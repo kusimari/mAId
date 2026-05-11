@@ -1,0 +1,2 @@
+prompt: Given the `git` skill loaded from ~/.claude/skills/git/SKILL.md, what commit-message style do I use on this machine?
+expect_substr: Conventional Commits

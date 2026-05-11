@@ -1,0 +1,2 @@
+prompt: Given the `writing-style` skill loaded from ~/.claude/skills/writing-style/SKILL.md, do I use exclamation marks in my writing?
+expect_substr: no

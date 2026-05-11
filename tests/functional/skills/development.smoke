@@ -1,0 +1,2 @@
+prompt: Given the `development` skill loaded from ~/.claude/skills/development/SKILL.md, should a bug fix include drive-by refactor?
+expect_substr: no
