@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Thin wrapper around `deno run maid/main.ts`. Put this on PATH
+# (or symlink it into ~/.local/bin) to invoke maid as a normal
+# command.
+set -euo pipefail
+# Resolve this script through any symlinks so `here` is the real
+# scripts/ dir inside the mAId checkout, not the symlink location.
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    [[ "$src" != /* ]] && src="$dir/$src"
+done
+here="$(cd -P "$(dirname "$src")" && pwd)"
+exec deno run --allow-read --allow-write --allow-env \
+    "$here/../maid/main.ts" "$@"
