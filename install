@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# mAId/install — put `maid` on PATH and deploy symlinks into $HOME.
+#
+# Invoked by env/layer-5/run after clone. Also safe to re-run
+# manually ("refresh").
+#
+# Steps:
+#   1. Ensure `deno` is on PATH. If missing, install via
+#      `nix profile install nixpkgs#deno`. If nix itself is not
+#      installed, bail with a clear error.
+#   2. Symlink scripts/maid into ~/.local/bin so `maid` resolves.
+#   3. Run `maid validate && maid deploy`.
+#
+# Idempotent.
+#
+# Options:
+#   --dry-run   Plan the deploy without mutating anything.
+#   --force     Replace symlinks that point elsewhere.
+#   --help, -h  Show this header.
+# END-USAGE
+
+set -euo pipefail
+
+CHECKOUT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+log()  { printf '==> %s\n' "$*"; }
+warn() { printf '!!! %s\n' "$*" >&2; }
+die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+usage() {
+    awk '/^# END-USAGE$/{exit} NR>1 && /^#/{sub(/^# ?/,""); print}' \
+        "${BASH_SOURCE[0]}"
+}
+
+FORWARD=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --dry-run|--force)   FORWARD+=("$1"); shift ;;
+        --help|-h)           usage; exit 0 ;;
+        *) die "Unknown argument: $1 (use --help)" ;;
+    esac
+done
+
+# ── Step 1: ensure deno is on PATH ──────────────────────────────────
+
+ensure_deno() {
+    if command -v deno >/dev/null 2>&1; then
+        log "deno present: $(command -v deno) ($(deno --version | head -1))"
+        return
+    fi
+    command -v nix >/dev/null 2>&1 \
+        || die "neither deno nor nix is on PATH. Install nix first (see env/README.md Layers 1–3), then re-run."
+    log "Installing deno via nix profile"
+    nix profile install nixpkgs#deno
+    command -v deno >/dev/null 2>&1 \
+        || die "nix profile install completed but deno is still not on PATH — check ~/.nix-profile/bin is in PATH"
+}
+
+# ── Step 2: put maid on PATH ────────────────────────────────────────
+
+ensure_maid_on_path() {
+    local link_dir="$HOME/.local/bin"
+    local link="$link_dir/maid"
+    local target="$CHECKOUT/scripts/maid"
+    mkdir -p "$link_dir"
+
+    if [[ -L "$link" ]]; then
+        local cur
+        cur="$(readlink "$link")"
+        if [[ "$cur" = "$target" ]]; then
+            log "maid symlinked: $link -> $target"
+            return
+        fi
+        log "Replacing stale symlink: $link (was -> $cur)"
+        rm "$link"
+    elif [[ -e "$link" ]]; then
+        die "$link exists and is not a symlink; resolve manually"
+    fi
+    ln -s "$target" "$link"
+    log "Symlinked: $link -> $target"
+
+    if ! printf '%s' ":$PATH:" | grep -q ":$link_dir:"; then
+        warn "$link_dir is not on PATH for this shell."
+        warn "Add to your shell RC if not already:  export PATH=\"\$HOME/.local/bin:\$PATH\""
+    fi
+}
+
+# ── Step 3: validate + deploy ───────────────────────────────────────
+
+run_maid() {
+    # Use the wrapper directly so we don't depend on PATH updates
+    # taking effect in this shell.
+    "$CHECKOUT/scripts/maid" validate
+    "$CHECKOUT/scripts/maid" deploy "${FORWARD[@]}"
+}
+
+# ── Flow ────────────────────────────────────────────────────────────
+
+log "mAId install: $CHECKOUT"
+ensure_deno
+ensure_maid_on_path
+run_maid
+log "mAId install done."
