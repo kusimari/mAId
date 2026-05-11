@@ -23,7 +23,10 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MAID_ROOT="$(cd "$HERE/../.." && pwd)"
+# -P so the path is the physical/realpath form. Home-dir auto-mounts
+# (e.g. /home/user → /local/home/user) would otherwise misalign with
+# `readlink -f` output from the assertion helpers.
+MAID_ROOT="$(cd -P "$HERE/../.." && pwd -P)"
 
 # ── args ────────────────────────────────────────────────────────────
 
