@@ -1,2 +1,2 @@
-prompt: Given the `writing-style` skill loaded from ~/.claude/skills/writing-style/SKILL.md, do I use exclamation marks in my writing?
-expect_substr: no
+prompt: Load the `writing-style` skill from ~/.claude/skills/writing-style/SKILL.md. Begin your response with the literal line `[writing-style] applies` on its own line, then answer: do I use exclamation marks in my writing?
+expect_substr: [writing-style] applies

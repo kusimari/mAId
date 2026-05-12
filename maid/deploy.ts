@@ -12,8 +12,18 @@ export interface DeployOptions {
 export type DeployResult =
   | { entry: RegistryEntry; status: "created" | "already-ok" | "replaced"; target: string }
   | { entry: RegistryEntry; status: "skipped-missing-source"; target: string }
-  | { entry: RegistryEntry; status: "skipped-non-symlink"; target: string; existing: "file" | "dir" }
-  | { entry: RegistryEntry; status: "skipped-wrong-symlink"; target: string; currentTarget: string };
+  | {
+    entry: RegistryEntry;
+    status: "skipped-non-symlink";
+    target: string;
+    existing: "file" | "dir";
+  }
+  | {
+    entry: RegistryEntry;
+    status: "skipped-wrong-symlink";
+    target: string;
+    currentTarget: string;
+  };
 
 export async function deploy(opts: DeployOptions): Promise<DeployResult[]> {
   const results: DeployResult[] = [];
@@ -83,4 +93,71 @@ async function pathExists(p: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// ── undeploy ────────────────────────────────────────────────────────
+
+export type UndeployResult =
+  | { entry: RegistryEntry; status: "not-deployed"; target: string }
+  | { entry: RegistryEntry; status: "removed"; target: string; was: string }
+  | {
+    entry: RegistryEntry;
+    status: "force-removed";
+    target: string;
+    existing: "file" | "dir" | "symlink";
+  }
+  | {
+    entry: RegistryEntry;
+    status: "skipped-foreign-symlink";
+    target: string;
+    currentTarget: string;
+  }
+  | {
+    entry: RegistryEntry;
+    status: "skipped-non-symlink";
+    target: string;
+    existing: "file" | "dir";
+  };
+
+export async function undeploy(opts: DeployOptions): Promise<UndeployResult[]> {
+  const results: UndeployResult[] = [];
+  for (const entry of REGISTRY) {
+    results.push(await undeployOne(entry, opts));
+  }
+  return results;
+}
+
+async function undeployOne(entry: RegistryEntry, opts: DeployOptions): Promise<UndeployResult> {
+  const homePath = `${opts.home}/${entry.home_subpath}`;
+  const expectedTarget = `${opts.checkout}/${entry.source_subpath}`;
+
+  let lstat: Deno.FileInfo | null = null;
+  try {
+    lstat = await Deno.lstat(homePath);
+  } catch {
+    return { entry, status: "not-deployed", target: homePath };
+  }
+
+  if (lstat.isSymlink) {
+    const currentTarget = await Deno.readLink(homePath);
+    if (currentTarget === expectedTarget) {
+      if (!opts.dryRun) await Deno.remove(homePath);
+      return { entry, status: "removed", target: homePath, was: currentTarget };
+    }
+    if (opts.force) {
+      if (!opts.dryRun) await Deno.remove(homePath);
+      return { entry, status: "force-removed", target: homePath, existing: "symlink" };
+    }
+    return { entry, status: "skipped-foreign-symlink", target: homePath, currentTarget };
+  }
+
+  // Regular file / directory at the managed destination.
+  const existing: "file" | "dir" = lstat.isDirectory ? "dir" : "file";
+  if (opts.force) {
+    if (!opts.dryRun) {
+      await Deno.remove(homePath, { recursive: lstat.isDirectory });
+    }
+    return { entry, status: "force-removed", target: homePath, existing };
+  }
+  return { entry, status: "skipped-non-symlink", target: homePath, existing };
 }

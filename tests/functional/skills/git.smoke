@@ -1,2 +1,2 @@
-prompt: Given the `git` skill loaded from ~/.claude/skills/git/SKILL.md, what commit-message style do I use on this machine?
-expect_substr: Conventional Commits
+prompt: Load the `git` skill from ~/.claude/skills/git/SKILL.md. Begin your response with the literal line `[git] applies` on its own line, then answer: what commit-message style do I use on this machine?
+expect_substr: [git] applies

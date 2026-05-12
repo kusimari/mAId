@@ -7,7 +7,7 @@
 //   --help       Usage.
 
 import { walkSources } from "./sources.ts";
-import { deploy } from "./deploy.ts";
+import { deploy, undeploy } from "./deploy.ts";
 import { REGISTRY } from "./registry.ts";
 
 const USAGE = `maid — validate/deploy mAId sources.
@@ -15,12 +15,15 @@ const USAGE = `maid — validate/deploy mAId sources.
 Usage:
   maid validate              Walk sources/ and validate frontmatter.
   maid deploy [--force]      Create/refresh $HOME-facing symlinks.
+  maid undeploy [--force]    Remove deploy-managed symlinks.
   maid status                Report each managed symlink's state.
   maid --help | -h           Show this help.
 
 Flags:
-  --dry-run                  (deploy) Plan without making changes.
+  --dry-run                  (deploy/undeploy) Plan without making changes.
   --force                    (deploy) Replace symlinks that point elsewhere.
+                             (undeploy) Remove whatever is at the managed
+                             path, including foreign symlinks and non-symlinks.
 `;
 
 function usage(stream: "out" | "err" = "out") {
@@ -101,6 +104,47 @@ async function cmdDeploy(args: string[]): Promise<number> {
   return failures > 0 ? 1 : 0;
 }
 
+async function cmdUndeploy(args: string[]): Promise<number> {
+  const dryRun = args.includes("--dry-run");
+  const force = args.includes("--force");
+
+  const results = await undeploy({
+    home: home(),
+    checkout: repoRoot(),
+    dryRun,
+    force,
+  });
+
+  let failures = 0;
+  for (const r of results) {
+    const tag = dryRun ? "(dry-run) " : "";
+    switch (r.status) {
+      case "not-deployed":
+        console.log(`${tag}not-deployed  ${r.target}`);
+        break;
+      case "removed":
+        console.log(`${tag}removed       ${r.target}`);
+        break;
+      case "force-removed":
+        console.log(`${tag}force-removed ${r.target} (was ${r.existing})`);
+        break;
+      case "skipped-foreign-symlink":
+        console.error(
+          `${tag}skip          ${r.target} (foreign symlink -> ${r.currentTarget}; use --force to remove)`,
+        );
+        failures++;
+        break;
+      case "skipped-non-symlink":
+        console.error(
+          `${tag}skip          ${r.target} (existing ${r.existing}; not managed by maid; use --force to remove)`,
+        );
+        failures++;
+        break;
+    }
+  }
+  return failures > 0 ? 1 : 0;
+}
+
 async function cmdStatus(): Promise<number> {
   const h = home();
   const c = repoRoot();
@@ -137,6 +181,9 @@ async function main() {
       break;
     case "deploy":
       rc = await cmdDeploy(rest);
+      break;
+    case "undeploy":
+      rc = await cmdUndeploy(rest);
       break;
     case "status":
       rc = await cmdStatus();

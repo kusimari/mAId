@@ -1,5 +1,7 @@
-import { assert, assertEquals } from "jsr:@std/assert@1";
-import { deploy } from "../maid/deploy.ts";
+// Run with `deno task test`, or `deno test -A` for an ad-hoc run.
+// Bare `deno test` fails with permission errors — tests touch the filesystem.
+import { assert, assertEquals } from "@std/assert";
+import { deploy, undeploy } from "../maid/deploy.ts";
 import { REGISTRY } from "../maid/registry.ts";
 
 async function makeCheckout(): Promise<string> {
@@ -7,8 +9,16 @@ async function makeCheckout(): Promise<string> {
   await Deno.mkdir(`${dir}/sources/skills`, { recursive: true });
   await Deno.mkdir(`${dir}/sources/agents`, { recursive: true });
   await Deno.mkdir(`${dir}/sources/commands`, { recursive: true });
-  await Deno.writeTextFile(`${dir}/CLAUDE.md`, "---\nname: x\ndescription: y\n---\nTop.\n");
-  await Deno.writeTextFile(`${dir}/KIRO.md`, "---\nname: x\ndescription: y\n---\nKiro.\n");
+  await Deno.mkdir(`${dir}/sources/claude`, { recursive: true });
+  await Deno.mkdir(`${dir}/sources/kiro`, { recursive: true });
+  await Deno.writeTextFile(
+    `${dir}/sources/claude/CLAUDE.md`,
+    "---\nname: x\ndescription: y\n---\nTop.\n",
+  );
+  await Deno.writeTextFile(
+    `${dir}/sources/kiro/KIRO.md`,
+    "---\nname: x\ndescription: y\n---\nKiro.\n",
+  );
   return dir;
 }
 
@@ -35,7 +45,11 @@ Deno.test("deploy: second run is a no-op (already-ok)", async () => {
   await deploy({ home, checkout });
   const second = await deploy({ home, checkout });
   for (const r of second) {
-    assertEquals(r.status, "already-ok", `unexpected status for ${r.entry.home_subpath}: ${r.status}`);
+    assertEquals(
+      r.status,
+      "already-ok",
+      `unexpected status for ${r.entry.home_subpath}: ${r.status}`,
+    );
   }
 });
 
@@ -97,4 +111,105 @@ Deno.test("deploy: pre-existing real file is not overwritten", async () => {
   assertEquals(firstResult!.status, "skipped-non-symlink");
   const still = await Deno.readTextFile(target);
   assertEquals(still, "user content");
+});
+
+Deno.test("undeploy: clean HOME reports not-deployed for every entry", async () => {
+  const checkout = await makeCheckout();
+  const home = await makeHome();
+  const results = await undeploy({ home, checkout });
+  assertEquals(results.length, REGISTRY.length);
+  for (const r of results) {
+    assertEquals(r.status, "not-deployed", `unexpected ${r.status} for ${r.entry.home_subpath}`);
+  }
+});
+
+Deno.test("undeploy: removes symlinks that point into the checkout", async () => {
+  const checkout = await makeCheckout();
+  const home = await makeHome();
+  await deploy({ home, checkout });
+
+  const results = await undeploy({ home, checkout });
+  for (const r of results) {
+    assertEquals(r.status, "removed", `expected removed for ${r.entry.home_subpath}`);
+    try {
+      await Deno.lstat(`${home}/${r.entry.home_subpath}`);
+      throw new Error("expected not to find " + r.entry.home_subpath);
+    } catch (e) {
+      assert(e instanceof Deno.errors.NotFound, "expected NotFound");
+    }
+  }
+});
+
+Deno.test("undeploy: idempotent (second run is not-deployed)", async () => {
+  const checkout = await makeCheckout();
+  const home = await makeHome();
+  await deploy({ home, checkout });
+  await undeploy({ home, checkout });
+  const second = await undeploy({ home, checkout });
+  for (const r of second) {
+    assertEquals(r.status, "not-deployed");
+  }
+});
+
+Deno.test("undeploy: foreign symlink is skipped without --force", async () => {
+  const checkout = await makeCheckout();
+  const home = await makeHome();
+  const first = REGISTRY[0];
+  const target = `${home}/${first.home_subpath}`;
+  await Deno.mkdir(target.replace(/\/[^/]+$/, ""), { recursive: true });
+  await Deno.symlink("/nonexistent/elsewhere.md", target);
+
+  const results = await undeploy({ home, checkout });
+  const firstResult = results.find((r) => r.entry.home_subpath === first.home_subpath);
+  assertEquals(firstResult!.status, "skipped-foreign-symlink");
+  // Still present after the skip.
+  const stat = await Deno.lstat(target);
+  assert(stat.isSymlink);
+});
+
+Deno.test("undeploy: foreign symlink removed with --force", async () => {
+  const checkout = await makeCheckout();
+  const home = await makeHome();
+  const first = REGISTRY[0];
+  const target = `${home}/${first.home_subpath}`;
+  await Deno.mkdir(target.replace(/\/[^/]+$/, ""), { recursive: true });
+  await Deno.symlink("/nonexistent/elsewhere.md", target);
+
+  const results = await undeploy({ home, checkout, force: true });
+  const firstResult = results.find((r) => r.entry.home_subpath === first.home_subpath);
+  assertEquals(firstResult!.status, "force-removed");
+  try {
+    await Deno.lstat(target);
+    throw new Error("expected not to find " + target);
+  } catch (e) {
+    assert(e instanceof Deno.errors.NotFound);
+  }
+});
+
+Deno.test("undeploy: user-authored real file is preserved without --force", async () => {
+  const checkout = await makeCheckout();
+  const home = await makeHome();
+  const first = REGISTRY[0];
+  const target = `${home}/${first.home_subpath}`;
+  await Deno.mkdir(target.replace(/\/[^/]+$/, ""), { recursive: true });
+  await Deno.writeTextFile(target, "user content");
+
+  const results = await undeploy({ home, checkout });
+  const firstResult = results.find((r) => r.entry.home_subpath === first.home_subpath);
+  assertEquals(firstResult!.status, "skipped-non-symlink");
+  const still = await Deno.readTextFile(target);
+  assertEquals(still, "user content");
+});
+
+Deno.test("undeploy: dry-run makes no filesystem changes", async () => {
+  const checkout = await makeCheckout();
+  const home = await makeHome();
+  await deploy({ home, checkout });
+  const results = await undeploy({ home, checkout, dryRun: true });
+  for (const r of results) {
+    assertEquals(r.status, "removed");
+    // Still present (dry-run).
+    const stat = await Deno.lstat(`${home}/${r.entry.home_subpath}`);
+    assert(stat.isSymlink);
+  }
 });

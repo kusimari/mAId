@@ -1,6 +1,6 @@
 // Walk mAId/sources/<kind>/ and return parsed records.
 
-import { parseFile, type Frontmatter, SchemaError } from "./schema.ts";
+import { type Frontmatter, parseFile, SchemaError } from "./schema.ts";
 
 export type Kind = "skills" | "agents" | "commands";
 export const ALL_KINDS: Kind[] = ["skills", "agents", "commands"];

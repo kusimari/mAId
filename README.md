@@ -1,77 +1,61 @@
 # mAId
 
 Tool-agnostic source of truth for agentic resources — skills,
-agents, commands, MCPs — compiled to whatever AI tool happens to
-be in use (Claude Code, Kiro, Gemini CLI, and future tools).
+agents, commands, steering docs — compiled into whatever AI tool
+happens to be in use (Claude Code, Kiro, Gemini CLI, future
+tools).
 
-## Day-1 install
+The repo is the checked-in source. Installing mAId drops a
+`maid` binary on PATH and creates symlinks from `$HOME` into this
+tree, so edits to `sources/` are live for the next AI session.
 
-```
-cd ~/workplace/ai-workspace/mAId
-./install
-```
-
-The install script:
-
-1. Ensures `deno` is on PATH (via `nix profile install nixpkgs#deno`
-   if missing).
-2. Symlinks `scripts/maid` into `~/.local/bin/maid`.
-3. Runs `maid validate && maid deploy` to create directory symlinks
-   from `$HOME` into this checkout.
-
-## Day-2 flow
-
-Editing any `SKILL.md` under `sources/skills/<name>/` is live in
-the next AI session — the symlinks already point at this tree.
-Adding a brand-new skill: just drop a new
-`sources/skills/<name>/SKILL.md` and it's visible too (the
-directory symlink transparently exposes the new file).
-
-Run `./install` again after `git pull` to pick up new registry
-entries or maid CLI changes.
-
-## `maid` subcommands
+## Develop
 
 ```
-maid validate       Walk sources/ and validate frontmatter.
-maid deploy         Create/refresh $HOME-facing symlinks.
-  --dry-run         Plan without making changes.
-  --force           Replace symlinks that point elsewhere.
-maid status         Report each managed symlink's state.
-maid --help         Show usage.
+direnv allow              # loads deno via the repo-local flake
+deno task test            # full suite
+deno task fmt             # format
+deno task lint            # lint
+deno task check           # typecheck
 ```
 
-## Layout
+Full task list lives in [`deno.json`](./deno.json). A bare
+`deno test` fails with permission errors by design — use
+`deno task test` or `deno test -A`.
+
+The development methodology (spec-driven, phase-gated) is encoded
+in the [`kdevkit` skill](./sources/skills/kdevkit/SKILL.md).
+Project context lives in [`.kdevkit/project.md`](./.kdevkit/project.md);
+feature specs live in [`.kdevkit/feature/`](./.kdevkit/feature/).
+
+## Install
 
 ```
-mAId/
-├── install                  # day-1 entry point (invoked by env/layer-5/run)
-├── scripts/maid             # bash wrapper → deno run maid/main.ts
-├── maid/                    # Deno TypeScript CLI
-│   ├── main.ts
-│   ├── schema.ts            # frontmatter parse + validate
-│   ├── sources.ts           # walk sources/
-│   ├── registry.ts          # $HOME ↔ source path mapping
-│   └── deploy.ts            # symlink manager
-├── sources/
-│   ├── skills/<name>/SKILL.md
-│   ├── agents/<name>.md
-│   └── commands/<name>.md
-├── CLAUDE.md                # user-memory for Claude Code
-├── KIRO.md                  # steering for Kiro
-└── tests/
-    ├── schema_test.ts       # deno test
-    ├── deploy_test.ts
-    └── functional/          # real-tool round-trip smokes
-        ├── run
-        └── skills/*.smoke
+./install              # deno task setup:   install maid + validate + deploy
+./install --uninstall  # deno task teardown: undeploy + uninstall maid
 ```
 
-## Testing
+What happens on install:
 
-```
-deno task test                    # unit + integration (schema + deploy)
-deno task check                   # typecheck
-./tests/functional/run            # structural + real tool invocations
-./tests/functional/run --no-tools # structural only (fast)
-```
+1. Deno picks up from the repo-local flake (direnv active) or
+   via `nix develop --command` if nix is present.
+2. `deno install` writes a shim at `~/.local/bin/maid` with the
+   required permissions baked in.
+3. `maid validate && maid deploy` symlinks every entry in
+   [`maid/registry.ts`](./maid/registry.ts) — today that's
+   `~/.claude/CLAUDE.md`, `~/.claude/skills`, `~/.claude/agents`,
+   `~/.claude/commands`, and `~/.kiro/steering/KIRO.md`, each
+   pointing into [`sources/`](./sources/).
+
+Uninstall reverses both steps and is idempotent. Hand-written
+files at a managed destination are preserved unless you pass
+`--force`.
+
+## Where to look next
+
+- Everything that gets deployed: [`sources/`](./sources/).
+- How deployment is decided: [`maid/registry.ts`](./maid/registry.ts).
+- Reference shape for a new skill:
+  [`sources/skills/development/SKILL.md`](./sources/skills/development/SKILL.md)
+  (and its three siblings).
+- Full dev-verb list: [`deno.json`](./deno.json) `tasks` block.

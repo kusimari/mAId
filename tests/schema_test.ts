@@ -1,4 +1,5 @@
-import { assertEquals, assertThrows } from "jsr:@std/assert@1";
+// Run with `deno task test`, or `deno test -A` for an ad-hoc run.
+import { assertEquals, assertThrows } from "@std/assert";
 import { parseFile, parseFrontmatter, SchemaError, splitFrontmatter } from "../maid/schema.ts";
 
 Deno.test("splitFrontmatter parses valid file", () => {

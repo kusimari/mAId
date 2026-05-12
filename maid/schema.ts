@@ -65,9 +65,7 @@ export function parseFrontmatter(filePath: string, raw: string): Frontmatter {
 
     if (val.startsWith("[") && val.endsWith("]")) {
       const inner = val.slice(1, -1).trim();
-      out[key] = inner === ""
-        ? []
-        : inner.split(",").map((s) => unquote(s.trim()));
+      out[key] = inner === "" ? [] : inner.split(",").map((s) => unquote(s.trim()));
     } else {
       out[key] = unquote(val);
     }
