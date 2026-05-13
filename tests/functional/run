@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# mAId/tests/functional/run — functional smoke tests.
+#
+# Exercises AI artefacts (skills, agents, commands, MCPs) in the
+# real tools (Claude Code, Kiro) and asserts each one round-trips.
+#
+# Fixture shape — one file per artefact:
+#   tests/functional/skills/<name>.smoke     Generic format:
+#     prompt: <one-line prompt>
+#     expect_substr: <substring the response must contain>
+#
+# Cheap structural checks (symlink resolves, files exist) run
+# first. Real tool invocations follow — those can be slow.
+#
+# Usage:
+#   tests/functional/run                 Run all smokes.
+#   tests/functional/run --no-tools      Skip the claude/kiro
+#                                        invocations; only
+#                                        structural checks.
+#   tests/functional/run <name>          Run only <name>'s smoke.
+#   tests/functional/run --help
+
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# -P so the path is the physical/realpath form. Home-dir auto-mounts
+# (e.g. /home/user → /local/home/user) would otherwise misalign with
+# `readlink -f` output from the assertion helpers.
+MAID_ROOT="$(cd -P "$HERE/../.." && pwd -P)"
+
+# ── args ────────────────────────────────────────────────────────────
+
+NO_TOOLS=0
+SELECTOR=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --no-tools) NO_TOOLS=1; shift ;;
+        --help|-h)
+            awk '/^$/{exit} /^#/{sub(/^# ?/,""); print}' "${BASH_SOURCE[0]}"
+            exit 0
+            ;;
+        -*) echo "unknown flag: $1" >&2; exit 2 ;;
+        *)  SELECTOR="$1"; shift ;;
+    esac
+done
+
+# ── output ──────────────────────────────────────────────────────────
+
+pass() { printf '\033[32mPASS\033[0m %s\n' "$*"; }
+fail() { printf '\033[31mFAIL\033[0m %s\n' "$*" >&2; FAILURES=$((FAILURES+1)); }
+skip() { printf '\033[33mSKIP\033[0m %s\n' "$*"; }
+info() { printf '  %s\n' "$*"; }
+
+FAILURES=0
+
+# ── assertions ──────────────────────────────────────────────────────
+
+# assert_symlink_resolves <path> <expected-absolute-target>
+assert_symlink_resolves() {
+    local path="$1" expected="$2"
+    if [[ ! -L "$path" ]]; then
+        fail "$path is not a symlink"
+        return
+    fi
+    local actual
+    actual="$(readlink -f "$path" 2>/dev/null || true)"
+    if [[ "$actual" != "$expected" ]]; then
+        fail "$path resolves to $actual (expected $expected)"
+        return
+    fi
+    pass "$path resolves"
+}
+
+# assert_claude_response <prompt> <expected-substring> <check-name>
+assert_claude_response() {
+    local prompt="$1" expect="$2" name="$3"
+    if ! command -v claude >/dev/null 2>&1; then
+        skip "$name (claude not on PATH)"
+        return
+    fi
+    local out
+    if ! out="$(claude --print "$prompt" 2>&1)"; then
+        fail "$name (claude invocation failed): $out"
+        return
+    fi
+    if grep -qiF -- "$expect" <<<"$out"; then
+        pass "$name"
+    else
+        fail "$name: response missing expected substring '$expect'"
+        info "response head: $(head -c 200 <<<"$out")..."
+    fi
+}
+
+# ── structural smokes ──────────────────────────────────────────────
+
+structural_smokes() {
+    info "=== structural checks ==="
+    assert_symlink_resolves "$HOME/.claude/CLAUDE.md" "$MAID_ROOT/sources/claude/CLAUDE.md"
+    # Directory symlinks: readlink -f resolves to the target dir.
+    assert_symlink_resolves "$HOME/.claude/skills" "$MAID_ROOT/sources/skills"
+    assert_symlink_resolves "$HOME/.claude/agents" "$MAID_ROOT/sources/agents"
+    assert_symlink_resolves "$HOME/.claude/commands" "$MAID_ROOT/sources/commands"
+    assert_symlink_resolves "$HOME/.kiro/steering/KIRO.md" "$MAID_ROOT/sources/kiro/KIRO.md"
+
+    # Each skill's SKILL.md exists and is reachable through the symlink.
+    local skill
+    for skill in "$MAID_ROOT/sources/skills"/*/SKILL.md; do
+        [[ -e "$skill" ]] || continue
+        local name
+        name="$(basename "$(dirname "$skill")")"
+        [[ -n "$SELECTOR" && "$SELECTOR" != "$name" ]] && continue
+        local homepath="$HOME/.claude/skills/$name/SKILL.md"
+        if [[ -r "$homepath" ]]; then
+            pass "skill visible: $name"
+        else
+            fail "skill not reachable through ~/.claude/skills/$name"
+        fi
+    done
+}
+
+# ── skill-level functional smokes ──────────────────────────────────
+
+skill_smokes() {
+    info "=== skill smokes ==="
+    local fixture name prompt expect
+    for fixture in "$HERE/skills"/*.smoke; do
+        [[ -e "$fixture" ]] || continue
+        name="$(basename "$fixture" .smoke)"
+        [[ -n "$SELECTOR" && "$SELECTOR" != "$name" ]] && continue
+
+        prompt="$(grep '^prompt:' "$fixture" | sed 's/^prompt:[[:space:]]*//')"
+        expect="$(grep '^expect_substr:' "$fixture" | sed 's/^expect_substr:[[:space:]]*//')"
+        if [[ -z "$prompt" || -z "$expect" ]]; then
+            fail "fixture $fixture malformed (needs prompt: and expect_substr: lines)"
+            continue
+        fi
+        assert_claude_response "$prompt" "$expect" "skill:$name via claude"
+    done
+}
+
+# ── flow ────────────────────────────────────────────────────────────
+
+structural_smokes
+if (( NO_TOOLS )); then
+    skip "tool invocations disabled (--no-tools)"
+else
+    skill_smokes
+fi
+
+echo
+if (( FAILURES == 0 )); then
+    echo "all smokes passed"
+    exit 0
+else
+    echo "$FAILURES smoke(s) failed"
+    exit 1
+fi

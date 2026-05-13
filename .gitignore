@@ -1,0 +1,6 @@
+.direnv/
+.deno_cache/
+node_modules/
+*.log
+result
+result-*

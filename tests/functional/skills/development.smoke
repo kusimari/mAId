@@ -1,0 +1,2 @@
+prompt: Load the `development` skill from ~/.claude/skills/development/SKILL.md. Begin your response with the literal line `[development] applies` on its own line, then answer: should a bug fix include drive-by refactor?
+expect_substr: [development] applies
