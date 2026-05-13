@@ -1,9 +1,8 @@
 # Feature (deferred): gorantls-agents-hand-select
 
 > **Status: deferred.** Pick this up in a dedicated feature-dev
-> session by copying this file to `.kdevkit/feature/` (dropping
-> the `-wip` suffix in the path) and promoting its Implementation
-> Plan.
+> session by promoting this file to `specs/feature/` and
+> promoting its Implementation Plan.
 
 ## Feature Brief
 

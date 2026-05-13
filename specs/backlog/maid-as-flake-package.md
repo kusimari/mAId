@@ -1,7 +1,7 @@
 # Feature (deferred): maid-as-flake-package
 
 > **Status: deferred.** Pick this up in a dedicated feature-dev
-> session by promoting to `.kdevkit/feature/`.
+> session by promoting to `specs/feature/`.
 
 ## Feature Brief
 

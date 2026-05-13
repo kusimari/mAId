@@ -580,6 +580,19 @@ for debugging if they surface.
 
 ## Session Log
 
+- **2026-05-13** — All five commits executed (YOLO mode). A:
+  skills reshaped, dev/git deleted, notes stub added. B: registry
+  entry added; `~/.kiro/steering/skills/` symlink deployed. C:
+  duplicated standing-rules stripped from CLAUDE.md/KIRO.md. D:
+  Kiro smoke support via `kiro-cli chat --no-interactive
+  --trust-tools=`; new `kdevkit.smoke` and `notes.smoke`. Full
+  functional suite green on both Claude and Kiro — six smokes,
+  all pass. E: tree migrated — `.kdevkit/` → `specs/`,
+  `feature-wip/` → `backlog/`; `project.md` rewritten to six-
+  section template; `notes-skill-design.md` backlog entry
+  created; `kiro-side-functional-smoke.md` deleted (completed by
+  this cycle); README updated; light terminology cleanup on
+  remaining backlog items. No R1–R5 risks materialized.
 - **2026-05-13** — Implementation plan drafted. Five commits in
   order: (A) skill reshape + dev/git delete + notes stub; (B)
   registry entry exposing skills to Kiro; (C) strip duplicated
