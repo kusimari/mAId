@@ -8,9 +8,11 @@
 #   tests/functional/skills/<name>.smoke     Generic format:
 #     prompt: <one-line prompt>
 #     expect_substr: <substring the response must contain>
+#     tools: claude,kiro       (optional; defaults to "claude")
 #
 # Cheap structural checks (symlink resolves, files exist) run
 # first. Real tool invocations follow — those can be slow.
+# Missing CLIs skip (don't fail) their respective assertions.
 #
 # Usage:
 #   tests/functional/run                 Run all smokes.
@@ -91,6 +93,28 @@ assert_claude_response() {
     fi
 }
 
+# assert_kiro_response <prompt> <expected-substring> <check-name>
+assert_kiro_response() {
+    local prompt="$1" expect="$2" name="$3"
+    if ! command -v kiro-cli >/dev/null 2>&1; then
+        skip "$name (kiro-cli not on PATH)"
+        return
+    fi
+    local out
+    # --trust-tools= (empty list) = trust none = non-interactive
+    # run doesn't stall on tool-use confirmation prompts.
+    if ! out="$(kiro-cli chat --no-interactive --trust-tools= "$prompt" 2>&1)"; then
+        fail "$name (kiro-cli invocation failed): $out"
+        return
+    fi
+    if grep -qiF -- "$expect" <<<"$out"; then
+        pass "$name"
+    else
+        fail "$name: response missing expected substring '$expect'"
+        info "response head: $(head -c 200 <<<"$out")..."
+    fi
+}
+
 # ── structural smokes ──────────────────────────────────────────────
 
 structural_smokes() {
@@ -101,6 +125,7 @@ structural_smokes() {
     assert_symlink_resolves "$HOME/.claude/agents" "$MAID_ROOT/sources/agents"
     assert_symlink_resolves "$HOME/.claude/commands" "$MAID_ROOT/sources/commands"
     assert_symlink_resolves "$HOME/.kiro/steering/KIRO.md" "$MAID_ROOT/sources/kiro/KIRO.md"
+    assert_symlink_resolves "$HOME/.kiro/steering/skills" "$MAID_ROOT/sources/skills"
 
     # Each skill's SKILL.md exists and is reachable through the symlink.
     local skill
@@ -122,7 +147,7 @@ structural_smokes() {
 
 skill_smokes() {
     info "=== skill smokes ==="
-    local fixture name prompt expect
+    local fixture name prompt expect tools tool
     for fixture in "$HERE/skills"/*.smoke; do
         [[ -e "$fixture" ]] || continue
         name="$(basename "$fixture" .smoke)"
@@ -130,11 +155,22 @@ skill_smokes() {
 
         prompt="$(grep '^prompt:' "$fixture" | sed 's/^prompt:[[:space:]]*//')"
         expect="$(grep '^expect_substr:' "$fixture" | sed 's/^expect_substr:[[:space:]]*//')"
+        tools="$(grep '^tools:' "$fixture" | sed 's/^tools:[[:space:]]*//')"
+        : "${tools:=claude}"
         if [[ -z "$prompt" || -z "$expect" ]]; then
             fail "fixture $fixture malformed (needs prompt: and expect_substr: lines)"
             continue
         fi
-        assert_claude_response "$prompt" "$expect" "skill:$name via claude"
+        IFS=',' read -ra _tool_list <<<"$tools"
+        for tool in "${_tool_list[@]}"; do
+            tool="${tool//[[:space:]]/}"
+            case "$tool" in
+                claude) assert_claude_response "$prompt" "$expect" "skill:$name via claude" ;;
+                kiro)   assert_kiro_response   "$prompt" "$expect" "skill:$name via kiro" ;;
+                "")     ;;
+                *)      fail "fixture $fixture: unknown tool '$tool' in tools: field" ;;
+            esac
+        done
     done
 }
 
