@@ -18,4 +18,5 @@ export const REGISTRY: RegistryEntry[] = [
   { home_subpath: ".claude/agents", source_subpath: "sources/agents", kind: "dir" },
   { home_subpath: ".claude/commands", source_subpath: "sources/commands", kind: "dir" },
   { home_subpath: ".kiro/steering/KIRO.md", source_subpath: "sources/kiro/KIRO.md", kind: "file" },
+  { home_subpath: ".kiro/steering/skills", source_subpath: "sources/skills", kind: "dir" },
 ];
