@@ -25,8 +25,9 @@ Full task list lives in [`deno.json`](./deno.json). A bare
 
 The development methodology (spec-driven, phase-gated) is encoded
 in the [`kdevkit` skill](./sources/skills/kdevkit/SKILL.md).
-Project context lives in [`.kdevkit/project.md`](./.kdevkit/project.md);
-feature specs live in [`.kdevkit/feature/`](./.kdevkit/feature/).
+Project context lives in [`specs/project.md`](./specs/project.md);
+feature specs live in [`specs/feature/`](./specs/feature/);
+open future work sits in [`specs/backlog/`](./specs/backlog/).
 
 ## Install
 
