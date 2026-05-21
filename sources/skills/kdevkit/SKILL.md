@@ -96,6 +96,38 @@ them in place so future sessions re-read the intent.
      in a traditional sense, describe how it's consumed. -->
 ```
 
+### First-time `project.md` detection
+
+When creating `project.md` from scratch, fill the Testing
+section by:
+
+1. **Probe ecosystem markers** to identify the toolchain:
+   `pyproject.toml` / `package.json` / `Cargo.toml` / `go.mod` /
+   `pom.xml` or `build.gradle*` / `Makefile` / `deno.json`. Map
+   each to its conventional format / lint / type-check / test
+   commands.
+2. **Prefer CI as ground truth.** If `.github/workflows/*.yml`
+   or `.gitlab-ci.yml` defines quality / test commands, use them
+   verbatim — they reflect what actually runs.
+3. **One batched confirmation with the user:** present detected
+   commands and ask which test layers are load-bearing vs.
+   nice-to-have. Don't drip-feed questions.
+4. **Write the Testing section as prose** — describe the test
+   layers and mention commands inline where natural. Do not
+   invent a structured "Toolchain" block; §7 reads commands out
+   of the prose at run time.
+
+### Optional `## Agent Development` section
+
+Some skills carry an opinionated, structured flow that needs
+per-project config (score thresholds, retry budgets, named
+sub-agents, etc.). When such config doesn't fit naturally into
+the general sections above, `project.md` may carry an optional
+`## Agent Development` section, organised by skill name. kdevkit
+itself does not require this section — its loop runs from the
+Testing section's prose. Add an `## Agent Development` block
+only when a specific skill asks for one.
+
 ## 3 · Load feature context
 
 When the user begins work on a feature (cue words: "let's start
@@ -269,27 +301,46 @@ done:
 
 ## 7 · Quality → Test → Push loop
 
-Apply after any coherent unit of implementation work.
+Apply after any coherent unit of implementation work. Once an
+implementation plan is approved, the loop runs autonomously
+between gates — no per-step prompts.
+
+### Inputs · read commands from `project.md`
+
+Before running, read `$SPEC_ROOT/project.md`'s Testing section
+to identify the format / lint / type-check / test commands for
+this project. If a command is ambiguous or missing:
+
+- Ask the user **once**, then offer to update `project.md` so
+  the answer persists.
+- If `project.md` itself is missing the Testing section, fall
+  back to §2's first-time detection rubric and confirm in one
+  batch.
+
+If the project has an `## Agent Development` section with a
+`kdevkit` block, prefer those values over the generic defaults
+below (score threshold, retry budget).
 
 ### Quality Gate
 
-1. Format source files (repo-appropriate formatter).
-2. Lint; fix all violations; re-run until clean.
-3. Type-check (if the repo supports it); fix all errors.
+1. Run the format command. Apply all auto-fixes.
+2. Run the lint command. Fix all violations; re-run until clean.
+3. Run the type-check command (if applicable). Fix all errors.
 4. Self-review the diff against the base branch. Score your own
    work 0–100 for correctness, security, and adherence to
-   project conventions. Threshold: 70.
-   - ≥ 70 → proceed to Test Gate.
-   - < 70 → fix the highest-severity issues and re-review **once
-     only**; if still below threshold, proceed and note residual
+   project conventions. Default threshold: **70**.
+   - ≥ threshold → proceed to Test Gate.
+   - < threshold → fix the highest-severity issues and re-review
+     **once only**; if still below, proceed and note residual
      issues in the Session Log.
 
 ### Test Gate
 
-1. Run the full test suite.
+1. Run the test command identified above.
 2. All tests pass (zero failures, zero errors).
-3. On failure: diagnose, fix, re-run. Up to **2** fix-and-retry
-   cycles. If still failing, stop and report — do not push.
+3. On failure: diagnose, fix, re-run. Default budget: **2**
+   fix-and-retry cycles. If still failing, stop and report — do
+   not push.
 4. If the fixes were substantial, re-run the Quality Gate before
    pushing.
 
