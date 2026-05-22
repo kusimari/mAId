@@ -1,11 +1,21 @@
 ---
 name: writing-style
-description: Voice, tone, and structure for my prose — emails, docs, PR descriptions, announcements, casual notes.
-version: 1.0.0
-tags: [narrative, writing, email, announcement]
+description: Voice, tone, and structure for my prose. Includes a formatter verb ("format this in my style"), an opt-in strict mode that flags style violations before sending, and an explicit-teach loop that captures new rules into the curated source.
+version: 1.1.0
+tags: [narrative, writing, email, announcement, formatter, learning]
 ---
 
 # writing-style — how I write
+
+You begin every response that uses this skill with the
+literal line `[writing-style] applies` on its own line.
+
+When you load this skill at session start, **first** check
+the `## Learned rules` section below. If it has any
+entries, offer promotion before answering the user's actual
+prompt: *"You have N learned rules pending promotion. Want
+to review them now? &lt;list&gt;"*. If the user declines or
+ignores the offer, proceed normally.
 
 ## Voice
 
@@ -59,6 +69,143 @@ tags: [narrative, writing, email, announcement]
 - Lists when the items are parallel. Prose when they aren't.
 - Code blocks for anything the reader might copy-paste.
 - Headings when the piece is >3 paragraphs. Below that, prose.
+
+## Formatter
+
+The user can ask you to rewrite a passage against the rules
+above. Trigger phrases:
+
+- "format this in my style"
+- "rewrite to my voice"
+- "fix this in my style"
+
+Output two things, in order:
+
+1. The rewritten passage (no preamble — start with the
+   text).
+2. A bulleted **change log**: one bullet per substantive
+   edit, citing the section the rule came from. Examples:
+
+   - Vocabulary: "leverage" → "use"
+   - Voice: cut hedge "arguably" — say it or don't
+   - Sentence structure: split two ideas into two
+     sentences
+   - Emphasis: removed UPPERCASE for emphasis
+
+Cosmetic edits (whitespace, typo fixes) don't need a
+bullet. If the input already conforms, say so explicitly:
+*"No changes — this already fits the style guide."*
+
+## Strict mode
+
+The user can toggle a session-scoped guardrail flag.
+
+Triggers:
+
+- **On:** "strict mode on", "strict on", "guardrails on"
+- **Off:** "strict mode off", "strict off", "guardrails off"
+
+Default is **off**. The flag resets at the end of the
+session — every new session starts off.
+
+When strict mode is on, before sending **any prose draft**
+(email, doc, PR description, announcement, reply with a
+distinct prose passage), prefix the draft with a bullet
+list of style violations found in your own draft, with
+span quotes:
+
+```
+Style check (strict mode):
+- Voice: hedge — "I would arguably say…"
+- Vocabulary: business-speak — "leverage"
+
+Want me to apply these fixes before sending? (yes / no / specific ones)
+```
+
+Wait for confirmation before sending the draft. If the
+user says no, send the draft as-is. If yes, apply all
+fixes; if specific, apply only those.
+
+Strict mode does **not** apply to short conversational
+replies (one or two sentences answering a question). It
+applies to substantive prose — anything you'd consider a
+"draft".
+
+## Learning loop
+
+The user can teach you new style rules during a session.
+
+**Strict-prefix triggers only:**
+
+- `new rule: …`
+- `add rule: …`
+- `style rule: …`
+
+Phrases like "I prefer X" or "stop using Y" are **not**
+triggers — they're conversational and would generate
+false-positive captures.
+
+On a prefix match: append a dated entry to the
+`## Learned rules` section below, newest at top. Edit the
+file at `~/.claude/skills/writing-style/SKILL.md` (or the
+kiro path if Claude isn't where you're running) — the path
+is a symlink into the mAId checkout, so the edit lands in
+the version-controlled source.
+
+Entry shape:
+
+```markdown
+- 2026-05-22 · prefer "to" over "in order to"
+  · *example:* "in order to reach the team" → "to reach the team"
+  · source: explicit teach
+```
+
+The `*example:*` and `source:` fields are optional but
+recommended. Use them when the user's framing makes them
+natural.
+
+After writing, confirm with one short line:
+*"Added to `## Learned rules`. Run `git status` in the
+mAId checkout to see the diff."*
+
+### Promotion
+
+Stable learned rules belong in the curated body above
+(Voice / Sentence structure / Punctuation / Vocabulary /
+Paragraph structure / POV / Emphasis / Other patterns).
+Promote them via two paths:
+
+1. **Next-session offer.** On session start, if
+   `## Learned rules` has entries, offer to review them
+   before answering the user's actual prompt.
+2. **On-demand.** The user says "promote learned rules"
+   or "review learned rules". List pending entries with
+   proposed target sections; ask the user to confirm
+   each.
+
+On confirmation: edit the target section to add the rule
+in its existing voice (terse, declarative), then remove
+the entry from `## Learned rules`. Both edits land in
+the same file write.
+
+## Learned rules
+
+<!-- Newest at top. Entries are explicit teach turns
+     (`new rule:` / `add rule:` / `style rule:` prefix).
+     At session start or on-demand, the assistant offers
+     to promote stable entries into the body sections
+     above. -->
+
+## Known limits (v1)
+
+- **Concurrency.** Two parallel sessions both teaching at
+  the same time can race — last writer wins, the earlier
+  append is lost. In solo personal use this is rare.
+  Tracked for the v2 MCP-server promotion at
+  `specs/backlog/writing-style-mcp-server.md` (file lock).
+- **Strict mode is session-scoped.** Every new session
+  starts off; re-enable each session if you want it on
+  consistently. v2 promotes this to MCP-server state.
 
 ## Session Log
 
