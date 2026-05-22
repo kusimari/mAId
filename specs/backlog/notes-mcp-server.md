@@ -5,8 +5,8 @@
 Promote the v1 `notes` skill (markdown-only, agent follows
 the contract using its own filesystem tools) into a typed
 MCP server consumed by every harness mAId deploys to —
-Claude Code, Kiro, MeshClaw, future Claude Desktop / AWS
-Q-Desktop.
+Claude Code, Kiro, and any future harness that loads MCP
+servers from a JSON config file.
 
 Tools the server would expose:
 
@@ -34,8 +34,8 @@ Five wins over the v1 skill-only shape:
    the user to paste a Dataview block.
 5. **Cross-harness uniformity** — one server, one config
    merged into each consumer's MCP config file
-   (`~/.claude.json`, `~/.kiro/settings/mcp.json`,
-   `~/.meshclaw/mcp.json`).
+   (`~/.claude.json`, `~/.kiro/settings/mcp.json`, and
+   future harness equivalents).
 
 ## Open questions
 
@@ -43,8 +43,7 @@ Five wins over the v1 skill-only shape:
   `npm:@modelcontextprotocol/sdk`, or Node + TypeScript?
 - **mAId platform work.** New registry kind
   `mcp-server` with surgical JSON-merge deploy
-  (`__managed_by: "maid"` marker pattern, mirroring
-  `Gorantls-agents/items/meshclaw/item.py`). Schema
+  (`__managed_by: "maid"` marker pattern). Schema
   validator extension for the manifest shape. New tests
   for JSON-merge deploy/undeploy idempotence.
 - **Server discovery of vault path.** `$NOTES_VAULT` env

@@ -51,9 +51,11 @@ registry translates them into each tool's expected layout.
     `setup`, `teardown`. There is no installed binary on
     `$PATH`; `maid` is invoked through `deno run` /
     `deno task` from the checkout.
-  - **Cold-start / `Gorantls-env`:** `./install` (3-line
-    pass-through into `deno task setup`); `./install --uninstall`
-    → `deno task teardown`.
+  - **Cold-start (env-side bootstrap):** `./install`
+    (3-line pass-through into `deno task setup`);
+    `./install --uninstall` → `deno task teardown`. The
+    user's env-workplace driver invokes `./install` after
+    cloning this repo.
 
 ## Layout
 
@@ -140,4 +142,16 @@ managed-symlink state.
   install path. (Install/uninstall of a `maid` binary is
   reserved for the future flake-package shape; see
   `specs/backlog/maid-as-flake-package.md`.)
-- **No changes to `env` or `Gorantls-env`** from this repo.
+- **No changes to the user's env-workplace** from this
+  repo. mAId stays a pure-content workspace; bootstrap
+  drivers belong on the env side.
+- **Public repo — no internal references in any
+  artefact.** Skills, specs, commit messages, PR
+  descriptions, and project docs must not name internal
+  products, teams, tickets, code reviews, repos, or
+  stores. Use generic placeholders or hobbyist-flavoured
+  examples. When asked to capture work that mentions
+  internal names, route it to a corporate spec tree
+  rather than letting names land here. The `kdevkit`
+  skill encodes this rule for every project; this bullet
+  declares mAId as a public repo so the rule fires.

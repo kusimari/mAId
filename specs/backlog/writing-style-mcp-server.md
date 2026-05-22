@@ -44,8 +44,9 @@ Five wins over v1.1:
    removing the learned-rules entry as one write removes
    the can-promote-but-not-clean-up failure mode.
 5. **Cross-harness uniformity.** Same server, same flag
-   state, same teach store across Claude Code, MeshClaw,
-   future harnesses.
+   state, same teach store across Claude Code, Kiro, and
+   any future harness that loads MCP servers from a JSON
+   config.
 
 ## Open questions
 

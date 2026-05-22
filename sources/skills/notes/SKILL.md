@@ -24,8 +24,15 @@ explicitly.
 
 ## The vault
 
-Location: `${NOTES_VAULT:-$HOME/notes}`. Honour the env var
-if set; fall back to `$HOME/notes` otherwise.
+Default: `$HOME/notes`. Override with the `$NOTES_VAULT`
+env var.
+
+The override is the **recommended** setup for any user
+who wants the vault on more than one machine — point
+`$NOTES_VAULT` at a directory inside an iCloud / Dropbox
+/ git-synced folder so captures from any host land in the
+same place. The skill itself is stateless; the vault on
+disk is the cross-machine substrate.
 
 Layout (create missing directories on first capture; never
 delete or rename existing ones):
@@ -43,6 +50,24 @@ $NOTES_VAULT/
 If the user's existing layout differs (e.g. `todo/` instead
 of `reminders/`), **ask** before creating new directories —
 do not silently create a parallel structure.
+
+### Named vaults (future)
+
+A user may keep more than one vault — e.g., a personal
+vault and a work vault — separated for sync, sharing, or
+content-class reasons. The future shape:
+
+- Each named vault is pointed to by a per-name env var:
+  `$NOTES_VAULT_<NAME>` (uppercase). Example:
+  `NOTES_VAULT_WORK=/path/to/work-vault`.
+- `add note for <name>: <X>` → write into
+  `$NOTES_VAULT_<NAME>` if set; error otherwise.
+- `add note for: <X>` (no qualifier) → default to
+  `$NOTES_VAULT`, then `$HOME/notes`.
+
+Until a named vault is configured, `add note for
+<name>: …` produces a "no vault configured for
+&lt;name&gt;" message and stops without writing.
 
 ## Classification
 
@@ -79,10 +104,10 @@ All kinds share `date / kind / links`. Add fields per kind.
 date: 2026-05-22
 kind: reminder
 due: 2026-05-26
-links: [[Coral migration]]
+links: [[topic-A]]
 ---
 
-Review the Coral migration design with the team Tuesday.
+<one-line reminder body>.
 ```
 
 ### Insight
@@ -107,13 +132,13 @@ reduction to terminate without quadratic blowup.
 kind: person
 ---
 
-# Alice
+# <person>
 
 ## 2026-05-22 1:1
-links: [[Coral migration]], [[Q3 roadmap]]
+links: [[topic-A]], [[topic-B]]
 
-- alice owns Q3 roadmap rewrite, due end of June
-- blocked on infra approval; will follow up Friday
+- <bullet>
+- <bullet>
 ```
 
 If `people/<person>.md` already exists, append the dated
@@ -125,16 +150,15 @@ section. Do not rewrite the file head.
 ---
 date: 2026-05-22
 kind: conversation
-source: audio:~/Downloads/coral-design.m4a
-tags: [#coral, #design-review]
-links: [[Coral migration]]
+source: audio:~/Downloads/<recording>.m4a
+tags: [#tag-A, #tag-B]
+links: [[topic-A]]
 ---
 
 ## Pre-amble
 
-Bob, Alice, and I walked through the Coral migration design
-doc; goal was to lock the storage shape before the design
-review on Friday.
+<one paragraph: who was in the conversation, what it was
+about, and the goal of the capture>.
 
 ## Transcript
 
@@ -248,7 +272,8 @@ Default `<N>` = 14 days unless the user specifies.
   else, slug-collision means find a suffix (`-2`, `-3`).
 - **Never copy audio** into the vault. Transcript only.
 - **Never volunteer captures.** Only act on explicit verbs.
-- **Honour `$NOTES_VAULT`** — don't assume `$HOME/notes`.
+- **Honour `$NOTES_VAULT`** — when set, never fall back to
+  `$HOME/notes`.
 - **One disambiguation question max** before writing. If
   still unclear, default to `inbox/` with
   `kind: unsorted` and tell the user where it landed.

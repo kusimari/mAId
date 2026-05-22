@@ -37,7 +37,7 @@ clean pattern.
 5. `deno task setup` and `deno task teardown` are the composite
    entrypoints used by the thin shell `install`.
 6. `./install` and `./install --uninstall` stay as the
-   `Gorantls-env/layer-5/run` entrypoints but are 3-line
+   env-workplace cold-start entrypoints but are 3-line
    pass-throughs into `deno task`.
 7. `scripts/maid` is deleted and no live reference survives.
 8. `CLAUDE.md` → `sources/claude/CLAUDE.md`;
@@ -161,8 +161,6 @@ test && ./tests/functional/run --no-tools`. All green.
 Deferred to dedicated feature-dev sessions (tracked under
 `.kdevkit/feature-wip/`):
 
-- `gorantls-agents-hand-select.md` — `./install --list` +
-  `--agent <name>` surface in Gorantls-agents.
 - `maid-as-flake-package.md` — convert mAId into a
   `packages.<system>.default` flake output consumable from
   `~/env`.

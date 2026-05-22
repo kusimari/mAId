@@ -118,15 +118,15 @@ All four kinds share `date`, `kind`, `links`. Reminders add
 add `source`, `tags`.
 
 ```yaml
-# reminders/2026-05-21-review-coral.md
+# reminders/2026-05-21-<slug>.md
 ---
 date: 2026-05-21
 kind: reminder
 due: 2026-05-26
-links: [[Coral migration]]
+links: [[topic-A]]
 ---
 
-Review the Coral migration design with the team Tuesday.
+<one-line reminder body>.
 ```
 
 ```yaml
@@ -144,33 +144,32 @@ reduction to terminate without quadratic blowup …
 ```
 
 ```yaml
-# people/alice.md (append a section)
+# people/<person>.md (append a section)
 ---
 kind: person
 ---
 
 ## 2026-05-21 1:1
-links: [[Coral migration]], [[Q3 roadmap]]
+links: [[topic-A]], [[topic-B]]
 
-- alice owns Q3 roadmap rewrite, due end of June
-- blocked on infra approval; will follow up Friday
+- <bullet>
+- <bullet>
 ```
 
 ```yaml
-# conversations/2026-05-21-coral-migration-design.md
+# conversations/2026-05-21-<slug>.md
 ---
 date: 2026-05-21
 kind: conversation
-source: audio:~/Downloads/coral-design.m4a
-tags: [#coral, #design-review]
-links: [[Coral migration]]
+source: audio:~/Downloads/<recording>.m4a
+tags: [#tag-A, #tag-B]
+links: [[topic-A]]
 ---
 
 ## Pre-amble
 
-Bob, Alice, and I walked through the Coral migration design
-doc; goal was to lock the storage shape before the design
-review on Friday.
+<one paragraph: who was in the conversation, what it was
+about, and the goal of the capture>.
 
 ## Transcript
 
@@ -303,14 +302,15 @@ writing anything.
 
 <!-- Newest at top -->
 
-- 2026-05-22 · **MeshClaw out of scope for v1.** v1 ships
-  skills that work in any AI system loading
-  `~/.claude/skills/` or `~/.kiro/steering/skills/`. MeshClaw
-  installs through Gorantls-agents, which already does
-  surgical merges into kiro config; wiring the skills there
-  is a separate feature designed against Gorantls-agents,
-  not bolted on here. Tracked in
-  `specs/backlog/meshclaw-skill-loading.md`.
+- 2026-05-22 · **Slack-driven harnesses out of scope for
+  v1.** v1 ships skills that work in any AI system that
+  loads `~/.claude/skills/` or `~/.kiro/steering/skills/`.
+  Wiring the skills into a Slack-driven harness — and the
+  install mechanism that owns that harness's agent
+  config — is a separate feature, designed against the
+  install harness rather than bolted on here. Public mAId
+  doesn't track that follow-up; it lives in the install
+  harness's own spec tree.
 - 2026-05-22 · **Skills-first, MCP deferred.** v1 is plain
   markdown — the agent follows SKILL.md and uses its
   existing Bash/Write tools. v2 promotes parts that benefit
