@@ -5,11 +5,17 @@
 
 ## Feature Brief
 
-mAId today ships a **devShell flake** — direnv users get `deno`
-on PATH inside the repo; `deno install` writes a shim to
-`~/.local/bin/maid`. This feature proposes converting mAId into a
-**package-output flake** so `~/env` can consume it as an input
-and make `maid` available system-wide via home-manager.
+mAId today ships a **devShell flake** — direnv users get
+`deno` on PATH inside the repo and run everything through
+`deno task <verb>`. There is no installed `maid` binary on
+`$PATH` today; the project's invariant is that all work on
+mAId itself goes through the deno-task surface from the
+checkout.
+
+This feature proposes converting mAId into a
+**package-output flake** so `~/env` can consume it as an
+input and make `maid` available system-wide via
+home-manager — the *first* path to an installed binary.
 
 ## Requirements (draft)
 

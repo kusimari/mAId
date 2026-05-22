@@ -47,14 +47,13 @@ registry translates them into each tool's expected layout.
   fallback on machines without direnv.
 - **Entrypoints:**
   - **Dev loop:** `deno task <verb>` — `fmt`, `lint`, `check`,
-    `test`, `install`, `uninstall`, `deploy`, `undeploy`,
-    `validate`, `status`, `setup`, `teardown`.
+    `test`, `validate`, `deploy`, `undeploy`, `status`,
+    `setup`, `teardown`. There is no installed binary on
+    `$PATH`; `maid` is invoked through `deno run` /
+    `deno task` from the checkout.
   - **Cold-start / `Gorantls-env`:** `./install` (3-line
     pass-through into `deno task setup`); `./install --uninstall`
     → `deno task teardown`.
-  - **Tool shim:** `deno task install` writes
-    `$HOME/.local/bin/maid` via `deno install` — no bespoke
-    wrapper script.
 
 ## Layout
 
@@ -134,8 +133,11 @@ managed-symlink state.
 - **Registry is the single source of truth** for deployment.
   Adding a new managed path = a registry change + CR, never an
   ad-hoc edit.
-- **No global state mutation** on install. Deno comes from the
-  repo-local flake; `maid` comes from a deno-generated shim in
-  `~/.local/bin` — no `nix profile install` anywhere in the
-  install path.
+- **No global state mutation** on install. Deno comes from
+  the repo-local flake; `maid` is invoked through `deno
+  task <verb>` from the checkout — no shim under
+  `~/.local/bin`, no `nix profile install` anywhere in the
+  install path. (Install/uninstall of a `maid` binary is
+  reserved for the future flake-package shape; see
+  `specs/backlog/maid-as-flake-package.md`.)
 - **No changes to `env` or `Gorantls-env`** from this repo.

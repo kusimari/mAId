@@ -6,8 +6,8 @@
 # picked up without touching the user's global nix profile.
 #
 # Usage:
-#   ./install              → deno task setup    (install maid + validate + deploy)
-#   ./install --uninstall  → deno task teardown (undeploy + uninstall maid)
+#   ./install              → deno task setup    (validate + deploy)
+#   ./install --uninstall  → deno task teardown (undeploy)
 #   ./install --help
 # END-USAGE
 set -euo pipefail
