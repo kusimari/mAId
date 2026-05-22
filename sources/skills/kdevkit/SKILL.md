@@ -1,8 +1,8 @@
 ---
 name: kdevkit
-description: Spec-driven development workflow — project invariants, feature specs, backlog. Phase gating, Conventional Commits, Quality/Test/Push gates. Auto-detects specs/, docs/specs/, or .kdevkit/.
-version: 2.0.0
-tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog]
+description: Spec-driven development workflow — project invariants, feature specs, backlog. Phase gating, Conventional Commits, Quality/Test/Push gates. Public-repo hygiene. Auto-detects specs/, docs/specs/, or .kdevkit/.
+version: 2.1.0
+tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, public-repo]
 ---
 
 # kdevkit — spec-driven development workflow
@@ -114,7 +114,7 @@ section by:
    nice-to-have. Don't drip-feed questions.
 4. **Write the Testing section as prose** — describe the test
    layers and mention commands inline where natural. Do not
-   invent a structured "Toolchain" block; §7 reads commands out
+   invent a structured "Toolchain" block; §8 reads commands out
    of the prose at run time.
 
 ### Optional `## Agent Development` section
@@ -299,7 +299,51 @@ done:
 2. On yes: append/revise the project file with the new patterns,
    constraints, or components introduced.
 
-## 7 · Quality → Test → Push loop
+## 7 · Public-repo hygiene
+
+Some projects are public; some are internal. Skills,
+specs, and commit text written in a public project must
+not leak internal product/team/ticket/CR/repo/store
+names. The canonical signal is the project's own
+declaration:
+
+- If `$SPEC_ROOT/project.md`'s **Hard constraints**
+  section contains a bullet declaring the repo public,
+  apply the rules below.
+- If the checkout's `git remote -v` resolves to an
+  obviously public host (`github.com`, `gitlab.com`,
+  `codeberg.org`, etc.) and `project.md` is silent,
+  treat the repo as public until told otherwise.
+
+When in public-repo mode, NEVER write internal names
+into:
+
+- `SKILL.md` / `agent.md` / `command.md` bodies
+- `specs/feature/*.md`, `specs/backlog/*.md`,
+  `project.md`
+- Commit messages and PR descriptions
+- `README.md` and other top-level docs
+
+What counts as an "internal name" is project-specific.
+At minimum: internal product names, team identifiers,
+ticket IDs, code-review URLs, internal repo names,
+internal storage/store names, and internal employee
+emails. Where ambiguity exists, ask the user and add
+the answer to `project.md`'s Hard constraints.
+
+When the user asks to capture work that mentions
+internal names — note it; surface that the public repo
+won't carry the names; offer to file the capture into
+a corporate spec tree (the user maintains that tree
+elsewhere) instead. Do not silently strip names and
+write a partial capture either.
+
+The Quality → Test → Push loop's pre-push check (§ 8)
+greps the staged diff for known internal markers; in
+public-repo mode, fail loud on any hit and surface the
+matching lines for the user to scrub before retrying.
+
+## 8 · Quality → Test → Push loop
 
 Apply after any coherent unit of implementation work. Once an
 implementation plan is approved, the loop runs autonomously

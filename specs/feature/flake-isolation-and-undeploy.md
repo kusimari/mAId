@@ -29,8 +29,9 @@ that the answer happened to look right.
   path.
 - Each of `tests/functional/skills/{development,git,writing-style}.smoke` asserts the skill emitted
   a `[<skill>] applies` preamble.
-- Zero changes to `env` or `Gorantls-env`.
-- Zero Node/mise work (slack-mcp is handled in a separate session).
+- Zero changes to the user's env-workplace.
+- Zero Node/mise work (the chat-MCP integration is handled in
+  a separate session).
 
 ## Design
 

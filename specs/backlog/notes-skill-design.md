@@ -1,5 +1,18 @@
 # Backlog: notes-skill-design
 
+> **RESOLVED 2026-05-22.** Promoted to
+> `specs/feature/notes-skill.md`. Open questions answered:
+> single "Add note for X" verb with classifier; Obsidian
+> vault at `${NOTES_VAULT:-$HOME/notes}` with the layout
+> below; `[[wiki]]` + `#tag` linking; capture + retrieval
+> with Obsidian-plugin-first ladder (Smart Connections /
+> Dataview) and ripgrep fallback; transcripts stored, audio
+> never copied. Embedding-based search and the v2
+> MCP-server promotion tracked separately at
+> `specs/backlog/notes-mcp-server.md`. Original questions
+> below preserved for the audit trail.
+
+
 ## What
 
 Design the notes/knowledge skill whose SKILL.md currently ships

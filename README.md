@@ -5,9 +5,11 @@ agents, commands, steering docs — compiled into whatever AI tool
 happens to be in use (Claude Code, Kiro, Gemini CLI, future
 tools).
 
-The repo is the checked-in source. Installing mAId drops a
-`maid` binary on PATH and creates symlinks from `$HOME` into this
-tree, so edits to `sources/` are live for the next AI session.
+The repo is the checked-in source. Installing mAId creates
+symlinks from `$HOME` into this tree, so edits to `sources/`
+are live for the next AI session. All work on mAId itself
+goes through `deno task <verb>` — there is no separate
+binary on `PATH`.
 
 ## Develop
 
@@ -32,25 +34,24 @@ open future work sits in [`specs/backlog/`](./specs/backlog/).
 ## Install
 
 ```
-./install              # deno task setup:   install maid + validate + deploy
-./install --uninstall  # deno task teardown: undeploy + uninstall maid
+./install              # deno task setup:   validate + deploy
+./install --uninstall  # deno task teardown: undeploy
 ```
 
 What happens on install:
 
-1. Deno picks up from the repo-local flake (direnv active) or
-   via `nix develop --command` if nix is present.
-2. `deno install` writes a shim at `~/.local/bin/maid` with the
-   required permissions baked in.
-3. `maid validate && maid deploy` symlinks every entry in
-   [`maid/registry.ts`](./maid/registry.ts) — today that's
-   `~/.claude/CLAUDE.md`, `~/.claude/skills`, `~/.claude/agents`,
-   `~/.claude/commands`, and `~/.kiro/steering/KIRO.md`, each
-   pointing into [`sources/`](./sources/).
+1. Deno picks up from the repo-local flake (direnv active)
+   or via `nix develop --command` if nix is present.
+2. `deno task validate && deno task deploy` symlinks every
+   entry in [`maid/registry.ts`](./maid/registry.ts) — today
+   `~/.claude/CLAUDE.md`, `~/.claude/skills`,
+   `~/.claude/agents`, `~/.claude/commands`,
+   `~/.kiro/steering/KIRO.md`, and
+   `~/.kiro/steering/skills`, each pointing into
+   [`sources/`](./sources/).
 
-Uninstall reverses both steps and is idempotent. Hand-written
-files at a managed destination are preserved unless you pass
-`--force`.
+Uninstall is idempotent. Hand-written files at a managed
+destination are preserved unless you pass `--force`.
 
 ## Where to look next
 

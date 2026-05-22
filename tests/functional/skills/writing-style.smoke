@@ -1,3 +1,3 @@
-prompt: Load the `writing-style` skill from ~/.claude/skills/writing-style/SKILL.md or ~/.kiro/steering/skills/writing-style/SKILL.md — whichever path exists. Begin your response with the literal line `[writing-style] applies` on its own line, then answer in one sentence: do I use exclamation marks in my writing?
+prompt: Load the `writing-style` skill from ~/.claude/skills/writing-style/SKILL.md or ~/.kiro/steering/skills/writing-style/SKILL.md — whichever path exists. Begin your response with the literal line `[writing-style] applies` on its own line, then in one short sentence: which prefix triggers the explicit-teach learning loop?
 expect_substr: [writing-style] applies
 tools: claude,kiro

@@ -47,14 +47,15 @@ registry translates them into each tool's expected layout.
   fallback on machines without direnv.
 - **Entrypoints:**
   - **Dev loop:** `deno task <verb>` — `fmt`, `lint`, `check`,
-    `test`, `install`, `uninstall`, `deploy`, `undeploy`,
-    `validate`, `status`, `setup`, `teardown`.
-  - **Cold-start / `Gorantls-env`:** `./install` (3-line
-    pass-through into `deno task setup`); `./install --uninstall`
-    → `deno task teardown`.
-  - **Tool shim:** `deno task install` writes
-    `$HOME/.local/bin/maid` via `deno install` — no bespoke
-    wrapper script.
+    `test`, `validate`, `deploy`, `undeploy`, `status`,
+    `setup`, `teardown`. There is no installed binary on
+    `$PATH`; `maid` is invoked through `deno run` /
+    `deno task` from the checkout.
+  - **Cold-start (env-side bootstrap):** `./install`
+    (3-line pass-through into `deno task setup`);
+    `./install --uninstall` → `deno task teardown`. The
+    user's env-workplace driver invokes `./install` after
+    cloning this repo.
 
 ## Layout
 
@@ -134,8 +135,23 @@ managed-symlink state.
 - **Registry is the single source of truth** for deployment.
   Adding a new managed path = a registry change + CR, never an
   ad-hoc edit.
-- **No global state mutation** on install. Deno comes from the
-  repo-local flake; `maid` comes from a deno-generated shim in
-  `~/.local/bin` — no `nix profile install` anywhere in the
-  install path.
-- **No changes to `env` or `Gorantls-env`** from this repo.
+- **No global state mutation** on install. Deno comes from
+  the repo-local flake; `maid` is invoked through `deno
+  task <verb>` from the checkout — no shim under
+  `~/.local/bin`, no `nix profile install` anywhere in the
+  install path. (Install/uninstall of a `maid` binary is
+  reserved for the future flake-package shape; see
+  `specs/backlog/maid-as-flake-package.md`.)
+- **No changes to the user's env-workplace** from this
+  repo. mAId stays a pure-content workspace; bootstrap
+  drivers belong on the env side.
+- **Public repo — no internal references in any
+  artefact.** Skills, specs, commit messages, PR
+  descriptions, and project docs must not name internal
+  products, teams, tickets, code reviews, repos, or
+  stores. Use generic placeholders or hobbyist-flavoured
+  examples. When asked to capture work that mentions
+  internal names, route it to a corporate spec tree
+  rather than letting names land here. The `kdevkit`
+  skill encodes this rule for every project; this bullet
+  declares mAId as a public repo so the rule fires.
