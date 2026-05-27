@@ -110,6 +110,44 @@ Gorantls-env CR opened by the agent, all with the same
   existing review on push is straightforward via `gh pr list
   --head <branch>` / `cr` lookup.
 
+- **Close-out on approval — squash merge + branch cleanup.**
+  When a feature reaches approval (PR approved + checks green;
+  CR approved + reviewers signed off), the loop should also
+  drive the close-out without per-step instruction:
+
+  1. **Pick the merge mode.** Default to **squash merge** for
+     feature branches — keeps one logical commit per feature on
+     the main branch. Evaluate the alternative once before
+     defaulting:
+     - If the branch has a single commit already, plain merge
+       and squash produce the same result; either is fine.
+     - If the repo's main branch is itself a non-linear history
+       (merge commits as the norm), squash still works but
+       surface the choice to the user before going non-default.
+     - For repos that explicitly require fast-forward only on
+       main (config or convention), use the local
+       `git merge --squash` + commit + push pattern (what the
+       Gorantls-env CR flow used in this session) since the
+       review tool can't be the merger.
+  2. **Confirm branch deletion.** After merge, delete the
+     feature branch **both local and remote**. For
+     `gh pr merge`, pass `--delete-branch`. For the local
+     `git merge --squash` path, do `git branch -D <feat>` plus
+     `git push origin --delete <feat>` and `git fetch --prune`.
+     Surface the deletion (one line) so the user sees it landed
+     — but do not pause to ask permission; deletion is the
+     declared default for merged feature branches.
+  3. **Worktree teardown.** If the agent worktree itself was
+     dedicated to this feature, surface the path and offer to
+     `git worktree remove` it. Don't auto-remove without
+     surfacing — the worktree may have generated artifacts
+     (logs, temp files) the user wants to inspect first.
+
+  This closes the full agentic loop: spec → branch → push →
+  PR/CR → approval → merge → cleanup, with no manual prompts in
+  the steady-state path. The user's role stays at "approve the
+  review" and "review the close-out summary."
+
 ## Trigger to promote
 
 Promote when one of these is true:
