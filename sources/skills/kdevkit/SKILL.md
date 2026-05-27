@@ -1,74 +1,53 @@
 ---
 name: kdevkit
 description: Spec-driven development workflow — project invariants, feature specs, backlog. Three nested loops (project → feature → agent-dev) with codified close-outs. Phase gating, Conventional Commits, Quality/Test/Push/Review gates, feature-loop squash-merge close-out. Public-repo hygiene. Auto-detects specs/, docs/specs/, or .kdevkit/.
-version: 2.2.0
+version: 2.2.1
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, public-repo]
 ---
 
 # kdevkit — spec-driven development workflow
 
-Self-contained methodology with three distinct surfaces:
-
-1. **Project invariants** — maintained, change rarely. Mission,
-   architecture, tech stack, layout, testing, deployment.
-2. **Feature specs** — lifecycle per feature. Requirements,
-   design, test strategy, implementation plan, session +
-   decision logs.
-3. **Backlog** — open list of wanted future work, one file per
-   item.
-
-"kdevkit" is the moniker for this methodology. The directory
-name on disk is not load-bearing — the skill auto-detects
-between `specs/`, `docs/specs/`, and `.kdevkit/`.
-
-### Three loops
-
-Work nests as three loops, named here so later sections can
-refer to them:
+Three nested loops:
 
 ```
-project loop      ← project.md invariants. Lives across features.
+project loop      ← project.md invariants. Cross-feature.
   feature loop    ← one branch, one merge. Closes via §9.
     agent-dev loop ← Quality → Test → Push → Review. Closes via §8.
 ```
 
-Each inner loop's terminal step is the trigger for re-entering
-the outer loop's next iteration. The two close-outs (§8 Review
-Gate, §9 feature close-out) automate the manual handoffs that
-otherwise live between iterations.
+Three surfaces, one per loop scope:
+
+1. **Project invariants** — `project.md`. Mission, architecture,
+   tech stack, layout, testing, deployment.
+2. **Feature specs** — one file per feature. Requirements,
+   design, test strategy, implementation plan, session +
+   decision logs.
+3. **Backlog** — one file per wanted-future-work item.
+
+Auto-detects the spec tree in `specs/`, `docs/specs/`, or
+`.kdevkit/` (first hit wins). Each inner loop's terminal step
+re-enters the outer loop; the two close-outs (§8, §9) automate
+the handoffs.
 
 ## 1 · Locate the spec tree
 
-At session start, resolve `$SPEC_ROOT` by looking for the
-following directories in order — first hit wins:
-
-```
-specs/          ← preferred
-docs/specs/
-.kdevkit/       ← legacy
-```
-
-If none exists and the user begins feature work, create `specs/`.
-Never auto-migrate an existing `.kdevkit/` tree — that is a
-human `git mv` decision because it can touch CI wiring.
-
-Subsequent references to `$SPEC_ROOT` below mean whichever of
-the three is in use.
+At session start, resolve `$SPEC_ROOT` by checking
+`specs/` → `docs/specs/` → `.kdevkit/` (first hit wins). If
+none exists and feature work begins, create `specs/`. Never
+auto-migrate an existing `.kdevkit/` tree — `git mv` is a
+human decision because it can touch CI wiring.
 
 ## 2 · Load project context
 
 If `$SPEC_ROOT/project.md` exists, read it silently at session
-start. It describes what the project is, its tech stack, and any
-hard constraints.
+start.
 
-If the file is missing or empty and the user starts feature
-work, ask exactly one question:
+If missing/empty and feature work begins, ask one question:
 
 > _"Briefly describe this project — purpose, tech stack, and any
 > hard constraints."_
 
-Then write `$SPEC_ROOT/project.md` using the six-section
-template below before moving on.
+Then write `$SPEC_ROOT/project.md` from the template below.
 
 ### `project.md` template
 
@@ -117,80 +96,56 @@ them in place so future sessions re-read the intent.
 When creating `project.md` from scratch, fill the Testing
 section by:
 
-1. **Probe ecosystem markers** to identify the toolchain:
-   `pyproject.toml` / `package.json` / `Cargo.toml` / `go.mod` /
-   `pom.xml` or `build.gradle*` / `Makefile` / `deno.json`. Map
-   each to its conventional format / lint / type-check / test
-   commands.
-2. **Prefer CI as ground truth.** If `.github/workflows/*.yml`
-   or `.gitlab-ci.yml` defines quality / test commands, use them
-   verbatim — they reflect what actually runs.
-3. **One batched confirmation with the user:** present detected
-   commands and ask which test layers are load-bearing vs.
-   nice-to-have. Don't drip-feed questions.
-4. **Write the Testing section as prose** — describe the test
-   layers and mention commands inline where natural. Do not
-   invent a structured "Toolchain" block; §8 reads commands out
-   of the prose at run time.
+- Probe ecosystem markers (`package.json`, `pyproject.toml`,
+  `Cargo.toml`, `go.mod`, `Makefile`, `deno.json`, etc.) for
+  the toolchain. Prefer CI files (`.github/workflows/*`,
+  `.gitlab-ci.yml`) verbatim — they reflect what runs.
+- Confirm in one batch with the user; don't drip-feed.
+- Write Testing as prose, not a structured block; §8 reads
+  commands out of the prose at run time.
 
 ### Optional `## Agent Development` section
 
-Some skills carry an opinionated, structured flow that needs
-per-project config (score thresholds, retry budgets, named
-sub-agents, etc.). When such config doesn't fit naturally into
-the general sections above, `project.md` may carry an optional
-`## Agent Development` section, organised by skill name. kdevkit
-itself does not require this section — its loop runs from the
-Testing section's prose. Add an `## Agent Development` block
-only when a specific skill asks for one.
+`project.md` may carry an `## Agent Development` section
+organised by skill name, for per-project config (score
+thresholds, retry budgets, review-tool commands, etc.).
+kdevkit reads this block when present; absent, it runs from
+the Testing section's prose plus its own defaults.
 
 ## 3 · Load feature context
 
-When the user begins work on a feature (cue words: "let's start
-/ continue / pick up <feature>", or a named branch like
-`feat/user-auth`), derive the feature-file path:
+At feature-start (cues: "let's start / continue / pick up
+<feature>", or a branch like `feat/user-auth`), do these in
+order: **(1)** locate or promote the feature spec, **(2)**
+check `project.md` for a worktree preference, then **(3)**
+proceed under §6 phase gating.
 
-```
-$SPEC_ROOT/feature/<feature-name>.md
-```
+**1 · Locate or create the feature spec.** Derive
+`$SPEC_ROOT/feature/<feature-name>.md` (lowercase, hyphenated).
 
-Lowercase the name, replace spaces with hyphens.
+- File has content → load silently.
+- File is missing → first check
+  `$SPEC_ROOT/backlog/<feature-name>.md`. If a matching item
+  is scoped there, promote it via `git mv` into `feature/`
+  and start from its existing What/Why. Only run the
+  four-interview setup if nothing is scoped in either
+  location.
 
-- **File has content** → load silently. It tells you what the
-  current state is and what comes next.
-- **File is missing** → before running the four-interview setup,
-  check `$SPEC_ROOT/backlog/<feature-name>.md`. If a matching
-  spec is already scoped there, promote it: `git mv` to
-  `$SPEC_ROOT/feature/<feature-name>.md` and start from its
-  existing What/Why. Only run the full interview if nothing is
-  scoped in either location.
-
-### Worktree recommendation
-
-Feature work defaults to a branch on the main checkout. Where a
-project prefers per-feature isolation, the feature loop should
-run in a dedicated git worktree so independent features can
-proceed without contaminating each other.
-
-At feature-start (after backlog promotion or the four-interview
-setup, before the first implementation slice), check
-`$SPEC_ROOT/project.md` for a worktree-preference signal:
+**2 · Check `project.md` for worktree preference.** Feature
+work defaults to a branch on the main checkout, but some
+projects prefer per-feature isolation in a dedicated git
+worktree so independent features don't contaminate each
+other. The signal lives in either:
 
 - An `## Agent Development` → `kdevkit` block declaring
   `prefer_worktree: true|false`, **or**
 - A bullet under **Hard constraints** mentioning worktrees.
 
-If the signal is **prefer**, surface a one-line suggestion —
-do not auto-run, the user may have a different parent path
-convention:
-
-```
-git worktree add ../<repo>-<feature> -b <branch>
-```
-
-If `project.md` is silent on worktrees, continue branch-only
-without prompting. Worktree status does **not** gate the §8
-Review Gate; it only affects the §9 worktree-teardown offer.
+If the signal is **prefer**, suggest creating a worktree at
+feature-start (don't auto-run — parent-path conventions
+vary). If silent, continue branch-only **without prompting**.
+Worktree status does not gate the §8 Review Gate; it only
+affects the §9 worktree-teardown offer.
 
 ### Feature setup — four short interviews
 
@@ -320,79 +275,56 @@ answered — update the feature file's Session Log / Decision Log
 before starting the next unit. Do not batch.
 
 **Phase gating.** Do not chain phases automatically. After
-completing any phase (requirements, design, test strategy,
+each phase (requirements, design, test strategy,
 implementation of a slice), stop and wait for explicit
-instruction before starting the next. Phase order is flexible;
-the gate applies between any two. The agent-dev loop's
-Push + Review-open is a single phase (Push), not chained
-phases — both gates green is the implicit approval to close
-the inner loop. The feature close-out (§9) is a distinct phase,
-gated on an explicit human cue ("close it" / "ship it" /
-"merge it" / "feature done").
+instruction before starting the next; phase order is flexible.
+The agent-dev loop's Push + Review-open is a single phase —
+both gates green is the implicit approval to close the inner
+loop. The feature close-out (§9) is a distinct phase, gated on
+an explicit human cue ("close it" / "ship it" / "merge it" /
+"feature done").
 
-**Assumptions within a phase.** If a phase's input is ambiguous,
-present a brief plan (what you're assuming, how you intend to
-proceed) and wait for approval. If the path is clear, act
+**Assumptions within a phase.** If input is ambiguous, present
+a brief plan and wait for approval. If the path is clear, act
 without a plan step.
 
-**YOLO mode.** If the user says `yolo`: drop the phase gate and
-drop the assumption plan for the rest of the session. If the
-user says `yolo off`: revert immediately.
+**YOLO mode.** `yolo` → drop the phase gate and assumption
+plan for the rest of the session. `yolo off` → revert
+immediately.
 
-**Feature completion.** When the user indicates the feature is
-done:
-
-1. Offer: _"Shall I update `$SPEC_ROOT/project.md` with what
-   changed? This keeps future sessions oriented."_
-2. On yes: append/revise the project file with the new patterns,
-   constraints, or components introduced.
+**Feature completion.** Driven by §9. The project.md
+update offer lives there as a soft step.
 
 ## 7 · Public-repo hygiene
 
-Some projects are public; some are internal. Skills,
-specs, and commit text written in a public project must
-not leak internal product/team/ticket/CR/repo/store
-names. The canonical signal is the project's own
-declaration:
+Skills, specs, commit text, and PR/CR bodies in a public
+project must not leak internal names. Public-mode signal:
 
-- If `$SPEC_ROOT/project.md`'s **Hard constraints**
-  section contains a bullet declaring the repo public,
-  apply the rules below.
-- If the checkout's `git remote -v` resolves to an
-  obviously public host (`github.com`, `gitlab.com`,
-  `codeberg.org`, etc.) and `project.md` is silent,
-  treat the repo as public until told otherwise.
+- A bullet in `$SPEC_ROOT/project.md`'s **Hard constraints**
+  declaring the repo public, **or**
+- `git remote` resolves to an obviously public host while
+  `project.md` is silent (treat as public until told
+  otherwise).
 
-When in public-repo mode, NEVER write internal names
-into:
+When public, NEVER write internal names into `SKILL.md` /
+`agent.md` / `command.md` bodies, anything under `specs/`,
+`project.md`, commit messages, PR/CR descriptions, or
+top-level docs.
 
-- `SKILL.md` / `agent.md` / `command.md` bodies
-- `specs/feature/*.md`, `specs/backlog/*.md`,
-  `project.md`
-- Commit messages and PR descriptions
-- `README.md` and other top-level docs
+"Internal names" is project-specific — at minimum: internal
+product / team / ticket / code-review / repo / store names
+and internal emails. Where ambiguous, ask and persist the
+answer to `project.md`'s Hard constraints.
 
-What counts as an "internal name" is project-specific.
-At minimum: internal product names, team identifiers,
-ticket IDs, code-review URLs, internal repo names,
-internal storage/store names, and internal employee
-emails. Where ambiguity exists, ask the user and add
-the answer to `project.md`'s Hard constraints.
+If asked to capture work mentioning internal names: note it,
+surface the public-repo constraint, offer to file into a
+corporate spec tree the user maintains elsewhere. Do not
+silently strip names and write a partial capture.
 
-When the user asks to capture work that mentions
-internal names — note it; surface that the public repo
-won't carry the names; offer to file the capture into
-a corporate spec tree (the user maintains that tree
-elsewhere) instead. Do not silently strip names and
-write a partial capture either.
-
-The Quality → Test → Push → Review loop's pre-push check
-(§ 8) greps the staged diff for known internal markers; in
-public-repo mode, fail loud on any hit and surface the
-matching lines for the user to scrub before retrying. The
-Review Gate (§ 8) reruns the same grep against the prepared
-PR/CR title and body string before submission — review
-content is also human-visible.
+The §8 Push Gate greps the staged diff for internal markers;
+the Review Gate reruns the same grep against the prepared
+PR/CR title and body before submission. In public-repo mode,
+either hit fails loud and surfaces the matching lines.
 
 ## 8 · Quality → Test → Push → Review loop
 
@@ -403,19 +335,26 @@ agent-dev loop's body; the Review Gate is its terminal step.
 
 ### Inputs · read commands from `project.md`
 
-Before running, read `$SPEC_ROOT/project.md`'s Testing section
-to identify the format / lint / type-check / test commands for
-this project. If a command is ambiguous or missing:
+Read `$SPEC_ROOT/project.md`'s Testing section for format /
+lint / type-check / test commands. If ambiguous or missing,
+ask the user once and offer to update `project.md`. If the
+Testing section itself is missing, fall back to §2's first-
+time detection.
 
-- Ask the user **once**, then offer to update `project.md` so
-  the answer persists.
-- If `project.md` itself is missing the Testing section, fall
-  back to §2's first-time detection rubric and confirm in one
-  batch.
+A `kdevkit` block under `## Agent Development` in
+`project.md` overrides the defaults below (score threshold,
+retry budget, review-tool commands, branch-cleanup commands,
+merge command).
 
-If the project has an `## Agent Development` section with a
-`kdevkit` block, prefer those values over the generic defaults
-below (score threshold, retry budget).
+**Resolution of any specific command this loop needs**
+(review CLI, branch-deletion verb, merge, worktree ops,
+etc.) — first hit wins:
+
+1. Agent's implicit knowledge for the host (e.g. on a public
+   host the conventional CLI is well-known).
+2. `## Agent Development` → `kdevkit` block in `project.md`.
+3. Ask once and offer to persist the answer into the block
+   so future sessions skip the question.
 
 ### Quality Gate
 
@@ -426,177 +365,109 @@ below (score threshold, retry budget).
    work 0–100 for correctness, security, and adherence to
    project conventions. Default threshold: **70**.
    - ≥ threshold → proceed to Test Gate.
-   - < threshold → fix the highest-severity issues and re-review
+   - < threshold → fix highest-severity issues and re-review
      **once only**; if still below, proceed and note residual
      issues in the Session Log.
 
 ### Test Gate
 
-1. Run the test command identified above.
+1. Run the test command.
 2. All tests pass (zero failures, zero errors).
 3. On failure: diagnose, fix, re-run. Default budget: **2**
-   fix-and-retry cycles. If still failing, stop and report — do
-   not push.
-4. If the fixes were substantial, re-run the Quality Gate before
-   pushing.
+   fix-and-retry cycles. If still failing, stop and report —
+   do not push.
+4. If the fixes were substantial, re-run the Quality Gate.
 
 ### Push Gate
 
-Only push after both prior gates pass:
-
-```
-git push -u origin <feature-branch>
-```
-
-Before pushing, run §7's internal-marker grep against the
-staged diff. In public-repo mode, fail loud on any hit and
-surface matching lines for the user to scrub before retrying.
+Only push after Quality + Test pass. Push the feature branch
+to its upstream. Before pushing, run §7's internal-marker
+grep against the staged diff; in public-repo mode, hit fails
+loud.
 
 ### Review Gate
 
-Always-on terminal step of the agent-dev loop. Fires after Push
-when Quality and Test both passed cleanly. Closes the inner
-loop by opening (or updating) the PR / CR for this branch and
-returning the URL.
+Terminal step of the agent-dev loop. Fires after Push when
+both prior gates passed cleanly. Opens (or updates) the PR /
+CR for this branch and returns the URL.
 
-**Refuse-on-fail.** If either prior gate failed — or the
-Quality self-review finished below threshold with residual
-issues noted — do not open a review. Surface what failed and
-require an explicit "open it anyway" override.
+**Refuse-on-fail.** If a prior gate failed or finished with
+residual issues noted, do not open a review. Surface what
+failed and require an explicit override.
 
-**1 · Detect the review tool.** Resolution order, first hit
-wins:
+**1 · Body shape.** Title: `type(scope): subject` (per §5).
+Body required: **Why** (one paragraph — motivation, not file
+changes; the diff is authoritative for *what*) and
+**Approach** (bullets covering the actual changes). Suggested
+when warranted: **Verification** (commands + results),
+**Reading guide** (file order with compare-against hints),
+**Pairs with** (cross-repo links). Match §5's PR rule (body =
+why + approach) — don't impose more structure on small diffs.
 
-1. `git remote get-url origin` → host match. Built-in
-   mapping: `github.com` → `gh`. Other public hosts (e.g.
-   `gitlab.com`, `codeberg.org`) may be added in the same
-   spirit as the project grows.
-2. `## Agent Development` → `kdevkit` block in
-   `$SPEC_ROOT/project.md` declaring the per-project review
-   CLI. The block names the commands for **create**, **edit**
-   (update body), **list-by-branch** (existence check), and
-   **merge** (used by §9).
-3. Neither hit → ask the user once for the review-CLI
-   commands, and offer to write them into `project.md`'s
-   `## Agent Development` → `kdevkit` block so future
-   sessions skip the question.
+**2 · Body grep.** Run §7's internal-marker grep against the
+prepared title + body before submission. Hit → fail loud,
+surface lines, abort.
 
-**2 · Prepare title + body.**
+**3 · Update vs. create.** Look up an existing review on this
+branch. If found, update its body. Otherwise, create a new
+one.
 
-- Title: same `type(scope): subject` shape as the commit (per
-  §5).
-- Body — light shape, two required sections:
-  - **Why** — one paragraph. The motivation, not a list of
-    file changes. The diff is authoritative for *what*.
-  - **Approach** — bullet list covering the actual changes.
-- Suggested optional sections, when warranted by diff size or
-  reviewer cold-read cost:
-  - **Verification** — commands run + results.
-  - **Reading guide** — numbered file order with "compare
-    against X" hints.
-  - **Pairs with** — cross-repo links when applicable.
-
-This matches §5's existing PR rule (body: _why_ + approach)
-without imposing new structure on small diffs.
-
-**3 · Body grep.** Run §7's internal-marker grep against the
-prepared title + body string before submission. Hit → fail
-loud, surface matching lines, abort.
-
-**4 · Update vs. create.** Look up an existing review for the
-branch using the detected tool's list-by-branch verb (e.g.
-`gh pr list --head <branch> --state open`).
-
-- Existing review found → update its body using the **edit**
-  verb (`gh pr edit <n> --body-file <tmp>`).
-- No existing review → use the **create** verb
-  (`gh pr create --title "<title>" --body-file <tmp>`).
-
-**5 · Return the URL** as the last line of inner-loop output.
-The agent-dev loop is now closed; the next phase is either
-another agent-dev iteration on the same feature or the §9
-feature close-out.
+**4 · Return the URL** as the last line of inner-loop output.
 
 ## 9 · Feature close-out loop
 
 Closes the **feature loop**. Trigger: an explicit human cue —
-"feature done" / "close it" / "ship it" / "merge it" / "land
-it" / equivalent. Distinct phase from the agent-dev loop;
-gated separately per §6.
+"feature done" / "close it" / "ship it" / "merge it". Distinct
+phase from the agent-dev loop; gated separately per §6.
 
-The close-out drives the merge, the cleanups, and the
-backlog reconciliation in one sequence — no per-step prompts
-in the steady-state path. The user's role stays at "approve
-the review" and "give the close cue."
+Drives merge + cleanups + backlog reconciliation in one
+sequence — no per-step prompts in the steady-state path. The
+user's role stays at "approve the review" and "give the close
+cue." Specific commands resolve via the order in §8 intro
+(implicit → kdevkit block → ask + persist).
 
-**1 · Reconcile in-flight markers in the feature spec.**
-Before merging, sweep `$SPEC_ROOT/feature/<feature>.md` for
-unchecked Implementation Plan items, open Decision Log
-entries, or unresolved questions. Either resolve them in
-place (so the spec is a faithful record of what shipped) or
-move them out — into the backlog, or into a new follow-up
-feature. The merged feature spec is "done in place"; it does
-not move directories.
+**1 · Reconcile in-flight markers in the feature spec.** Sweep
+`$SPEC_ROOT/feature/<feature>.md` for unchecked Implementation
+Plan items, open Decision Log entries, unresolved questions.
+Resolve in place or move out — to the backlog or a follow-up
+feature. The merged feature spec is "done in place"; do not
+move directories.
 
-**2 · Squash merge.** Default: **squash merge** to `main` —
-one logical commit per feature on the main history.
+**2 · Squash merge to `main`** — one logical commit per
+feature on the main history. Exceptions:
 
-- Single-commit branch → squash and plain merge produce the
-  same result; either is fine.
-- Multiple commits → squash. If the branch contains work for
-  *several* logical features (rare), break into multiple
-  squash merges, one per logical feature.
-- Repo whose `main` is itself a non-linear history (merge
-  commits as the norm) → squash still works, but surface the
-  choice to the user before going non-default.
-- Repo enforcing fast-forward only on `main` → use the local
-  `git merge --squash <feat>` + `git commit` + `git push`
-  pattern, since the review tool can't be the merger.
+- Single-commit branch: plain merge or squash produce the same
+  result; either works.
+- Branch carrying *several* logical features (rare): break
+  into multiple squash merges, one per logical feature.
+- Repo whose `main` is non-linear by convention: squash still
+  works, but surface the choice before going non-default.
+- Repo enforcing fast-forward only on `main`: do the squash
+  locally, then commit and push (the review tool can't be the
+  merger).
 
-**3 · Branch cleanup — local + remote, no per-step prompts.**
-Deletion is the declared default for merged feature branches.
+**3 · Branch cleanup.** Delete the feature branch from local
+**and** remote, then prune stale remote refs. Deletion is the
+declared default for merged feature branches — surface it as
+one line, do not pause for permission.
 
-- `gh pr merge` path: pass `--delete-branch`.
-- Local-merge path: `git branch -D <feat>` +
-  `git push origin --delete <feat>` + `git fetch --prune`.
+**4 · Soft `project.md` verify.** Re-run §6's offer to update
+`project.md` with what changed. Decline is fine; close-out
+continues either way. Not a hard block.
 
-Surface the deletion as one line of output. Do not pause for
-permission — the close cue is the approval.
-
-**4 · Soft `project.md` verify.** Re-run §6's existing offer:
-_"Shall I update `project.md` with what changed? This keeps
-future sessions oriented."_ User decline is fine; the
-close-out continues either way. The aim is a prompt at the
-moment when the human knows whether invariants drifted, not
-a hard block.
-
-**5 · Backlog cleanup (interactive).** List the contents of
-`$SPEC_ROOT/backlog/` and ask the user which items this
-feature resolves:
+**5 · Backlog cleanup (interactive).** List
+`$SPEC_ROOT/backlog/` contents and ask:
 
 > _"Which backlog items did this feature close out? Pick any
 > that apply, or 'none'."_
 
-`git rm` the chosen ones. Items the user does not pick stay
-in the backlog. Feature names drift, so this is a one-prompt
-interactive step rather than a frontmatter pointer that
-would go stale.
+`git rm` the chosen ones. Unchosen items stay.
 
-**6 · Worktree teardown — offer-only.** If `git worktree
-list` shows the current working directory as a non-primary
-worktree, surface the path and offer:
-
-```
-git worktree remove <path>
-```
-
-Do not auto-remove. The worktree may have generated artifacts
-(logs, scratch files, debug output) the user wants to inspect
-before teardown.
-
-This closes the feature loop. The next phase belongs to the
-project loop: pick the next feature spec, or promote a backlog
-item, or step away.
+**6 · Worktree teardown — offer-only.** If the current working
+directory is a non-primary worktree, surface its path and
+offer to remove it. Do not auto-remove — the worktree may
+have artifacts (logs, scratch files, debug output) worth
+inspecting first.
 
 ## Session Log
 

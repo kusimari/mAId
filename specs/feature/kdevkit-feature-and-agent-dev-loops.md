@@ -225,6 +225,32 @@ this feature spec. No code changes.
 
 ## Session Log
 
+- 2026-05-27 · **Revision pass on PR #5 review feedback.**
+  Reviewer asked to condense narrative (loads every kdevkit
+  session) and strip the explicit `gh ...` / `git ...`
+  syntax from §8 Review and §9 close-out, replacing it with
+  semantic verbs that resolve via the agent's implicit
+  knowledge → `## Agent Development` → `kdevkit` block in
+  `project.md` → ask + persist. Method:
+
+  1. Subagent ran a per-rule audit producing a table:
+     `rule_only` (36) + `rule_plus_load_bearing_rationale`
+     (72) + `rule_plus_narrative_rationale` (10) +
+     `worked_example` (15) + `host_specific_mapping` (3) +
+     `template` (3). Cut policy: drop narrative
+     rationales + flag-heavy worked examples + host
+     mappings; keep all load-bearing rationales, templates,
+     and short well-known semantic verbs (`git mv`,
+     `git rm`).
+  2. Built three judge-based smoke fixtures (one per loop)
+     and extended `tests/functional/run` with an
+     `expected_narrative:` key. Each fixture runs against
+     both `claude` and `kiro-cli` — six cells per pass.
+  3. Captured A (pre-cut) baseline.
+  4. Applied the cut. SKILL.md went 605 → 471 lines (~22%).
+  5. Captured B (post-cut). All six cells **held against
+     A** — no regression introduced by the cut.
+
 - 2026-05-27 · promoted backlog item
   `kdevkit-agentic-worktree-push-loop.md` to feature
   `kdevkit-feature-and-agent-dev-loops.md` via `git mv`. Filled
@@ -291,3 +317,59 @@ this feature spec. No code changes.
   close-out a distinct phase. Resolves the apparent contra-
   diction with §6's "do not chain phases automatically" rule
   without changing that rule.
+
+- 2026-05-27 · **Semantic verbs over syntax (§8 + §9
+  revision pass).** PR #5 review asked the skill to capture
+  *what* (semantics) rather than *how* (concrete commands)
+  for the §8 Review Gate and §9 close-out. Codified one
+  resolution-order paragraph in §8's intro that applies
+  uniformly across both gates: implicit host knowledge →
+  `## Agent Development` → `kdevkit` block in `project.md`
+  → ask once and offer to persist. Cut all `gh ...` and
+  `git ...` flag-heavy examples; kept short well-known
+  semantic verbs (`git mv`, `git rm`) and one fenced
+  resolution-order block. Rationale: every flag the skill
+  spells out is a lock-in to a specific tool version; the
+  resolution order future-proofs the skill across CLIs.
+
+- 2026-05-27 · **Audit-driven cut, not eyeball-driven.**
+  Before cutting, ran a subagent rule-and-rationale audit
+  classifying every line into six categories (rule_only /
+  rule_plus_load_bearing_rationale /
+  rule_plus_narrative_rationale / worked_example /
+  host_specific_mapping / template). Cut only the latter
+  three categories; kept the first three. Rationale: a
+  half-sentence "because..." that overrides agent
+  default-helpfulness is *not* narrative bloat — it's the
+  rule's load-bearing override clause. Cutting it would
+  silently regress behavior. The audit forced explicit
+  per-rule decisions instead of bulk prose-tightening.
+
+- 2026-05-27 · **Judge-based smoke testing (3 fixtures × 2
+  tools).** Added one `.smoke` fixture per loop
+  (feature-loop / dev-loop / feature-closure), each with an
+  `expected_narrative:` key that triggers a second judge
+  call after the primary answer. Six cells per A/B run.
+  Captured A (pre-cut) before editing SKILL.md; captured B
+  after the cut. The cut held: dev-loop went 4-of-4 PASS in
+  both A and B; feature-loop and closure each had one kiro
+  judge FAIL in A *and the same FAIL in B* — pre-existing
+  kiro recall ceilings, not regressions caused by the cut.
+  Claude judge passed all six cells in both runs. Treat
+  this as the **load-bearing** behavior test for SKILL.md
+  changes going forward — markdown skills can't be
+  unit-tested, the substring smoke only proves load, the
+  judge proves behavior.
+
+- 2026-05-27 · **Tool-divergence finding (recorded, not
+  fixed).** Kiro consistently under-recalls two specific
+  rules regardless of prose density: the §3 worktree-
+  preference signal at feature-start, and the §9 squash-
+  merge non-default-host exceptions (non-linear main, FF-
+  only main). Reshaped §3 to bring worktree-pref to the
+  intro line; kiro still elided it on every re-run.
+  Concluded that further chasing risks over-fitting the
+  prose to one fixture. The rules are present and clear in
+  both A and B; this is a model-level recall pattern, not a
+  prose problem. Worth revisiting if the recall ceiling
+  changes (newer kiro model, different agent launcher).

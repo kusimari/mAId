@@ -8,7 +8,14 @@
 #   tests/functional/skills/<name>.smoke     Generic format:
 #     prompt: <one-line prompt>
 #     expect_substr: <substring the response must contain>
+#     expected_narrative: <prose describing what a correct
+#                          answer should cover; triggers a
+#                          second judge call on the same tool>
 #     tools: claude,kiro       (optional; defaults to "claude")
+#
+#   Each fixture must declare prompt: plus at least one of
+#   expect_substr: or expected_narrative:. Both may be set
+#   (substring is checked first, then the judge).
 #
 # Cheap structural checks (symlink resolves, files exist) run
 # first. Real tool invocations follow — those can be slow.
@@ -73,45 +80,117 @@ assert_symlink_resolves() {
     pass "$path resolves"
 }
 
-# assert_claude_response <prompt> <expected-substring> <check-name>
-assert_claude_response() {
-    local prompt="$1" expect="$2" name="$3"
-    if ! command -v claude >/dev/null 2>&1; then
-        skip "$name (claude not on PATH)"
-        return
-    fi
-    local out
-    if ! out="$(claude --print "$prompt" 2>&1)"; then
-        fail "$name (claude invocation failed): $out"
-        return
-    fi
-    if grep -qiF -- "$expect" <<<"$out"; then
-        pass "$name"
-    else
-        fail "$name: response missing expected substring '$expect'"
-        info "response head: $(head -c 200 <<<"$out")..."
-    fi
+# tool_invoke <tool> <prompt>   → echoes captured stdout/stderr.
+# Returns 0 on tool exit success, 1 on invocation failure (caller
+# distinguishes by checking the return code; the captured text is
+# still echoed so the caller can include it in the failure
+# message).
+tool_invoke() {
+    local tool="$1" prompt="$2"
+    case "$tool" in
+        claude) claude --print "$prompt" 2>&1 ;;
+        kiro)   kiro-cli chat --no-interactive --trust-tools= "$prompt" 2>&1 ;;
+        *)      echo "tool_invoke: unknown tool '$tool'"; return 1 ;;
+    esac
 }
 
-# assert_kiro_response <prompt> <expected-substring> <check-name>
-assert_kiro_response() {
-    local prompt="$1" expect="$2" name="$3"
-    if ! command -v kiro-cli >/dev/null 2>&1; then
-        skip "$name (kiro-cli not on PATH)"
+# tool_available <tool>   → 0 if on PATH, 1 otherwise.
+tool_available() {
+    case "$1" in
+        claude) command -v claude   >/dev/null 2>&1 ;;
+        kiro)   command -v kiro-cli >/dev/null 2>&1 ;;
+        *)      return 1 ;;
+    esac
+}
+
+# build_judge_prompt <question> <answer> <expected-narrative>
+build_judge_prompt() {
+    local question="$1" answer="$2" expected="$3"
+    cat <<EOF
+You are evaluating whether an AI agent's answer is consistent with a skill's intended narrative.
+
+Question:
+$question
+
+Answer:
+$answer
+
+Expected narrative:
+$expected
+
+Reply with exactly one line in this format:
+PASS — <one short sentence describing what's right>
+or
+FAIL — <one short sentence describing what's missing or wrong>
+EOF
+}
+
+# assert_response <tool> <prompt> <expect-substr-or-empty>
+#                 <expected-narrative-or-empty> <check-name>
+#
+# Runs the prompt through <tool>. If expect-substr is non-empty,
+# checks substring first. If expected-narrative is non-empty,
+# runs a second judge call on the same tool. Either check
+# missing → its phase is skipped. At least one must be set
+# (validated by the caller).
+assert_response() {
+    local tool="$1" prompt="$2" expect_substr="$3"
+    local expected_narrative="$4" name="$5"
+
+    if ! tool_available "$tool"; then
+        skip "$name ($tool not on PATH)"
         return
     fi
+
     local out
-    # --trust-tools= (empty list) = trust none = non-interactive
-    # run doesn't stall on tool-use confirmation prompts.
-    if ! out="$(kiro-cli chat --no-interactive --trust-tools= "$prompt" 2>&1)"; then
-        fail "$name (kiro-cli invocation failed): $out"
+    if ! out="$(tool_invoke "$tool" "$prompt")"; then
+        fail "$name ($tool invocation failed): $out"
         return
     fi
-    if grep -qiF -- "$expect" <<<"$out"; then
-        pass "$name"
-    else
-        fail "$name: response missing expected substring '$expect'"
-        info "response head: $(head -c 200 <<<"$out")..."
+
+    if [[ -n "$expect_substr" ]]; then
+        if grep -qiF -- "$expect_substr" <<<"$out"; then
+            pass "$name (substr)"
+        else
+            fail "$name (substr): response missing '$expect_substr'"
+            info "response head: $(head -c 200 <<<"$out")..."
+            return
+        fi
+    fi
+
+    if [[ -n "$expected_narrative" ]]; then
+        local judge_prompt judge_out judge_clean verdict
+        judge_prompt="$(build_judge_prompt "$prompt" "$out" "$expected_narrative")"
+        if ! judge_out="$(tool_invoke "$tool" "$judge_prompt")"; then
+            fail "$name (judge invocation failed): $judge_out"
+            return
+        fi
+        # Strip ANSI escape codes and control bytes, then look for
+        # the first PASS/FAIL token anywhere in the response.
+        # Different tools prefix lines differently (e.g. kiro emits
+        # `> PASS — ...`); anchoring to ^ is too strict. Some kiro
+        # outputs split a long verdict across multiple `> `-prefixed
+        # lines, so collapse newlines to spaces before grepping.
+        judge_clean="$(printf '%s' "$judge_out" \
+            | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\r//g' \
+            | tr '\n' ' ')"
+        verdict="$(grep -oE '(PASS|FAIL)[^|]+' <<<"$judge_clean" | head -n1 || true)"
+        case "$verdict" in
+            PASS*)
+                pass "$name (judge)"
+                info "${verdict#PASS — }"
+                ;;
+            FAIL*)
+                fail "$name (judge): ${verdict#FAIL — }"
+                info "answer head: $(head -c 200 <<<"$out")..."
+                ;;
+            *)
+                local dump="/tmp/smoke-judge-${name//[^a-zA-Z0-9_-]/_}-${tool}.log"
+                printf '%s\n' "$judge_clean" >"$dump"
+                fail "$name (judge): no PASS/FAIL token; full judge output → $dump"
+                info "judge head: $(head -c 200 <<<"$judge_clean")..."
+                ;;
+        esac
     fi
 }
 
@@ -147,28 +226,35 @@ structural_smokes() {
 
 skill_smokes() {
     info "=== skill smokes ==="
-    local fixture name prompt expect tools tool
+    local fixture name prompt expect_substr expected_narrative tools tool
     for fixture in "$HERE/skills"/*.smoke; do
         [[ -e "$fixture" ]] || continue
         name="$(basename "$fixture" .smoke)"
         [[ -n "$SELECTOR" && "$SELECTOR" != "$name" ]] && continue
 
         prompt="$(grep '^prompt:' "$fixture" | sed 's/^prompt:[[:space:]]*//')"
-        expect="$(grep '^expect_substr:' "$fixture" | sed 's/^expect_substr:[[:space:]]*//')"
+        expect_substr="$(grep '^expect_substr:' "$fixture" | sed 's/^expect_substr:[[:space:]]*//' || true)"
+        expected_narrative="$(grep '^expected_narrative:' "$fixture" | sed 's/^expected_narrative:[[:space:]]*//' || true)"
         tools="$(grep '^tools:' "$fixture" | sed 's/^tools:[[:space:]]*//')"
         : "${tools:=claude}"
-        if [[ -z "$prompt" || -z "$expect" ]]; then
-            fail "fixture $fixture malformed (needs prompt: and expect_substr: lines)"
+        if [[ -z "$prompt" ]]; then
+            fail "fixture $fixture malformed (missing prompt:)"
+            continue
+        fi
+        if [[ -z "$expect_substr" && -z "$expected_narrative" ]]; then
+            fail "fixture $fixture malformed (needs expect_substr: or expected_narrative:)"
             continue
         fi
         IFS=',' read -ra _tool_list <<<"$tools"
         for tool in "${_tool_list[@]}"; do
             tool="${tool//[[:space:]]/}"
             case "$tool" in
-                claude) assert_claude_response "$prompt" "$expect" "skill:$name via claude" ;;
-                kiro)   assert_kiro_response   "$prompt" "$expect" "skill:$name via kiro" ;;
-                "")     ;;
-                *)      fail "fixture $fixture: unknown tool '$tool' in tools: field" ;;
+                claude|kiro)
+                    assert_response "$tool" "$prompt" "$expect_substr" \
+                        "$expected_narrative" "skill:$name via $tool"
+                    ;;
+                "") ;;
+                *)  fail "fixture $fixture: unknown tool '$tool' in tools: field" ;;
             esac
         done
     done
