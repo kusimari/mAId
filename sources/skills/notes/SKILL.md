@@ -1,7 +1,7 @@
 ---
 name: notes
-description: Capture reminders, insights, 1:1 notes, and conversation transcripts into an Obsidian-shaped vault. Single verb "Add note [in <vault>] for X" classifies the kind, writes the file, and links topics.
-version: 1.1.0
+description: Capture reminders, insights, 1:1 notes, and conversation transcripts into an Obsidian-shaped vault. Single verb "Add note [in <vault>] for X" classifies the kind, writes the file, and links topics. Disconnected-capture buffer for Obsidian-direct sessions; "merge buffer" routes its entries through the same classifier.
+version: 1.2.0
 tags: [notes, knowledge, obsidian, capture]
 ---
 
@@ -19,6 +19,12 @@ line `[notes] applies` on its own line.
 - The user asks to **find / list** notes ("find notes related
   to X", "list notes in &lt;vault&gt; by topic Y", "what
   reminders do I have").
+- The user says **"merge buffer"** or **"merge buffer in
+  &lt;vault&gt;"** to drain disconnected captures from
+  `scratch/buffer.md` into the vault.
+- The user says **"show me my buffer"** or **"show me my
+  buffer in &lt;vault&gt;"** to print the buffer's current
+  contents.
 
 Capture is **always user-driven**. Never volunteer "want me
 to capture that?" mid-session — the user invokes this skill
@@ -58,7 +64,10 @@ delete or rename existing ones):
 ├── insights/<slug>.md                  thoughts + topic links
 ├── people/<person>.md                  one file per person; append
 ├── conversations/<slug>.md             transcripts + pre-amble
-└── topics/<topic>.md                   first-class topic pages
+├── topics/<topic>.md                   first-class topic pages
+└── scratch/                            disconnected-capture buffer
+    ├── buffer.md                       active buffer (append in Obsidian)
+    └── buffer-<YYYY-MM-DD>.md          dated archive of a merged buffer
 ```
 
 **Filenames are slug-only.** Dates live inside the file —
@@ -305,6 +314,75 @@ top N rolling files modified in the window, then show their
 last few `## YYYY-MM-DD` sections — not just the file
 mtimes.
 
+## Disconnected capture
+
+The skill is only reachable inside an agent session. When
+the user is in Obsidian directly — no agent — they have no
+inline capture path. The `scratch/buffer.md` file solves
+that: a single free-form file the user appends to during
+disconnected work, which the skill drains on demand.
+
+### `scratch/buffer.md` shape
+
+Same shape the user already writes by hand: loose markdown,
+optional `## YYYY-MM-DD` sections, optional explicit kind
+prefixes (`insight: …`, `1:1 with Alice: …`, `conversation:
+…`, `reminder: …`) the existing classifier already
+understands. No special schema.
+
+When the buffer is initialized (by the user or by the
+skill on first use), it carries a short header explaining
+how to use it. Below the header, the user appends entries
+freely.
+
+### "Merge buffer in &lt;vault&gt;"
+
+Read `<vault>/scratch/buffer.md`, walk top-level entries
+(each `## …` section, or each blank-line-separated block
+if no headers), and **for each entry, run the existing
+"add note for X" classifier and write path** — same rules
+as a single-prompt capture, applied in a loop. No
+special-case classification. Same disambiguation rules
+(one question max; ambiguous-after-one → `inbox/` with
+`kind: unsorted`).
+
+After all entries are routed:
+
+1. **Archive** the original buffer body to
+   `<vault>/scratch/buffer-<YYYY-MM-DD>.md` (a fresh dated
+   copy each merge). If today's archive already exists,
+   suffix with `-2`, `-3` per the existing slug-collision
+   rule.
+2. **Reset** `<vault>/scratch/buffer.md` to its
+   header-only state so the user has a clean buffer to
+   keep capturing.
+3. **Print a merge report** listing every entry and where
+   it landed. Same shape as `MIGRATION-LOG-2026-05-28.md`
+   in `Gorantls-store`. Also write the report to
+   `<vault>/inbox/merge-report-<YYYY-MM-DD>.md` for the
+   audit trail.
+
+The user manages the dated archives — the skill never
+deletes them. They're proof that the merge faithfully
+moved content; once the user is confident, they can
+`rm scratch/buffer-2026-*.md` themselves.
+
+Empty-body buffer → say "buffer empty" and exit without
+writing.
+
+Buffer file missing → say so and stop. The skill does not
+auto-create-and-merge an empty buffer.
+
+### "Show me my buffer in &lt;vault&gt;"
+
+Read and print `<vault>/scratch/buffer.md`. Convenience
+for review before merging.
+
+### Bare forms
+
+`merge buffer` and `show me my buffer` (no `in <…>`) use
+the default vault chain (`$NOTES_VAULT` → `$HOME/notes`).
+
 ## Behaviour rules
 
 - **Never overwrite** an existing file (insight, conversation,
@@ -320,6 +398,11 @@ mtimes.
 - **One disambiguation question max** before writing. If
   still unclear, default to `inbox/` with
   `kind: unsorted` and tell the user where it landed.
+- **Merge is destructive-with-archive.** `scratch/buffer.md`
+  resets to its header-only state after a successful merge;
+  the body is preserved verbatim in `scratch/buffer-<DATE>.md`.
+- **The skill never deletes archive files.** Cleanup of
+  `scratch/buffer-<DATE>.md` is user-driven.
 
 ## Known limits (v1)
 
