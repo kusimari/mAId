@@ -82,7 +82,9 @@ mAId/
 ├── tests/
 │   ├── schema_test.ts
 │   ├── deploy_test.ts
-│   └── functional/run      real-tool round-trip smoke
+│   └── functional/
+│       ├── run                 ← harness (see Testing)
+│       └── skills/<name>.smoke ← fixtures: prompt + expect_substr or expected_narrative
 └── specs/
     ├── project.md          this file
     ├── feature/            in-flight + completed feature records
