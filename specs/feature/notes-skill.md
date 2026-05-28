@@ -319,6 +319,37 @@ exposing v1.0 gaps:
    notes use the conversation kind without faking an audio
    path.
 
+## v1.3 revised (PR #10 review, 2026-05-28)
+
+PR #10 review feedback redesigned the v1.3 git story from
+per-verb auto-commit into an **open / work / close** session
+model. Same branch, follow-up commit on the same PR.
+
+The model:
+
+- **Open** — every notes verb pulls (`git pull --ff-only`)
+  before running. Pull failure surfaces verbatim and stops
+  the verb.
+- **Work** — captures and buffer merges write files and
+  return; no `git add`, no `git commit` during work. Dirty
+  files accumulate across verbs.
+- **Close** — explicit only (`close notes`, `done notes`,
+  `wrap up notes`). Pulls again, then `git add` only the
+  dirty paths under the seven skill-owned directories
+  (`inbox/`, `reminders/`, `insights/`, `people/`,
+  `conversations/`, `topics/`, `scratch/`), commits in one
+  squash with a path-shaped subject (single file → that
+  path; buffer-merge → `merge buffer (<N>)`; multi → comma-
+  joined with `…and K more` overflow), then pushes with
+  `GIT_TERMINAL_PROMPT=0`.
+
+Edge cases (no `.git`, no remote, detached HEAD / mid-rebase
+/ mid-merge, push fails, empty close) consolidated into one
+bullet block at the end of the section.
+
+The supplanted per-verb model is preserved below as audit
+trail; v1.3 revised is the shipped contract.
+
 ## v1.3 refinements (2026-05-28)
 
 Two changes shipped in `feat/notes-v1-3`:
@@ -396,6 +427,18 @@ a place to land notes for later merge.
 
 <!-- Newest at top -->
 
+- 2026-05-28 · v1.3 revised on PR #10 review: per-verb
+  auto-commit replaced with open/work/close session model.
+  Open = `git pull --ff-only` before any notes verb. Work =
+  captures write but don't commit. Close = explicit verb
+  (`close notes` / `done notes` / `wrap up notes`) that
+  squash-commits dirty skill-owned paths and pushes.
+  SKILL.md `## Vault auto-commit` section replaced with
+  tighter `## Vault git: open / work / close` (~35 lines vs.
+  ~80). Behaviour rules updated. Fixture
+  `notes-git-commit.smoke` rewritten to cover ten
+  behaviours under the new model. Net SKILL.md drops from
+  443 → 393 lines.
 - 2026-05-28 · v1.3 ships vault auto-commit on successful
   verbs (`add note`, `merge buffer`), path-shaped commit
   messages, push-when-remote with `GIT_TERMINAL_PROMPT=0`,
@@ -423,6 +466,56 @@ a place to land notes for later merge.
 ## Decision Log
 
 <!-- Newest at top -->
+
+- 2026-05-28 · **Open / work / close session model over
+  per-verb auto-commit.** Source: PR #10 review. The
+  per-verb model churned `git log` with path-shaped
+  subjects (one commit per capture), forced a push decision
+  on every verb, and split a "session of notes work" into
+  N atomic commits when the user thinks of it as one
+  session. The session model matches the user's mental
+  model: sit down → pull → capture some things → walk away
+  with one squash commit. Trade-off: a dirty working tree
+  between verbs in the same session — acceptable, the close
+  is one verb away. Supersedes the per-verb decision below
+  and the closely related "auto-commit triggers per
+  successful verb" decision.
+- 2026-05-28 · **Explicit-only close, no implicit close.**
+  Considered: marker-file-with-timeout, idle-detection
+  heuristics, end-of-chat triggers. Rejected — the skill
+  has no daemon and no cross-invocation memory; any
+  "implicit close" would need state the skill can't
+  maintain reliably. User picked discipline over
+  speculative state. Trade-off: a forgotten close leaves
+  work uncommitted until the next close — visible in
+  `git status` and surfaced again at the next close call.
+- 2026-05-28 · **`git pull --ff-only` over `--rebase` or
+  default merge.** Refuses on divergence with a verbatim
+  git error; user resolves by hand. Personal vault is
+  rarely divergent — the `--ff-only` is a forcing function
+  for "don't run notes work against an out-of-sync vault."
+  `--rebase` would replay local commits the work phase
+  doesn't make anyway; default-merge would pollute the
+  linear history a personal vault wants.
+- 2026-05-28 · **Stage by directory scope on close, not by
+  verb-tracked paths.** The original v1.3 plan tracked
+  every path each verb wrote. The session model removes
+  that bookkeeping: the seven skill-owned directories
+  (`inbox/`, `reminders/`, `insights/`, `people/`,
+  `conversations/`, `topics/`, `scratch/`) are the skill's
+  scope; everything dirty in them at close is intentional.
+  Smaller contract, less drift surface. Trade-off:
+  hand-edits to old files in those directories during a
+  session land in the close commit — stated outcome, not
+  a bug.
+- 2026-05-28 · **Reuse path-shaped commit-message shape
+  at close.** User asked "why something different" — the
+  close commit subject reuses the v1.3 path-shaped form,
+  just folded into one subject. Single file → that path;
+  buffer merge → `merge buffer (<N>)`; multi-file →
+  comma-joined paths with `…and K more` overflow at ~70
+  chars. Vault `git log --oneline` reads as a list of
+  what landed.
 
 - 2026-05-28 · **Auto-commit triggers per successful verb,
   not on a session boundary.** Considered: only commit on

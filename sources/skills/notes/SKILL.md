@@ -1,6 +1,6 @@
 ---
 name: notes
-description: Capture reminders, insights, 1:1 notes, and conversation transcripts into an Obsidian-shaped vault. Single verb "Add note [in <vault>] for X" classifies the kind, writes the file, and links topics. Disconnected-capture buffer for Obsidian-direct sessions; "merge buffer" routes its entries through the same classifier. Successful captures and buffer merges auto-commit (and push when a remote is configured) when the vault is a git repo.
+description: Capture reminders, insights, 1:1 notes, and conversation transcripts into an Obsidian-shaped vault. Single verb "Add note [in <vault>] for X" classifies the kind, writes the file, and links topics. Disconnected-capture buffer for Obsidian-direct sessions; "merge buffer" routes its entries through the same classifier. When the vault is a git repo with a remote, every verb pulls on open; captures stay uncommitted; "close notes" squashes and pushes.
 version: 1.3.0
 tags: [notes, knowledge, obsidian, capture]
 ---
@@ -25,6 +25,10 @@ line `[notes] applies` on its own line.
 - The user says **"show me my buffer"** or **"show me my
   buffer in &lt;vault&gt;"** to print the buffer's current
   contents.
+- The user says **"close notes"**, **"done notes"**, or
+  **"wrap up notes"** (with optional `in <vault>`) to flush
+  the session: pull, squash-commit dirty skill-owned paths,
+  push.
 
 Capture is **always user-driven**. Never volunteer "want me
 to capture that?" mid-session — the user invokes this skill
@@ -328,97 +332,42 @@ review before merging.
 `merge buffer` and `show me my buffer` (no `in <…>`) use the
 default vault chain (`$NOTES_VAULT` → `$HOME/notes`).
 
-## Vault auto-commit
+## Vault git: open / work / close
 
-When the vault directory contains a `.git` subdirectory, the
-skill commits its writes after every **successful** verb,
-and pushes when a remote is configured. The vault is a
-personal store, so commits are minimal and path-shaped — no
-Conventional Commits machinery, no hand-written subjects.
+If the vault has a `.git` directory and a remote configured:
 
-### Successful verbs commit; aborted and read-only verbs do not
+- **Open** — before running any notes verb (capture, retrieve,
+  list, show buffer, merge buffer, close), `git pull --ff-only`
+  in the vault. On failure (divergence, network, auth), surface
+  the git error verbatim and stop the verb.
+- **Work** — captures and buffer merges write their files and
+  return. **No `git add`, no `git commit`** during work. The
+  working tree accumulates dirty files across verbs until close.
+- **Close** — when the user says `close notes`, `done notes`,
+  or `wrap up notes` (with optional `in <vault>`):
+  `git pull --ff-only` again, then `git add` only the dirty
+  paths under skill-owned directories (`inbox/`, `reminders/`,
+  `insights/`, `people/`, `conversations/`, `topics/`,
+  `scratch/`) — never `git add -A`, never `git add <vault>`.
+  Commit in one squash with a path-shaped subject:
+  - one dirty file → that file's path,
+  - one buffer merge → `merge buffer (<N>)`,
+  - multiple → comma-joined paths up to ~70 chars,
+    overflowing as `…and K more`.
 
-Commit AFTER every intended write for the verb has landed:
+  Then `git push` with `GIT_TERMINAL_PROMPT=0`.
 
-- `add note for X` — destination file plus every
-  auto-created `topics/<topic>.md` stub.
-- `merge buffer` — every classified destination plus every
-  topic stub plus the archived `scratch/buffer-<DATE>.md`
-  plus the reset `scratch/buffer.md` plus the
-  `inbox/merge-report-<DATE>.md`.
+Edge cases (apply uniformly):
 
-Do **not** commit on:
-
-- A capture stopped at the disambiguation question.
-- An audio conversation where `whisper` / `whisper-cpp` is
-  missing (the skill writes nothing on this path).
-- A buffer merge that errors partway through. Surface the
-  error and leave the partial state on disk uncommitted; the
-  user retries or cleans up.
-- Read-only verbs: `show me my buffer`, retrieval verbs.
-  These write nothing, therefore commit nothing.
-
-### Staging is path-scoped
-
-Track every path the verb wrote or modified and pass them
-explicitly to `git add`. Never `git add -A`, never
-`git add <vault>`. A user editing
-`insights/foo.md` in Obsidian while the skill writes
-`insights/bar.md` must not see their dirty `foo.md` swept
-into the skill's commit.
-
-The full side-effect set must be staged — for a capture that
-mentions two new topics, that's the destination + both new
-topic stubs. For a buffer merge, every line in the merge
-report's "what landed where" list, plus the archive, the
-reset buffer, and the report itself.
-
-### Commit message — minimal, path-shaped
-
-The vault `git log` reads as a list of files that landed.
-Kind is implicit in the directory; no `add` verb (true of
-every commit), no body to truncate.
-
-| Verb              | Commit message                            |
-| ----------------- | ----------------------------------------- |
-| add insight       | `insights/<slug>.md`                      |
-| add conversation  | `conversations/<slug>.md`                 |
-| add reminder      | `reminders/<file>.md` (usually `inbox.md`) |
-| add 1:1           | `people/<person>.md`                      |
-| merge buffer      | `merge buffer (<N>)`                      |
-
-Buffer merge keeps the count form because it touches many
-paths; a single representative path would mislead.
-
-### Push when remote exists
-
-After the commit lands, run `git remote` in the vault. If
-output is non-empty, run `git push` against the upstream of
-the current branch with `GIT_TERMINAL_PROMPT=0` so missing
-credential helpers fail fast instead of hanging on a TTY
-prompt the agent can't satisfy.
-
-If push fails for any reason (no upstream, network, auth,
-prompt-disabled), surface a one-line warning —
-`vault push failed: <first line of stderr>` — and return the
-verb success. The commit is local; the user can retry by
-hand. **Do not roll back the commit on push failure.**
-
-If `git remote` is empty, silent skip — no warning.
-
-### Non-git vault → silent skip
-
-`.git` directory absent → write the file as today and
-return. No commit, no warning, no offer to `git init`.
-iCloud-only / Dropbox-only / no-sync vaults work unchanged.
-
-### Detached HEAD / mid-rebase / mid-merge
-
-If `git symbolic-ref HEAD` errors (detached HEAD, fresh repo
-with no commits yet), or `<vault>/.git/rebase-merge` /
-`rebase-apply` / `MERGE_HEAD` exist, surface
-`vault commit skipped: <reason>` and return. The file write
-stands; the user resolves the git state and commits by hand.
+- No `.git` → skip the git flow entirely; verbs run as today.
+- `git remote` empty → skip pull and push; the close commit
+  still happens locally.
+- Detached HEAD, mid-rebase, mid-merge → say
+  `vault git skipped: <reason>` and stop.
+- Push fails → one-line `vault push failed: <stderr line>`
+  warning; the commit stays; verb returns success.
+- Close finds nothing dirty → say `nothing to close` and stop;
+  do not commit empty.
 
 ## Behaviour rules
 
@@ -434,10 +383,11 @@ stands; the user resolves the git state and commits by hand.
 - **One disambiguation question max** before writing. Still
   unclear → `inbox/` with `kind: unsorted` and tell the user
   where it landed.
-- **Never `git add -A`** in the vault. Stage only the paths
-  the verb wrote or modified.
-- **Commit on success only.** Aborted captures, missing
-  transcription tools, partial-merge errors, and read-only
-  verbs commit nothing.
+- **Pull on open, commit on close.** Every notes verb runs
+  `git pull --ff-only` first. Work-phase verbs never commit;
+  commit + push happens only on explicit `close notes`.
+- **Never `git add -A`.** At close, stage by directory scope
+  (the seven skill-owned directories). Hand-edits inside those
+  directories during a session fold into the close commit.
 - **Push failure is a warning, not an error.** The commit
-  stays; the verb succeeds.
+  stays local; the verb returns success.
