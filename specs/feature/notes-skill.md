@@ -319,10 +319,51 @@ exposing v1.0 gaps:
    notes use the conversation kind without faking an audio
    path.
 
+## v1.2 refinements (2026-05-28)
+
+Two changes shipped in `feat/notes-v1-2`, driven by (a) PR
+#7 review feedback asking the new vault-selector fixture
+to use the LLM-as-judge pattern the kdevkit fixtures
+already use, and (b) the disconnected-capture gap — the
+skill is only reachable from an agent session, but the
+user works in Obsidian directly some of the time and needs
+a place to land notes for later merge.
+
+1. **Disconnected capture buffer.** New `scratch/`
+   directory in the vault layout. `scratch/buffer.md` is a
+   single free-form file the user appends to in Obsidian
+   while disconnected. `merge buffer in <vault>` drains
+   the buffer by running the existing classifier over each
+   entry, archives the buffer to
+   `scratch/buffer-<YYYY-MM-DD>.md`, and resets `buffer.md`
+   to its header-only state. `show me my buffer in <vault>`
+   prints the buffer for review. Both verbs are
+   vault-selector-aware; bare forms hit the default chain.
+   Merge is "add note for X applied in a loop" — no
+   special-case rules.
+2. **LLM-as-judge fixture for vault selection.** The
+   `notes-vault-selector.smoke` fixture gains an
+   `expected_narrative:` block matching the kdevkit
+   fixture shape (numbered behaviours + explicit
+   wrong-answer callouts). The runner already supports
+   the field; the v1.1 fixture just didn't use it. A
+   sibling `notes-add-note.smoke` fixture covers the
+   capture verb end-to-end. The test runner is extended
+   to invoke `claude` with `--dangerously-skip-permissions`
+   so future fixtures can exercise real writes; current
+   fixtures stay read-only by design (they ask the agent
+   to *plan*, not write).
+
 ## Session Log
 
 <!-- Newest at top -->
 
+- 2026-05-28 · v1.2 ships disconnected-capture buffer
+  (`scratch/buffer.md` + `merge buffer` + `show me my
+  buffer`) plus LLM-as-judge fixtures
+  (`notes-vault-selector.smoke` rewritten,
+  `notes-add-note.smoke` added). Runner extended to
+  bypass permissions on `claude`.
 - 2026-05-28 · v1.1 design refinements driven by scrap.md
   migration: vault selector, slug-only filenames, optional
   conversation `source:`. Documented above.
@@ -335,6 +376,37 @@ exposing v1.0 gaps:
 
 <!-- Newest at top -->
 
+- 2026-05-28 · **One buffer file over multiple
+  disconnected files.** `scratch/buffer.md` is a single
+  rolling file rather than e.g. one file per disconnected
+  session or one per day. Picked the simplest shape that
+  matches how the user already works (`scrap.md` was a
+  single rolling file too). Multi-buffer / per-day-buffer
+  shapes are cheap to add later if friction shows up;
+  doing it now would be premature.
+- 2026-05-28 · **Merge is "add note in a loop", not a new
+  classifier.** Considered building a batch classifier
+  with merge-specific heuristics (e.g. cross-entry topic
+  inference). Rejected — a buffer entry is
+  indistinguishable from a single-prompt capture, so
+  reusing the existing classifier keeps behaviour
+  predictable and the spec compact. Side benefit: any
+  improvement to the single-prompt classifier
+  automatically applies to merges.
+- 2026-05-28 · **Archive-and-reset over leave-buffer or
+  delete-merged-only.** After a merge, copy the body to
+  `scratch/buffer-<DATE>.md` and reset `buffer.md` to
+  header-only. Leave-untouched would create
+  duplicate-classification risk on the next merge;
+  delete-merged-only would pile up ambiguous entries
+  across runs without making the next merge easier. The
+  archive is the audit trail the user can verify against
+  before deleting.
+- 2026-05-28 · **`scratch/` over `inbox/` for the buffer.**
+  `inbox/` is for classified-but-unsorted captures during
+  normal skill use (with `kind: unsorted` frontmatter).
+  `scratch/` is for unclassified pre-skill content —
+  semantically distinct, deserves its own directory.
 - 2026-05-28 · **Slug-only filenames over date-prefixed.**
   v1.0 used `<YYYY-MM-DD>-<slug>.md`. Dropped because (a) a
   rolling reminders list as a directory of dated single-line

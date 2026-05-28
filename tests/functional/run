@@ -88,7 +88,7 @@ assert_symlink_resolves() {
 tool_invoke() {
     local tool="$1" prompt="$2"
     case "$tool" in
-        claude) claude --print "$prompt" 2>&1 ;;
+        claude) claude --print --dangerously-skip-permissions "$prompt" 2>&1 ;;
         kiro)   kiro-cli chat --no-interactive --trust-tools= "$prompt" 2>&1 ;;
         *)      echo "tool_invoke: unknown tool '$tool'"; return 1 ;;
     esac
