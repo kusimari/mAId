@@ -225,6 +225,24 @@ this feature spec. No code changes.
 
 ## Session Log
 
+- 2026-05-28 · **Feature closed via §9 close-out.** Shipped
+  as PR #5 (squash-merged to `main`). Five commits across
+  the branch:
+  - `e56dfb3` feat(kdevkit): three-loop close-outs — Review
+    Gate + feature close-out
+  - `ff5dff9` refactor(kdevkit): condense narrative + strip
+    command syntax
+  - `553d0c4` refactor(maid): split deno test tasks by
+    layer
+  - `5970f74` refactor(kdevkit): tighten expected
+    narratives + §3 salience
+  - (plus this close-out commit)
+
+  No in-flight markers in the spec; Implementation Plan all
+  10 steps done; Decision Log records every choice with
+  resolution. Final functional smoke matrix: 12/12 PASS
+  (3 fixtures × 2 tools × substr + judge).
+
 - 2026-05-28 · **Addressed the two persistent kiro judge
   FAILs** previously recorded as a tool-divergence finding.
   Subagent re-audited the failing fixtures and split the gaps
