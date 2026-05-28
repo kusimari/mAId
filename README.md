@@ -58,6 +58,7 @@ destination are preserved unless you pass `--force`.
 - Everything that gets deployed: [`sources/`](./sources/).
 - How deployment is decided: [`maid/registry.ts`](./maid/registry.ts).
 - Reference shape for a new skill:
-  [`sources/skills/development/SKILL.md`](./sources/skills/development/SKILL.md)
-  (and its three siblings).
+  [`sources/skills/kdevkit/SKILL.md`](./sources/skills/kdevkit/SKILL.md)
+  (live siblings: [`notes/`](./sources/skills/notes/SKILL.md),
+  [`writing-style/`](./sources/skills/writing-style/SKILL.md)).
 - Full dev-verb list: [`deno.json`](./deno.json) `tasks` block.

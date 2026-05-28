@@ -319,6 +319,44 @@ exposing v1.0 gaps:
    notes use the conversation kind without faking an audio
    path.
 
+## v1.3 refinements (2026-05-28)
+
+Two changes shipped in `feat/notes-v1-3`:
+
+1. **Vault auto-commit on successful verbs.** When the
+   vault has a `.git` directory, every successful capture
+   or buffer merge auto-commits its writes (path-scoped
+   staging, never `git add -A`) and pushes when a remote
+   is configured. Successful = every intended write
+   landed cleanly; aborted captures, missing transcription
+   tools, partial-merge errors, and read-only verbs do not
+   commit. Commit messages are minimal and path-shaped:
+   `insights/<slug>.md`, `conversations/<slug>.md`,
+   `reminders/<file>.md`, `people/<person>.md`,
+   `merge buffer (<N>)`. Push runs with
+   `GIT_TERMINAL_PROMPT=0` so credential prompts on a fresh
+   machine fail fast instead of hanging on a TTY the agent
+   can't satisfy; push failure surfaces a one-line warning
+   and the commit stays local. Non-git vaults silently
+   skip — the skill works unchanged for iCloud-only /
+   Dropbox-only / no-sync setups. Closes the multi-machine
+   sync loop the v1.1 named-vault env vars opened.
+2. **Compression pass on `SKILL.md`.** Now that the skill
+   is mature (three releases of refinements), the prose
+   was tighter than it needed to be. Cuts: collapsed the
+   four per-kind frontmatter examples into one combined
+   block; merged steps 4–6 of the audio-transcription
+   procedure into one paragraph; pulled the
+   plugin-first-then-ripgrep ladder up once at the
+   retrieval section open; dropped the rationale paragraphs
+   (rationale lives in this Decision Log); cut "Known
+   limits (v1)" as a backlog meta-note that wasn't a rule
+   the agent reads; tightened the Behaviour rules digest to
+   genuinely cross-cutting rules. Net length is +26 over
+   v1.2 — the compression cut ~50 lines from existing
+   material, the new auto-commit section runs ~80 (rules
+   needed spelling out to be agent-readable).
+
 ## v1.2 refinements (2026-05-28)
 
 Two changes shipped in `feat/notes-v1-2`, driven by (a) PR
@@ -358,6 +396,16 @@ a place to land notes for later merge.
 
 <!-- Newest at top -->
 
+- 2026-05-28 · v1.3 ships vault auto-commit on successful
+  verbs (`add note`, `merge buffer`), path-shaped commit
+  messages, push-when-remote with `GIT_TERMINAL_PROMPT=0`,
+  silent skip on non-git vaults, `vault commit skipped:
+  <reason>` on detached HEAD / mid-rebase / mid-merge.
+  Compression pass on SKILL.md alongside (collapsed
+  per-kind frontmatter examples, retrieval ladder, audio
+  transcription steps; cut Known limits and rationale
+  paragraphs). New `notes-git-commit.smoke` fixture covers
+  the eight behaviours via judge mode.
 - 2026-05-28 · v1.2 ships disconnected-capture buffer
   (`scratch/buffer.md` + `merge buffer` + `show me my
   buffer`) plus LLM-as-judge fixtures
@@ -376,6 +424,72 @@ a place to land notes for later merge.
 
 <!-- Newest at top -->
 
+- 2026-05-28 · **Auto-commit triggers per successful verb,
+  not on a session boundary.** Considered: only commit on
+  an explicit "wrap up notes" verb. Rejected — the agent
+  has no daemon, "session done" has no concrete trigger,
+  and users forget. Per-verb commit aligns with the kdevkit
+  rule "commit when a coherent unit of work is done";
+  multiple captures in one chat = multiple commits, which
+  matches what `git log` should show. Aborted captures and
+  partial-merge errors don't commit so the audit trail
+  doesn't carry half-finished work.
+- 2026-05-28 · **Push when remote exists, no per-vault
+  opt-in env var.** Considered: gate push on
+  `$NOTES_VAULT_<NAME>_AUTOPUSH=1` to avoid surprise
+  outbound traffic. Rejected — the named-vault env vars
+  already declare the user's intent that the vault is a
+  multi-machine substrate, and pushing is the obvious
+  follow-on. Push failure is a one-line warning, not an
+  error, so the worst case on an unconfigured machine is a
+  visible warning the user can ignore. `GIT_TERMINAL_PROMPT=0`
+  prevents the agent from hanging on a credential prompt
+  it can't satisfy.
+- 2026-05-28 · **Path-shaped commit messages over body or
+  Conventional Commits.** Three shapes considered:
+  Conventional kind-scoped (`notes(insight): <slug>`),
+  plain prose with body (`add insight: <slug>`), and
+  path-only (`insights/<slug>.md`). Picked path-only — the
+  vault is a personal store, not engineering code. `git
+  log --oneline` reads as a list of files that landed,
+  kind is implicit in the directory, no body to truncate
+  or wordsmith, no `add` verb that's true of every commit.
+  Trade-off: two reminders captured in the same session
+  produce duplicate `reminders/inbox.md` subjects in
+  `git log --oneline`; acceptable because each commit's
+  diff shows the appended section, and `git log -p
+  reminders/inbox.md` resolves it. Considered fixing with
+  a hash suffix or body — that reintroduces the noise the
+  shape was chosen to avoid.
+- 2026-05-28 · **Path-scoped staging, never `git add -A`.**
+  A user editing `insights/foo.md` in Obsidian while the
+  skill writes `insights/bar.md` must not see their dirty
+  `foo.md` swept into the skill's commit. Rule is "stage
+  every path the verb wrote or modified, exactly those" —
+  including auto-created topic stubs and buffer-merge
+  side-effects (archive, reset buffer, merge report). The
+  SKILL.md spells out the side-effect set so the reader
+  can't shortcut to "stage the destination."
+- 2026-05-28 · **Non-git vault → silent skip; no
+  `git init` offer.** Considered: prompt on first capture
+  ("Initialize <vault> as a git repo so captures
+  auto-commit?"). Rejected — the user may have intentionally
+  picked iCloud / Dropbox / no-sync; an offer trains the
+  skill to volunteer infrastructure decisions, which v1.0's
+  capture-only volunteering rule already forbids. The
+  named-vault env vars are the user's intent declaration;
+  a `.git` directory is the user's intent confirmation.
+- 2026-05-28 · **No `## Agent Development` README block in
+  kdevkit.** Considered adding a soft-README-verify step
+  to §9 of the kdevkit skill, alongside the existing
+  soft-`project.md`-verify. Rejected — README in mAId is a
+  thin install/develop/where-to-look pointer, not a
+  feature catalogue; volunteering README edits on every
+  feature close is noise. project.md's invariants surface
+  is what soft-verify exists for. If a future project's
+  README *is* a feature catalogue, that's a project-level
+  signal handled in `project.md`'s `## Agent Development`
+  block, not a kdevkit default.
 - 2026-05-28 · **One buffer file over multiple
   disconnected files.** `scratch/buffer.md` is a single
   rolling file rather than e.g. one file per disconnected
