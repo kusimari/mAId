@@ -115,13 +115,20 @@ the Testing section's prose plus its own defaults.
 ## 3 · Load feature context
 
 At feature-start (cues: "let's start / continue / pick up
-<feature>", or a branch like `feat/user-auth`), do these in
-order: **(1)** locate or promote the feature spec, **(2)**
-check `project.md` for a worktree preference, then **(3)**
-proceed under §6 phase gating.
+<feature>", or a branch like `feat/user-auth`), do all three
+of these checks before the first implementation slice — they
+are parallel decisions, not optional:
 
-**1 · Locate or create the feature spec.** Derive
-`$SPEC_ROOT/feature/<feature-name>.md` (lowercase, hyphenated).
+1. **Locate or promote the feature spec.**
+2. **Check `project.md` for a worktree preference.**
+3. **Proceed under §6 phase gating.**
+
+Detail for each follows.
+
+### 1 · Locate or create the feature spec
+
+Derive `$SPEC_ROOT/feature/<feature-name>.md` (lowercase,
+hyphenated).
 
 - File has content → load silently.
 - File is missing → first check
@@ -131,9 +138,10 @@ proceed under §6 phase gating.
   four-interview setup if nothing is scoped in either
   location.
 
-**2 · Check `project.md` for worktree preference.** Feature
-work defaults to a branch on the main checkout, but some
-projects prefer per-feature isolation in a dedicated git
+### 2 · Check `project.md` for worktree preference
+
+Feature work defaults to a branch on the main checkout, but
+some projects prefer per-feature isolation in a dedicated git
 worktree so independent features don't contaminate each
 other. The signal lives in either:
 
@@ -146,6 +154,13 @@ feature-start (don't auto-run — parent-path conventions
 vary). If silent, continue branch-only **without prompting**.
 Worktree status does not gate the §8 Review Gate; it only
 affects the §9 worktree-teardown offer.
+
+### 3 · Proceed under §6 phase gating
+
+Phase gating governs the rest of the feature loop. See §6 for
+the full rule; in summary: stop after each phase
+(requirements / design / test strategy / implementation
+slice), wait for explicit instruction before the next.
 
 ### Feature setup — four short interviews
 
