@@ -2,8 +2,8 @@
 
 ## What
 
-Two related sharpenings of the kdevkit skill (lives at
-`mAId/sources/skills/kdevkit/SKILL.md`), driven by two real
+Three related sharpenings of the kdevkit skill (lives at
+`mAId/sources/skills/kdevkit/SKILL.md`), driven by real
 session failures that surfaced gaps in the current rule set:
 
 1. **§6 phase gating: "spec-already-drafted" handling.** When the
@@ -29,6 +29,26 @@ session failures that surfaced gaps in the current rule set:
      when the answer is "none"; *asking* is the artifact.
    - Step 3 (branch cleanup local + remote + prune) is one
      line, default delete, no permission pause.
+
+3. **§9 close-out: bundle `project.md` updates into the
+   squash-merge commit.** When §9.4's soft `project.md` verify
+   produces an edit, the close-out should fold that edit into
+   the feature branch *before* the squash-merge — either as a
+   final commit on the feature branch or by amending the most
+   recent commit there — so the merged squash commit on `main`
+   carries the docs change. Currently the verify happens *after*
+   §9.2 squash-merge, which forces any project.md update to
+   land as a separate `docs(project)` commit on `main`,
+   breaking the "one logical commit per feature on main"
+   invariant declared in §9.2.
+
+   Reorder the §9 steps so the verify is step 1.5 (between
+   reconcile and merge), and the merge bundles whatever the
+   verify produced. Worked example: in the
+   `kdevkit-feature-and-agent-dev-loops` close-out (PR #5,
+   merged 2026-05-28), §9.4 surfaced a Layout drift in
+   `project.md` only after §9.2 had already merged — leaving
+   two commits on main where one was intended.
 
 ## Why
 
