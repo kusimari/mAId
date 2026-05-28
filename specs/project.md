@@ -95,21 +95,40 @@ mAId/
      manual. Which commands run which suite. Which are
      load-bearing vs. nice-to-have. -->
 
-Three layers:
+Four-layer test surface; each layer is a `deno task` so the
+§8 Test Gate can pick the right one for the situation.
 
-- **Deno unit tests (`deno task test`)** — 22 tests covering
-  schema parsing and deploy/undeploy invariants against a fake
-  `$HOME`. Load-bearing. Must be green before any push.
-- **Structural smokes (`./tests/functional/run --no-tools`)** —
-  asserts the managed symlinks actually resolve in real `$HOME`
-  after a deploy. Cheap, runs always.
-- **Tool smokes (`./tests/functional/run`)** — drives
-  `claude --print` and `kiro-cli chat --no-interactive` with
-  one-line prompts that force each skill to announce itself
-  (`[<skill>] applies`). Proves the skills actually load in
-  live sessions, not just that the files are reachable. One
-  `.smoke` fixture per skill; a single fixture can target both
-  CLIs via a `tools: claude,kiro` field.
+- **`deno task test:unit`** (alias: `deno task test`) — 22
+  tests covering schema parsing and deploy/undeploy
+  invariants against a fake `$HOME`. ~100ms. Load-bearing.
+  This is the §8 Test Gate default. Catches malformed
+  frontmatter and broken deploy logic before any push.
+- **`deno task test:smoke`** — structural smoke, no tools
+  required (`./tests/functional/run --no-tools`). Asserts
+  the managed symlinks actually resolve in real `$HOME`
+  after a deploy and each skill is reachable through them.
+  Cheap, no API credits, no PATH dependencies. Run after
+  `deno task deploy` to confirm the symlinks landed.
+- **`deno task test:functional`** — tool-driven smoke
+  (`./tests/functional/run`). Drives `claude --print` and
+  `kiro-cli chat --no-interactive` with the `.smoke`
+  fixtures under `tests/functional/skills/`. Two fixture
+  styles share the harness: substring fixtures
+  (`expect_substr:`) for cheap load-checks, and judge
+  fixtures (`expected_narrative:`) that run a second tool
+  call to evaluate whether the primary answer covers the
+  expected behavior. Slow (minutes), costs API credits,
+  requires both `claude` and `kiro-cli` on PATH. Use for
+  revision passes that touch SKILL.md prose where you need
+  evidence the cut preserved behavior.
+- **`deno task test:all`** — chains unit → smoke →
+  functional. Use before merging a SKILL.md or harness
+  change.
+
+The §8 Test Gate uses `test:unit` by default. SKILL.md prose
+revisions add `test:functional` (judge mode) as their A/B
+evidence. The §9 close-out can run `test:smoke` after a
+deploy to confirm symlinks resolved.
 
 Quality gate: `deno task fmt` + `deno task lint` + `deno task
 check`. Run after any implementation slice.

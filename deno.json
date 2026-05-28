@@ -3,7 +3,12 @@
     "check": "deno check maid/main.ts",
     "fmt": "deno fmt",
     "lint": "deno lint",
-    "test": "deno test --allow-read --allow-write --allow-env",
+
+    "test:unit": "deno test --allow-read --allow-write --allow-env",
+    "test:smoke": "tests/functional/run --no-tools",
+    "test:functional": "tests/functional/run",
+    "test:all": "deno task test:unit && deno task test:smoke && deno task test:functional",
+    "test": "deno task test:unit",
 
     "validate": "deno run --allow-read --allow-write --allow-env maid/main.ts validate",
     "deploy": "deno run --allow-read --allow-write --allow-env maid/main.ts deploy",
