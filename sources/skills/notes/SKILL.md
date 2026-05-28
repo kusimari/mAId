@@ -1,7 +1,7 @@
 ---
 name: notes
-description: Capture reminders, insights, 1:1 notes, and conversation transcripts into an Obsidian-shaped vault. Single verb "Add note for X" classifies the kind, writes the file, and links topics.
-version: 1.0.0
+description: Capture reminders, insights, 1:1 notes, and conversation transcripts into an Obsidian-shaped vault. Single verb "Add note [in <vault>] for X" classifies the kind, writes the file, and links topics.
+version: 1.1.0
 tags: [notes, knowledge, obsidian, capture]
 ---
 
@@ -13,10 +13,12 @@ line `[notes] applies` on its own line.
 ## When to apply
 
 - The user says some variant of **"Add note for &lt;X&gt;"**
-  (also: "save this", "remember this", "capture this", "note
-  to self", "log this 1:1").
+  or **"Add note in &lt;vault&gt; for &lt;X&gt;"** (also:
+  "save this", "remember this", "capture this", "note to
+  self", "log this 1:1").
 - The user asks to **find / list** notes ("find notes related
-  to X", "list notes by topic Y", "what reminders do I have").
+  to X", "list notes in &lt;vault&gt; by topic Y", "what
+  reminders do I have").
 
 Capture is **always user-driven**. Never volunteer "want me
 to capture that?" mid-session — the user invokes this skill
@@ -24,50 +26,52 @@ explicitly.
 
 ## The vault
 
-Default: `$HOME/notes`. Override with the `$NOTES_VAULT`
-env var.
+The skill writes into one of three vault sources, resolved
+at invocation time:
 
-The override is the **recommended** setup for any user
-who wants the vault on more than one machine — point
-`$NOTES_VAULT` at a directory inside an iCloud / Dropbox
-/ git-synced folder so captures from any host land in the
-same place. The skill itself is stateless; the vault on
-disk is the cross-machine substrate.
+1. **Inline path** — `add note in <path> for <X>` where
+   `<path>` starts with `/`, `~`, or `./`. Use the directory
+   directly. If it doesn't exist, ask before creating.
+2. **Named vault** — `add note in <name> for <X>` resolves
+   to the env var `$NOTES_VAULT_<NAME_UPPER_SNAKE>`. Examples:
+   `add note in work for X` → `$NOTES_VAULT_WORK`;
+   `add note in gorantls-store for X` → `$NOTES_VAULT_GORANTLS_STORE`.
+   If the env var is unset, stop and tell the user
+   *"no vault configured for &lt;name&gt; (set
+   $NOTES_VAULT_&lt;NAME&gt;)"*. Don't fall through to default.
+3. **Default** — `add note for <X>` (no `in <…>` qualifier)
+   uses `$NOTES_VAULT` if set, else `$HOME/notes`.
+
+The named-vault env vars are the **recommended** setup for
+multi-machine use — point each at a directory inside an
+iCloud / Dropbox / git-synced folder so captures from any
+host land in the same place. The skill itself is stateless;
+the vault on disk is the cross-machine substrate.
 
 Layout (create missing directories on first capture; never
 delete or rename existing ones):
 
 ```
-$NOTES_VAULT/
+<vault>/
 ├── inbox/                              unsorted captures (rare)
-├── reminders/<YYYY-MM-DD>-<slug>.md    dated to-dos
-├── insights/<YYYY-MM-DD>-<slug>.md     thoughts + topic links
+├── reminders/<slug>.md                 to-dos; dated sections inside
+├── insights/<slug>.md                  thoughts + topic links
 ├── people/<person>.md                  one file per person; append
-├── conversations/<YYYY-MM-DD>-<slug>.md transcripts + pre-amble
+├── conversations/<slug>.md             transcripts + pre-amble
 └── topics/<topic>.md                   first-class topic pages
 ```
+
+**Filenames are slug-only.** Dates live inside the file —
+in the frontmatter `date:` field for one-shot kinds
+(insights, conversations) and as `## YYYY-MM-DD` section
+headers for accumulating kinds (reminders, people). This
+keeps related entries co-located and lets the user open
+e.g. `reminders/inbox.md` to see the whole rolling list,
+not a directory of dated single-line files.
 
 If the user's existing layout differs (e.g. `todo/` instead
 of `reminders/`), **ask** before creating new directories —
 do not silently create a parallel structure.
-
-### Named vaults (future)
-
-A user may keep more than one vault — e.g., a personal
-vault and a work vault — separated for sync, sharing, or
-content-class reasons. The future shape:
-
-- Each named vault is pointed to by a per-name env var:
-  `$NOTES_VAULT_<NAME>` (uppercase). Example:
-  `NOTES_VAULT_WORK=/path/to/work-vault`.
-- `add note for <name>: <X>` → write into
-  `$NOTES_VAULT_<NAME>` if set; error otherwise.
-- `add note for: <X>` (no qualifier) → default to
-  `$NOTES_VAULT`, then `$HOME/notes`.
-
-Until a named vault is configured, `add note for
-<name>: …` produces a "no vault configured for
-&lt;name&gt;" message and stops without writing.
 
 ## Classification
 
@@ -95,22 +99,37 @@ ask **one** disambiguation question before writing.
 
 ## Frontmatter templates
 
-All kinds share `date / kind / links`. Add fields per kind.
+All kinds share `kind / links`. Insights and conversations
+add `date`. Reminders accumulate dated sections inside a
+single rolling file (so the file itself has no top-level
+`date`).
 
-### Reminder
+### Reminder (append a dated section to a rolling file)
+
+The default rolling file is `reminders/inbox.md`. Use a
+topic-area filename (`reminders/q3-launch.md`) when the
+user's reminder is clearly scoped.
 
 ```markdown
 ---
-date: 2026-05-22
 kind: reminder
-due: 2026-05-26
-links: [[topic-A]]
 ---
 
-<one-line reminder body>.
+# Reminders
+
+## 2026-05-22
+- file taxes by Friday (links: [[taxes]])
+- send the migration log to myself
+
+## 2026-05-26
+- review the Q3 doc
 ```
 
-### Insight
+If a reminder has a hard `due:` date, capture it inline:
+`- <body> — due 2026-06-01`. Section headers track
+**capture date** (when added), not due date.
+
+### Insight (one file per insight)
 
 ```markdown
 ---
@@ -146,13 +165,22 @@ section. Do not rewrite the file head.
 
 ### Conversation
 
+`source:` is **optional**. When present, one of:
+
+- `audio:<path>` — triggers transcription (see below).
+- `notes-from:<who>` — hand-captured notes / verbatim quotes
+  the user typed up. No transcription needed.
+
+Omit `source:` entirely for pure-prose captures with no
+discernible source.
+
 ```markdown
 ---
 date: 2026-05-22
 kind: conversation
-source: audio:~/Downloads/<recording>.m4a
-tags: [#tag-A, #tag-B]
-links: [[topic-A]]
+source: notes-from:beth-ramirez
+tags: [#search-friction, #seller-voice]
+links: [[search]], [[discovery]]
 ---
 
 ## Pre-amble
@@ -160,10 +188,13 @@ links: [[topic-A]]
 <one paragraph: who was in the conversation, what it was
 about, and the goal of the capture>.
 
-## Transcript
+## Notes
 
 …
 ```
+
+For audio-sourced conversations, replace `## Notes` with
+`## Transcript`.
 
 ## Linking
 
@@ -217,7 +248,10 @@ When the user passes `audio: <path>`:
 
 ## Retrieval
 
-Three queries, plugin-first ladder.
+Three queries, plugin-first ladder. The vault selector
+(`in <name|path>`) works on retrieval verbs too — resolve
+it the same way as for capture, then run the query against
+the resolved vault directory (`<vault>` below).
 
 ### "Find notes related to X"
 
@@ -234,7 +268,7 @@ Three queries, plugin-first ladder.
 2. **Fallback: ripgrep.** When the user picks ripgrep:
 
    ```bash
-   rg -l --no-heading -- "X|\[\[X\]\]|#X" "$NOTES_VAULT"
+   rg -l --no-heading -- "X|\[\[X\]\]|#X" "<vault>"
    ```
 
    Return file paths plus a short line of context per hit.
@@ -259,21 +293,30 @@ Three queries, plugin-first ladder.
 Use shell — fastest:
 
 ```bash
-find "$NOTES_VAULT/<kind>" -type f -mtime -<N> -printf '%T@ %p\n' \
+find "<vault>/<kind>" -type f -mtime -<N> -printf '%T@ %p\n' \
   | sort -rn | head -n 10 | cut -d' ' -f2-
 ```
 
 Default `<N>` = 14 days unless the user specifies.
 
+For accumulating kinds (reminders, people), files contain
+many dated sections. "List recent reminders" means: open the
+top N rolling files modified in the window, then show their
+last few `## YYYY-MM-DD` sections — not just the file
+mtimes.
+
 ## Behaviour rules
 
-- **Never overwrite** an existing file (insight, reminder,
-  topic stub). Append to per-person files; for everything
-  else, slug-collision means find a suffix (`-2`, `-3`).
+- **Never overwrite** an existing file (insight, conversation,
+  topic stub). Append dated sections to accumulating files
+  (reminders, people). For one-shot kinds (insights,
+  conversations), slug collision means find a suffix
+  (`-2`, `-3`).
 - **Never copy audio** into the vault. Transcript only.
 - **Never volunteer captures.** Only act on explicit verbs.
-- **Honour `$NOTES_VAULT`** — when set, never fall back to
-  `$HOME/notes`.
+- **Honour the vault selector.** Inline path > named vault
+  env var > `$NOTES_VAULT` > `$HOME/notes`. A named vault
+  whose env var is unset is an error, not a fall-through.
 - **One disambiguation question max** before writing. If
   still unclear, default to `inbox/` with
   `kind: unsorted` and tell the user where it landed.

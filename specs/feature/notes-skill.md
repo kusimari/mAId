@@ -289,10 +289,43 @@ writing anything.
   plugin requirement in its retrieval section, and the
   ripgrep fallback always works without Obsidian.
 
+## v1.1 refinements (2026-05-28)
+
+Three changes shipped in `feat/notes-v1-1`, driven by the
+first real migration target (`~/dabba/Gorantls-store/scrap.md`)
+exposing v1.0 gaps:
+
+1. **Vault selection at invocation time.** Capture and
+   retrieval verbs accept an `in <name|path>` qualifier.
+   `in <name>` resolves to `$NOTES_VAULT_<NAME_UPPER_SNAKE>`;
+   `in <path>` (starts with `/`, `~`, `./`) is used directly;
+   bare `add note for …` falls through to `$NOTES_VAULT` →
+   `$HOME/notes`. Unset named-vault env var is an error, not
+   a fall-through. Lets one user run e.g. a personal
+   `Gorantls-store` vault and a separate work vault from the
+   same skill.
+2. **Slug-only filenames.** Dropped the
+   `<YYYY-MM-DD>-<slug>.md` template for reminders, insights,
+   and conversations. Filenames are now `<slug>.md`. Dates
+   live in `date:` frontmatter (one-shot kinds) or as
+   `## YYYY-MM-DD` section headers (accumulating kinds —
+   reminders join people in this category). Avoids a
+   directory of single-line dated files for a rolling
+   reminders list and keeps related captures co-located.
+3. **Optional `source:` for conversations.** Three shapes:
+   `audio:<path>` (existing — transcribes), `notes-from:<who>`
+   (new — hand-captured), or omitted (new — pure prose).
+   Lets verbatim seller-voice captures and customer-quote
+   notes use the conversation kind without faking an audio
+   path.
+
 ## Session Log
 
 <!-- Newest at top -->
 
+- 2026-05-28 · v1.1 design refinements driven by scrap.md
+  migration: vault selector, slug-only filenames, optional
+  conversation `source:`. Documented above.
 - 2026-05-21 · feature spec drafted from backlog +
   in-conversation decisions (single verb, Obsidian patterns,
   plugin-first retrieval ladder, transcript-only conversation
@@ -302,6 +335,28 @@ writing anything.
 
 <!-- Newest at top -->
 
+- 2026-05-28 · **Slug-only filenames over date-prefixed.**
+  v1.0 used `<YYYY-MM-DD>-<slug>.md`. Dropped because (a) a
+  rolling reminders list as a directory of dated single-line
+  files is hostile to read, (b) related captures fragment
+  across many files, (c) Obsidian's graph view doesn't care
+  about filename dates — frontmatter `date:` and section
+  headers are sufficient. Trade-off: `ls reminders/` no
+  longer shows dates; have to open the file. Acceptable
+  because the file itself shows `## YYYY-MM-DD` sections.
+- 2026-05-28 · **Vault selector at invocation time over
+  single env var.** v1.0 had `$NOTES_VAULT` only and a
+  sketched-but-unshipped `$NOTES_VAULT_<NAME>` story.
+  Promoted to shipped because real use exposes that one
+  user runs personal + work vaults. Inline-path option
+  (`in /path/to/vault`) added for ad-hoc one-shot writes
+  like the scrap.md migration into Gorantls-store.
+- 2026-05-28 · **`source:` is optional.** v1.0 required
+  `source: audio:<path>` for conversations, but real
+  captures of customer voice and verbatim quotes have no
+  audio file. Adding `notes-from:<who>` and allowing
+  omission keeps the conversation kind useful without
+  fabricating audio paths.
 - 2026-05-22 · **Slack-driven harnesses out of scope for
   v1.** v1 ships skills that work in any AI system that
   loads `~/.claude/skills/` or `~/.kiro/steering/skills/`.
