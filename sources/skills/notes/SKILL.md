@@ -1,7 +1,7 @@
 ---
 name: notes
-description: Capture reminders, insights, 1:1 notes, and conversation transcripts into an Obsidian-shaped vault. Single verb "Add note [in <vault>] for X" classifies the kind, writes the file, and links topics. Disconnected-capture buffer for Obsidian-direct sessions; "merge buffer" routes its entries through the same classifier.
-version: 1.2.0
+description: Capture reminders, insights, 1:1 notes, and conversation transcripts into an Obsidian-shaped vault. Single verb "Add note [in <vault>] for X" classifies the kind, writes the file, and links topics. Disconnected-capture buffer for Obsidian-direct sessions; "merge buffer" routes its entries through the same classifier. When the vault is a git repo with a remote, every verb pulls on open; captures stay uncommitted; "close notes" squashes and pushes.
+version: 1.3.0
 tags: [notes, knowledge, obsidian, capture]
 ---
 
@@ -25,6 +25,10 @@ line `[notes] applies` on its own line.
 - The user says **"show me my buffer"** or **"show me my
   buffer in &lt;vault&gt;"** to print the buffer's current
   contents.
+- The user says **"close notes"**, **"done notes"**, or
+  **"wrap up notes"** (with optional `in <vault>`) to flush
+  the session: pull, squash-commit dirty skill-owned paths,
+  push.
 
 Capture is **always user-driven**. Never volunteer "want me
 to capture that?" mid-session — the user invokes this skill
@@ -48,35 +52,30 @@ at invocation time:
 3. **Default** — `add note for <X>` (no `in <…>` qualifier)
    uses `$NOTES_VAULT` if set, else `$HOME/notes`.
 
-The named-vault env vars are the **recommended** setup for
-multi-machine use — point each at a directory inside an
-iCloud / Dropbox / git-synced folder so captures from any
-host land in the same place. The skill itself is stateless;
-the vault on disk is the cross-machine substrate.
+Named-vault env vars are the recommended setup for
+multi-machine use — the vault on disk is the cross-machine
+substrate; the skill is stateless.
 
 Layout (create missing directories on first capture; never
 delete or rename existing ones):
 
 ```
 <vault>/
-├── inbox/                              unsorted captures (rare)
-├── reminders/<slug>.md                 to-dos; dated sections inside
-├── insights/<slug>.md                  thoughts + topic links
-├── people/<person>.md                  one file per person; append
-├── conversations/<slug>.md             transcripts + pre-amble
-├── topics/<topic>.md                   first-class topic pages
-└── scratch/                            disconnected-capture buffer
-    ├── buffer.md                       active buffer (append in Obsidian)
-    └── buffer-<YYYY-MM-DD>.md          dated archive of a merged buffer
+├── inbox/                 unsorted captures (rare)
+├── reminders/<slug>.md    to-dos; dated sections inside
+├── insights/<slug>.md     thoughts + topic links
+├── people/<person>.md     one file per person; append
+├── conversations/<slug>.md  transcripts + pre-amble
+├── topics/<topic>.md      first-class topic pages
+└── scratch/               disconnected-capture buffer
+    ├── buffer.md          active buffer (append in Obsidian)
+    └── buffer-<DATE>.md   archive of a merged buffer
 ```
 
 **Filenames are slug-only.** Dates live inside the file —
 in the frontmatter `date:` field for one-shot kinds
 (insights, conversations) and as `## YYYY-MM-DD` section
-headers for accumulating kinds (reminders, people). This
-keeps related entries co-located and lets the user open
-e.g. `reminders/inbox.md` to see the whole rolling list,
-not a directory of dated single-line files.
+headers for accumulating kinds (reminders, people).
 
 If the user's existing layout differs (e.g. `todo/` instead
 of `reminders/`), **ask** before creating new directories —
@@ -108,18 +107,13 @@ ask **one** disambiguation question before writing.
 
 ## Frontmatter templates
 
-All kinds share `kind / links`. Insights and conversations
-add `date`. Reminders accumulate dated sections inside a
-single rolling file (so the file itself has no top-level
-`date`).
-
-### Reminder (append a dated section to a rolling file)
-
-The default rolling file is `reminders/inbox.md`. Use a
-topic-area filename (`reminders/q3-launch.md`) when the
-user's reminder is clearly scoped.
+All kinds share `kind` (and `links` where present). One-shot
+kinds (insights, conversations) carry top-level `date:`.
+Accumulating kinds (reminders, people) track date in
+`## YYYY-MM-DD` section headers and have no top-level `date:`.
 
 ```markdown
+# reminders/inbox.md  (or reminders/<topic-area>.md when scoped)
 ---
 kind: reminder
 ---
@@ -134,13 +128,8 @@ kind: reminder
 - review the Q3 doc
 ```
 
-If a reminder has a hard `due:` date, capture it inline:
-`- <body> — due 2026-06-01`. Section headers track
-**capture date** (when added), not due date.
-
-### Insight (one file per insight)
-
 ```markdown
+# insights/<slug>.md
 ---
 date: 2026-05-22
 kind: insight
@@ -148,14 +137,11 @@ topics: [pretty-printing, wadler]
 links: [[pretty-printing]], [[wadler]]
 ---
 
-Wadler's prettier algorithm needs immutable doc trees because
-the `<>` combinator must be associative for the optimal-layout
-reduction to terminate without quadratic blowup.
+<one-shot insight body>.
 ```
 
-### 1:1 / interview (append to per-person file)
-
 ```markdown
+# people/<person>.md  (append a dated section per encounter)
 ---
 kind: person
 ---
@@ -169,41 +155,39 @@ links: [[topic-A]], [[topic-B]]
 - <bullet>
 ```
 
-If `people/<person>.md` already exists, append the dated
-section. Do not rewrite the file head.
-
-### Conversation
-
-`source:` is **optional**. When present, one of:
-
-- `audio:<path>` — triggers transcription (see below).
-- `notes-from:<who>` — hand-captured notes / verbatim quotes
-  the user typed up. No transcription needed.
-
-Omit `source:` entirely for pure-prose captures with no
-discernible source.
-
 ```markdown
+# conversations/<slug>.md
 ---
 date: 2026-05-22
 kind: conversation
-source: notes-from:beth-ramirez
-tags: [#search-friction, #seller-voice]
-links: [[search]], [[discovery]]
+source: notes-from:beth-ramirez   # see "source: is optional"
+tags: [#search-friction]
+links: [[search]]
 ---
 
 ## Pre-amble
 
-<one paragraph: who was in the conversation, what it was
-about, and the goal of the capture>.
+<one paragraph: who, what, goal of capture>.
 
 ## Notes
-
 …
 ```
 
-For audio-sourced conversations, replace `## Notes` with
-`## Transcript`.
+For audio-sourced conversations, `source: audio:<path>` and
+`## Notes` becomes `## Transcript`.
+
+`source:` on a conversation is **optional**. Three shapes:
+
+- `audio:<path>` — triggers transcription (see below).
+- `notes-from:<who>` — hand-captured notes / verbatim quotes.
+- omit — pure-prose capture with no discernible source.
+
+Reminders with a hard `due:` capture it inline:
+`- <body> — due 2026-06-01`. Section headers track
+**capture date**, not due date.
+
+If `people/<person>.md` already exists, append the dated
+section. Do not rewrite the file head.
 
 ## Linking
 
@@ -219,87 +203,66 @@ For audio-sourced conversations, replace `## Notes` with
   # <topic>
   ```
 
-  Never overwrite an existing topic stub. The user grows
-  topic pages over time.
+  Never overwrite an existing topic stub.
 
 - **`#tag`** — loose categorization in `tags:` frontmatter.
-  Use for cross-cutting labels (e.g. `#design-review`,
-  `#urgent`) that aren't worth a topic page.
 
-Insights and 1:1s carry `topics:` (drives the graph view in
-Obsidian). Conversations carry `tags:`. Reminders may carry
-both if they reference an in-flight topic.
+Insights and 1:1s carry `topics:` (drives Obsidian's graph
+view). Conversations carry `tags:`. Reminders may carry both.
 
 ## Conversation transcripts
 
 When the user passes `audio: <path>`:
 
 1. Resolve `<path>` (expand `~`).
-2. Probe for a transcription tool, in this order:
-   - `whisper` (OpenAI whisper CLI)
-   - `whisper-cpp`
-
-   If neither is on `$PATH`, stop and tell the user:
-   "no transcription tool available; pass a transcript
-   instead". Do **not** write a partial conversation file.
-3. Run the tool — typical invocation:
-
-   ```bash
-   whisper "<path>" --output_format txt --output_dir "<tmpdir>"
-   ```
-
-4. Read the produced `.txt` and place it under
-   `## Transcript`.
-5. Delete the temp directory.
-6. Record the audio path under `source: audio:<path>` in
-   frontmatter — but **never copy or move the audio file
-   into the vault**. The vault stores text only.
+2. Probe `$PATH` for a transcription tool, in this order:
+   `whisper` (OpenAI whisper CLI), then `whisper-cpp`. If
+   neither is found, stop and tell the user "no transcription
+   tool available; pass a transcript instead". Do **not**
+   write a partial conversation file.
+3. Run `<tool> "<path>" --output_format txt --output_dir "<tmpdir>"`.
+4. Read the produced `.txt` under `## Transcript`, delete the
+   tmpdir, and record `source: audio:<path>` in frontmatter.
+   Never copy or move the audio file into the vault — the
+   vault stores text only.
 
 ## Retrieval
 
-Three queries, plugin-first ladder. The vault selector
+Three queries. Plugin-first ladder: emit the Obsidian plugin
+query as a code block the user can paste, and offer the
+ripgrep / shell fallback inline. The vault selector
 (`in <name|path>`) works on retrieval verbs too — resolve
-it the same way as for capture, then run the query against
-the resolved vault directory (`<vault>` below).
+the same way as for capture.
 
 ### "Find notes related to X"
 
-1. **Primary: Smart Connections (Obsidian plugin).** Emit a
-   code block the user can paste into Obsidian's search:
+**Smart Connections (Obsidian):**
 
-   ```
-   "X" OR [[X]] OR #X
-   ```
+```
+"X" OR [[X]] OR #X
+```
 
-   Tell the user: *"Paste this into Obsidian's Smart
-   Connections search; if you'd rather a terminal answer,
-   say 'use ripgrep'."*
-2. **Fallback: ripgrep.** When the user picks ripgrep:
+**Ripgrep fallback:**
 
-   ```bash
-   rg -l --no-heading -- "X|\[\[X\]\]|#X" "<vault>"
-   ```
-
-   Return file paths plus a short line of context per hit.
+```bash
+rg -l --no-heading -- "X|\[\[X\]\]|#X" "<vault>"
+```
 
 ### "List notes by topic X"
 
-1. **Primary: Dataview.** Emit:
+**Dataview (Obsidian):**
 
-   ````
-   ```dataview
-   table date, kind from ""
-   where contains(file.outlinks, [[X]]) or contains(topics, "X")
-   sort date desc
-   ```
-   ````
+````
+```dataview
+table date, kind from ""
+where contains(file.outlinks, [[X]]) or contains(topics, "X")
+sort date desc
+```
+````
 
-2. **Fallback: ripgrep** over `[[X]]` and frontmatter
-   `topics:` containing the term.
+**Ripgrep fallback** over `[[X]]` and frontmatter `topics:`.
 
 ### "List recent &lt;kind&gt;"
-
-Use shell — fastest:
 
 ```bash
 find "<vault>/<kind>" -type f -mtime -<N> -printf '%T@ %p\n' \
@@ -309,108 +272,122 @@ find "<vault>/<kind>" -type f -mtime -<N> -printf '%T@ %p\n' \
 Default `<N>` = 14 days unless the user specifies.
 
 For accumulating kinds (reminders, people), files contain
-many dated sections. "List recent reminders" means: open the
-top N rolling files modified in the window, then show their
-last few `## YYYY-MM-DD` sections — not just the file
-mtimes.
+many dated sections — show their last few `## YYYY-MM-DD`
+sections, not just file mtimes.
 
 ## Disconnected capture
 
-The skill is only reachable inside an agent session. When
-the user is in Obsidian directly — no agent — they have no
-inline capture path. The `scratch/buffer.md` file solves
-that: a single free-form file the user appends to during
-disconnected work, which the skill drains on demand.
+The skill is only reachable inside an agent session. The
+`scratch/buffer.md` file gives the user an inline capture
+path while in Obsidian directly.
 
 ### `scratch/buffer.md` shape
 
-Same shape the user already writes by hand: loose markdown,
-optional `## YYYY-MM-DD` sections, optional explicit kind
-prefixes (`insight: …`, `1:1 with Alice: …`, `conversation:
-…`, `reminder: …`) the existing classifier already
-understands. No special schema.
+Loose markdown, optional `## YYYY-MM-DD` sections, optional
+explicit kind prefixes (`insight: …`, `1:1 with Alice: …`,
+`conversation: …`, `reminder: …`) the existing classifier
+already understands. No special schema.
 
-When the buffer is initialized (by the user or by the
-skill on first use), it carries a short header explaining
-how to use it. Below the header, the user appends entries
-freely.
+When the buffer is initialized, it carries a short header
+explaining how to use it. Below the header, the user appends
+entries freely.
 
 ### "Merge buffer in &lt;vault&gt;"
 
 Read `<vault>/scratch/buffer.md`, walk top-level entries
-(each `## …` section, or each blank-line-separated block
-if no headers), and **for each entry, run the existing
-"add note for X" classifier and write path** — same rules
-as a single-prompt capture, applied in a loop. No
-special-case classification. Same disambiguation rules
-(one question max; ambiguous-after-one → `inbox/` with
+(each `## …` section, or each blank-line-separated block if
+no headers), and **for each entry, run the existing "add note
+for X" classifier and write path** — same rules as a
+single-prompt capture, applied in a loop. Same disambiguation
+budget (one question max; ambiguous-after-one → `inbox/` with
 `kind: unsorted`).
 
 After all entries are routed:
 
 1. **Archive** the original buffer body to
    `<vault>/scratch/buffer-<YYYY-MM-DD>.md` (a fresh dated
-   copy each merge). If today's archive already exists,
-   suffix with `-2`, `-3` per the existing slug-collision
-   rule.
-2. **Reset** `<vault>/scratch/buffer.md` to its
-   header-only state so the user has a clean buffer to
-   keep capturing.
-3. **Print a merge report** listing every entry and where
-   it landed. Same shape as `MIGRATION-LOG-2026-05-28.md`
-   in `Gorantls-store`. Also write the report to
-   `<vault>/inbox/merge-report-<YYYY-MM-DD>.md` for the
-   audit trail.
+   copy each merge). If today's archive exists, suffix `-2`,
+   `-3` per the slug-collision rule.
+2. **Reset** `<vault>/scratch/buffer.md` to its header-only
+   state.
+3. **Print a merge report** listing every entry and where it
+   landed, and write the report to
+   `<vault>/inbox/merge-report-<YYYY-MM-DD>.md` for the audit
+   trail.
 
 The user manages the dated archives — the skill never
-deletes them. They're proof that the merge faithfully
-moved content; once the user is confident, they can
-`rm scratch/buffer-2026-*.md` themselves.
+deletes them.
 
-Empty-body buffer → say "buffer empty" and exit without
-writing.
-
-Buffer file missing → say so and stop. The skill does not
-auto-create-and-merge an empty buffer.
+Empty-body buffer → "buffer empty" and exit. Buffer file
+missing → say so and stop; the skill does not auto-create
+and merge an empty buffer.
 
 ### "Show me my buffer in &lt;vault&gt;"
 
-Read and print `<vault>/scratch/buffer.md`. Convenience
-for review before merging.
+Read and print `<vault>/scratch/buffer.md`. Convenience for
+review before merging.
 
 ### Bare forms
 
-`merge buffer` and `show me my buffer` (no `in <…>`) use
-the default vault chain (`$NOTES_VAULT` → `$HOME/notes`).
+`merge buffer` and `show me my buffer` (no `in <…>`) use the
+default vault chain (`$NOTES_VAULT` → `$HOME/notes`).
+
+## Vault git: open / work / close
+
+If the vault has a `.git` directory and a remote configured:
+
+- **Open** — before running any notes verb (capture, retrieve,
+  list, show buffer, merge buffer, close), `git pull --ff-only`
+  in the vault. On failure (divergence, network, auth), surface
+  the git error verbatim and stop the verb.
+- **Work** — captures and buffer merges write their files and
+  return. **No `git add`, no `git commit`** during work. The
+  working tree accumulates dirty files across verbs until close.
+- **Close** — when the user says `close notes`, `done notes`,
+  or `wrap up notes` (with optional `in <vault>`):
+  `git pull --ff-only` again, then `git add` only the dirty
+  paths under skill-owned directories (`inbox/`, `reminders/`,
+  `insights/`, `people/`, `conversations/`, `topics/`,
+  `scratch/`) — never `git add -A`, never `git add <vault>`.
+  Commit in one squash with a path-shaped subject:
+  - one dirty file → that file's path,
+  - one buffer merge → `merge buffer (<N>)`,
+  - multiple → comma-joined paths up to ~70 chars,
+    overflowing as `…and K more`.
+
+  Then `git push` with `GIT_TERMINAL_PROMPT=0`.
+
+Edge cases (apply uniformly):
+
+- No `.git` → skip the git flow entirely; verbs run as today.
+- `git remote` empty → skip pull and push; the close commit
+  still happens locally.
+- Detached HEAD, mid-rebase, mid-merge → say
+  `vault git skipped: <reason>` and stop.
+- Push fails → one-line `vault push failed: <stderr line>`
+  warning; the commit stays; verb returns success.
+- Close finds nothing dirty → say `nothing to close` and stop;
+  do not commit empty.
 
 ## Behaviour rules
 
-- **Never overwrite** an existing file (insight, conversation,
-  topic stub). Append dated sections to accumulating files
-  (reminders, people). For one-shot kinds (insights,
-  conversations), slug collision means find a suffix
-  (`-2`, `-3`).
+- **Never overwrite** an existing file. For accumulating
+  kinds (reminders, people), append a dated section. For
+  one-shot kinds (insights, conversations), slug collision
+  means find a suffix (`-2`, `-3`).
 - **Never copy audio** into the vault. Transcript only.
 - **Never volunteer captures.** Only act on explicit verbs.
 - **Honour the vault selector.** Inline path > named vault
   env var > `$NOTES_VAULT` > `$HOME/notes`. A named vault
   whose env var is unset is an error, not a fall-through.
-- **One disambiguation question max** before writing. If
-  still unclear, default to `inbox/` with
-  `kind: unsorted` and tell the user where it landed.
-- **Merge is destructive-with-archive.** `scratch/buffer.md`
-  resets to its header-only state after a successful merge;
-  the body is preserved verbatim in `scratch/buffer-<DATE>.md`.
-- **The skill never deletes archive files.** Cleanup of
-  `scratch/buffer-<DATE>.md` is user-driven.
-
-## Known limits (v1)
-
-- No semantic search; Dataview / ripgrep only.
-- No watch-mode; the skill doesn't surface "this reminds
-  me of a note from two weeks ago".
-- Transcription depends on `whisper` / `whisper-cpp` being
-  on `$PATH`.
-
-These are tracked in `specs/backlog/notes-mcp-server.md` for
-the v2 promotion to a typed MCP server.
+- **One disambiguation question max** before writing. Still
+  unclear → `inbox/` with `kind: unsorted` and tell the user
+  where it landed.
+- **Pull on open, commit on close.** Every notes verb runs
+  `git pull --ff-only` first. Work-phase verbs never commit;
+  commit + push happens only on explicit `close notes`.
+- **Never `git add -A`.** At close, stage by directory scope
+  (the seven skill-owned directories). Hand-edits inside those
+  directories during a session fold into the close commit.
+- **Push failure is a warning, not an error.** The commit
+  stays local; the verb returns success.

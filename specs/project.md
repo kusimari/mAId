@@ -132,6 +132,24 @@ revisions add `test:functional` (judge mode) as their A/B
 evidence. The §9 close-out can run `test:smoke` after a
 deploy to confirm symlinks resolved.
 
+### Functional tests are user-driven
+
+Agentic runs (an AI assistant working through this project)
+**must** stop at `test:smoke`. The judge-mode functional
+suite costs API credits and takes minutes; whether to spend
+that budget on a given change is a human call. The agent
+prepares the fixture, names the exact command, and hands
+off — it does not run it.
+
+Commands the user runs by hand:
+
+- All functional fixtures: `deno task test:functional`
+- A single fixture: `./tests/functional/run <name>` (e.g.
+  `./tests/functional/run notes-git-commit`).
+
+The fixture file's basename (without `.smoke`) is the
+`<name>`.
+
 Quality gate: `deno task fmt` + `deno task lint` + `deno task
 check`. Run after any implementation slice.
 
