@@ -1,19 +1,26 @@
 ---
 name: kdevkit
-description: Spec-driven development workflow — project invariants, feature specs, backlog. Three nested loops (project → feature → agent-dev) with codified close-outs. Phase gating, Conventional Commits, Quality/Test/Push/Review gates, feature-loop squash-merge close-out. Public-repo hygiene. Auto-detects specs/, docs/specs/, or .kdevkit/.
-version: 2.2.1
+description: Spec-driven development workflow — project invariants, feature specs, backlog. Three nested loops (project → feature → agent-dev) with codified close-outs. Three-phase feature branch (planning → agent-dev → closure) — each phase commits and reviews on its own; main stays single-commit-per-feature via squash. Phase gating, Conventional Commits, Quality/Test/Push/Review gates. Public-repo hygiene. Auto-detects specs/, docs/specs/, or .kdevkit/.
+version: 2.3.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, public-repo]
 ---
 
 # kdevkit — spec-driven development workflow
 
-Three nested loops:
+Three nested loops, with three phases on the feature branch:
 
 ```
 project loop      ← project.md invariants. Cross-feature.
-  feature loop    ← one branch, one merge. Closes via §9.
-    agent-dev loop ← Quality → Test → Push → Review. Closes via §8.
+  feature loop    ← one branch, three phases, one squash-merge.
+    ├─ planning phase    plan(<feature>): commits + Review Gate
+    ├─ agent-dev loop    feat/fix/...: Quality → Test → Push → Review (§8)
+    └─ closure phase     close(<feature>): reconcile + squash-merge (§9)
 ```
+
+The branch carries all three phases on the same PR/CR; the body is
+rewritten at each phase boundary. The §9 squash-merge collapses every
+phase into one commit on `main`, preserving "one logical commit per
+feature."
 
 Three surfaces, one per loop scope:
 
@@ -112,16 +119,34 @@ thresholds, retry budgets, review-tool commands, etc.).
 kdevkit reads this block when present; absent, it runs from
 the Testing section's prose plus its own defaults.
 
+Recognised keys under the `kdevkit` block:
+
+- `prefer_worktree: true|false` — feature-start worktree
+  recommendation (see §3).
+- `planning_phase: true|false` (default `true`) — three-phase
+  feature branch (planning → agent-dev → closure) per §6/§8/§9.
+  Set `false` to revert to spec-bundled-with-code review.
+
 ## 3 · Load feature context
 
 At feature-start (cues: "let's start / continue / pick up
-<feature>", or a branch like `feat/user-auth`), do all three
+<feature>", or a branch like `feat/user-auth`), do all four
 of these checks before the first implementation slice — they
 are parallel decisions, not optional:
 
 1. **Locate or promote the feature spec.**
 2. **Check `project.md` for a worktree preference.**
 3. **Proceed under §6 phase gating.**
+4. **Plan to commit the spec.** When the four-interview
+   setup (or backlog promotion) yields a populated
+   `specs/feature/<feature>.md`, that file becomes the first
+   commit on the feature branch — `plan(<feature>): initial
+   spec` — and ships through the §8 Planning Review Gate
+   before any code work starts. Wait for the explicit cue
+   ("plan the feature" / "ready to commit the spec") before
+   pushing; phase gating still applies. Skip this step only
+   if the project's `kdevkit` block declares
+   `planning_phase: false` (§2).
 
 Detail for each follows.
 
@@ -130,7 +155,14 @@ Detail for each follows.
 Derive `$SPEC_ROOT/feature/<feature-name>.md` (lowercase,
 hyphenated).
 
-- File has content → load silently.
+- File has content → load silently and **start in the
+  planning phase**, not agent-dev. Even when Requirements /
+  Design / Test Strategy / Implementation Plan are all
+  populated, confirm with the user that the spec is ready
+  as-is or whether the planning round should iterate before
+  any code is written. A spec being complete on disk does not
+  mean it has been *reviewed*. The planning → agent-dev cue
+  (§6) is the gate.
 - File is missing → first check
   `$SPEC_ROOT/backlog/<feature-name>.md`. If a matching item
   is scoped there, promote it via `git mv` into `feature/`
@@ -269,6 +301,34 @@ What/Why.
   don't batch to end-of-feature.
 - New commits, never amends, unless the user explicitly asks.
 
+#### Phase-typed commits on the feature branch
+
+Two extra types encode the feature-branch phase in the subject
+line. Existing types (`feat` / `fix` / `chore` / `docs` /
+`refactor` / `test`) are the **agent-dev** vocabulary,
+unchanged.
+
+- **`plan(<feature>): subject`** — planning-phase commits.
+  Scope is the feature name. Touches only
+  `specs/feature/<feature>.md` (and rarely
+  `specs/backlog/<item>.md` when promoting). No code edits.
+- **`close(<feature>): subject`** — closure-phase commits.
+  Reconciles in-flight markers in the feature spec, applies
+  any soft `project.md` verify edit, removes resolved
+  backlog items. Code stays untouched here — drift found at
+  closure goes back to agent-dev.
+
+The squash-merge at §9.6 collapses every phase into one
+commit on `main`; the type encoded in commits is the
+on-branch narrative for reviewers, not the on-`main` shape.
+
+Projects whose CI enforces a closed Conventional-Commits set
+substitute `docs(spec/<feature>): plan — …` and
+`chore(close/<feature>): …`; the phase signal in the subject
+is what matters, the literal verb is secondary. Document the
+substitution in the project's `## Agent Development` →
+`kdevkit` block.
+
 ### Pull Requests
 
 - Title: same `type(scope): subject` shape.
@@ -289,15 +349,30 @@ of work — a decision made, a subtask completed, an open question
 answered — update the feature file's Session Log / Decision Log
 before starting the next unit. Do not batch.
 
-**Phase gating.** Do not chain phases automatically. After
-each phase (requirements, design, test strategy,
-implementation of a slice), stop and wait for explicit
-instruction before starting the next; phase order is flexible.
-The agent-dev loop's Push + Review-open is a single phase —
-both gates green is the implicit approval to close the inner
-loop. The feature close-out (§9) is a distinct phase, gated on
-an explicit human cue ("close it" / "ship it" / "merge it" /
-"feature done").
+**Phase gating.** Do not chain phases automatically. Two
+gating layers stack:
+
+- **Interview phases** (within feature setup): requirements /
+  design / test strategy / implementation plan. Stop after
+  each; phase order is flexible.
+- **Branch phases** (the three rounds on the feature
+  branch): planning / agent-dev / closure. Stop at each
+  boundary. The boundaries are gated on these cues:
+  - **Planning → agent-dev**: `"spec looks good"` /
+    `"start build"` / `"plan approved"` / equivalent.
+  - **Agent-dev → closure**: `"close it"` / `"ship it"` /
+    `"merge it"` / `"feature done"` / equivalent.
+
+Within a phase, the agent-dev loop's Push + Review-open is a
+single step — both gates green is the implicit approval to
+close the inner loop and continue agent-dev iterations.
+Closure (§9) is its own phase, entered only on the explicit
+agent-dev → closure cue.
+
+If `## Agent Development` → `kdevkit` declares
+`planning_phase: false`, skip the planning phase entirely —
+spec edits ride with the first agent-dev commit per the older
+convention.
 
 **Assumptions within a phase.** If input is ambiguous, present
 a brief plan and wait for approval. If the path is clear, act
@@ -309,6 +384,19 @@ immediately.
 
 **Feature completion.** Driven by §9. The project.md
 update offer lives there as a soft step.
+
+### Three-phase cheat-sheet
+
+```
+planning   plan(<feature>):    spec only      → planning Review Gate
+agent-dev  feat/fix/...:       implementation → agent-dev Review Gate
+closure    close(<feature>):   reconcile      → closure Review Gate → squash-merge
+```
+
+One branch, one PR/CR, one squash-merge. Body rewritten at
+each phase boundary. PR title rewritten to the dominant
+`feat(<scope>): subject` at the Closure Review Gate so
+`main`'s squash-merge subject matches §5.
 
 ## 7 · Public-repo hygiene
 
@@ -402,32 +490,61 @@ loud.
 
 ### Review Gate
 
-Terminal step of the agent-dev loop. Fires after Push when
-both prior gates passed cleanly. Opens (or updates) the PR /
-CR for this branch and returns the URL.
+Fires after Push when both prior gates passed cleanly. Opens
+or updates the PR/CR for this branch and returns the URL.
+Same gate runs at each branch-phase boundary (planning /
+agent-dev / closure); the body shape changes per phase, the
+gate logic does not.
 
 **Refuse-on-fail.** If a prior gate failed or finished with
 residual issues noted, do not open a review. Surface what
 failed and require an explicit override.
 
-**1 · Body shape.** Title: `type(scope): subject` (per §5).
-Body required: **Why** (one paragraph — motivation, not file
-changes; the diff is authoritative for *what*) and
-**Approach** (bullets covering the actual changes). Suggested
-when warranted: **Verification** (commands + results),
-**Reading guide** (file order with compare-against hints),
-**Pairs with** (cross-repo links). Match §5's PR rule (body =
-why + approach) — don't impose more structure on small diffs.
+**1 · Body shape — per phase.** Title is `type(scope):
+subject` (per §5).
+
+- **Planning Review Gate** — fires after a `plan(<feature>):`
+  commit is pushed. Title: `plan(<feature>): subject`. Body:
+  **Why** (motivation) + **Spec summary** (Requirements /
+  Design / Test Strategy / Implementation Plan, one line
+  each) + **Open questions** (anything the planning round
+  needs reviewer input on). PR/CR opens as a normal review,
+  not draft — the `plan(...)` title prefix carries the phase
+  signal across hosts that don't have a draft concept.
+- **Agent-dev Review Gate** — fires after each agent-dev
+  push. Title: `feat(scope): subject` etc. Body: **Why**
+  (motivation, not file changes; the diff is authoritative
+  for *what*) + **Approach** (bullets covering the actual
+  changes). Suggested when warranted: **Verification**
+  (commands + results), **Reading guide** (file order with
+  compare-against hints), **Pairs with** (cross-repo links).
+  Match §5's PR rule — don't impose more structure on small
+  diffs.
+- **Closure Review Gate** — fires after the `close(<feature>):`
+  commits are pushed. **Title is rewritten** to the dominant
+  agent-dev subject (`feat(<scope>): subject` /
+  `fix(<scope>): subject` / `refactor(<scope>): subject`),
+  *not* the `close(<feature>):` subject. Reason: hosts that
+  inherit the PR title onto the squash-merge commit (e.g.
+  GitHub) need `main`'s history to read as a feature
+  ship, not a closure mechanic. Body: rewrite to final shape
+  — **Why** + **Approach** + **Verification** + optionally
+  **Reading guide** / **Pairs with** / **Spec & docs touched
+  at close-out**.
 
 **2 · Body grep.** Run §7's internal-marker grep against the
 prepared title + body before submission. Hit → fail loud,
-surface lines, abort.
+surface lines, abort. Fires at every phase — the planning
+Review Gate is the *first* place it runs for a given
+feature, catching internal names early before any
+implementation work.
 
-**3 · Update vs. create.** Look up an existing review on this
-branch. If found, update its body. Otherwise, create a new
-one.
+**3 · Update vs. create.** One PR/CR per branch. On the first
+phase boundary (typically planning), create. On subsequent
+boundaries, update — rewrite the body to the phase shape
+above.
 
-**4 · Return the URL** as the last line of inner-loop output.
+**4 · Return the URL** as the last line of phase output.
 
 ## 9 · Feature close-out loop
 
@@ -441,14 +558,47 @@ user's role stays at "approve the review" and "give the close
 cue." Specific commands resolve via the order in §8 intro
 (implicit → kdevkit block → ask + persist).
 
+Steps 1–3 are spec / docs / backlog edits that get **staged
+together** and land as `close(<feature>):` commits on the
+feature branch *before* the squash-merge. Asking step 3 is
+mandatory even when the answer is "none" — *asking is the
+artifact*. This guarantees `project.md` updates and backlog
+cleanup ride into the squash-merge as part of the one-logical-
+commit-per-feature on `main`, instead of trailing as separate
+post-merge commits.
+
 **1 · Reconcile in-flight markers in the feature spec.** Sweep
 `$SPEC_ROOT/feature/<feature>.md` for unchecked Implementation
 Plan items, open Decision Log entries, unresolved questions.
 Resolve in place or move out — to the backlog or a follow-up
 feature. The merged feature spec is "done in place"; do not
-move directories.
+move directories. Stage the spec edits.
 
-**2 · Squash merge to `main`** — one logical commit per
+**2 · Soft `project.md` verify.** Re-run §6's offer to update
+`project.md` with what changed. Decline is fine; close-out
+continues either way. Not a hard block. Stage any edits the
+user accepts.
+
+**3 · Backlog cleanup (interactive).** List
+`$SPEC_ROOT/backlog/` contents and ask:
+
+> _"Which backlog items did this feature close out? Pick any
+> that apply, or 'none'."_
+
+`git rm` the chosen ones. Unchosen items stay. Asking is
+mandatory even when the answer is "none".
+
+**4 · Commit + push the closure phase.** All staged closure
+edits land in one or more `close(<feature>):` commits per §5.
+Push to upstream.
+
+**5 · Closure Review Gate.** Run §8's Review Gate in closure
+mode — body rewritten to final shape, PR/CR title rewritten
+to the dominant agent-dev subject (`feat(<scope>):` etc.) so
+the squash-merge commit on `main` reads as a feature ship.
+Internal-marker grep fires.
+
+**6 · Squash merge to `main`** — one logical commit per
 feature on the main history. Exceptions:
 
 - Single-commit branch: plain merge or squash produce the same
@@ -461,24 +611,12 @@ feature on the main history. Exceptions:
   locally, then commit and push (the review tool can't be the
   merger).
 
-**3 · Branch cleanup.** Delete the feature branch from local
+**7 · Branch cleanup.** Delete the feature branch from local
 **and** remote, then prune stale remote refs. Deletion is the
 declared default for merged feature branches — surface it as
 one line, do not pause for permission.
 
-**4 · Soft `project.md` verify.** Re-run §6's offer to update
-`project.md` with what changed. Decline is fine; close-out
-continues either way. Not a hard block.
-
-**5 · Backlog cleanup (interactive).** List
-`$SPEC_ROOT/backlog/` contents and ask:
-
-> _"Which backlog items did this feature close out? Pick any
-> that apply, or 'none'."_
-
-`git rm` the chosen ones. Unchosen items stay.
-
-**6 · Worktree teardown — offer-only.** If the current working
+**8 · Worktree teardown — offer-only.** If the current working
 directory is a non-primary worktree, surface its path and
 offer to remove it. Do not auto-remove — the worktree may
 have artifacts (logs, scratch files, debug output) worth
