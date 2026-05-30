@@ -221,6 +221,23 @@ change.
 
 <!-- newest at top -->
 
+- 2026-05-30 · **Compression pass on PR #11.** Reviewer feedback on
+  `2d46ef9` asked for aggressive compression — the skill is loaded on
+  every kdevkit-aware session and verbose prose erodes the always-on
+  signal. Reused the per-rule audit methodology from the May 2026 pass
+  (recorded in
+  `specs/feature/kdevkit-feature-and-agent-dev-loops.md` Decision Log):
+  Explore-agent classified passages into rule_only /
+  rule_plus_load_bearing_rationale / rule_plus_narrative_rationale /
+  worked_example / host_specific_mapping / template; cut policy dropped
+  the latter three categories. Applied 31 edits across §1–§9. Result:
+  628 → 473 lines (~25% cut). All load-bearing tokens still present
+  (verified by grep): `plan(<feature>)`, `close(<feature>)`,
+  `planning_phase`, `prefer_worktree`, threshold **70**, retry budget
+  **2**, `Conventional Commits`, `Co-Authored-By`, "asking is the
+  artifact". Section numbering §1–§9 intact. Quality + Test gates
+  green; functional smokes deferred to user-driven judge runs.
+
 ## Decision Log
 
 - **Planning PR opens normal, not draft.** Considered draft mode on hosts
@@ -241,3 +258,16 @@ change.
   history read as a closure mechanic instead of the feature itself.
   Rewriting at the Closure Review Gate is one extra step but produces a
   faithful `main` history.
+- **2026-05-30 · Second compression pass — methodology reuse.** Same
+  per-rule audit + cut classifier as the May 2026 pass. Skill is
+  always-on context for long feature sessions; verbose prose erodes
+  recall. Cuts targeted: `project.md` and backlog template HTML
+  comments (intent prompts to a human author, not load-bearing rules);
+  duplicated phase-gating prose between §3 and §6; verbose intros to
+  numbered lists in §8 and §9; the §6.3 cheat-sheet's restatement
+  paragraph; the §8 command-resolution numbered list (folded to one
+  sentence). Kept verbatim: every protected rule (§5 commit types
+  incl. `plan`/`close`, §8 score 70 / retry 2, §9 numbered step
+  sequence, the feature-file template the agent fills as a prompt,
+  §7's grep rule). Behavior verification is judge-mode user-driven —
+  fixtures unchanged, surfaced for the user to run before merge.
