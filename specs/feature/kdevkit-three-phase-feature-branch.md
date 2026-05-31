@@ -221,6 +221,27 @@ change.
 
 <!-- newest at top -->
 
+- 2026-05-31 · **Rev-3 session-arc restructure on PR #11.** Reviewer
+  follow-up after the rev-2 compression: proposed reorganising the
+  skill from "reference manual organized by surface" (project / spec /
+  backlog / git practices / session / hygiene / dev / closure) to a
+  session-arc outline (locate → load project → load feature → start
+  session → run session → cross-cutting). Critique landed four
+  refinements before implementing: (1) operational gating (YOLO,
+  ambiguous → plan) stays in §5, not §9, since these fire during
+  phase execution rather than as cross-cutting hygiene; (2) each
+  phase section ends with an explicit `Apply:` pointer naming the §9
+  rules that fire there, protecting agent recall when a rule and its
+  application site are in different sections; (3) §3 states the
+  spec-already-drafted rule + its consequence (→ §6 Planning, not §7
+  Dev) in one sentence so the rule survives an agent reading §3
+  alone; (4) §9 header is labelled `Cross-cutting rules (always-on)`
+  so the agent reads it as fire-everywhere, not fire-once. Result:
+  473 → 505 lines. Net delta is small growth (~7%) — the structure
+  win comes from the reordering, not from cuts. All load-bearing
+  tokens preserved; cross-references resolve cleanly. Bumped version
+  2.3.0 → 2.4.0.
+
 - 2026-05-30 · **Compression pass on PR #11.** Reviewer feedback on
   `2d46ef9` asked for aggressive compression — the skill is loaded on
   every kdevkit-aware session and verbose prose erodes the always-on
@@ -258,6 +279,23 @@ change.
   history read as a closure mechanic instead of the feature itself.
   Rewriting at the Closure Review Gate is one extra step but produces a
   faithful `main` history.
+- **2026-05-31 · Session-arc outline (rev 3).** Reviewer's outline
+  reorders the skill so reading top-to-bottom matches the order an
+  agent acts: locate → load project → load feature → start session →
+  run (planning / dev / closure) → cross-cutting rules. The reference-
+  manual layout we had before forced agents to assemble the
+  three-phase model from §6 (session behaviour), §8 (dev loop), and
+  §9 (closure) — three sections that are siblings of the same thing.
+  Refinements applied before implementation: (1) operational gating
+  (YOLO, ambiguous → plan) stays in §5 (Run feature session), not
+  §9 (Cross-cutting), since these fire *during* execution; (2) §6 /
+  §7 / §8 each end with an explicit `Apply: §9 grep + commit
+  hygiene` pointer so the cross-reference is one hop, not assembled;
+  (3) the spec-already-drafted rule lives in §3 with its consequence
+  ("→ §6 Planning, not §7 Dev") in the same sentence; (4) §9 header
+  carries the `(always-on)` label so the agent reads it as
+  fire-everywhere. Single-digit unique numbering (the reviewer's
+  draft outline had two §5s).
 - **2026-05-30 · Second compression pass — methodology reuse.** Same
   per-rule audit + cut classifier as the May 2026 pass. Skill is
   always-on context for long feature sessions; verbose prose erodes
