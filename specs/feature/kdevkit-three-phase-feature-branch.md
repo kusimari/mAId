@@ -182,44 +182,78 @@ change.
 
 ## Implementation Plan
 
+All ten items shipped via `2d46ef9 feat(kdevkit): three-phase feature
+branch — plan/agent-dev/close`. Two follow-up revisions landed on the
+same branch under reviewer feedback:
+
+- `89b93de refactor(kdevkit): compress SKILL.md (628 → 473 lines, ~25%)`
+  — per-rule audit + cuts of narrative rationale, worked examples,
+  host mappings.
+- `529702b refactor(kdevkit): restructure SKILL.md to session-arc outline`
+  — §1–§9 reordered to read top-to-bottom in the order an agent acts:
+  locate → load project → load feature → start session → run session
+  (planning / dev / closure) → cross-cutting rules (always-on).
+
+### Original ten-step plan
+
 1. Bump frontmatter version + description in
-   `sources/skills/kdevkit/SKILL.md`.
-2. Add the "phases on the feature branch" preamble sub-block.
+   `sources/skills/kdevkit/SKILL.md`. ✓
+2. Add the "phases on the feature branch" preamble sub-block. ✓
 3. Add the `planning_phase` opt-out key to §2's Optional `## Agent
-   Development` section paragraph.
+   Development` section paragraph. ✓
 4. Edit §3: append spec-already-drafted handling to "Locate or create the
    feature spec", and append the planning-phase commit point as a fourth
-   check.
+   check. ✓
 5. Edit §5: append `plan(<feature>):` and `close(<feature>):` bullets to
-   Commits, plus the strict-CI substitution note.
+   Commits, plus the strict-CI substitution note. ✓
 6. Edit §6: rewrite the phase-gating paragraph to name the three branch
-   phases + cues. Optionally append the cheat-sheet block.
-7. Edit §8: restructure the Review Gate subsection to fire per phase.
+   phases + cues. Optionally append the cheat-sheet block. ✓
+7. Edit §8: restructure the Review Gate subsection to fire per phase. ✓
 8. Edit §9: reorder the close-out steps so reconciliation /
    `project.md` verify / backlog cleanup are commits before the squash-
-   merge.
-9. Run Quality + Test gates locally.
+   merge. ✓
+9. Run Quality + Test gates locally. ✓
 10. Stage + commit per the new convention; push the feature branch; open
-    the PR via the planning Review Gate (dogfood).
+    the PR via the planning Review Gate (dogfood). ✓
 
-### Risk notes
+### Risk notes (resolved)
 
-- Skill is consumed live by every kdevkit-aware session. Misnumbered
-  headings or broken markdown ripple immediately. The diff review must
-  confirm §1–§9 number cleanly after edits.
-- The planning-phase commit becomes the first impression of every
-  feature for reviewers. The body shape (Why + Spec summary + Open
-  questions) must read well at first glance — overly prescriptive
-  phrasing risks turning the PR description into a re-paste of the spec
-  itself.
-- The "title rewrite at Closure Review Gate" rule is new; agents that
-  miss it will leave `close(<feature>):` as the squash-merge subject on
-  `main`, regressing §5. The rule needs to be load-bearing in §8's
-  Closure Review Gate paragraph, not a sidebar.
+- **Skill is consumed live by every kdevkit-aware session.** Section
+  numbering audit ran after every edit; §1–§9 stayed clean across all
+  three commits.
+- **Planning-phase commit as first impression.** The PR #11 planning
+  body (`49184a2`) used Why + Spec summary + Open questions; reviewer
+  engaged with the Open questions block, which is the intended use.
+- **Title rewrite at Closure Review Gate.** Encoded in §8 step 5 of
+  the new SKILL.md and applied at this very close-out.
+
+### Out-of-band manual verification (deferred)
+
+Functional smoke fixtures (`tests/functional/skills/kdevkit-*.smoke`)
+are user-driven per `specs/project.md`'s Testing rule. The
+restructure changed section names; judge fixtures'
+`expected_narrative` may need re-tune. Flagged in the rev-3 PR body.
 
 ## Session Log
 
 <!-- newest at top -->
+
+- 2026-05-31 · **Feature closed via §8 close-out.** Shipped as PR #11.
+  Four commits across the branch (planning + behavior + compression +
+  restructure):
+  - `49184a2 plan(kdevkit-three-phase-feature-branch): initial spec`
+  - `2d46ef9 feat(kdevkit): three-phase feature branch — plan/agent-dev/close`
+  - `89b93de refactor(kdevkit): compress SKILL.md (628 → 473 lines, ~25%)`
+  - `529702b refactor(kdevkit): restructure SKILL.md to session-arc outline`
+  - (plus this close-out commit)
+
+  Closure round dogfooded the new §8 sequence: reconciliation +
+  project.md verify (no edits needed) + backlog cleanup
+  (`kdevkit-planning-and-closeout-hardening.md` `git rm`'d as
+  resolved by this feature). Closure Review Gate rewrote PR title
+  from `plan(...)` to `feat(kdevkit): three-phase feature branch —
+  plan/agent-dev/close` per §5 so the squash-merge commit on `main`
+  reads as a feature ship.
 
 - 2026-05-31 · **Rev-3 session-arc restructure on PR #11.** Reviewer
   follow-up after the rev-2 compression: proposed reorganising the
