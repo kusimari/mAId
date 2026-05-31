@@ -1,7 +1,7 @@
 ---
 name: kdevkit
 description: Spec-driven development workflow — locate spec tree, load project + feature context, start a session, run it through planning → dev loop → closure with phase-gating cues, ship via Conventional Commits and Quality/Test/Push/Review gates. Three-phase feature branch on a single PR/CR; main stays single-commit-per-feature via squash. Public-repo hygiene. Auto-detects specs/, docs/specs/, or .kdevkit/.
-version: 2.4.0
+version: 2.5.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, public-repo]
 ---
 
@@ -231,14 +231,19 @@ fresh.
 ### Four short interviews
 
 One per topic; skip what existing project context already
-answers.
+answers. Order matters: tests sit immediately after requirements
+so success criteria are declared before the design converges —
+the dev loop (§7) then has a verifiable target, not a sketch to
+validate after the fact.
 
 1. **Requirements.** Problem? Who interacts? Acceptance
    criterion?
-2. **Design.** Technical approach, components, interactions,
+2. **Test strategy.** Per `project.md`'s Testing section: which
+   layers fire for this change, what are the success criteria,
+   what's load-bearing vs. nice-to-have? Map onto existing test
+   commands; don't invent new layers.
+3. **Design.** Technical approach, components, interactions,
    trade-offs.
-3. **Test strategy.** Test kinds (unit / integration / smoke /
-   manual), which are load-bearing, key scenarios.
 4. **Implementation plan.** Ordered tasks + risk notes.
 
 ### Feature file template
@@ -259,13 +264,13 @@ answers.
 
 <bullet list>
 
+## Test Strategy
+
+<success criteria mapped onto project.md test layers>
+
 ## Design
 
 <technical approach, components, interactions>
-
-## Test Strategy
-
-<validation approach, key scenarios>
 
 ## Implementation Plan
 
@@ -290,7 +295,7 @@ work; skip if `planning_phase: false` (§2).
 
 Fires after the `plan(<feature>):` push. Title:
 `plan(<feature>): subject`. Body: **Why** + **Spec summary**
-(R / D / T / I one-liners) + **Open questions**. Open as a
+(R / T / D / I one-liners) + **Open questions**. Open as a
 normal review, not draft — the title prefix carries the phase
 signal across hosts.
 
@@ -327,6 +332,13 @@ block → ask once and persist.
      in the Session Log.
 
 ### Test Gate
+
+Tests are part of the same iteration as the behavior change —
+not a follow-up. When an implementation slice changes a behavior
+the project's tests evaluate, the test update lands in the same
+loop iteration, before the Push Gate. The §6 Test Strategy maps
+each success criterion to a project test layer; the Test Gate
+verifies them.
 
 1. Run tests. All pass (zero failures, zero errors).
 2. On failure: diagnose, fix, re-run. Default budget: **2**
