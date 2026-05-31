@@ -15,16 +15,65 @@ rule in §3, two new commit types (`plan(<feature>):` /
 restructured §8 close-out that stages reconciliation + project.md
 verify + backlog cleanup as commits *before* the squash-merge.
 
-The judge-mode functional smoke fixtures under
-`tests/functional/skills/kdevkit-*.smoke` were authored against the
-old §6/§8/§9 structure and pre-three-phase semantics. They no longer
-match the live skill's behavior contract — running them today against
-the merged skill will judge it against an obsolete narrative.
+Two related gaps surfaced when reviewing this CR:
 
-This feature realigns the four existing fixtures to the new structure
-and adds a fifth fixture for the planning-phase entry behavior.
+1. **Fixtures didn't update with the implementation.** The judge-mode
+   functional smoke fixtures under
+   `tests/functional/skills/kdevkit-*.smoke` were authored against
+   the old §6/§8/§9 structure. The agent-dev loop on PR #11 made
+   substantial structural edits but never updated the tests that
+   evaluate the change — so the live skill is now judged against an
+   obsolete narrative. This is a **symptom**, not the root cause.
+2. **The root cause: feature planning has tests *after* design.**
+   With the current §6 interview order
+   (Requirements → Design → Test Strategy → Implementation Plan),
+   tests are a downstream concern that the dev loop can drift away
+   from. If tests are designed *after* implementation is sketched,
+   they describe what the agent built, not what success means. By
+   the time the dev loop is running, tests are already the lowest-
+   priority item in the spec. **Reordering** to
+   Requirements → **Test Strategy** → Design → Implementation Plan
+   forces tests to describe success criteria before the design
+   converges, so the dev loop has a target to verify against.
+
+This feature does both: reorder §6's interview structure (and the
+feature-file template) to put tests before design, and realign the
+five fixtures to the new structure.
 
 ## Requirements
+
+### Reorder §6 interviews and feature-file template
+
+The current §6 four-interview order — Requirements → Design → Test
+Strategy → Implementation Plan — treats tests as a downstream
+concern. Reorder to **Requirements → Test Strategy → Design →
+Implementation Plan** so tests describe success criteria before the
+design converges. The dev loop now has a verifiable target instead
+of a sketch-after-the-fact validation step.
+
+Reordering touches:
+
+- §6 "Four short interviews" — reorder the numbered list (no prose
+  rewrite of individual interview prompts).
+- §6 "Feature file template" — reorder the headers
+  (`## Test Strategy` moves above `## Design`).
+- §6 "Planning Review Gate" body-shape spec — the **Spec summary**
+  block currently lists `R / D / T / I one-liners`; update to
+  `R / T / D / I` to match the new order.
+
+The Test Strategy interview should also lean explicitly on
+`project.md`'s Testing section — when the project declares which
+test layers are load-bearing, the feature's tests should map onto
+those layers, not invent a new structure. Tighten the interview
+prompt to call this out: *"Test strategy. Per project.md's Testing
+section: which layers fire for this change, what are the success
+criteria, what's load-bearing vs. nice-to-have?"*
+
+This reorder also affects every existing feature spec on disk
+(`specs/feature/*.md`). They stay as-is — the rule applies to new
+specs from this point forward; existing files keep their authored
+shape (rev-2 compression precedent). The closure-phase reconcile
+sweep doesn't rewrite section order on shipped features.
 
 ### Update existing fixtures
 
@@ -112,43 +161,69 @@ A/B evidence.
 
 ## Test Strategy
 
-- **Quality gate (load-bearing):** `deno task fmt` + `deno task lint`
-  + `deno task check`. Fixture files are plain-text, so the gates run
-  against the maid/ + tests/ trees only and confirm nothing else
-  broke.
-- **Test gate (load-bearing):** `deno task test:unit` — the existing
-  22-test suite. Should pass unchanged; fixtures aren't a consumed
-  surface.
-- **Smoke (load-bearing):** `deno task test:smoke` — confirms the
-  fixtures are well-formed (the harness parses every `.smoke` file
-  and exits non-zero on a malformed one) and that the kdevkit symlink
-  still resolves.
-- **Functional (judge mode, user-driven):** the *behavior* signal for
-  this feature is the user running `deno task test:functional` (or a
-  single fixture via `./tests/functional/run <name>`) against the
-  updated kdevkit skill. The agent prepares the fixtures and hands
-  off; whether to spend the API budget is a human call.
-- **A/B baseline:** none formally captured. The previous
-  fixture-update pass (May 2026) ran A (pre-edit) before B
-  (post-edit) for each fixture; this pass can do the same when the
-  user runs the judge.
+Per `specs/project.md`'s Testing section, this project has four
+layers: `test:unit` (load-bearing, default §7 Test Gate),
+`test:smoke` (load-bearing, post-deploy structural check),
+`test:functional` (user-driven judge mode), and `test:all`
+(chained). Success criteria for this feature map onto each layer:
+
+- **Success criterion 1 — SKILL.md still loads cleanly.**
+  - `deno task fmt` clean (markdown not formatter-managed, but
+    workspace stays well-formed).
+  - `deno task lint` clean.
+  - `deno task check maid/main.ts` clean.
+  - `deno task test:unit` 22/22 — fixture and SKILL.md changes don't
+    consume a surface the unit suite covers.
+- **Success criterion 2 — fixtures are well-formed.**
+  - `deno task test:smoke` — the harness parses every `.smoke` file
+    and exits non-zero on a malformed one. Confirms the new
+    `kdevkit-feature-planning.smoke` parses + the four edited
+    fixtures still parse + the kdevkit skill symlink resolves.
+- **Success criterion 3 — judge agrees the live skill matches the
+  fixtures' new narratives.** User-driven; runs:
+  - `./tests/functional/run kdevkit-feature-planning` (new fixture).
+  - `./tests/functional/run kdevkit-feature-loop` (covers entry-mode
+    + populated-spec → §6 Planning).
+  - `./tests/functional/run kdevkit-dev-loop`.
+  - `./tests/functional/run kdevkit-feature-closure`.
+  - `./tests/functional/run kdevkit` (load-only substring; should
+    PASS unchanged).
+  - The judge's verdict is the only signal that the SKILL.md
+    rewrite + fixture rewrite actually align.
+
+The agent prepares the fixtures and surfaces the exact run command;
+whether to spend the API budget on the judge is a human call (per
+`specs/project.md`'s "agentic runs must stop at `test:smoke`" rule).
+
+**A/B baseline:** Capture A (current SKILL.md + current fixtures)
+before the agent-dev edits, B (updated SKILL.md + updated fixtures)
+after. Same methodology as the May 2026 fixture-update pass. The
+agent records the run commands; the user runs them.
 
 ## Implementation Plan
 
-1. Update `tests/functional/skills/kdevkit-feature-loop.smoke` —
+1. **Edit SKILL.md** — reorder §6 four-interview list to
+   Requirements → Test Strategy → Design → Implementation Plan;
+   reorder the feature-file template's section headers to match;
+   tighten the Test Strategy interview prompt to lean on
+   `project.md`'s Testing section; update the Planning Review Gate
+   body-shape line from `R / D / T / I` to `R / T / D / I`. Bump
+   frontmatter version `2.4.0` → `2.5.0`.
+2. Update `tests/functional/skills/kdevkit-feature-loop.smoke` —
    extend prompt and rewrite `expected_narrative` per Requirements.
-2. Update `tests/functional/skills/kdevkit-dev-loop.smoke` —
+3. Update `tests/functional/skills/kdevkit-dev-loop.smoke` —
    rewrite `expected_narrative` per Requirements.
-3. Update `tests/functional/skills/kdevkit-feature-closure.smoke` —
+4. Update `tests/functional/skills/kdevkit-feature-closure.smoke` —
    rewrite `expected_narrative` reordered to the new §8 sequence,
    adding the title-rewrite rule.
-4. Add `tests/functional/skills/kdevkit-feature-planning.smoke` —
+5. Add `tests/functional/skills/kdevkit-feature-planning.smoke` —
    new judge fixture per Requirements.
-5. Run `deno task fmt && lint && check && test:unit && test:smoke`.
-6. Stage + commit per the three-phase convention; push the feature
-   branch; open the PR via the Planning Review Gate (this spec
-   itself ships as `plan(<feature>): initial spec` first, dogfooding
-   the rule).
+6. Run `deno task fmt && lint && check && test:unit && test:smoke`.
+7. Surface the exact `./tests/functional/run <name>` commands so the
+   user can capture the post-edit B baseline.
+8. Stage + commit per the three-phase convention (this spec ships as
+   `plan(...)` first, then a single `feat(kdevkit): …` for the
+   SKILL.md + fixtures edits, then `close(...)` at the end).
 
 ### Risk notes
 
@@ -171,6 +246,46 @@ A/B evidence.
 <!-- newest at top -->
 
 ## Decision Log
+
+- **2026-05-31 · Reorder §6 interviews:
+  Requirements → Test Strategy → Design → Implementation Plan.**
+  The current order treats tests as a downstream concern that the
+  dev loop can drift away from. Reviewer feedback on PR #12: "our
+  agent-dev loop in the previous feature session did not update
+  tests as part of its loop. Otherwise we would not have needed
+  this CR at all." Symptom: fixture drift on PR #11. Root cause:
+  tests came after design in §6, so the dev loop had no verifiable
+  success target — fixtures were treated as a separate maintenance
+  task that the loop didn't own. Putting tests immediately after
+  requirements forces the spec to declare success criteria *before*
+  the design converges, so the dev loop's Quality + Test Gates have
+  something specific to verify against. Tightening the Test Strategy
+  prompt to lean on `project.md`'s Testing section also forces the
+  interview to map onto the project's existing layers
+  (`test:unit`/`test:smoke`/`test:functional`) rather than invent a
+  new structure per feature.
+
+- **2026-05-31 · Tests are part of the agent-dev loop, not a
+  follow-up.** Implicit corollary of the reorder: when an
+  implementation slice changes a behavior the fixtures evaluate, the
+  fixture update lands in the *same* dev-loop iteration as the
+  behavior change. The Test Gate (§7) currently runs `test:unit` by
+  default; for skill-prose changes, the `test:smoke` parse-check is
+  load-bearing too, and the user-driven `test:functional` is the
+  *behavior signal*. The agent's responsibility on a skill-prose
+  change: prepare the updated fixtures, confirm they parse via
+  `test:smoke`, surface the `test:functional` command for the user
+  to run. PR #11 should have done this in the same loop instead of
+  shipping fixture drift to PR #12.
+
+- **2026-05-31 · Existing feature specs are not retroactively
+  reordered.** New feature specs from this point forward use
+  R → T → D → I; existing files in `specs/feature/` keep their
+  authored shape. Rationale: rewriting shipped specs would be a
+  no-behavior-change churn pass that dilutes git history and risks
+  link-rot in commit messages / PR bodies that reference specific
+  sections. Same precedent as the rev-2 compression pass — apply
+  forward, not backward.
 
 - **2026-05-31 · Add a fifth fixture for planning-phase entry.**
   Considered folding planning coverage into the existing
