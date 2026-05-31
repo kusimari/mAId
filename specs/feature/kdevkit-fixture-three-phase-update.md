@@ -202,28 +202,41 @@ agent records the run commands; the user runs them.
 
 ## Implementation Plan
 
+All eight steps shipped in two `feat(kdevkit):` commits on this
+branch:
+
+- `ab9790c feat(kdevkit): reorder §6 interviews + realign smoke
+  fixtures` — steps 1–6.
+- `5e80246 feat(kdevkit): tighten §3 entry-flow ordering +
+  judge-mode prompt nudges` — judge-mode dev-loop fix-up after
+  the user authorized agent-run functional tests for this session.
+
 1. **Edit SKILL.md** — reorder §6 four-interview list to
    Requirements → Test Strategy → Design → Implementation Plan;
    reorder the feature-file template's section headers to match;
    tighten the Test Strategy interview prompt to lean on
    `project.md`'s Testing section; update the Planning Review Gate
    body-shape line from `R / D / T / I` to `R / T / D / I`. Bump
-   frontmatter version `2.4.0` → `2.5.0`.
+   frontmatter version `2.4.0` → `2.5.0`. ✓
 2. Update `tests/functional/skills/kdevkit-feature-loop.smoke` —
-   extend prompt and rewrite `expected_narrative` per Requirements.
+   extend prompt and rewrite `expected_narrative` per Requirements. ✓
 3. Update `tests/functional/skills/kdevkit-dev-loop.smoke` —
-   rewrite `expected_narrative` per Requirements.
+   rewrite `expected_narrative` per Requirements. ✓
 4. Update `tests/functional/skills/kdevkit-feature-closure.smoke` —
    rewrite `expected_narrative` reordered to the new §8 sequence,
-   adding the title-rewrite rule.
+   adding the title-rewrite rule. ✓
 5. Add `tests/functional/skills/kdevkit-feature-planning.smoke` —
-   new judge fixture per Requirements.
-6. Run `deno task fmt && lint && check && test:unit && test:smoke`.
-7. Surface the exact `./tests/functional/run <name>` commands so the
-   user can capture the post-edit B baseline.
+   new judge fixture per Requirements. ✓
+6. Run `deno task fmt && lint && check && test:unit && test:smoke`. ✓
+7. Surface the exact `./tests/functional/run <name>` commands so
+   the user can capture the post-edit B baseline. ✓ — followed by
+   actual judge-mode runs on user authorization (5e80246).
 8. Stage + commit per the three-phase convention (this spec ships as
    `plan(...)` first, then a single `feat(kdevkit): …` for the
-   SKILL.md + fixtures edits, then `close(...)` at the end).
+   SKILL.md + fixtures edits, then `close(...)` at the end). ✓
+   — landed as two `feat(kdevkit):` commits because the dev loop
+   surfaced real recall bugs in the SKILL.md ordering prose; both
+   fixes ride into the squash-merge.
 
 ### Risk notes
 
@@ -244,6 +257,38 @@ agent records the run commands; the user runs them.
 ## Session Log
 
 <!-- newest at top -->
+
+- 2026-05-31 · **Feature closed via §8 close-out.** Shipped as
+  PR #12. Four commits across the branch (planning + behavior +
+  dev-loop fix-up + closure):
+  - `0317935 plan(kdevkit-fixture-three-phase-update): initial spec`
+  - `dec5330 plan(...): widen scope — reorder §6 interviews`
+  - `ab9790c feat(kdevkit): reorder §6 interviews + realign smoke
+    fixtures`
+  - `5e80246 feat(kdevkit): tighten §3 entry-flow ordering +
+    judge-mode prompt nudges`
+  - (plus this close-out commit)
+
+  User authorized agent-run functional tests for this session,
+  overriding `specs/project.md`'s "agentic runs must stop at
+  test:smoke" rule. Three rounds of agent-driven dev-loop
+  fix-and-retry: ~30 judge invocations across both tools surfaced
+  two real recall misses (kiro placing plan-commit after the user
+  cue; both tools occasionally eliding the worktree project.md
+  preference under length pressure) and two over-strict fixture
+  patterns (R/T/D/I letter-form enumeration; literal
+  `kdevkit.prefer_worktree` key-name requirement). Final 3x full
+  confirmation: 15/15 fixture × tool × check cells PASS, 100%
+  stable.
+
+  Closure round dogfooded the new §8 sequence: reconciliation
+  (this entry), soft project.md verify (no edits — feature
+  touched only SKILL.md + fixtures), backlog cleanup (asked, no
+  matches: existing items `maid-as-flake-package` and
+  `writing-style-mcp-server` are unrelated to fixture
+  realignment). Closure Review Gate rewrites PR title from
+  `plan(...)` to `feat(kdevkit): reorder §6 interviews + realign
+  smoke fixtures` per §5.
 
 ## Decision Log
 
