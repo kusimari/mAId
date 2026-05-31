@@ -126,8 +126,27 @@ branch like `feat/user-auth`. Resolve the entry mode:
 
 **A spec on disk is not a reviewed spec** — when entering with a
 populated `feature/<feature>.md`, start in §6 Planning (not §7
-Dev). Confirm readiness with the user or iterate; the planning
-→ dev cue (§5) is the gate.
+Dev). Order matters:
+
+1. Confirm readiness with the user; iterate on the spec if
+   needed.
+2. **Commit** the spec as `plan(<feature>): initial spec`.
+3. **Push** the feature branch.
+4. **Open the Planning Review Gate** (PR/CR with the planning
+   body shape — see §6).
+5. **Then** wait for the planning → dev cue (§5).
+
+The cue gates the *move* to dev — not the planning commit. The
+commit + push + review must happen first so the user has
+something to react to. Reversing this order (waiting for the cue
+before committing) is the most common ordering mistake.
+
+In every entry mode — start, continue, or pick up — read
+`project.md`'s `kdevkit.prefer_worktree` *first* and decide:
+**prefer** → suggest a worktree (don't auto-run); silent →
+branch-only without prompting. Then load other preferences from
+the same `kdevkit` block (§4 covers this fully). The four
+interviews in §6 only run when no spec is found.
 
 ### Backlog
 
