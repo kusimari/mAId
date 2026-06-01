@@ -127,33 +127,36 @@ always-on rule produces awkward small-CR bodies.
 
 ## Implementation Plan
 
-1. **Plan-commit + Planning Review Gate.** This file is the
-   spec; the next commit is `plan(cr-reading-order): initial
-   spec`. Push, open PR with §6 body shape, wait for the
-   planning → dev cue.
-2. **§6/§7/§8 body-shape edits in SKILL.md** (single commit:
-   `feat(kdevkit): require grouped Reading order in §6/§7/§8`).
-   Bump `version` to `2.6.0`. Drop "Don't impose more
-   structure" sentence in §7.
-3. **Smoke fixture updates** (single commit:
-   `test(kdevkit): match grouped Reading-order contract`).
-   Edit `kdevkit-dev-loop.smoke` and
-   `kdevkit-feature-closure.smoke` narratives.
-4. **Backlog deprecation** (single commit:
-   `chore(specs): drop deferred flake-package backlog`).
-   `git rm specs/backlog/maid-as-flake-package.md`; trim
-   project.md parenthetical.
-5. **Quality + Test Gate.** `deno task fmt && deno task lint
-   && deno task check && deno task test:unit`. Run smoke
-   after `deno task deploy`.
-6. **Push + Agent-dev Review Gate.** Update PR body to §7
-   shape; the body itself carries a grouped Reading order
-   over the three commits as the self-applicability check.
-7. **Closure** on user cue. Reconcile this file's
-   Implementation Plan (each item a checkbox), confirm
-   project.md verify (the parenthetical trim already
-   counts), backlog cleanup interview, `close(cr-reading-order):`
-   commits, §8 squash-merge to main.
+- [x] **Plan-commit + Planning Review Gate.** Committed as
+  `plan(cr-reading-order): initial spec` (9999bad); PR #13
+  opened with §6 body shape.
+- [x] **§6/§7/§8 body-shape edits in SKILL.md.** Shipped as
+  `feat(kdevkit): require grouped Reading order in §6/§7/§8`
+  (3e7a7e9). Version → 2.6.0. Dropped "Don't impose more
+  structure" sentence.
+- [x] **Smoke fixture updates.** Shipped as `test(kdevkit):
+  match grouped Reading-order contract` (00ef2a8).
+- [x] **Backlog deprecation.** Shipped as `chore(specs):
+  drop deferred flake-package backlog` (906c66a) — file
+  removed and project.md parenthetical trimmed in one
+  commit.
+- [x] **Quality + Test Gate.** fmt + lint + check clean;
+  `test:unit` 22/22; `test:smoke` 9/9.
+- [x] **Push + Agent-dev Review Gate.** PR title + body
+  rewritten to §7 shape with grouped Reading order over the
+  three commits (the self-applicability check).
+- [x] **Refactor per CR feedback.** Factored the universal
+  CR contract into a new §9 "Review Gates" subsection,
+  trimmed §6/§7/§8 to phase-specific lines + `Apply §9
+  Review Gates`. Dropped three "Apply: §9 internal-marker
+  grep" footers. Shipped as `refactor(kdevkit): factor CR
+  body shape into §9 Review Gates` (769b4f3).
+- [x] **Judge-mode functional A/B.** User-approved
+  `test:functional` run after the §9 refactor:
+  `kdevkit-dev-loop` and `kdevkit-feature-closure` both
+  PASS judge mode on Claude AND Kiro. Concrete evidence
+  the simplification preserved agent behavior.
+- [ ] **Closure** on user cue (in progress).
 
 Risk notes:
 
@@ -177,6 +180,23 @@ Risk notes:
 
 <!-- append: date · what was done · decisions made -->
 
+- 2026-06-01 · §8 closure entered. Functional A/B fixtures
+  ran user-approved on both Claude + Kiro: `kdevkit-dev-loop`
+  and `kdevkit-feature-closure` both PASS substr + judge.
+  Judge narratives confirmed Why + Approach + grouped
+  Reading order body shape and full eight-step closure
+  ordering — concrete evidence the §9 refactor preserved
+  agent behavior across both harnesses.
+- 2026-06-01 · §9 refactor shipped after PR review feedback
+  ("do we need to repeat the CR shape … move to cross-cutting
+  and reference?"). Factored the universal CR contract into
+  a new §9 "Review Gates" subsection; §6/§7/§8 trimmed to
+  phase-specific lines + `Apply §9 Review Gates`. Net 38/44
+  ins/del; behavior preserved (verified by the §9 fixture
+  run above).
+- 2026-06-01 · v2.6.0 contract + smoke fixture updates +
+  flake-package backlog deprecation shipped across three
+  commits on PR #13.
 - 2026-06-01 · feature spec written from approved plan; branch
   `feat/cr-reading-order` cut off `main` (e4bc596). Three
   open questions from the original backlog resolved at plan
@@ -212,3 +232,23 @@ Risk notes:
   rejected: leave the backlog as a deferred future
   shape — the user's review marked it "not applicable
   with the way we have designed maid now."
+- 2026-06-01 · **Factor CR contract into §9 cross-cutting,
+  reference from §6/§7/§8.** Reason: PR review surfaced
+  that v2.6.0 inlined the same Why + Reading order +
+  optional Verification/Pairs-with shape three times
+  across the gates — duplication that drifts. Single §9
+  source of truth makes the skill easier for humans to
+  scan and gives the agent one contract to load instead
+  of three near-identical paragraphs. Alternative rejected:
+  reply explaining why I kept it inline (each gate
+  self-contained) — the gate-specific content was small
+  enough that the duplication wasn't earning its weight.
+- 2026-06-01 · **Judge-mode A/B as the §9 refactor's
+  evidence gate.** Reason: the §9 consolidation is a
+  prose refactor, but the contract it carries is what the
+  agent emits at every gate. `test:unit` can't catch a
+  drift in agent behavior; only `test:functional` (judge
+  mode) can. User explicitly approved spending the
+  credits to get the simplest skill that the agent
+  still works correctly with. Both fixtures passed on
+  both harnesses — refactor goes to closure.
