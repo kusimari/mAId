@@ -312,16 +312,9 @@ work; skip if `planning_phase: false` (§2).
 
 ### Planning Review Gate
 
-Fires after the `plan(<feature>):` push. Title:
-`plan(<feature>): subject`. Body: **Why** + **Spec summary**
-(R / T / D / I one-liners) + **Reading order** (grouped by
-phase: *Read for intent:* … ; *Read for contract:* … ; *Read
-for plumbing:* …) + **Open questions**. Open as a normal
-review, not draft — the title prefix carries the phase signal
-across hosts.
-
-**Apply: §9 internal-marker grep on push + review body; §9
-commit hygiene on every commit.**
+Fires after the `plan(<feature>):` push. Apply §9 Review
+Gates. Phase-specific body content: **Spec summary**
+(R / T / D / I one-liners) + **Open questions**.
 
 ## 7 · Dev loop
 
@@ -372,27 +365,11 @@ Only push after Quality + Test pass.
 
 ### Agent-dev Review Gate
 
-Fires after Push. Opens or updates the PR/CR for this branch
-and returns the URL.
+Fires after Push. Apply §9 Review Gates. Phase-specific body
+content: **Approach** (bullets covering the changes).
 
 **Refuse-on-fail.** Prior gate failed or noted residual issues
 → no review. Surface failure; require explicit override.
-
-**Body shape.** Title: `feat/fix/refactor/test/docs/chore(scope):
-subject`. Body: **Why** (motivation, not file changes — the diff
-is authoritative for *what*) + **Approach** (bullets covering
-the changes) + **Reading order** (grouped by phase: *Read for
-intent:* … ; *Read for contract:* … ; *Read for plumbing:* …).
-Optional: **Verification** (commands + results), **Pairs with**
-(cross-repo links).
-
-**Update vs. create.** One PR/CR per branch. Create on the
-first phase; update body on subsequent phases.
-
-**Return the URL** as the last line of phase output.
-
-**Apply: §9 internal-marker grep on push + review body; §9
-commit hygiene on every commit.**
 
 ## 8 · Closure
 
@@ -423,13 +400,12 @@ ones; asking is mandatory even when the answer is "none".
 **4 · Commit + push.** Staged closure edits land in one or
 more `close(<feature>):` commits per §9. Push.
 
-**5 · Closure Review Gate.** Body rewritten to final shape:
-**Why** + **Approach** + **Reading order** (grouped by phase:
-*Read for intent:* … ; *Read for contract:* … ; *Read for
-plumbing:* …) + **Verification** + optional **Pairs with** /
-**Spec & docs touched at close-out**. **Title rewritten** to
-the dominant agent-dev subject (`feat(<scope>): subject` etc.)
-— *not* the `close(<feature>):` subject — so the squash-merge
+**5 · Closure Review Gate.** Apply §9 Review Gates. Body
+rewritten to final shape; phase-specific content: **Approach**
++ **Verification** (required at close-out) + optional **Spec
+& docs touched at close-out**. **Title rewritten** to the
+dominant agent-dev subject (`feat(<scope>): subject` etc.) —
+*not* the `close(<feature>):` subject — so the squash-merge
 commit on `main` reads as a feature ship, not a closure
 mechanic.
 
@@ -451,9 +427,6 @@ permission pause.
 **8 · Worktree teardown — offer-only.** Non-primary worktree →
 surface path and offer removal. Do not auto-remove — artifacts
 may be worth inspecting.
-
-**Apply: §9 internal-marker grep on closure review body; §9
-commit hygiene on `close(<feature>):` commits.**
 
 ## 9 · Cross-cutting rules (always-on)
 
@@ -497,12 +470,33 @@ Every commit leaves the repo working. Commit per coherent unit;
 don't batch to end-of-feature. New commits, never amends,
 unless the user explicitly asks.
 
-### Pull Requests
+### Review Gates
 
-Title: same `type(scope): subject` shape. Body: *why* +
-approach. Squash merge preferred. Keep PRs small — one concern
-per PR. PR-ready means: Quality Gate + Test Gate both pass
-locally.
+Universal CR/PR contract — applied by §6 Planning, §7
+Agent-dev, and §8 Closure. Each gate adds only the
+phase-specific content section + any per-gate exception.
+
+- **Title.** `<type>(scope): subject` — Conventional Commits
+  shape (above). The phase prefix (`plan(...)` / dev type /
+  rewritten `feat(...)` at close) carries the phase signal
+  across hosts.
+- **Body.** **Why** (motivation, not file changes — the diff
+  is authoritative for *what*) + *phase-specific content* +
+  **Reading order** (grouped by phase: *Read for intent:* … ;
+  *Read for contract:* … ; *Read for plumbing:* …).
+  Optional: **Verification** (commands + results), **Pairs
+  with** (cross-repo links).
+- **One PR/CR per branch.** Open as a normal review, not
+  draft. Create on the first gate; update title + body on
+  subsequent gates. Return the URL as the last line of phase
+  output.
+- **PR-ready** means Quality Gate + Test Gate both pass
+  locally.
+- **Squash merge** is the default close (§8.6). Keep PRs
+  small — one concern per PR.
+
+**Apply:** internal-marker grep on title + body before every
+submission; commit hygiene (below) on every commit.
 
 ### Public-repo hygiene
 
