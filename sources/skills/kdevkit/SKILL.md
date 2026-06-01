@@ -110,6 +110,38 @@ organised by skill. Keys under `kdevkit`:
   feature branch (planning → dev → closure) per §5/§6/§7/§8.
   Set `false` to skip §6 Planning and let spec edits ride
   with the first dev commit.
+- `code_review:` — nested block configuring the §7 Code Review
+  Gate. All keys optional; defaults below.
+
+  ```yaml
+  code_review:
+    reviewer: host-native       # default; alternative: skill:<name>
+                                # / mcp:<server.tool> / agent:<name>
+    threshold: 70               # 0–100 score floor for Push
+    authority: hard-stop        # alternative: soft
+    retry_budget: 2             # fix-and-retry cycles before stop
+  ```
+
+  - **`reviewer`** — who runs the review. Prefix-tagged so the
+    orchestrator knows what to dispatch:
+    - `host-native` (default) — the host coding agent's built-in
+      code review.
+    - `skill:<name>` — a skill in the registry (bare strings
+      without a prefix default to `skill:`).
+    - `mcp:<server>.<tool>` — an MCP server's tool.
+    - `agent:<name>` — a named project-configured agent.
+  - **`threshold`** — score floor; sub-threshold loops back to
+    Quality. Default `70`.
+  - **`authority`** — `hard-stop` blocks Push when retries
+    exhaust; `soft` allows Push with residuals appended to
+    Session Log.
+  - **`retry_budget`** — fix-and-retry cycles before stop.
+    Default `2`. Pairs with the Test Gate's own retry budget;
+    worst-case loop is `retry_budget × test_budget`.
+
+  Omitting the block entirely triggers the §3/§4 setup UX. Once
+  written (even with all defaults), the block sticks — the
+  question doesn't re-fire next session.
 
 ## 3 · Load feature context
 
