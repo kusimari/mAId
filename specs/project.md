@@ -178,9 +178,7 @@ managed-symlink state.
   the repo-local flake; `maid` is invoked through `deno
   task <verb>` from the checkout — no shim under
   `~/.local/bin`, no `nix profile install` anywhere in the
-  install path. (Install/uninstall of a `maid` binary is
-  reserved for the future flake-package shape; see
-  `specs/backlog/maid-as-flake-package.md`.)
+  install path.
 - **No changes to the user's env-workplace** from this
   repo. mAId stays a pure-content workspace; bootstrap
   drivers belong on the env side.
