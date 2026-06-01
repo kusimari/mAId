@@ -192,3 +192,16 @@ managed-symlink state.
   rather than letting names land here. The `kdevkit`
   skill encodes this rule for every project; this bullet
   declares mAId as a public repo so the rule fires.
+
+## Agent Development
+
+<!-- Skill-scoped preferences. Each subsection is a skill name. -->
+
+### kdevkit
+
+- `code_review:`
+  - `reviewer: host-native` — use the host coding agent's built-in
+    code review (Claude Code's `/code-review` skill, Kiro's
+    equivalent). No project-specific reviewer skill yet; revisit
+    once host-native review proves consistently weak across
+    feature work in this repo.
