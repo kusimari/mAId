@@ -577,6 +577,19 @@ Each step is one logical commit unless noted.
 
 <!-- append: date · what was done · decisions made -->
 
+- **2026-06-01** · Empirical Code Review Gate dispatched against
+  the cumulative SKILL.md + project.md diff (task 8). Two loop
+  iterations: loop 1 scored 78 with 7 findings (1 high, 3 medium,
+  3 low); loop 2 scored 74 with 8 findings (3 high, 3 medium, 2
+  low) — surface coherence catches the loop-1 fixes hadn't
+  cleared. All 8 loop-2 findings applied in
+  `fix(kdevkit): apply Code Review Gate findings…`. Both
+  iterations cleared the 70 threshold; `retry_budget=2`
+  exhausted; loop closed. Decision: the abstract dispatch
+  contract is actionable on Claude Code (the reviewer subagent
+  produced a usable score + JSON without host-specific
+  scaffolding) → task 9 Hosts appendix is **not** needed.
+
 - **2026-06-01** · §6 Plan-commit ordering reinforcement
   bundled into this feature mid-planning. The planning agent
   inverted commit and review (asked for spec confirmation
@@ -604,6 +617,18 @@ Each step is one logical commit unless noted.
 ## Decision Log
 
 <!-- append: decision · rationale · alternatives rejected -->
+
+- **2026-06-01 · Abstract dispatch contract is actionable —
+  Hosts appendix not needed.** Rationale: an empirical Code
+  Review Gate dispatch on Claude Code (using a fresh-context
+  Agent-tool subagent) produced a usable score + JSON findings
+  list without any host-specific scaffolding in §7. The contract
+  ("dispatch in a fresh-context agent call; pass project.md +
+  diff + reviewer config") was sufficient. Task 9 (Hosts
+  appendix) skipped. Alternative rejected: ship the appendix
+  as a safety net — not paying for speculative complexity that
+  the empirical check showed isn't needed. Revisit if the
+  contract proves vague on a different host (Kiro / Codex).
 
 - **2026-06-01 · §6 Plan-commit rule becomes a numbered
   sequence; "common ordering mistake" warning lives in §6 with
