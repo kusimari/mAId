@@ -1,7 +1,7 @@
 ---
 name: kdevkit
 description: Spec-driven development workflow — locate spec tree, load project + feature context, start a session, run it through planning → dev loop → closure with phase-gating cues, ship via Conventional Commits and Quality/Test/Push/Review gates. Three-phase feature branch on a single PR/CR; main stays single-commit-per-feature via squash. Public-repo hygiene. Auto-detects specs/, docs/specs/, or .kdevkit/.
-version: 2.5.0
+version: 2.6.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, public-repo]
 ---
 
@@ -314,9 +314,11 @@ work; skip if `planning_phase: false` (§2).
 
 Fires after the `plan(<feature>):` push. Title:
 `plan(<feature>): subject`. Body: **Why** + **Spec summary**
-(R / T / D / I one-liners) + **Open questions**. Open as a
-normal review, not draft — the title prefix carries the phase
-signal across hosts.
+(R / T / D / I one-liners) + **Reading order** (grouped by
+phase: *Read for intent:* … ; *Read for contract:* … ; *Read
+for plumbing:* …) + **Open questions**. Open as a normal
+review, not draft — the title prefix carries the phase signal
+across hosts.
 
 **Apply: §9 internal-marker grep on push + review body; §9
 commit hygiene on every commit.**
@@ -379,10 +381,10 @@ and returns the URL.
 **Body shape.** Title: `feat/fix/refactor/test/docs/chore(scope):
 subject`. Body: **Why** (motivation, not file changes — the diff
 is authoritative for *what*) + **Approach** (bullets covering
-the changes). Optional: **Verification** (commands + results),
-**Reading guide** (file order with compare-against hints),
-**Pairs with** (cross-repo links). Don't impose more structure
-on small diffs.
+the changes) + **Reading order** (grouped by phase: *Read for
+intent:* … ; *Read for contract:* … ; *Read for plumbing:* …).
+Optional: **Verification** (commands + results), **Pairs with**
+(cross-repo links).
 
 **Update vs. create.** One PR/CR per branch. Create on the
 first phase; update body on subsequent phases.
@@ -422,12 +424,14 @@ ones; asking is mandatory even when the answer is "none".
 more `close(<feature>):` commits per §9. Push.
 
 **5 · Closure Review Gate.** Body rewritten to final shape:
-**Why** + **Approach** + **Verification** + optional **Reading
-guide** / **Pairs with** / **Spec & docs touched at
-close-out**. **Title rewritten** to the dominant agent-dev
-subject (`feat(<scope>): subject` etc.) — *not* the
-`close(<feature>):` subject — so the squash-merge commit on
-`main` reads as a feature ship, not a closure mechanic.
+**Why** + **Approach** + **Reading order** (grouped by phase:
+*Read for intent:* … ; *Read for contract:* … ; *Read for
+plumbing:* …) + **Verification** + optional **Pairs with** /
+**Spec & docs touched at close-out**. **Title rewritten** to
+the dominant agent-dev subject (`feat(<scope>): subject` etc.)
+— *not* the `close(<feature>):` subject — so the squash-merge
+commit on `main` reads as a feature ship, not a closure
+mechanic.
 
 **6 · Squash merge to `main`** — one logical commit per
 feature. Exceptions:
