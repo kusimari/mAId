@@ -412,15 +412,14 @@ block → ask once and persist.
 
 ### Quality Gate
 
+Deterministic checks only — anything subjective moves to the
+**Code Review Gate** (below).
+
 1. Run format; apply auto-fixes.
 2. Run lint; fix until clean.
 3. Run type-check (if applicable); fix all errors.
-4. Self-review the diff vs. base, score 0–100 (correctness,
-   security, conventions). Default threshold: **70**.
-   - ≥ threshold → Test Gate.
-   - < threshold → fix highest-severity, re-review **once
-     only**; if still below, proceed and note residual issues
-     in the Session Log.
+
+All three pass → Test Gate.
 
 ### Test Gate
 
