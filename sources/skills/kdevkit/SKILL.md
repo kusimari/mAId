@@ -426,26 +426,91 @@ All three pass → Test Gate.
 Tests are part of the same iteration as the behavior change —
 not a follow-up. When an implementation slice changes a behavior
 the project's tests evaluate, the test update lands in the same
-loop iteration, before the Push Gate. The §6 Test Strategy maps
-each success criterion to a project test layer; the Test Gate
-verifies them.
+loop iteration, before the Code Review Gate. The §6 Test Strategy
+maps each success criterion to a project test layer; the Test
+Gate verifies them.
 
 1. Run tests. All pass (zero failures, zero errors).
 2. On failure: diagnose, fix, re-run. Default budget: **2**
    fix-and-retry cycles. If still failing, stop and report.
 3. If fixes were substantial, re-run the Quality Gate.
 
+### Code Review Gate
+
+A real code review run by a separate agent, on a green diff. The
+reviewer is **not** the agent doing the implementation — it sees
+a fresh context so feature-spec narrative doesn't bias the read.
+
+**Resolve the reviewer.** Read
+`kdevkit.code_review:` from `project.md` (§2). Defaults if
+missing keys: `reviewer: host-native`, `threshold: 70`,
+`authority: hard-stop`, `retry_budget: 2`. If the entire block
+is missing, the §3/§4 setup UX should already have prompted —
+proceed with defaults if the user replied 'skip'.
+
+**Dispatch contract.** The reviewer runs in a **fresh-context
+agent call** — no feature spec, no session log, no
+in-progress conversation history. It receives:
+
+- ✅ `project.md` (project invariants — every reviewer needs the
+  architecture / hard-constraints / public-repo signal).
+- ✅ The diff vs. base.
+- ✅ The reviewer reference + threshold + authority +
+  retry_budget.
+- ❌ `feature/<name>.md` (deliberately excluded — feature
+  context is what we're trying to keep out).
+- ❌ Session log / Decision log.
+- ❌ Conversation history.
+
+Reviewers that legitimately need feature context (e.g. "did the
+implementation match the spec?") must ask for it themselves —
+the contract default is "no feature-spec." This keeps the gate
+honest about what it's reviewing: the diff against the project,
+not the diff against the agent's own plan. How the host
+translates "fresh-context agent call" is host-specific (Claude
+Code's Agent tool, Kiro's equivalent, Codex's CLI); the
+contract is portable.
+
+**Returns.** A findings list + a 0–100 score.
+
+**Score handling.**
+
+- Score ≥ `threshold` → Push Gate.
+- Score < `threshold` → loop back to start of Quality:
+  1. Append findings (or a one-line summary + reviewer URL) to
+     the feature spec's Session Log so they're captured.
+  2. Treat the highest-severity findings as the next
+     implementation slice.
+  3. Re-enter Quality Gate from the top.
+  4. Re-run Test Gate.
+  5. Re-run Code Review Gate.
+  6. Repeat until score ≥ threshold or `retry_budget`
+     exhausted.
+
+Worst-case loop: `retry_budget` (review) × Test Gate `budget`
+(test) cycles per slice. With both defaults at 2, that's up to 4
+fix-and-retry cycles. After exhausting `retry_budget`, behavior
+splits on **`authority`**:
+
+- `hard-stop` (default) — refuse Push; surface findings to user;
+  await explicit override.
+- `soft` — allow a final Push with residuals appended to Session
+  Log. Matches the older "fix once, proceed with residuals"
+  softness for projects that prefer it.
+
 ### Push Gate
 
-Only push after Quality + Test pass.
+Only push after Quality + Test + Code Review pass (the latter
+per `authority`).
 
 ### Agent-dev Review Gate
 
 Fires after Push. Apply §9 Review Gates. Phase-specific body
 content: **Approach** (bullets covering the changes).
 
-**Refuse-on-fail.** Prior gate failed or noted residual issues
-→ no review. Surface failure; require explicit override.
+**Refuse-on-fail.** A prior gate (Quality / Test / Code Review)
+failed or noted residual issues → no review. Surface failure;
+require explicit override.
 
 ## 8 · Closure
 
