@@ -126,20 +126,10 @@ branch like `feat/user-auth`. Resolve the entry mode:
 
 **A spec on disk is not a reviewed spec** — when entering with a
 populated `feature/<feature>.md`, start in §6 Planning (not §7
-Dev). Order matters:
-
-1. Confirm readiness with the user; iterate on the spec if
-   needed.
-2. **Commit** the spec as `plan(<feature>): initial spec`.
-3. **Push** the feature branch.
-4. **Open the Planning Review Gate** (PR/CR with the planning
-   body shape — see §6).
-5. **Then** wait for the planning → dev cue (§5).
-
-The cue gates the *move* to dev — not the planning commit. The
-commit + push + review must happen first so the user has
-something to react to. Reversing this order (waiting for the cue
-before committing) is the most common ordering mistake.
+Dev). Apply §6's **Plan-commit rule** (numbered sequence): commit
+→ push → open the Planning Review Gate → *then* wait for the
+planning → dev cue. The single source of truth for the order
+lives in §6 so it fires regardless of entry path.
 
 In every entry mode — start, continue, or pick up — read
 `project.md`'s `kdevkit.prefer_worktree` *first* and decide:
@@ -217,11 +207,16 @@ Do not chain phases automatically. Two gating layers stack:
   design / test strategy / implementation plan. Stop after
   each; order is flexible.
 - **Branch phases** (planning / dev / closure). Stop at each
-  boundary. Cues:
+  boundary. Each cue gates the *move* to the next phase, not the
+  commits/pushes that precede the gate — those must already have
+  happened. Cues:
   - **Planning → dev**: `"spec looks good"` /
-    `"start build"` / `"plan approved"`.
+    `"start build"` / `"plan approved"`. *Fires only after the
+    Planning Review Gate is open — see §6 Plan-commit rule for
+    the prerequisite sequence.*
   - **Dev → closure**: `"close it"` / `"ship it"` /
-    `"merge it"` / `"feature done"`.
+    `"merge it"` / `"feature done"`. *Fires only after the
+    Agent-dev Review Gate is open — see §7.*
 
 Both Review Gate greens close the inner loop; closure (§8)
 requires the explicit cue.
@@ -306,9 +301,33 @@ validate after the fact.
 
 ### Plan-commit rule
 
-Commit the populated spec as `plan(<feature>): initial spec`
-and ship through the **Planning Review Gate** before any code
-work; skip if `planning_phase: false` (§2).
+The populated spec must reach the user as a reviewable artefact
+before any code work begins. Order matters:
+
+1. Finish the four interviews and write
+   `$SPEC_ROOT/feature/<feature>.md`.
+2. Confirm readiness with the user; iterate on the spec if
+   needed.
+3. **Commit** the spec as `plan(<feature>): initial spec`.
+4. **Push** the feature branch.
+5. **Open the Planning Review Gate** (PR/CR with the
+   phase-specific body shape — see below).
+6. **Then** wait for the planning → dev cue (§5).
+
+The cue gates the *move* to dev — not the planning commit. The
+commit + push + review must happen first so the user has
+something concrete to react to. Reversing this order (waiting
+for the cue before committing) is the most common ordering
+mistake — a planning agent can read "confirm readiness" as the
+exit-from-planning cue and stop there. It isn't. Steps 3–5 are
+the artefact; step 6 is the gate after the artefact exists.
+
+This rule is the single source of truth for both planning entry
+paths — fresh-from-interviews and spec-on-disk (§3); §3 cites it
+rather than duplicating.
+
+Skip steps 3–6 if `planning_phase: false` (§2) — spec edits ride
+with the first dev commit.
 
 ### Planning Review Gate
 
