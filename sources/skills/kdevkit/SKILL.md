@@ -99,6 +99,10 @@ When creating `project.md`, probe ecosystem markers
 one batch; write Testing as prose — §7 reads commands from it
 at run time.
 
+Append the §3/§4 **Code-review setup prompt** as a one-liner
+to the same setup batch so the new project lands with a
+`code_review:` block already declared.
+
 ### Optional `## Agent Development` section
 
 `project.md` may carry an `## Agent Development` section
@@ -214,6 +218,28 @@ One-time setup decisions on entry:
 - **Planning-phase opt-out.** `kdevkit.planning_phase: false`
   skips §6 entirely — spec edits ride with the first dev
   commit.
+- **Code-review setup prompt.** If `kdevkit.code_review:` is
+  missing from `project.md`, fire a one-line prompt before
+  the §6 interviews start:
+
+  > _"This project doesn't declare a code reviewer. Use the
+  > host's native review (default), or point to a project-specific
+  > one (`skill:<name>` / `mcp:<server.tool>` / `agent:<name>`)?
+  > Reply 'default', paste a reference, or 'skip'."_
+
+  Then **sticky-write** the answer to `project.md`'s `## Agent
+  Development > kdevkit` block so the question doesn't re-fire
+  next session:
+  - Reply `'default'` → write
+    `code_review: { reviewer: host-native }`.
+  - Reply with a `<ref>` → write
+    `code_review: { reviewer: <ref> }`. Threshold / authority /
+    retry_budget inherit defaults.
+  - Reply `'skip'` → no write; question re-fires next session.
+    (Lets a user defer the decision without committing.)
+
+  The same prompt fires from §2's first-time `project.md` flow
+  as the appended one-liner.
 - **Other preferences load from the `kdevkit` block** —
   threshold, retry budget, review CLI, branch-cleanup, merge.
   Full resolution rule is in §7.
