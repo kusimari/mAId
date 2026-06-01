@@ -139,11 +139,10 @@ organised by skill. Keys under `kdevkit`:
   - **`authority`** — `hard-stop` blocks Push when retries
     exhaust; `soft` allows Push with residuals appended to
     Session Log.
-  - **`retry_budget`** — total fix-and-retry cycles, including
-    the first review attempt (a budget of 2 = up to 2 cycles
-    total, not 2 retries on top of an initial pass). Default
-    `2`. Pairs with the Test Gate's own retry budget; worst-case
-    loop is `retry_budget × test_budget`.
+  - **`retry_budget`** — total review attempts including the
+    first (a budget of 2 = up to 2 outer review cycles, not 2
+    retries on top of an initial pass). Default `2`. The Test
+    Gate uses the same "attempts including first" semantics.
 
   Omitting the block entirely triggers the §4 setup UX. Once
   written (even with all defaults), the block sticks — the
@@ -222,9 +221,9 @@ One-time setup decisions on entry:
   commit.
 - **Code-review setup prompt.** If `kdevkit.code_review:` is
   missing from `project.md`, fire a one-line prompt on session
-  entry — before the first gate that consumes the config
-  (Plan-commit, Quality, or Code Review), regardless of entry
-  mode (fresh feature, continue, or pick-up):
+  entry — the §7 Code Review Gate is the only gate that reads
+  the config, but firing on entry (regardless of fresh / continue
+  / pick-up mode) keeps the prompt out of the dev loop:
 
   > _"This project doesn't declare a code reviewer. Use the
   > host's native review (default), or point to a project-specific
@@ -438,7 +437,9 @@ Gate verifies them.
 
 1. Run tests. All pass (zero failures, zero errors).
 2. On failure: diagnose, fix, re-run. Default budget: **2**
-   fix-and-retry cycles. If still failing, stop and report.
+   total attempts (initial run + 1 retry) — same semantics as
+   the Code Review Gate's `retry_budget`. If still failing, stop
+   and report.
 3. If fixes were substantial, re-run the Quality Gate.
 
 ### Code Review Gate
@@ -455,8 +456,8 @@ is missing, the §4 setup UX should already have prompted —
 proceed with defaults if the user replied 'skip'.
 
 **Dispatch contract.** The reviewer runs in a **fresh-context
-agent call** — no feature spec, no session log, no
-in-progress conversation history. It receives:
+agent call** — no feature spec, no session log, no in-progress
+conversation history.
 
 Receives:
 
@@ -498,12 +499,13 @@ contract is portable.
   6. Repeat until score ≥ threshold or `retry_budget`
      exhausted.
 
-Worst-case loop: `retry_budget` (review) × Test Gate `budget`
-(test) cycles per slice. A budget of 2 means up to 2 cycles
-total — not 2 retries on top of an initial pass. With both
-defaults at 2, that's up to 4 Quality+Test+Code-Review cycles
-before Push is refused. After exhausting `retry_budget`,
-behavior splits on **`authority`**:
+Worst-case loop: `retry_budget` outer review cycles per slice
+(default 2 — the count includes the first review attempt, not
+retries on top of it). The Test Gate's own retry budget runs
+inside each Test Gate invocation; it doesn't multiply the
+review-cycle count, since Code Review only re-fires after Test
+passes. After exhausting `retry_budget`, behavior splits on
+**`authority`**:
 
 - `hard-stop` (default) — refuse Push; surface findings to user;
   await explicit override.
