@@ -1,7 +1,7 @@
 ---
 name: kdevkit
 description: Spec-driven development workflow — locate spec tree, load project + feature context, start a session, run it through planning → dev loop → closure with phase-gating cues, ship via Conventional Commits and Quality/Test/Code-Review/Push/Review gates. Three-phase feature branch on a single PR/CR; main stays single-commit-per-feature via squash. Public-repo hygiene. Auto-detects specs/, docs/specs/, or .kdevkit/.
-version: 2.6.0
+version: 2.7.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, public-repo]
 ---
 
@@ -229,6 +229,13 @@ One-time setup decisions on entry:
   > host's native review (default), or point to a project-specific
   > one (`skill:<name>` / `mcp:<server>.<tool>` / `agent:<name>`)?
   > Reply 'default', paste a reference, or 'skip'."_
+
+  Alongside the prompt, surface a one-line note (outside the
+  blockquote so it isn't read as a reply option): _"This skill
+  prefixes agent-authored CR/PR comments with `[agent]:` so
+  review threads stay disambiguable when builder and reviewer
+  share an identity (see §7); your own comments don't need a
+  prefix."_
 
   Then **sticky-write** the answer to `project.md`'s `## Agent
   Development > kdevkit` block so the question doesn't re-fire
@@ -518,6 +525,58 @@ passes. After exhausting `retry_budget`, behavior splits on
 Only push after Quality + Test + Code Review pass (the latter
 per `authority`).
 
+### Comment-prefix convention
+
+When the agent operates the CR/PR review surface under the
+human's identity (the common case for host-driven review
+CLIs that bind to the operator's account), both parties post
+under the same author — the review tool threads by author,
+not content, so review notes and agent replies land flat in
+the timeline, indistinguishable.
+The prefix gives a sequential, grep-able substitute for
+threading without forcing a workflow change on either party.
+
+The rule:
+
+- **Every comment body the agent posts on the CR/PR starts with
+  `[agent]:` on the first line**, followed by the comment
+  content. No carve-outs by comment type — free-form replies,
+  short status acks ("done", "fixed in `<sha>`"), and
+  resolved-thread acknowledgements all get the prefix.
+- The convention applies to **comment bodies only**: not the
+  CR/PR description (no thread to disambiguate), not commit
+  messages (already attributable via the Conventional Commits
+  subject), not the diff itself.
+- **Human side: prefix optional.** Bare comment bodies read as
+  human. A human MAY use `[human]:` to mark a comment as a
+  steer rather than a review note, but the skill does not
+  require it. The prefix discipline is the agent's
+  responsibility, not a symmetric convention.
+- **Forward-only.** The convention applies to comments posted
+  after this rule is adopted. Earlier comments on in-flight
+  CRs stay un-prefixed and are read by their context — no
+  backfill.
+- **Travels with the actor, not the tool.** Other skills the
+  agent invokes (e.g. project-specific reviewers, automated
+  review-iterators) inherit the rule by being invoked by an
+  agent already under it. kdevkit does not enumerate per-skill
+  carve-outs.
+
+Illustrative command shapes (tool-specific; the rule itself is
+tool-agnostic):
+
+```sh
+# project-specific review CLI
+<cli> reply -m '[agent]: applied fmt fix in 7a3c2f1; rerunning Test Gate'
+
+# GitHub
+gh pr comment <pr> --body '[agent]: applied fmt fix in 7a3c2f1; rerunning Test Gate'
+```
+
+The §4 setup-prompt blurb mentions this convention so a human
+encountering kdevkit on a fresh project sees it at project
+genesis.
+
 ### Agent-dev Review Gate
 
 Fires after Push. Apply §9 Review Gates. Phase-specific body
@@ -531,6 +590,10 @@ require explicit override.
 
 Closes the **feature loop**. Trigger: an explicit cue —
 `"feature done"` / `"close it"` / `"ship it"` / `"merge it"`.
+
+The closure cycle reuses §7's **comment-prefix convention** for
+any agent-authored CR/PR comments posted during reconcile or
+the Closure Review Gate.
 
 Steps 1–3 stage spec / docs / backlog edits as
 `close(<feature>):` commits before the §8.6 squash; step 3
