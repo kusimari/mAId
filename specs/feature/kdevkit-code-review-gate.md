@@ -519,17 +519,23 @@ Each step is one logical commit unless noted.
 ### Closure phase
 
 12. **Reconcile.** Sweep Implementation Plan / Decision Log /
-    open questions. Resolve in place.
+    open questions. Resolve in place. **Done** — no `[ ]` /
+    TODO markers; task 9 (Hosts appendix) confirmed skipped per
+    Decision Log; critical-category authority remains a
+    deferred future-work item per Decision Log (not promoted to
+    backlog at close).
 13. **Soft `project.md` verify.** Already updated in task 7;
-    confirm no further edits warranted.
-14. **Backlog cleanup (interactive).** List
-    `specs/backlog/`; expected answer "none" — but ask anyway
-    per §8.3.
+    confirm no further edits warranted. **Done** — `project.md`
+    declares `code_review: { reviewer: host-native }`; no
+    further close-time edits warranted.
+14. **Backlog cleanup (interactive).** **Skipped at user
+    direction** — backlog items added in parallel by other work
+    don't need closure review for this feature.
 15. **`close(...)` commits.** Stage spec / docs edits. Push.
 16. **Closure Review Gate.** Title rewritten to
-    `feat(kdevkit): add Code Review Gate to dev loop` (drops
-    `close(...)` mechanic per §8.5). Body: Why + Approach +
-    Verification + Reading order.
+    `feat(kdevkit): Code Review Gate in dev loop + §6 plan-commit
+    ordering` (drops `close(...)` mechanic per §8.5). Body:
+    Why + Approach + Verification + Reading order.
 17. **Squash merge.** One commit on `main`.
 18. **Branch cleanup.** Delete local + remote per §8.7.
 
@@ -576,6 +582,33 @@ Each step is one logical commit unless noted.
 ## Session Log
 
 <!-- append: date · what was done · decisions made -->
+
+- **2026-06-03** · Closure phase. In-flight reconciliation:
+  no `[ ]` / TODO markers; task 9 (Hosts appendix) confirmed
+  skipped per the empirical-check Decision Log; critical-
+  category authority stays deferred per Decision Log (no
+  real-project ask materialised — not promoting to backlog at
+  close). Soft `project.md` verify: already declared
+  `code_review: { reviewer: host-native }` in task 7; no
+  further close-time edits warranted. Backlog cleanup skipped
+  at user direction — parallel backlog additions are out of
+  scope for this feature's closure.
+
+- **2026-06-01** · `deno task test:functional` ran inside the
+  agent-dev loop per the feature-scope override. Final tally:
+  50 PASS / 1 FAIL. The lone FAIL is `kdevkit-dev-loop via kiro
+  (judge)` and the answer head shows a Kiro environment artifact
+  ('Error: Json supplied at /home/gorantls/.kiro/agents/
+  meshclaw-knowledge.json is invalid: unknown field
+  systemPrompt'). Kiro returned the error string instead of
+  invoking the skill; the judge correctly graded the error
+  message as "doesn't cover the kdevkit dev loop." Same fixture
+  passes via claude, all four kdevkit fixtures touched by this
+  feature pass via both tools where Kiro's env worked
+  (kdevkit-review-gate kiro judge: PASS;
+  kdevkit-review-config-setup kiro judge: PASS; kdevkit-feature-
+  planning kiro judge: PASS). The failure is outside this
+  feature's scope; surfacing in the spec, not chasing.
 
 - **2026-06-01** · Empirical Code Review Gate dispatched against
   the cumulative SKILL.md + project.md diff (task 8). Two loop
