@@ -33,12 +33,12 @@ carve-outs.
   mean the prefix would lie) and adds noise without information
   a future reader would use.
 - **Scope: every comment body the agent posts on the CR/PR.**
-  No carve-outs. The skill does not enumerate AutoSDE,
-  `/code-review`, or any other downstream skill that may post on
-  the agent's behalf — kdevkit's rule is "if the agent is
-  posting, prefix it." Other skills inherit by being invoked by
-  the agent that already operates under this rule. The convention
-  travels with the actor, not with the tool.
+  No carve-outs. The skill does not enumerate downstream review
+  iterators, host-native review skills, or any other skill that
+  may post on the agent's behalf — kdevkit's rule is "if the
+  agent is posting, prefix it." Other skills inherit by being
+  invoked by the agent that already operates under this rule.
+  The convention travels with the actor, not with the tool.
 - **Out of scope: CR/PR description.** Description has no thread
   to disambiguate, and is structurally the agent's artefact
   (generated from the Conventional Commits log). Prefixing it
@@ -233,8 +233,21 @@ Risk notes:
   interviews around existing What/Why · resolved 5 open
   questions (prefix=`[agent]:`, no description prefix, no
   scope carve-outs incl. acks, no per-skill enumeration of
-  AutoSDE/etc., forward-only migration) · test strategy
-  bundled into D (kdevkit-compaction) per user direction.
+  downstream review iterators, forward-only migration) ·
+  test strategy bundled into D (kdevkit-compaction) per user
+  direction.
+
+- 2026-06-03 · dev cycle 1 · Code Review Gate scored 68/70
+  (fail). 4 findings: (1) major — example block named an
+  internal review-automation tool by product name; (2) major
+  — example block prefaced "kerberos-bound review CLI" with
+  "internal", which trips §7's own internal-marker grep;
+  (3) minor — opening rationale missing a clause on *why*
+  builder/reviewer share an identity; (4) nit — §4 "heads-up"
+  was inside the prompt blockquote, parseable as a reply
+  option. All 4 fixed in cycle 2: removed product name,
+  dropped "internal" prefix, added host-driven-CLI clause,
+  moved the §4 note outside the blockquote.
 
 ## Decision Log
 
@@ -262,13 +275,13 @@ Risk notes:
   replies, not status acks" — the user's framing was that
   responses to comments are free-form anyway; ack-vs-reply is
   not a useful distinction.
-- **No per-skill enumeration of AutoSDE / `/code-review`.**
+- **No per-skill enumeration of downstream review iterators.**
   The kdevkit rule is "the agent operating the CR posts with
   the prefix"; skills the agent invokes inherit by being
   invoked by an agent already under the rule. Rationale: the
   convention travels with the actor, not the tool.
-  Alternative rejected: cross-skill follow-up backlog item to
-  modify AutoSDE / `/code-review` separately — adds churn
+  Alternative rejected: cross-skill follow-up backlog items to
+  modify each downstream skill separately — adds churn
   without changing the user-visible CR timeline.
 - **Forward-only migration.** Rationale: backfilling existing
   CR comments costs API churn and is arguably revisionist;
