@@ -1,7 +1,7 @@
 ---
 name: kdevkit
-description: Spec-driven development workflow — four tiers (project / initiative / feature / backlog), locate spec tree, load context, start a session, run it through planning → dev loop → closure with phase-gating cues, ship via Conventional Commits and Quality/Test/Code-Review/Push/Review gates. Three-phase feature branch on a single PR/CR; main stays single-commit-per-feature via squash. Multi-stream initiatives carry the persistent "you're in stream 2 of 3" context across feature branches. Public-repo hygiene. Auto-detects specs/, docs/specs/, or .kdevkit/.
-version: 3.0.0
+description: Spec-driven development workflow — four tiers (project / initiative / feature / backlog), locate spec tree, load context, start a session, run it through planning → dev loop → closure with phase-gating cues, ship via Conventional Commits and Quality/Test/Code-Review/Push/Review gates. Three-phase feature branch on a single PR/CR; main stays single-commit-per-feature via squash. Multi-stream initiatives carry the persistent "you're in stream 2 of 3" context across feature branches. Multi-file skill (always-on SKILL.md + deferred setup.md and interviews.md loaded on demand). Public-repo hygiene. Auto-detects specs/, docs/specs/, or .kdevkit/.
+version: 3.1.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, initiative, public-repo]
 ---
 
@@ -43,6 +43,33 @@ The skill reads in session-arc order: §1–§2 set up context, §3–§4
 enter a feature, §5 frames the run, §6/§7/§8 are the three phases,
 §9 carries the always-on cross-cutting rules.
 
+### Multi-file shape
+
+This skill ships as three files under
+`sources/skills/kdevkit/`:
+
+- **`SKILL.md`** (this file) — always-on. Operational rules
+  that fire every session: detect, entry cues, dev loop,
+  closure, cross-cutting hygiene, initiative tier mechanics.
+- **`setup.md`** — deferred. Templates and schemas that fire
+  on **project genesis** or schema-drift verify: project.md
+  template, six-section schema, `## Agent Development`
+  block, code-review setup prompt, `## Active initiatives`
+  index format, verify subagent return schema.
+- **`interviews.md`** — deferred. Interview scripts and file
+  templates that fire on **feature / backlog / initiative
+  genesis**: four short feature interviews, feature file
+  template, backlog item template, initiative file template,
+  initiative interview shape, stream template-fill steps.
+
+**Future-feature placement rule.** Operational content
+(fires every session) belongs in `SKILL.md`. Setup
+schemas and one-shot templates (fire on project / feature /
+initiative genesis) belong in `setup.md` or `interviews.md`.
+This split keeps the always-on context lean while preserving
+correctness; future contributors should not drop new
+templates into `SKILL.md`.
+
 ## 1 · Locate the spec tree
 
 At session start, resolve `$SPEC_ROOT` by checking
@@ -60,121 +87,59 @@ exists.
 ## 2 · Load project context
 
 If `$SPEC_ROOT/project.md` exists, read it silently at session
-start.
+start, then run the **structural verify** (next subsection).
 
 If missing/empty and feature work begins, ask one question:
 
 > _"Briefly describe this project — purpose, tech stack, and any
 > hard constraints."_
 
-Then write `$SPEC_ROOT/project.md` from the template below.
+Then **inline-Read `setup.md`** and follow its template +
+first-time detection prose to write `$SPEC_ROOT/project.md`.
 
-### `project.md` template
+### Structural verify (verify-as-subagent)
 
-Six sections, fixed order. The HTML comments are prompts — keep
-them in place so future sessions re-read the intent.
+A small structural check runs at session start to confirm
+`project.md` matches the kdevkit schema without pulling the
+schema narrative into main's context. **Main runs four
+lightweight checks inline**; on any drift signal it dispatches
+the subagent for full canonical-schema validation against
+`setup.md`.
 
-```markdown
-# Project: <name>
+Main's inline checks:
 
-## Mission
+1. The six required `##` headings are present and in fixed
+   order (Mission, Architecture, Tech Stack, Layout, Testing,
+   Deployment).
+2. `## Agent Development > kdevkit > code_review:` is either
+   present (with at least `reviewer:` set) or entirely absent
+   (in which case the §4 Code-review setup prompt fires).
+3. If a `## Active initiatives` index exists, every line
+   matches an `$SPEC_ROOT/initiative/*.md` on disk and every
+   on-disk initiative either has an index line or is archived.
+4. The `code_review:` block (if present) parses as YAML with
+   no unknown keys.
 
-<!-- Purpose + who it serves. One paragraph. -->
+Clean → no further action. Any drift → dispatch a **fresh-
+context agent call** (the same primitive §7 Code Review Gate
+uses) with these inputs: the path to `project.md`, the path to
+`setup.md`, and the on-disk listing of `$SPEC_ROOT/initiative/`.
+The subagent loads `setup.md` and `project.md`, runs the full
+canonical-schema validation, and returns:
 
-## Architecture
-
-<!-- Logical shape: components + responsibilities. Words mandatory. -->
-
-## Tech Stack
-
-<!-- Languages, runtimes, frameworks. Versions where they matter. -->
-
-## Layout
-
-<!-- Directory tree, one-line annotation per entry. -->
-
-## Testing
-
-<!-- Test layers + commands; load-bearing vs. nice-to-have. -->
-
-## Deployment
-
-<!-- Build / release / install path, or how it's consumed. -->
+```
+{ "status": "clean" | "drift",
+  "findings": [ { "section", "issue", "suggestion" }, ... ] }
 ```
 
-### First-time `project.md` detection
+Main applies any accepted findings via Edit. The setup
+narrative never enters main's context — only the structured
+verdict.
 
-When creating `project.md`, probe ecosystem markers
-(`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`,
-`Makefile`, `deno.json`) and CI files (`.github/workflows/*`,
-`.gitlab-ci.yml` — verbatim) for the toolchain; confirm in
-one batch; write Testing as prose — §7 reads commands from it
-at run time.
-
-Append the §4 **Code-review setup prompt** as a one-liner
-to the same setup batch so the new project lands with a
-`code_review:` block already declared.
-
-### Optional `## Agent Development` section
-
-`project.md` may carry an `## Agent Development` section
-organised by skill. Keys under `kdevkit`:
-
-- `prefer_worktree: true|false` — feature-start worktree
-  recommendation (see §4).
-- `planning_phase: true|false` (default `true`) — three-phase
-  feature branch (planning → dev → closure) per §5/§6/§7/§8.
-  Set `false` to skip §6 Planning and let spec edits ride
-  with the first dev commit.
-- `code_review:` — nested block configuring the §7 Code Review
-  Gate. All keys optional; defaults below.
-
-  ```yaml
-  code_review:
-    reviewer: host-native       # default; alternative: skill:<name>
-                                # / mcp:<server>.<tool> / agent:<name>
-    threshold: 70               # 0–100 score floor for Push
-    authority: hard-stop        # alternative: soft
-    retry_budget: 2             # total fix-and-retry cycles (incl. first review)
-  ```
-
-  - **`reviewer`** — who runs the review. Prefix-tagged so the
-    orchestrator knows what to dispatch:
-    - `host-native` (default) — the host coding agent's built-in
-      code review.
-    - `skill:<name>` — a skill in the registry (bare strings
-      without a prefix default to `skill:`).
-    - `mcp:<server>.<tool>` — an MCP server's tool.
-    - `agent:<name>` — a named project-configured agent.
-  - **`threshold`** — score floor; sub-threshold loops back to
-    Quality. Default `70`.
-  - **`authority`** — `hard-stop` blocks Push when retries
-    exhaust; `soft` allows Push with residuals appended to
-    Session Log.
-  - **`retry_budget`** — total review attempts including the
-    first (a budget of 2 = up to 2 outer review cycles, not 2
-    retries on top of an initial pass). Default `2`. The Test
-    Gate uses the same "attempts including first" semantics.
-
-  Omitting the block entirely triggers the §4 setup UX. Once
-  written (even with all defaults), the block sticks — the
-  question doesn't re-fire next session.
-
-### Optional `## Active initiatives` index
-
-When in-flight initiatives exist (see §10), `project.md` MAY
-carry an `## Active initiatives` index near the bottom — one
-line per initiative, removed at last-stream close:
-
-```markdown
-## Active initiatives
-
-- **<name>** (`initiative/<name>.md`) — <one-line intent>
-```
-
-The index lets the agent skip loading every initiative file
-unconditionally; only the initiative(s) referenced by the
-current entry cue or the current feature load.
+How the host translates "fresh-context agent call" is
+host-specific (Claude Code's Agent tool, Kiro's equivalent,
+Codex's CLI). Where unavailable, fall back to inline-Read of
+`setup.md` and run the validation in main.
 
 ### Session-start read order
 
@@ -225,32 +190,16 @@ interviews in §6 only run when no spec is found.
 
 When the user describes wanted-but-not-now work — an idea, a
 frustration, a "we should eventually" — write it to
-`$SPEC_ROOT/backlog/<item-name>.md`. One file per item; never
+`$SPEC_ROOT/backlog/<item-name>.md` using the **backlog item
+template** (inline-Read `interviews.md` for the template body
+if not already in context). One file per item; never
 consolidate into a single `FIXES.md` or `TODO.md`. Closure-time
 cleanup of resolved items lives in §8 step 3.
-
-### Backlog item template
-
-```markdown
-# Backlog: <item-name>
-
-## What
-
-<!-- One paragraph; what, not how. -->
-
-## Why
-
-<!-- Motivation; link the conversation/incident. -->
-
-## Open questions
-
-<!-- Blockers, dependencies, unknowns. -->
-```
 
 Promoting backlog → feature: `git mv` into
 `$SPEC_ROOT/feature/`, then fill Requirements / Design / Test
 Strategy / Implementation Plan around the existing What/Why
-(template in §6).
+using the feature file template (in `interviews.md`; see §6).
 
 ## 4 · Start feature session
 
@@ -266,36 +215,17 @@ One-time setup decisions on entry:
   skips §6 entirely — spec edits ride with the first dev
   commit.
 - **Code-review setup prompt.** If `kdevkit.code_review:` is
-  missing from `project.md`, fire a one-line prompt on session
-  entry — the §7 Code Review Gate is the only gate that reads
-  the config, but firing on entry (regardless of fresh / continue
-  / pick-up mode) keeps the prompt out of the dev loop:
-
-  > _"This project doesn't declare a code reviewer. Use the
-  > host's native review (default), or point to a project-specific
-  > one (`skill:<name>` / `mcp:<server>.<tool>` / `agent:<name>`)?
-  > Reply 'default', paste a reference, or 'skip'."_
-
-  Alongside the prompt, surface a one-line note (outside the
-  blockquote so it isn't read as a reply option): _"This skill
-  prefixes agent-authored CR/PR comments with `[agent]:` so
-  review threads stay disambiguable when builder and reviewer
-  share an identity (see §7); your own comments don't need a
-  prefix."_
-
-  Then **sticky-write** the answer to `project.md`'s `## Agent
-  Development > kdevkit` block so the question doesn't re-fire
-  next session:
-  - Reply `'default'` → write
-    `code_review: { reviewer: host-native }`.
-  - Reply with a `<ref>` → write
-    `code_review: { reviewer: <ref> }`. Threshold / authority /
-    retry_budget inherit defaults.
-  - Reply `'skip'` → no write; question re-fires next session.
-    (Lets a user defer the decision without committing.)
-
-  The same prompt fires from §2's first-time `project.md` flow
-  as the appended one-liner.
+  missing from `project.md`, fire the prompt on session entry
+  — firing on entry (regardless of fresh / continue / pick-up
+  mode) keeps the prompt out of the dev loop, even though the
+  §7 Code Review Gate is the only gate that reads the config.
+  **Inline-Read `setup.md`** for the prompt's exact wording,
+  the `[agent]:` heads-up note, and the sticky-write rules.
+  After the user replies, sticky-write the answer to
+  `project.md`'s `## Agent Development > kdevkit` block.
+  `'skip'` is a valid answer (the prompt re-fires next
+  session); `'default'` writes
+  `code_review: { reviewer: host-native }`.
 - **Other preferences load from the `kdevkit` block** — the
   full `code_review.*` block (`reviewer`, `threshold`,
   `authority`, `retry_budget`), plus review CLI,
@@ -366,65 +296,18 @@ fresh.
 
 ### Four short interviews
 
-One per topic; skip what existing project context already
-answers. Order matters: tests sit immediately after requirements
-so success criteria are declared before the design converges —
-the dev loop (§7) then has a verifiable target, not a sketch to
-validate after the fact.
+When entering a feature with no spec on disk (start mode), run
+four short interviews in fixed order — Requirements → Test
+Strategy → Design → Implementation Plan. Tests sit immediately
+after requirements so success criteria are declared before the
+design converges; the dev loop (§7) then has a verifiable
+target, not a sketch to validate after the fact. Skip topics
+existing project context already answers.
 
-1. **Requirements.** Problem? Who interacts? Acceptance
-   criterion?
-2. **Test strategy.** Per `project.md`'s Testing section: which
-   layers fire for this change, what are the success criteria,
-   what's load-bearing vs. nice-to-have? Map onto existing test
-   commands; don't invent new layers.
-3. **Design.** Technical approach, components, interactions,
-   trade-offs.
-4. **Implementation plan.** Ordered tasks + risk notes.
-
-### Feature file template
-
-```markdown
-# Feature: <name>
-
-## Git Setup
-
-- Branch: <branch-name>
-- Base: <commit-ish or branch>
-
-## Feature Brief
-
-<one paragraph — what this feature is and why it is being built>
-
-<!-- Optional, populated by §6 auto-link when this feature is a
-     stream of an active initiative:
-Part of initiative: [[<name>]]
--->
-
-## Requirements
-
-<bullet list>
-
-## Test Strategy
-
-<success criteria mapped onto project.md test layers>
-
-## Design
-
-<technical approach, components, interactions>
-
-## Implementation Plan
-
-<ordered task list with risk notes>
-
-## Session Log
-
-<!-- append: date · what was done · decisions made -->
-
-## Decision Log
-
-<!-- append: decision · rationale · alternatives rejected -->
-```
+**Inline-Read `interviews.md`** for the interview-by-interview
+prompt shape and the feature file template body. After the
+four interviews, write the feature spec, then return here for
+the Plan-commit rule.
 
 ### Initiative-stream auto-link
 
@@ -846,6 +729,15 @@ In public-repo mode, any hit fails loud, surfaces lines, aborts.
 No commented-out code, debug prints, temp files, secrets, or
 credentials in commits.
 
+### Skill-file placement
+
+Future kdevkit changes follow the multi-file split declared at
+the top of this file: operational rules in `SKILL.md`;
+templates and one-shot setup schemas in `setup.md` or
+`interviews.md`. New always-on prose lands in `SKILL.md`; new
+templates land in the appropriate deferred file with a
+trigger from `SKILL.md`.
+
 ## 10 · Initiative tier
 
 The fourth tier in kdevkit, slotted between project (timeless)
@@ -868,50 +760,29 @@ feature. A large feature that can ship as one branch stays a
 feature; only when the work has to fan out across multiple
 branches in a defined order does it become an initiative.
 
-### Initiative file template
-
-```markdown
-# Initiative: <name>
-
-## Why
-
-<!-- The realization or external trigger. One paragraph. -->
-
-## Streams
-
-<!-- Ordered list. Each stream = one branch / one CR.
-     Format: 1. **<name>** (`<branch>`) — <one-line intent>.
-              Prereq: <previous stream id, or "none"> -->
-
-## Decisions taken at the initiative level
-
-<!-- Anything that binds *all* streams. Per-stream decisions
-     belong in that stream's feature spec. -->
-
-## Status
-
-| Stream | Branch | CR | Status | Shipped | Learnings |
-|---|---|---|---|---|---|
-| 1 | ... | ... | planning | — | — |
-```
-
 ### Initiative entry verbs
 
 - **"start initiative `<name>`"** — write
-  `$SPEC_ROOT/initiative/<name>.md` from the template, populate
+  `$SPEC_ROOT/initiative/<name>.md` and populate
   `project.md`'s `## Active initiatives` index with a one-line
-  entry, commit as `plan(<initiative>): initial spec`. The
-  initiative spec then goes through a Planning Review Gate the
-  same way a feature spec does (§6 / §9 Review Gates), with
-  phase-specific body content: **Why** + **Streams** +
+  entry. **Inline-Read `interviews.md`** for the initiative
+  file template + the three short initiative interviews
+  (Why → Streams → initiative-level Decisions). After the
+  spec is written, commit as `plan(<initiative>): initial
+  spec`, push, and open the Planning Review Gate per §6 / §9
+  with phase-specific body content: **Why** + **Streams** +
   **Decisions taken at the initiative level**.
 - **"show initiatives"** — list active initiatives from
   `project.md`'s index. Read-only; no commit.
-- **"stream `<n>` for `<initiative>`"** — start a feature whose
-  Git Setup names the initiative as its parent. The feature
-  spec's `Part of initiative: [[<name>]]` line is auto-
-  populated; otherwise behaves as a normal §3 feature start
-  followed by §6 Planning.
+- **"stream `<n>` for `<initiative>`"** — start a feature
+  whose Git Setup names the initiative as its parent.
+  **Inline-Read `interviews.md`** for the
+  template-fill steps (which fields populate from the parent
+  initiative's stream entry, which come from the four
+  feature interviews). The feature spec's `Part of
+  initiative: [[<name>]]` line auto-populates per §6;
+  otherwise the flow is a normal §3 feature start followed
+  by §6 Planning.
 
 ### Cross-stream rebase mechanics
 

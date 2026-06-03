@@ -26,6 +26,15 @@
 #   tests/functional/run --no-tools      Skip the claude/kiro
 #                                        invocations; only
 #                                        structural checks.
+#   tests/functional/run --stressed      Prepend the shared
+#                                        conversational-stream
+#                                        prefix to each fixture's
+#                                        prompt. Stresses whether
+#                                        the agent retains the
+#                                        skill contract under a
+#                                        long-session content load.
+#                                        Both modes evaluate the
+#                                        same expected_narrative.
 #   tests/functional/run <name>          Run only <name>'s smoke.
 #   tests/functional/run --help
 
@@ -40,10 +49,12 @@ MAID_ROOT="$(cd -P "$HERE/../.." && pwd -P)"
 # ── args ────────────────────────────────────────────────────────────
 
 NO_TOOLS=0
+STRESSED=0
 SELECTOR=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --no-tools) NO_TOOLS=1; shift ;;
+        --stressed) STRESSED=1; shift ;;
         --help|-h)
             awk '/^$/{exit} /^#/{sub(/^# ?/,""); print}' "${BASH_SOURCE[0]}"
             exit 0
@@ -52,6 +63,22 @@ while [[ $# -gt 0 ]]; do
         *)  SELECTOR="$1"; shift ;;
     esac
 done
+
+# Load the conversational-stream prefix once if --stressed.
+# The prefix is treated as literal text — it must not contain
+# unescaped `$`, backticks, or backslash sequences, since the
+# concatenation below keeps it inside double quotes. Today's
+# prefix is plain English; future authors editing
+# conversational-stream.txt should keep it that way or quote
+# any shell-active characters.
+STRESS_PREFIX=""
+if (( STRESSED )); then
+    if [[ ! -r "$HERE/conversational-stream.txt" ]]; then
+        echo "--stressed requires $HERE/conversational-stream.txt" >&2
+        exit 2
+    fi
+    STRESS_PREFIX="$(cat "$HERE/conversational-stream.txt")"
+fi
 
 # ── output ──────────────────────────────────────────────────────────
 
@@ -240,6 +267,14 @@ skill_smokes() {
         if [[ -z "$prompt" ]]; then
             fail "fixture $fixture malformed (missing prompt:)"
             continue
+        fi
+        # In --stressed mode, prepend the shared conversational-stream
+        # prefix verbatim. The prefix ends with "Now the user says:"
+        # so the per-fixture prompt becomes the user's "current" turn
+        # at the end of a long session. Newline-join so the per-fixture
+        # prompt sits on its own line below "Now the user says:".
+        if (( STRESSED )); then
+            prompt="$STRESS_PREFIX"$'\n'"$prompt"
         fi
         if [[ -z "$expect_substr" && -z "$expected_narrative" ]]; then
             fail "fixture $fixture malformed (needs expect_substr: or expected_narrative:)"
