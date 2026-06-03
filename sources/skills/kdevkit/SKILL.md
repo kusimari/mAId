@@ -1,8 +1,8 @@
 ---
 name: kdevkit
-description: Spec-driven development workflow — locate spec tree, load project + feature context, start a session, run it through planning → dev loop → closure with phase-gating cues, ship via Conventional Commits and Quality/Test/Code-Review/Push/Review gates. Three-phase feature branch on a single PR/CR; main stays single-commit-per-feature via squash. Public-repo hygiene. Auto-detects specs/, docs/specs/, or .kdevkit/.
-version: 2.7.0
-tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, public-repo]
+description: Spec-driven development workflow — four tiers (project / initiative / feature / backlog), locate spec tree, load context, start a session, run it through planning → dev loop → closure with phase-gating cues, ship via Conventional Commits and Quality/Test/Code-Review/Push/Review gates. Three-phase feature branch on a single PR/CR; main stays single-commit-per-feature via squash. Multi-stream initiatives carry the persistent "you're in stream 2 of 3" context across feature branches. Public-repo hygiene. Auto-detects specs/, docs/specs/, or .kdevkit/.
+version: 3.0.0
+tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, initiative, public-repo]
 ---
 
 # kdevkit — spec-driven development workflow
@@ -22,14 +22,19 @@ rewritten at each phase boundary. The §8 squash-merge collapses every
 phase into one commit on `main`, preserving "one logical commit per
 feature."
 
-Three surfaces, one per loop scope:
+Four surfaces:
 
 1. **Project invariants** — `project.md`. Mission, architecture,
-   tech stack, layout, testing, deployment.
-2. **Feature specs** — one file per feature. Requirements,
+   tech stack, layout, testing, deployment. Timeless;
+   cross-feature.
+2. **Initiative specs** — one file per multi-stream initiative
+   under `initiative/<name>.md`. Why + ordered streams + status
+   table. Time-bound (last-stream closure archives them). See
+   §10.
+3. **Feature specs** — one file per feature. Requirements,
    design, test strategy, implementation plan, session +
    decision logs.
-3. **Backlog** — one file per wanted-future-work item.
+4. **Backlog** — one file per wanted-future-work item.
 
 Auto-detects the spec tree in `specs/`, `docs/specs/`, or
 `.kdevkit/` (first hit wins).
@@ -44,6 +49,13 @@ At session start, resolve `$SPEC_ROOT` by checking
 `specs/` → `docs/specs/` → `.kdevkit/` (first hit wins). If
 none exists and feature work begins, create `specs/`. Never
 auto-migrate an existing `.kdevkit/` tree.
+
+Within `$SPEC_ROOT`, four recognized subdirectories:
+`feature/` (in-flight + completed feature records), `backlog/`
+(wanted-but-not-now items), `initiative/` (multi-stream
+initiatives — see §10), and `project.md` at the root.
+Detection cue for the initiative tier: `$SPEC_ROOT/initiative/`
+exists.
 
 ## 2 · Load project context
 
@@ -148,10 +160,40 @@ organised by skill. Keys under `kdevkit`:
   written (even with all defaults), the block sticks — the
   question doesn't re-fire next session.
 
+### Optional `## Active initiatives` index
+
+When in-flight initiatives exist (see §10), `project.md` MAY
+carry an `## Active initiatives` index near the bottom — one
+line per initiative, removed at last-stream close:
+
+```markdown
+## Active initiatives
+
+- **<name>** (`initiative/<name>.md`) — <one-line intent>
+```
+
+The index lets the agent skip loading every initiative file
+unconditionally; only the initiative(s) referenced by the
+current entry cue or the current feature load.
+
+### Session-start read order
+
+When the spec tree carries initiatives, the agent reads at
+session start in this order: `project.md` → the **Active
+initiatives** index → the current initiative (if the entry cue
+references one or the current feature is auto-linked to one,
+per §6) → feature(s) for the current branch. Read only the
+referenced initiative(s); do not load the whole `initiative/`
+tree unconditionally.
+
 ## 3 · Load feature context
 
 Entry cues: `"let's start / continue / pick up <feature>"`, or a
-branch like `feat/user-auth`. Resolve the entry mode:
+branch like `feat/user-auth`. Initiative-tier cues:
+`"start initiative <name>"`, `"show initiatives"`,
+`"stream <n> for <initiative>"` — see §10 for what each does.
+
+Resolve the entry mode for feature work:
 
 1. **Continue / pick up `<feature>`** — look for
    `$SPEC_ROOT/feature/<feature-name>.md` (work-in-progress).
@@ -160,6 +202,10 @@ branch like `feat/user-auth`. Resolve the entry mode:
    What/Why.
 2. **Start `<feature>`** — if neither file exists, run the four
    interviews (§6) and write the spec.
+3. **Stream `<n>` for `<initiative>`** — start a feature whose
+   Git Setup names the initiative as its parent. Auto-populates
+   the feature spec's `Part of initiative: [[<name>]]` link
+   (§6). Otherwise behaves as a normal **start** entry.
 
 **A spec on disk is not a reviewed spec** — when entering with a
 populated `feature/<feature>.md`, start in §6 Planning (not §7
@@ -305,6 +351,13 @@ These fire during phase execution to influence boundaries
 Update `Session Log` / `Decision Log` after each unit of work;
 don't batch.
 
+### Initiative-stream auto-link
+
+When this feature is a stream of an active initiative, §6
+Planning auto-populates the `Part of initiative: [[<name>]]`
+line in the feature spec — see §6 (and §10 for what counts as
+active and how matching resolves).
+
 ## 6 · Feature planning
 
 Trigger: a populated spec lacks the user's review (§3
@@ -343,6 +396,11 @@ validate after the fact.
 
 <one paragraph — what this feature is and why it is being built>
 
+<!-- Optional, populated by §6 auto-link when this feature is a
+     stream of an active initiative:
+Part of initiative: [[<name>]]
+-->
+
 ## Requirements
 
 <bullet list>
@@ -367,6 +425,17 @@ validate after the fact.
 
 <!-- append: decision · rationale · alternatives rejected -->
 ```
+
+### Initiative-stream auto-link
+
+When the feature being started is a stream of an active
+initiative (the initiative's Streams list names this feature's
+branch or feature-spec basename — see §10), §6 Planning
+auto-populates the `Part of initiative: [[<name>]]` line in
+the feature spec, immediately after `## Feature Brief`. No
+prompt; the link populates silently when the match is
+unambiguous. If two or more active initiatives reference the
+same name, ask one line to disambiguate.
 
 ### Plan-commit rule
 
@@ -616,6 +685,21 @@ accepted edits.
 feature close out? Pick any, or 'none'."_ `git rm` the chosen
 ones; asking is mandatory even when the answer is "none".
 
+**3.5 · Initiative Status update (auto).** If the closing
+feature is a stream of an active initiative (the feature spec
+carries `Part of initiative: [[<name>]]` near the top), update
+the initiative's Status table row: branch, CR, status =
+`shipped`, ship date, one-line learning. Stage the edit. If
+this is the **last** stream (every other row in the Status
+table is already `shipped`), the same staged edit also
+archives the initiative spec — `git rm
+$SPEC_ROOT/initiative/<name>.md` and remove the line from
+`project.md`'s `## Active initiatives` index (the index is a
+bullet list; the Status table is the per-initiative file). No
+separate `close(<initiative>):` commit; the last stream's
+`close(<feature>):` does the work. See §10 for the table
+format.
+
 **4 · Commit + push.** Staged closure edits land in one or
 more `close(<feature>):` commits per §9. Push.
 
@@ -659,15 +743,23 @@ trailing period; subject ≤ 72 chars. Body (when present)
 explains *why*; the diff is authoritative for *what*.
 
 Existing types: `feat` · `fix` · `chore` · `docs` · `refactor`
-· `test`. Two extras encode feature-branch phase:
+· `test`. Three extras encode tier-specific phases:
 
-- **`plan(<feature>):`** — planning-phase. Touches only
+- **`plan(<feature>):`** — feature-planning-phase. Touches only
   `specs/feature/<feature>.md` (rarely `specs/backlog/` on
   promotion). No code edits.
-- **`close(<feature>):`** — closure-phase. Reconciles in-flight
-  markers, applies any `project.md` verify edit, `git rm`s
-  resolved backlog items. No code edits — drift goes back to
-  the dev loop.
+- **`close(<feature>):`** — feature-closure-phase. Reconciles
+  in-flight markers, applies any `project.md` verify edit,
+  `git rm`s resolved backlog items, updates the parent
+  initiative's Status table (§8.3.5) and archives it on
+  last-stream close. No code edits — drift goes back to the
+  dev loop.
+- **`plan(<initiative>):`** — initiative-planning. Authors
+  `$SPEC_ROOT/initiative/<name>.md` and adds the
+  `## Active initiatives` index entry to `project.md`. No
+  code edits. There is no `close(<initiative>):` type — the
+  last stream's `close(<feature>):` archives the initiative
+  spec (§8.3.5).
 
 The §8.6 squash-merge collapses every phase into one commit on
 `main`; the type encodes the on-branch narrative, not the
@@ -688,6 +780,10 @@ user; the assistant is not a co-author.
 Every commit leaves the repo working. Commit per coherent unit;
 don't batch to end-of-feature. New commits, never amends,
 unless the user explicitly asks.
+
+**Cross-stream rebase carve-out.** New commits, never amends,
+except the cross-stream rebase covered in §10 — the only place
+this rule yields.
 
 ### Review Gates
 
@@ -749,6 +845,118 @@ In public-repo mode, any hit fails loud, surfaces lines, aborts.
 
 No commented-out code, debug prints, temp files, secrets, or
 credentials in commits.
+
+## 10 · Initiative tier
+
+The fourth tier in kdevkit, slotted between project (timeless)
+and feature (one branch). An initiative captures multi-feature
+work that can't fit on one branch — the *why* plus the ordered
+*streams* (each stream = one feature = one branch / CR /
+squash-merge) that deliver it, plus a Status table updated by
+each stream's closure commit.
+
+Initiatives are time-bound: created when the multi-stream work
+is identified, archived by the last stream's
+`close(<feature>):` commit (§8.3.5).
+
+### When to create one
+
+Any time CR review or planning produces "this needs to land as
+several CRs in order," the work is an initiative. The signal
+is sequential dependency between branches, not just a large
+feature. A large feature that can ship as one branch stays a
+feature; only when the work has to fan out across multiple
+branches in a defined order does it become an initiative.
+
+### Initiative file template
+
+```markdown
+# Initiative: <name>
+
+## Why
+
+<!-- The realization or external trigger. One paragraph. -->
+
+## Streams
+
+<!-- Ordered list. Each stream = one branch / one CR.
+     Format: 1. **<name>** (`<branch>`) — <one-line intent>.
+              Prereq: <previous stream id, or "none"> -->
+
+## Decisions taken at the initiative level
+
+<!-- Anything that binds *all* streams. Per-stream decisions
+     belong in that stream's feature spec. -->
+
+## Status
+
+| Stream | Branch | CR | Status | Shipped | Learnings |
+|---|---|---|---|---|---|
+| 1 | ... | ... | planning | — | — |
+```
+
+### Initiative entry verbs
+
+- **"start initiative `<name>`"** — write
+  `$SPEC_ROOT/initiative/<name>.md` from the template, populate
+  `project.md`'s `## Active initiatives` index with a one-line
+  entry, commit as `plan(<initiative>): initial spec`. The
+  initiative spec then goes through a Planning Review Gate the
+  same way a feature spec does (§6 / §9 Review Gates), with
+  phase-specific body content: **Why** + **Streams** +
+  **Decisions taken at the initiative level**.
+- **"show initiatives"** — list active initiatives from
+  `project.md`'s index. Read-only; no commit.
+- **"stream `<n>` for `<initiative>`"** — start a feature whose
+  Git Setup names the initiative as its parent. The feature
+  spec's `Part of initiative: [[<name>]]` line is auto-
+  populated; otherwise behaves as a normal §3 feature start
+  followed by §6 Planning.
+
+### Cross-stream rebase mechanics
+
+When Stream `n+1` is in-flight and Stream `n` re-ships to
+`main` after CR review:
+
+1. From Stream `n+1`'s branch:
+   `git fetch origin && git rebase origin/main`. Resolve
+   conflicts in place.
+2. Re-run §7 Quality + Test + Code Review Gates for the slice
+   that intersects the rebased change. Threshold and
+   retry-budget semantics unchanged.
+3. Force-push: `git push --force-with-lease`. Only after §7
+   reverifies — never push a rebased branch with stale gates.
+   Plain `--force` is unsafe against concurrent pushes;
+   `--force-with-lease` is the contract.
+4. If the rebase substantially changed the diff (e.g. shrunk
+   because Stream `n`'s changes are now in `main`), update the
+   open CR/PR body so reviewers aren't reading against a stale
+   summary.
+
+This is the only place §9's "new commits, never amends" rule
+yields — the sequential-stream contract requires rebasing.
+
+### Working across repo shapes (guidance, not contract)
+
+Tier definitions (project / initiative / feature / backlog)
+are about *how* to work. *Where* the work lives is orthogonal:
+
+- **Single-repo** (default): `$SPEC_ROOT = specs/` (or
+  `docs/specs/`, `.kdevkit/`). All four tiers live here.
+- **Multi-repo, per-repo specs**: each repo carries its own
+  `specs/`. An initiative whose streams span repos is awkward
+  — the initiative spec lives in one repo by convention; each
+  cross-repo stream's feature spec lives in the repo where the
+  stream's branch lives. Cross-repo references use
+  fully-qualified paths or repo names.
+- **Cross-repo program** (multiple repos under one umbrella):
+  out of scope for kdevkit. A separate top-level "program"
+  surface (in a workspace-level directory, not inside any one
+  repo) is the right shape; the skill does not encode this.
+
+The tier definitions are repo-shape agnostic; this guidance
+shows how they map onto common shapes without baking
+assumptions into the templates.
 
 ## Session Log
 
