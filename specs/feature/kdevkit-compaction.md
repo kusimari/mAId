@@ -204,7 +204,7 @@ into SKILL.md by reflex.
 
 ## Test Strategy
 
-Test strategy follows your direction:
+Test strategy follows your direction. Three principles:
 
 1. **Behavior-based, not shape-based.** Smokes assert what
    the agent *does* in response to a user ask. They do **not**
@@ -214,27 +214,31 @@ Test strategy follows your direction:
 2. **Independent of compaction internals.** A v3.0 (pre-D)
    kdevkit and a v3.1 (post-D) kdevkit both pass the same
    functional smokes — the only difference is the load
-   pattern, which is invisible to the user. This means the
-   smokes form the regression net for kdevkit's contract,
-   not for kdevkit's compaction.
-3. **Conversational-stream emulation.** Real sessions have
-   long coding back-and-forths before a kdevkit cue fires
-   (the closure cue, in particular, often fires after
-   dozens of turns). Smokes inject a conversational-stream
-   prefix before the kdevkit-relevant prompt to stress
-   whether the agent retains the kdevkit contract under
+   pattern, which is invisible to the user. The smokes form
+   the regression net for kdevkit's *contract*, not for
+   kdevkit's *compaction*.
+3. **Conversational-stream stress for every fixture.** Real
+   sessions have long coding back-and-forths before a
+   kdevkit cue fires; closure cues in particular often fire
+   after dozens of turns. Every fixture (existing + new)
+   runs in two modes — *bare* (current shape) and *stressed*
+   (the same prompt with a synthetic conversational-stream
+   prefix injected). The same `expected_narrative` evaluates
+   both modes; passing both proves the contract survives
    compaction-window pressure.
 
 ### Functional smoke fixtures (judge mode)
 
-Existing fixtures stay green (regression net):
+The total fixture surface is 11: 7 existing + 4 new.
+
+Existing fixtures (regression net):
 `kdevkit.smoke`, `kdevkit-feature-loop.smoke`,
 `kdevkit-feature-planning.smoke`, `kdevkit-feature-closure.smoke`,
 `kdevkit-dev-loop.smoke`, `kdevkit-review-gate.smoke`,
 `kdevkit-review-config-setup.smoke`.
 
 Before re-running these, audit each for fragility against the
-new on-demand-load shape. The dev-loop / review-gate / closure
+on-demand-load shape. The dev-loop / review-gate / closure
 fixtures are operational and should pass unchanged. The
 feature-planning fixture asks about the four interviews — must
 still pass: the four interviews remain part of the kdevkit
@@ -243,135 +247,162 @@ contract; whether their text lives in SKILL.md or
 existing fixtures that asserts file location rather than
 behavior.
 
-**New fixtures.** Nine new judge-mode fixtures, all
-prompt + expected_narrative shape, three of them carrying a
-**conversational-stream prefix**:
+**New fixtures (4).** Each is judge-mode
+(`prompt: ` + `expected_narrative: `):
 
 1. **`kdevkit-initiative-recognition.smoke`** — user describes
    coupled, multi-CR work in conversation ("we need to refactor
    the auth middleware *and* migrate the session store *and*
    update the API contract; these need to land in order"); the
-   agent should offer to create an initiative, walk the user
-   through the §10 entry-verb shape, and ask the §10 interview
-   questions (Why → Streams → initiative-level Decisions). Wrong
-   answers: treating it as one feature; treating it as three
-   independent backlog items; jumping to spec-write without
-   offering the initiative shape.
-2. **`kdevkit-initiative-start.smoke`** — explicit cue "start
-   initiative `<name>`"; the agent should create
-   `$SPEC_ROOT/initiative/<name>.md` from the §10 template,
-   update the `## Active initiatives` index in `project.md`,
-   and commit as `plan(<initiative>): initial spec` per §6's
-   plan-commit rule (commit + push + open Planning Review
-   Gate before any cue). Wrong answers: skipping the index
-   update; using `feat(...)` instead of `plan(<initiative>):`;
-   waiting for a cue before committing.
-3. **`kdevkit-stream-auto-link.smoke`** — initiative exists
-   on disk with a Streams list naming `feat/api-contract`;
-   the user starts a new feature `feat/api-contract`; the
-   agent should auto-populate `Part of initiative: [[<name>]]`
-   in the new feature spec without prompting (§6 unambiguous
-   rule). Wrong answers: prompting unnecessarily; failing to
-   populate; populating with the wrong initiative name.
-4. **`kdevkit-cross-stream-rebase.smoke`** — Stream 2 is in
+   agent should (a) offer to create an initiative rather than
+   one feature or three backlog items, (b) walk through the
+   §10 entry-verb shape (`start initiative <name>`), (c) ask
+   the initiative-level interview questions (Why → Streams →
+   initiative-level Decisions), and (d) describe what the
+   downstream `stream <n> for <initiative>` cue would do
+   (auto-link, separate feature spec). One fixture covers
+   recognition + entry verbs + auto-link description.
+   Wrong answers: collapsing into one feature; splitting
+   into three independent backlog items; jumping to
+   spec-write without offering the initiative shape;
+   skipping the auto-link description.
+2. **`kdevkit-stream-closure.smoke`** — closing a feature
+   whose spec carries `Part of initiative: [[X]]`; the
+   `expected_narrative` covers both branches:
+   (a) **Normal stream case**: walk §8.1–§8.3 plus §8.3.5
+   (update X's Status table row with branch / CR /
+   status=shipped / ship date / one-line learning), then §8.4
+   commit + push + Closure Review Gate + squash-merge — all
+   in the same `close(<feature>):` commit.
+   (b) **Last-stream branch**: if every other Status table row
+   were already `shipped`, the same `close(<feature>):` commit
+   also archives the spec (`git rm
+   $SPEC_ROOT/initiative/<name>.md`) and removes the line from
+   `project.md`'s `## Active initiatives` index — no separate
+   `close(<initiative>):` ceremony.
+   Wrong answers: skipping §8.3.5; staging the Status table
+   update separately from the close-commit; archiving the
+   spec but forgetting the index entry; creating
+   `close(<initiative>):`.
+3. **`kdevkit-cross-stream-rebase.smoke`** — Stream 2 is in
    dev; Stream 1's CR re-ships to `main` after review; the
    user mentions "Stream 1 just merged"; the agent should
-   describe the §10 cross-stream rebase mechanics (fetch +
-   rebase + re-run §7 Quality + Test + Code Review +
-   `git push --force-with-lease`). Wrong answers: ignoring
-   Stream 1's merge; using plain `--force`; skipping the §7
-   re-run after rebase; suggesting a merge commit instead of
-   rebase.
-5. **`kdevkit-stream-closure.smoke`** — closing a feature
-   whose spec carries `Part of initiative: [[X]]`; the agent
-   should walk §8.1–§8.3 plus §8.3.5 (update X's Status table
-   row with branch / CR / status=shipped / ship date / one-line
-   learning), then §8.4 commit + push + Closure Review Gate +
-   squash-merge. Wrong answers: skipping §8.3.5; updating only
-   the Status table without staging it as part of the same
-   `close(<feature>):` commit.
-6. **`kdevkit-last-stream-archive.smoke`** — closing the last
-   unshipped stream of an active initiative; the agent should
-   stage **both** the Status table update AND the archive
-   (`git rm $SPEC_ROOT/initiative/<name>.md` and remove the
-   `## Active initiatives` index entry from `project.md`) in
-   the same `close(<feature>):` commit. No
-   `close(<initiative>):` ceremony. Wrong answers: leaving
-   the initiative spec in place; creating a separate
-   `close(<initiative>):` commit; archiving the spec but
-   forgetting the index entry.
-7. **`kdevkit-closure-after-long-session.smoke`** —
-   **CONVERSATIONAL-STREAM PREFIX.** Inject ~30–50 turns of
-   simulated coding back-and-forth (mix of file edits, test
-   runs, debugging chatter, brief tangents — not all kdevkit
-   relevant) before the closure cue fires. Then the user
-   says "ship it". The agent should run the full §8 closure
-   cycle correctly: §8.1 reconcile, §8.2 soft project.md
-   verify, §8.3 backlog ask (interactive — must ask even if
-   the answer is "none"), §8.3.5 if applicable, §8.4 commit
-   + push, §8.5 Closure Review Gate (title rewritten to
-   `feat(...)` from `close(...)`), §8.6 squash-merge.
+   describe the §10 cross-stream rebase mechanics in order:
+   `git fetch origin && git rebase origin/main` → re-run §7
+   Quality + Test + Code Review Gates → push with
+   `git push --force-with-lease` (never plain `--force`) →
+   update the open PR/CR body if the diff substantially
+   changed. Procedural and easy to get wrong; standalone
+   fixture justified.
+   Wrong answers: ignoring Stream 1's merge; plain `--force`;
+   skipping §7 re-run after rebase; merge commit instead of
+   rebase; rebasing without re-running gates.
+4. **`kdevkit-closure-after-long-session.smoke`** — the
+   killer test for D. Closure is the highest-stakes event
+   (squash-merge invariant lives in §8). The `expected_narrative`
+   covers the full §8 cycle: §8.1 reconcile, §8.2 soft
+   project.md verify, §8.3 backlog ask (interactive —
+   *asking is the artifact*; must ask even if the answer is
+   "none"), §8.3.5 if applicable, §8.4 commit + push, §8.5
+   Closure Review Gate (title rewritten to `feat(...)` from
+   `close(...)`), §8.6 squash-merge.
    Wrong answers: any §8 step skipped; treating the long
-   conversational stream as evidence the closure is
-   redundant; auto-merging without §8.3 backlog ask.
-8. **`kdevkit-initiative-after-long-session.smoke`** —
-   **CONVERSATIONAL-STREAM PREFIX.** Inject ~20–40 turns of
-   coding chatter; midway, the user describes new coupled
-   multi-CR work. The agent should still offer the initiative
-   shape rather than letting the long conversation push it
-   into a heuristic shortcut (e.g. "let's just open three PRs
-   in parallel"). Same expected behavior as fixture 1, but
-   under conversational pressure. Wrong answers: collapsing
-   the multi-stream work into one feature because of session
-   context drift; skipping the §10 interview questions;
-   creating three independent backlog items.
-9. **`kdevkit-planning-after-long-session.smoke`** —
-   **CONVERSATIONAL-STREAM PREFIX.** Inject ~30–50 turns of
-   coding chatter before the user says "let's plan
-   `<feature>`". The agent should still apply the §6
-   plan-commit rule sequence: confirm readiness → commit
-   `plan(<feature>): initial spec` → push → open Planning
-   Review Gate → wait for cue. Common ordering mistake under
-   pressure: waiting for the user's cue before committing.
-   Wrong answers: skipping the commit; reversing the order;
-   running §7 dev gates instead of §6 planning gates.
+   conversational stream as evidence closure is redundant;
+   auto-merging without §8.3 backlog ask; leaving the title
+   as `close(...)` for the squash subject.
 
-### Conversational-stream prefix shape
+### Cuts and rationale
 
-The harness already supports a `prompt:` field; for the three
-prefix-bearing fixtures, the `prompt:` value carries an
-inline conversational-stream block before the kdevkit cue.
-Format proposal:
+Five originally-listed fixtures were cut from this round:
 
-```
-prompt: <conversational-stream-prefix>: <30-50 turns of mixed
-  coding chatter — file edits, test runs, brief tangents,
-  some kdevkit-relevant turns mixed in but not focal>.
-  Now the user says: "<closure cue or initiative ask or
-  plan ask>". Begin your response with [kdevkit] applies.
-  Then answer in N sentences: ...
-expected_narrative: ...
-```
+- *initiative-start* — subsumed by `initiative-recognition`'s
+  expected_narrative (entry-verb walk-through is part of
+  recognition).
+- *stream-auto-link* — implicitly tested by `stream-closure`:
+  closure can't find the parent initiative and fire §8.3.5
+  unless auto-link populated correctly upstream.
+- *last-stream-archive* — folded into `stream-closure` as the
+  second branch of the same `expected_narrative`.
+- *initiative-after-long-session* — redundant with
+  `closure-after-long-session` once every fixture runs
+  stressed by default. Once the harness flag exists, every
+  fixture is a long-session test for free.
+- *planning-after-long-session* — same. The existing
+  `kdevkit-feature-planning.smoke` already covers the §6
+  plan-commit ordering; running it stressed is the
+  long-session test.
 
-The conversational-stream prefix is **synthetic** — no real
-external simulation needed. The harness keeps the existing
-single-shot dispatch shape (`claude --print` /
-`kiro-cli chat --no-interactive`); the prefix is part of the
-prompt string. This emulates the *content* of a long session
-(many references and turns to wade through) without
-emulating the *delivery* (multi-turn API calls). Sufficient
-for "does the agent retain the contract under compaction
-pressure?" since main-loop compaction summarizes prior turns
-into one context block — content is what survives, not turn
-count.
+The trade-off: cutting from 9 → 4 loses some isolated assertion
+granularity. If `closure-after-long-session` fails, the
+failure narrative says "closure broke under stress" but not
+necessarily "the agent forgot the planning order
+specifically." Acceptable — narrow tests get added when a real
+failure exposes a gap, not preemptively.
 
-### Smokes are user-driven
+### Conversational-stream stress: the shared prefix
 
-Per `project.md` Testing rule, agentic runs stop at
-`test:smoke` (structural). The judge fixtures are user-driven
-(`deno task test:functional` or `tests/functional/run <name>`).
-The feature spec names every new fixture so the user can run
-them by hand.
+A new file at `tests/functional/conversational-stream.txt`
+carries the synthetic prefix authored once and reused across
+every fixture. Shape: ~30–50 simulated turns of mixed coding
+chatter — file edits, test runs, debugging tangents, some
+kdevkit-relevant turns mixed in but not focal — followed by
+the literal cue "Now the user says:" so the harness can
+splice the per-fixture prompt after.
+
+Authoring discipline for the prefix:
+
+- **Mixed kdevkit relevance.** Some turns mention specs,
+  feature branches, or commits but not the *current* feature.
+  Stress comes from "did the agent track the context that
+  matters here, despite all this nearby noise."
+- **No internal markers.** Public-repo hygiene applies — the
+  prefix lives in the same `specs/`-adjacent test surface
+  the §9 internal-marker grep guards.
+- **One file, edited centrally.** Drift between fixtures
+  comes from divergent prefix content; a shared file
+  prevents that drift.
+
+### Two-mode harness
+
+`tests/functional/run` gains a `--stressed` flag. Both modes
+must pass the same `expected_narrative`:
+
+- **Bare (default)** — same as today; the per-fixture
+  `prompt:` is sent verbatim. Fast pre-flight; cheaper API
+  cost; first signal that the contract holds *at all*.
+- **Stressed (`--stressed`)** — the harness reads
+  `tests/functional/conversational-stream.txt`, prepends
+  it to each fixture's `prompt:` (separated by a clear
+  marker like `\n\nNow the user says: `), then sends. Slower,
+  costs more API credits, but proves the contract survives
+  compaction-window pressure.
+
+Both modes evaluate the same `expected_narrative`. A pass
+in bare + fail in stressed = a real bug surfaced by
+compaction. A fail in both = the change broke the contract
+fundamentally; bare is the cheaper signal to debug from.
+
+### Functional gate runs inside D's dev loop
+
+**Project.md override scoped to D**: the agent runs
+`deno task test:functional --stressed` (and the bare mode if
+needed) **as part of D's §7 Test Gate**, not as a user-driven
+follow-up. project.md's "Functional tests are user-driven"
+rule is a sensible default for most features but blocks the
+feedback loop that makes compaction tractable — D's whole
+point is "did the contract survive?" and only the smokes
+answer that. The agent reads judge feedback, patches
+SKILL.md / setup.md / interviews.md, re-runs, until green.
+
+This is a per-feature override, not a project.md change. After
+D ships, future features default back to user-driven
+functional. If a future feature also benefits from agent-side
+functional runs, it carries its own override in its spec.
+
+The override extends the §7 Test Gate's `retry_budget`: bare
++ stressed counts as one Test Gate invocation per cycle; if
+either fails, the cycle fix-and-retries up to the default
+budget of 2 cycles before stopping and reporting per §7.
 
 ### Quality gate
 
@@ -551,21 +582,46 @@ triggers behind in SKILL.md. No semantic invention.
     confirm it asserts behavior (not file location). Any
     fixture that says "the SKILL.md file says X" gets patched
     to "the agent says X" or equivalent. Stage edits.
-11. **Add 9 new functional smokes.** Three of them
-    (closure-after-long-session, initiative-after-long-session,
-    planning-after-long-session) carry the conversational-stream
-    prefix in the prompt body. The other six (initiative-
-    recognition, initiative-start, stream-auto-link,
-    cross-stream-rebase, stream-closure, last-stream-archive)
-    are direct-prompt fixtures. All judge-mode
-    (`expected_narrative`).
-12. **Run Code Review Gate.** Per `code_review.reviewer:
+11. **Add the shared conversational-stream prefix.** Author
+    `tests/functional/conversational-stream.txt` with ~30–50
+    simulated turns of mixed coding chatter (file edits,
+    test runs, debugging tangents, some kdevkit-relevant
+    turns mixed in but not focal). One file, edited
+    centrally; the §9 internal-marker grep applies.
+12. **Add the `--stressed` harness flag.** Extend
+    `tests/functional/run` so `--stressed` reads
+    `conversational-stream.txt`, prepends it to each
+    fixture's `prompt:` (separated by `\n\nNow the user
+    says: `), and sends the combined prompt. Both modes
+    evaluate the same `expected_narrative`. Update the
+    `--help` block and the harness's top-of-file usage
+    comment.
+13. **Add 4 new judge-mode fixtures**:
+    - `kdevkit-initiative-recognition.smoke`
+    - `kdevkit-stream-closure.smoke`
+    - `kdevkit-cross-stream-rebase.smoke`
+    - `kdevkit-closure-after-long-session.smoke`
+    All `prompt: ` + `expected_narrative: ` shape; no
+    fixture-local conversational-stream prefix (the harness
+    flag handles stress).
+14. **Run §7 Test Gate with functional smokes (D-scoped
+    override).** `deno task test:functional` (bare) +
+    `deno task test:functional -- --stressed` (or
+    `tests/functional/run --stressed`, depending on the
+    deno-task flag-passthrough shape). Read judge feedback;
+    patch SKILL.md / setup.md / interviews.md; re-run.
+    Within the §7 default `retry_budget: 2`. The override
+    is scoped to D — future features default back to
+    project.md's "user-driven" rule.
+15. **Run Code Review Gate.** Per `code_review.reviewer:
     host-native`, threshold 70, hard-stop, retry-budget 2.
     Reviewer sees `project.md` + the diff (which now spans
-    SKILL.md + new files); no feature spec.
-13. **Push.** Open Agent-dev Review Gate per §7. Body:
-    Approach + Reading order grouped by phase.
-14. **Closure** (per session override): §8.1 reconcile, §8.2
+    SKILL.md + new files + harness change + new fixtures);
+    no feature spec.
+16. **Push.** Open Agent-dev Review Gate per §7. Body:
+    Approach + Reading order grouped by phase. Include
+    test-gate evidence (bare + stressed pass counts).
+17. **Closure** (per session override): §8.1 reconcile, §8.2
     soft project.md verify (likely no edits — mAId's project.md
     is already clean), §8.3 backlog ask (this feature closes
     the kdevkit-compaction backlog item, which was `git mv`'d
@@ -627,6 +683,22 @@ Risk notes:
   (granularity, return shape, template grouping, fallback
   testing punted, future-feature rule).
 
+- 2026-06-03 · plan rev 2 · cut new fixtures 9 → 4
+  (initiative-recognition, stream-closure, cross-stream-rebase,
+  closure-after-long-session); fold initiative-start /
+  stream-auto-link / last-stream-archive into other fixtures'
+  expected_narrative; drop initiative-after-long-session and
+  planning-after-long-session as redundant once stress is
+  applied to every fixture. Add shared
+  `tests/functional/conversational-stream.txt` + harness
+  `--stressed` flag; every fixture (existing 7 + new 4) runs
+  in both bare and stressed modes against the same
+  expected_narrative. Add D-scoped override: §7 Test Gate
+  runs functional smokes in-loop so the agent can read judge
+  feedback and patch SKILL.md / setup.md / interviews.md
+  within retry_budget instead of waiting for user-driven
+  runs. Implementation Plan grew 14 → 17 steps.
+
 ## Decision Log
 
 <!-- append: decision · rationale · alternatives rejected -->
@@ -672,16 +744,33 @@ Risk notes:
   shape-checking smokes ("did the agent reference setup
   narrative?") — couples the test to the implementation,
   breaks every time the load pattern changes.
-- **Conversational-stream prefix on three new fixtures.**
-  Rationale: per user direction. Real sessions have long
-  coding back-and-forths before a kdevkit cue fires;
-  closure cues in particular often fire after dozens of
-  turns. The prefix stresses whether the agent retains the
-  contract under compaction-window pressure. Alternative
-  rejected: prefix on every new fixture — overspecifies
-  the test surface; the three coverage points
-  (closure / initiative / planning) cover the high-stress
-  paths.
+- **Four new fixtures, not nine.** Rationale: at nine
+  fixtures the spec became un-reviewable. Cutting to four
+  preserves the broad coverage (initiative recognition,
+  stream closure including last-stream branch, cross-stream
+  rebase, closure-after-long-session) and folds isolated
+  assertions into shared `expected_narrative` text where
+  they were redundant. Each prompt + narrative is now
+  short enough to read end-to-end. Alternative rejected:
+  nine narrowly-scoped fixtures — over-specification when
+  four broad-narrative fixtures cover the same ground via
+  expected_narrative discipline; failure isolation is what
+  you do *after* a real failure exposes a gap.
+- **Shared `conversational-stream.txt` prefix; harness
+  `--stressed` flag; every fixture runs in both modes.**
+  Rationale: per user direction. Authoring 11 inline
+  prefixes (one per fixture) would make stress vary by
+  fixture and "did this fail because of stress content X"
+  becomes a real question. One shared prefix = consistent
+  stress; one place to evolve. The bare → stressed split
+  is a CLI flag, not 11 separate fixture files. Both modes
+  evaluate the same `expected_narrative` — passing both
+  proves the contract survives compaction-window pressure;
+  passing bare and failing stressed = a real bug surfaced
+  by compaction; failing both = a fundamental contract
+  break (debug bare first, it's cheaper). Alternative
+  rejected: per-fixture inline prefix — drift risk;
+  fragmented stress content; harder to evolve.
 - **Conversational-stream prefix is synthetic
   (single-shot prompt with embedded content), not literal
   multi-turn.** Rationale: main-loop compaction summarizes
@@ -692,6 +781,20 @@ Risk notes:
   via a session-aware harness — would require a new test
   scaffolding effort; not justified by the marginal fidelity
   gain for "did the agent retain the contract."
+- **D's §7 Test Gate runs functional smokes in-loop
+  (per-feature override of project.md's "user-driven"
+  rule).** Rationale: D's whole point is "did the contract
+  survive compaction?" and only the smokes answer that.
+  Running them user-driven means a slow human-mediated
+  feedback loop (agent edits, user runs, agent reads
+  feedback, repeats); running them in-loop lets the agent
+  fix-and-retry within the existing §7 retry_budget. The
+  override is scoped to D's spec — future features default
+  back to project.md's "user-driven" rule unless their own
+  spec declares an override. Alternative rejected: change
+  project.md's rule globally — over-broad; most features
+  don't need agent-side functional runs and would pay the
+  API-credit cost without benefit.
 - **`setup.md` and `interviews.md` carry no frontmatter.**
   Rationale: only SKILL.md is the discoverable entrypoint;
   sibling files are inline-Read'd by reference. Frontmatter
