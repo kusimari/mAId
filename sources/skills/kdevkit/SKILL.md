@@ -1,6 +1,6 @@
 ---
 name: kdevkit
-description: Spec-driven development workflow — locate spec tree, load project + feature context, start a session, run it through planning → dev loop → closure with phase-gating cues, ship via Conventional Commits and Quality/Test/Push/Review gates. Three-phase feature branch on a single PR/CR; main stays single-commit-per-feature via squash. Public-repo hygiene. Auto-detects specs/, docs/specs/, or .kdevkit/.
+description: Spec-driven development workflow — locate spec tree, load project + feature context, start a session, run it through planning → dev loop → closure with phase-gating cues, ship via Conventional Commits and Quality/Test/Code-Review/Push/Review gates. Three-phase feature branch on a single PR/CR; main stays single-commit-per-feature via squash. Public-repo hygiene. Auto-detects specs/, docs/specs/, or .kdevkit/.
 version: 2.6.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, public-repo]
 ---
@@ -13,7 +13,7 @@ Three nested loops, with three phases on the feature branch:
 project loop      ← project.md invariants. Cross-feature.
   feature loop    ← one branch, three phases, one squash-merge.
     ├─ planning phase    plan(<feature>): commits + Review Gate
-    ├─ dev loop          feat/fix/...: Quality → Test → Push → Review (§7)
+    ├─ dev loop          feat/fix/...: Quality → Test → Code Review → Push → Review (§7)
     └─ closure phase     close(<feature>): reconcile + squash-merge (§8)
 ```
 
@@ -99,6 +99,10 @@ When creating `project.md`, probe ecosystem markers
 one batch; write Testing as prose — §7 reads commands from it
 at run time.
 
+Append the §4 **Code-review setup prompt** as a one-liner
+to the same setup batch so the new project lands with a
+`code_review:` block already declared.
+
 ### Optional `## Agent Development` section
 
 `project.md` may carry an `## Agent Development` section
@@ -110,6 +114,39 @@ organised by skill. Keys under `kdevkit`:
   feature branch (planning → dev → closure) per §5/§6/§7/§8.
   Set `false` to skip §6 Planning and let spec edits ride
   with the first dev commit.
+- `code_review:` — nested block configuring the §7 Code Review
+  Gate. All keys optional; defaults below.
+
+  ```yaml
+  code_review:
+    reviewer: host-native       # default; alternative: skill:<name>
+                                # / mcp:<server>.<tool> / agent:<name>
+    threshold: 70               # 0–100 score floor for Push
+    authority: hard-stop        # alternative: soft
+    retry_budget: 2             # total fix-and-retry cycles (incl. first review)
+  ```
+
+  - **`reviewer`** — who runs the review. Prefix-tagged so the
+    orchestrator knows what to dispatch:
+    - `host-native` (default) — the host coding agent's built-in
+      code review.
+    - `skill:<name>` — a skill in the registry (bare strings
+      without a prefix default to `skill:`).
+    - `mcp:<server>.<tool>` — an MCP server's tool.
+    - `agent:<name>` — a named project-configured agent.
+  - **`threshold`** — score floor; sub-threshold loops back to
+    Quality. Default `70`.
+  - **`authority`** — `hard-stop` blocks Push when retries
+    exhaust; `soft` allows Push with residuals appended to
+    Session Log.
+  - **`retry_budget`** — total review attempts including the
+    first (a budget of 2 = up to 2 outer review cycles, not 2
+    retries on top of an initial pass). Default `2`. The Test
+    Gate uses the same "attempts including first" semantics.
+
+  Omitting the block entirely triggers the §4 setup UX. Once
+  written (even with all defaults), the block sticks — the
+  question doesn't re-fire next session.
 
 ## 3 · Load feature context
 
@@ -126,20 +163,10 @@ branch like `feat/user-auth`. Resolve the entry mode:
 
 **A spec on disk is not a reviewed spec** — when entering with a
 populated `feature/<feature>.md`, start in §6 Planning (not §7
-Dev). Order matters:
-
-1. Confirm readiness with the user; iterate on the spec if
-   needed.
-2. **Commit** the spec as `plan(<feature>): initial spec`.
-3. **Push** the feature branch.
-4. **Open the Planning Review Gate** (PR/CR with the planning
-   body shape — see §6).
-5. **Then** wait for the planning → dev cue (§5).
-
-The cue gates the *move* to dev — not the planning commit. The
-commit + push + review must happen first so the user has
-something to react to. Reversing this order (waiting for the cue
-before committing) is the most common ordering mistake.
+Dev). Apply §6's **Plan-commit rule** (numbered sequence): commit
+→ push → open the Planning Review Gate → *then* wait for the
+planning → dev cue. The single source of truth for the order
+lives in §6 so it fires regardless of entry path.
 
 In every entry mode — start, continue, or pick up — read
 `project.md`'s `kdevkit.prefer_worktree` *first* and decide:
@@ -192,9 +219,34 @@ One-time setup decisions on entry:
 - **Planning-phase opt-out.** `kdevkit.planning_phase: false`
   skips §6 entirely — spec edits ride with the first dev
   commit.
-- **Other preferences load from the `kdevkit` block** —
-  threshold, retry budget, review CLI, branch-cleanup, merge.
-  Full resolution rule is in §7.
+- **Code-review setup prompt.** If `kdevkit.code_review:` is
+  missing from `project.md`, fire a one-line prompt on session
+  entry — the §7 Code Review Gate is the only gate that reads
+  the config, but firing on entry (regardless of fresh / continue
+  / pick-up mode) keeps the prompt out of the dev loop:
+
+  > _"This project doesn't declare a code reviewer. Use the
+  > host's native review (default), or point to a project-specific
+  > one (`skill:<name>` / `mcp:<server>.<tool>` / `agent:<name>`)?
+  > Reply 'default', paste a reference, or 'skip'."_
+
+  Then **sticky-write** the answer to `project.md`'s `## Agent
+  Development > kdevkit` block so the question doesn't re-fire
+  next session:
+  - Reply `'default'` → write
+    `code_review: { reviewer: host-native }`.
+  - Reply with a `<ref>` → write
+    `code_review: { reviewer: <ref> }`. Threshold / authority /
+    retry_budget inherit defaults.
+  - Reply `'skip'` → no write; question re-fires next session.
+    (Lets a user defer the decision without committing.)
+
+  The same prompt fires from §2's first-time `project.md` flow
+  as the appended one-liner.
+- **Other preferences load from the `kdevkit` block** — the
+  full `code_review.*` block (`reviewer`, `threshold`,
+  `authority`, `retry_budget`), plus review CLI,
+  branch-cleanup, merge. Full resolution rule is in §7.
 
 ## 5 · Run feature session
 
@@ -217,11 +269,16 @@ Do not chain phases automatically. Two gating layers stack:
   design / test strategy / implementation plan. Stop after
   each; order is flexible.
 - **Branch phases** (planning / dev / closure). Stop at each
-  boundary. Cues:
+  boundary. Each cue gates the *move* to the next phase, not the
+  commits/pushes that precede the gate — those must already have
+  happened. Cues:
   - **Planning → dev**: `"spec looks good"` /
-    `"start build"` / `"plan approved"`.
+    `"start build"` / `"plan approved"`. *Fires only after the
+    Planning Review Gate is open — see §6 Plan-commit rule for
+    the prerequisite sequence.*
   - **Dev → closure**: `"close it"` / `"ship it"` /
-    `"merge it"` / `"feature done"`.
+    `"merge it"` / `"feature done"`. *Fires only after the
+    Agent-dev Review Gate is open — see §7.*
 
 Both Review Gate greens close the inner loop; closure (§8)
 requires the explicit cue.
@@ -306,9 +363,33 @@ validate after the fact.
 
 ### Plan-commit rule
 
-Commit the populated spec as `plan(<feature>): initial spec`
-and ship through the **Planning Review Gate** before any code
-work; skip if `planning_phase: false` (§2).
+The populated spec must reach the user as a reviewable artefact
+before any code work begins. Order matters:
+
+1. Finish the four interviews and write
+   `$SPEC_ROOT/feature/<feature>.md`.
+2. Confirm readiness with the user; iterate on the spec if
+   needed.
+3. **Commit** the spec as `plan(<feature>): initial spec`.
+4. **Push** the feature branch.
+5. **Open the Planning Review Gate** (PR/CR with the
+   phase-specific body shape — see below).
+6. **Then** wait for the planning → dev cue (§5).
+
+The cue gates the *move* to dev — not the planning commit. The
+commit + push + review must happen first so the user has
+something concrete to react to. Reversing this order (waiting
+for the cue before committing) is the most common ordering
+mistake — a planning agent can read "confirm readiness" as the
+exit-from-planning cue and stop there. It isn't. Steps 3–5 are
+the artefact; step 6 is the gate after the artefact exists.
+
+This rule is the single source of truth for both planning entry
+paths — fresh-from-interviews and spec-on-disk (§3); §3 cites it
+rather than duplicating.
+
+Skip steps 3–6 if `planning_phase: false` (§2) — spec edits ride
+with the first dev commit.
 
 ### Planning Review Gate
 
@@ -326,8 +407,9 @@ loop runs autonomously between gates — no per-step prompts.
 Read `project.md`'s Testing section for format / lint /
 type-check / test commands; missing → fall back to §2
 first-time detection. The `kdevkit` block under `## Agent
-Development` overrides defaults below (threshold, retry
-budget, review CLI, branch-cleanup, merge).
+Development` overrides defaults below (the full `code_review.*`
+block — `reviewer`, `threshold`, `authority`, `retry_budget` —
+plus review CLI, branch-cleanup, merge).
 
 **Resolve any specific command** (review CLI, branch-delete,
 merge, worktree ops) via implicit host knowledge → `kdevkit`
@@ -335,41 +417,115 @@ block → ask once and persist.
 
 ### Quality Gate
 
+Deterministic checks only — anything subjective moves to the
+**Code Review Gate** (below).
+
 1. Run format; apply auto-fixes.
 2. Run lint; fix until clean.
 3. Run type-check (if applicable); fix all errors.
-4. Self-review the diff vs. base, score 0–100 (correctness,
-   security, conventions). Default threshold: **70**.
-   - ≥ threshold → Test Gate.
-   - < threshold → fix highest-severity, re-review **once
-     only**; if still below, proceed and note residual issues
-     in the Session Log.
+
+All three pass → Test Gate.
 
 ### Test Gate
 
 Tests are part of the same iteration as the behavior change —
 not a follow-up. When an implementation slice changes a behavior
 the project's tests evaluate, the test update lands in the same
-loop iteration, before the Push Gate. The §6 Test Strategy maps
-each success criterion to a project test layer; the Test Gate
-verifies them.
+loop iteration, before the Code Review Gate. The §6 Test Strategy
+maps each success criterion to a project test layer; the Test
+Gate verifies them.
 
 1. Run tests. All pass (zero failures, zero errors).
 2. On failure: diagnose, fix, re-run. Default budget: **2**
-   fix-and-retry cycles. If still failing, stop and report.
+   total attempts (initial run + 1 retry) — same semantics as
+   the Code Review Gate's `retry_budget`. If still failing, stop
+   and report.
 3. If fixes were substantial, re-run the Quality Gate.
+
+### Code Review Gate
+
+A real code review run by a separate agent, on a green diff. The
+reviewer is **not** the agent doing the implementation — it sees
+a fresh context so feature-spec narrative doesn't bias the read.
+
+**Resolve the reviewer.** Read
+`kdevkit.code_review:` from `project.md` (§2). Defaults if
+missing keys: `reviewer: host-native`, `threshold: 70`,
+`authority: hard-stop`, `retry_budget: 2`. If the entire block
+is missing, the §4 setup UX should already have prompted —
+proceed with defaults if the user replied 'skip'.
+
+**Dispatch contract.** The reviewer runs in a **fresh-context
+agent call** — no feature spec, no session log, no in-progress
+conversation history.
+
+Receives:
+
+- `project.md` (project invariants — every reviewer needs the
+  architecture / hard-constraints / public-repo signal).
+- The diff vs. base.
+- The reviewer reference + threshold + authority + retry_budget.
+
+Excluded:
+
+- `feature/<feature>.md` (deliberately excluded — feature
+  context is what we're trying to keep out).
+- Session log / Decision log.
+- Conversation history.
+
+Reviewers that legitimately need feature context (e.g. "did the
+implementation match the spec?") must ask for it themselves —
+the contract default is "no feature-spec." This keeps the gate
+honest about what it's reviewing: the diff against the project,
+not the diff against the agent's own plan. How the host
+translates "fresh-context agent call" is host-specific (Claude
+Code's Agent tool, Kiro's equivalent, Codex's CLI); the
+contract is portable.
+
+**Returns.** A findings list + a 0–100 score.
+
+**Score handling.**
+
+- Score ≥ `threshold` → Push Gate.
+- Score < `threshold` → loop back to start of Quality:
+  1. Append findings (or a one-line summary, plus a reviewer
+     URL where the host produces one) to the feature spec's
+     Session Log so they're captured.
+  2. Treat the highest-severity findings as the next
+     implementation slice.
+  3. Re-enter Quality Gate from the top.
+  4. Re-run Test Gate.
+  5. Re-run Code Review Gate.
+  6. Repeat until score ≥ threshold or `retry_budget`
+     exhausted.
+
+Worst-case loop: `retry_budget` outer review cycles per slice
+(default 2 — the count includes the first review attempt, not
+retries on top of it). The Test Gate's own retry budget runs
+inside each Test Gate invocation; it doesn't multiply the
+review-cycle count, since Code Review only re-fires after Test
+passes. After exhausting `retry_budget`, behavior splits on
+**`authority`**:
+
+- `hard-stop` (default) — refuse Push; surface findings to user;
+  await explicit override.
+- `soft` — allow a final Push with residuals appended to Session
+  Log. Matches the older "fix once, proceed with residuals"
+  softness for projects that prefer it.
 
 ### Push Gate
 
-Only push after Quality + Test pass.
+Only push after Quality + Test + Code Review pass (the latter
+per `authority`).
 
 ### Agent-dev Review Gate
 
 Fires after Push. Apply §9 Review Gates. Phase-specific body
 content: **Approach** (bullets covering the changes).
 
-**Refuse-on-fail.** Prior gate failed or noted residual issues
-→ no review. Surface failure; require explicit override.
+**Refuse-on-fail.** A prior gate (Quality / Test / Code Review)
+failed or noted residual issues → no review. Surface failure;
+require explicit override.
 
 ## 8 · Closure
 
@@ -490,8 +646,8 @@ phase-specific content section + any per-gate exception.
   draft. Create on the first gate; update title + body on
   subsequent gates. Return the URL as the last line of phase
   output.
-- **PR-ready** means Quality Gate + Test Gate both pass
-  locally.
+- **PR-ready** means Quality + Test + Code Review Gates pass
+  locally (the latter per `code_review.authority`).
 - **Squash merge** is the default close (§8.6). Keep PRs
   small — one concern per PR.
 
@@ -517,6 +673,9 @@ corporate spec tree elsewhere.
 **Internal-marker grep** — one source of truth, invoked from:
 
 - §6 Planning Review Gate (title + body before submission).
+- §7 Code Review Gate (diff before dispatch — the diff leaves
+  the agent's controlled boundary on dispatch, so any
+  internal-marker leak must be caught before, not after).
 - §7 Push Gate (staged diff before push) and Review Gate
   (title + body before submission).
 - §8 Closure Review Gate (title + body before submission).
