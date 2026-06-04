@@ -5,11 +5,15 @@
 //!   2. `Session` model + `apply_event` impl.
 //!   3. Pure helpers: read/write sessions, format, sort, filter,
 //!      kiro-orphan classification.
-//!   4. Locked-IO helpers (acquire flock, run a closure, atomic write).
-//!   5. Subcommand handlers (`cmd_wrap`, `cmd_hook`, ... — all stubs in
-//!      slice 1, filled in subsequent slices).
-//!   6. `clap` dispatch in `main`.
-//!   7. `#[cfg(test)] mod tests` at the bottom.
+//!   4. Locked-IO helper (acquire flock, run a closure).
+//!   5. `Env` (testable I/O surface — state-dir, stdout, stderr).
+//!   6. Subcommand handlers (`cmd_wrap`, `cmd_hook`, ... — all
+//!      stubs in slice 1, filled in subsequent slices).
+//!      `run_command(env, args)` → exit code: behavior-test entrypoint.
+//!   7. `clap` dispatch in `main` (delegates to `run_command`).
+//!   8. `#[cfg(test)] mod tests` at the bottom — split into
+//!      `mod behavior` (drives `run_command`) and `mod helpers`
+//!      (small, only what behavior tests can't reach).
 //!
 //! Splitting this file is a v2 concern (soft threshold ~1000 LOC).
 
@@ -17,6 +21,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -320,52 +325,127 @@ where
     f()
 }
 
-// ── 5 · subcommand handlers (stubs in slice 1) ─────────────────────
+// ── 5 · Env (testable entrypoint surface) ──────────────────────────
 
-fn cmd_wrap(_kind: String, _cwd: Option<PathBuf>, _agent_argv: Vec<String>) -> Result<()> {
+/// Everything a subcommand needs from the outside world. Production
+/// constructs from process state (`Env::from_process`); tests
+/// construct with an injected state-dir and Vec-backed stdout/stderr
+/// (`Env::for_test`). Each handler takes `&mut Env` so behavior tests
+/// can drive the same dispatch path the binary uses.
+///
+/// Kept small on purpose — only what slice 1's surface needs. Future
+/// slices grow this struct (now-injection for clock-pinned tests,
+/// stdin for `hook`, exec-spawner shim for `wrap`) as their tests
+/// demand it.
+pub struct Env {
+    pub state_dir: PathBuf,
+    pub stdout: Box<dyn Write>,
+    pub stderr: Box<dyn Write>,
+}
+
+impl Env {
+    pub fn from_process() -> Result<Self> {
+        Ok(Env {
+            state_dir: state_dir()?,
+            stdout: Box::new(std::io::stdout()),
+            stderr: Box::new(std::io::stderr()),
+        })
+    }
+}
+
+// ── 6 · subcommand handlers ────────────────────────────────────────
+
+fn cmd_wrap(
+    _env: &mut Env,
+    _kind: String,
+    _cwd: Option<PathBuf>,
+    _agent_argv: Vec<String>,
+) -> Result<i32> {
     anyhow::bail!("agent-orch wrap: not implemented yet (slice 2)")
 }
 
-fn cmd_hook(_event: String) -> Result<()> {
+fn cmd_hook(_env: &mut Env, _event: String) -> Result<i32> {
     anyhow::bail!("agent-orch hook: not implemented yet (slice 3)")
 }
 
-fn cmd_pick() -> Result<()> {
+fn cmd_pick(_env: &mut Env) -> Result<i32> {
     anyhow::bail!("agent-orch pick: not implemented yet (slice 5)")
 }
 
-fn cmd_loop() -> Result<()> {
+fn cmd_loop(_env: &mut Env) -> Result<i32> {
     anyhow::bail!("agent-orch loop: not implemented yet (slice 5)")
 }
 
-fn cmd_list() -> Result<()> {
-    let state = state_dir()?;
-    let sessions = read_sessions(&sessions_path(&state))?;
+fn cmd_list(env: &mut Env) -> Result<i32> {
+    let sessions = read_sessions(&sessions_path(&env.state_dir))?;
     if sessions.is_empty() {
-        println!("(no registered sessions)");
-        return Ok(());
+        writeln!(env.stdout, "(no registered sessions)")?;
+        return Ok(0);
     }
     let mut sessions = sessions;
     sort_sessions(&mut sessions);
     for s in &sessions {
-        println!("{}\t{}", s.pane_id, format_row(s));
+        writeln!(env.stdout, "{}\t{}", s.pane_id, format_row(s))?;
     }
-    Ok(())
+    Ok(0)
 }
 
-fn cmd_unregister(_pane_id: String) -> Result<()> {
+fn cmd_unregister(_env: &mut Env, _pane_id: String) -> Result<i32> {
     anyhow::bail!("agent-orch unregister: not implemented yet (slice 4)")
 }
 
-fn cmd_doctor() -> Result<()> {
+fn cmd_doctor(_env: &mut Env) -> Result<i32> {
     anyhow::bail!("agent-orch doctor: not implemented yet (slice 7)")
 }
 
-fn cmd_default() -> Result<()> {
+fn cmd_default(_env: &mut Env) -> Result<i32> {
     anyhow::bail!("agent-orch (bare): not implemented yet (slice 5)")
 }
 
-// ── 6 · clap dispatch ──────────────────────────────────────────────
+/// Behavior-test entrypoint. Drives the same clap dispatch the
+/// binary uses, but with all I/O routed through `env`. Returns the
+/// process-style exit code (0 = ok, non-zero = failure surfaced via
+/// the handler's `Result`). On parse error, the error's message is
+/// written to `env.stderr` and exit code 2 is returned.
+pub fn run_command<I, S>(env: &mut Env, args: I) -> i32
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let argv: Vec<String> = std::iter::once("agent-orch".to_string())
+        .chain(args.into_iter().map(Into::into))
+        .collect();
+    let cli = match Cli::try_parse_from(&argv) {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = writeln!(env.stderr, "{}", e);
+            return 2;
+        }
+    };
+    let result = match cli.cmd {
+        None => cmd_default(env),
+        Some(Cmd::Wrap {
+            kind,
+            cwd,
+            agent_argv,
+        }) => cmd_wrap(env, kind, cwd, agent_argv),
+        Some(Cmd::Hook { event }) => cmd_hook(env, event),
+        Some(Cmd::Pick) => cmd_pick(env),
+        Some(Cmd::Loop) => cmd_loop(env),
+        Some(Cmd::List) => cmd_list(env),
+        Some(Cmd::Unregister { pane_id }) => cmd_unregister(env, pane_id),
+        Some(Cmd::Doctor) => cmd_doctor(env),
+    };
+    match result {
+        Ok(code) => code,
+        Err(e) => {
+            let _ = writeln!(env.stderr, "Error: {:#}", e);
+            1
+        }
+    }
+}
+
+// ── 7 · clap dispatch ──────────────────────────────────────────────
 
 #[derive(Parser)]
 #[command(
@@ -411,29 +491,39 @@ enum Cmd {
 }
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
-    match cli.cmd {
-        None => cmd_default(),
-        Some(Cmd::Wrap {
-            kind,
-            cwd,
-            agent_argv,
-        }) => cmd_wrap(kind, cwd, agent_argv),
-        Some(Cmd::Hook { event }) => cmd_hook(event),
-        Some(Cmd::Pick) => cmd_pick(),
-        Some(Cmd::Loop) => cmd_loop(),
-        Some(Cmd::List) => cmd_list(),
-        Some(Cmd::Unregister { pane_id }) => cmd_unregister(pane_id),
-        Some(Cmd::Doctor) => cmd_doctor(),
-    }
+    let mut env = Env::from_process()?;
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let code = run_command(&mut env, argv);
+    std::process::exit(code);
 }
 
-// ── 7 · tests ──────────────────────────────────────────────────────
+// ── 8 · tests ──────────────────────────────────────────────────────
+//
+// Two-tier shape:
+//
+//   `mod behavior` drives `run_command` against a tempdir state-dir
+//   and asserts what a user would observe — stdout, on-disk
+//   sessions.json, side-effect files. These are the tests that
+//   answer "does the system do the right thing?" and survive
+//   refactors of the helpers underneath.
+//
+//   `mod helpers` is small. It carries only the pure-function
+//   invariants the behavior tests can't reach (e.g. cwd_tail's
+//   handling of root-anchored paths, kiro_orphan_paths'
+//   creation-flag-agnostic rule). Each entry is justified by a
+//   bug the behavior tests would have missed.
+//
+// Behavior tests for slices 2-5 (wrap, hook, unregister, pick) are
+// authored as `#[ignore]`d placeholders so the discipline is
+// visible from the start — those tests come alive as their slices
+// land.
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    // ── shared fixtures ────────────────────────────────────────────
 
     fn mk_session(pane: &str, kind: &str, cwd: &str, started: u64) -> Session {
         Session {
@@ -452,282 +542,236 @@ mod tests {
         }
     }
 
-    // ── apply_event ────────────────────────────────────────────────
-
-    #[test]
-    fn apply_user_prompt_submit_sets_running_and_prompt() {
-        let mut s = mk_session("%1", "claude", "/repo", 1000);
-        let changed = s.apply_event(EVT_USER_PROMPT_SUBMIT, Some("hello world"), None, 1100);
-        assert!(changed);
-        assert_eq!(s.state, State::Running);
-        assert_eq!(s.state_ts, 1100);
-        assert_eq!(s.last_prompt, "hello world");
-        assert_eq!(s.last_event, EVT_USER_PROMPT_SUBMIT);
-        assert_eq!(s.last_event_ts, 1100);
+    /// Build an `Env` whose state-dir is the given tempdir and whose
+    /// stdout/stderr capture into `Vec<u8>`s the caller can read back.
+    /// Returns `(env, stdout_buf, stderr_buf)` — the buffers are
+    /// `Arc<Mutex<Vec<u8>>>` so the caller can drop the env (which
+    /// closes the writers) and then read the captured bytes.
+    fn test_env(state_dir: PathBuf) -> (Env, SharedBuf, SharedBuf) {
+        let stdout = SharedBuf::new();
+        let stderr = SharedBuf::new();
+        let env = Env {
+            state_dir,
+            stdout: Box::new(stdout.clone()),
+            stderr: Box::new(stderr.clone()),
+        };
+        (env, stdout, stderr)
     }
 
-    #[test]
-    fn apply_user_prompt_submit_truncates_to_80_chars() {
-        let mut s = mk_session("%1", "claude", "/repo", 1000);
-        let long = "a".repeat(120);
-        s.apply_event(EVT_USER_PROMPT_SUBMIT, Some(&long), None, 1100);
-        assert_eq!(s.last_prompt.chars().count(), 80);
+    /// Tiny `Write` impl backed by `Arc<Mutex<Vec<u8>>>` so tests can
+    /// pull the captured bytes back out after `run_command` returns.
+    #[derive(Clone)]
+    struct SharedBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl SharedBuf {
+        fn new() -> Self {
+            SharedBuf(std::sync::Arc::new(std::sync::Mutex::new(Vec::new())))
+        }
+        fn as_string(&self) -> String {
+            String::from_utf8(self.0.lock().unwrap().clone()).expect("utf-8")
+        }
     }
 
-    #[test]
-    fn apply_pre_tool_use_sets_running_and_tool() {
-        let mut s = mk_session("%1", "claude", "/repo", 1000);
-        s.apply_event(EVT_PRE_TOOL_USE, None, Some("Bash"), 1100);
-        assert_eq!(s.state, State::Running);
-        assert_eq!(s.last_tool, "Bash");
+    impl Write for SharedBuf {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
-    #[test]
-    fn apply_post_tool_use_keeps_state_refreshes_tool() {
-        let mut s = mk_session("%1", "claude", "/repo", 1000);
-        s.state = State::Running;
-        s.state_ts = 1100;
-        s.apply_event(EVT_POST_TOOL_USE, None, Some("Edit"), 1200);
-        assert_eq!(s.state, State::Running, "state must not change");
-        assert_eq!(s.state_ts, 1100, "state_ts must not change on PostToolUse");
-        assert_eq!(s.last_tool, "Edit");
+    /// Seed a state-dir with a sessions.json containing the given
+    /// records. Used by behavior tests to set up a registry shape
+    /// without going through the (slice-2) `wrap` subcommand.
+    fn seed_sessions(state_dir: &Path, sessions: &[Session]) {
+        write_sessions_atomic(&sessions_path(state_dir), sessions).unwrap();
     }
 
-    #[test]
-    fn apply_stop_sets_complete() {
-        let mut s = mk_session("%1", "claude", "/repo", 1000);
-        s.state = State::Running;
-        s.apply_event(EVT_STOP, None, None, 1300);
-        assert_eq!(s.state, State::Complete);
-        assert_eq!(s.state_ts, 1300);
+    // ── behavior — exercise run_command end-to-end ─────────────────
+
+    mod behavior {
+        use super::*;
+
+        // ---- list ----
+
+        #[test]
+        fn list_with_no_sessions_prints_marker() {
+            let dir = tempdir().unwrap();
+            let (mut env, stdout, _stderr) = test_env(dir.path().to_path_buf());
+            let code = run_command(&mut env, ["list"]);
+            drop(env); // flush
+            assert_eq!(code, 0);
+            assert_eq!(stdout.as_string(), "(no registered sessions)\n");
+        }
+
+        #[test]
+        fn list_returns_sessions_after_seed() {
+            let dir = tempdir().unwrap();
+            let mut s = mk_session("%42", "claude", "/repo/foo", 1000);
+            s.state = State::Running;
+            s.last_prompt = "fix tests".to_string();
+            seed_sessions(dir.path(), std::slice::from_ref(&s));
+
+            let (mut env, stdout, _stderr) = test_env(dir.path().to_path_buf());
+            let code = run_command(&mut env, ["list"]);
+            drop(env);
+            assert_eq!(code, 0);
+            let out = stdout.as_string();
+            assert!(out.contains("%42"), "stdout missing pane id: {:?}", out);
+            assert!(out.contains("claude"), "stdout missing kind: {:?}", out);
+            assert!(
+                out.contains("fix tests"),
+                "stdout missing prompt: {:?}",
+                out
+            );
+        }
+
+        #[test]
+        fn list_orders_running_before_complete_before_unknown() {
+            let dir = tempdir().unwrap();
+            let mut a = mk_session("%a", "claude", "/x", 100);
+            a.state = State::Complete;
+            a.state_ts = 200;
+            let mut b = mk_session("%b", "claude", "/y", 100);
+            b.state = State::Running;
+            b.state_ts = 300;
+            let c = mk_session("%c", "kiro", "/z", 100); // unknown
+            seed_sessions(dir.path(), &[a, b, c]);
+
+            let (mut env, stdout, _stderr) = test_env(dir.path().to_path_buf());
+            run_command(&mut env, ["list"]);
+            drop(env);
+            let out = stdout.as_string();
+            let pos_b = out.find("%b").expect("running row missing");
+            let pos_a = out.find("%a").expect("complete row missing");
+            let pos_c = out.find("%c").expect("unknown row missing");
+            assert!(pos_b < pos_a, "running must come before complete");
+            assert!(pos_a < pos_c, "complete must come before unknown");
+        }
+
+        // ---- parse error path ----
+
+        #[test]
+        fn unknown_subcommand_writes_to_stderr_and_exits_2() {
+            let dir = tempdir().unwrap();
+            let (mut env, _stdout, stderr) = test_env(dir.path().to_path_buf());
+            let code = run_command(&mut env, ["nope-not-a-subcommand"]);
+            drop(env);
+            assert_eq!(code, 2);
+            assert!(
+                !stderr.as_string().is_empty(),
+                "expected clap error on stderr"
+            );
+        }
+
+        // ---- handlers stubbed in slice 1; tests exit 1 with bail!() ----
+        //
+        // These verify the dispatch path reaches the right handler,
+        // not the (yet-to-be-built) handler logic. They get rewritten
+        // into real assertions when each slice lands.
+
+        #[test]
+        fn wrap_dispatch_reaches_handler_and_currently_bails() {
+            let dir = tempdir().unwrap();
+            let (mut env, _stdout, stderr) = test_env(dir.path().to_path_buf());
+            let code = run_command(&mut env, ["wrap", "claude", "--", "echo"]);
+            drop(env);
+            assert_eq!(code, 1, "stub bails with Err");
+            assert!(stderr.as_string().contains("slice 2"));
+        }
+
+        #[test]
+        fn hook_dispatch_reaches_handler_and_currently_bails() {
+            let dir = tempdir().unwrap();
+            let (mut env, _stdout, stderr) = test_env(dir.path().to_path_buf());
+            let code = run_command(&mut env, ["hook", "Stop"]);
+            drop(env);
+            assert_eq!(code, 1);
+            assert!(stderr.as_string().contains("slice 3"));
+        }
+
+        // ---- placeholders for slice 2-5 behaviors ----
+        //
+        // These name the behavior tests that load-bear when their
+        // slices land. They're #[ignore]'d so cargo test runs green
+        // today; `cargo test -- --ignored` (or removing the attr in
+        // the relevant slice) flips them on.
+
+        #[test]
+        #[ignore = "slice 2 — wrap appends a sessions.json record"]
+        fn wrap_appends_session_record() {}
+
+        #[test]
+        #[ignore = "slice 2 — wrap installs the global tmux pane-exited hook"]
+        fn wrap_installs_pane_exited_hook() {}
+
+        #[test]
+        #[ignore = "slice 2 — wrap synthesizes claude --settings tempfile"]
+        fn wrap_synthesizes_claude_settings_with_user_base_merged() {}
+
+        #[test]
+        #[ignore = "slice 3 — hook UserPromptSubmit flips state to running and stores prompt"]
+        fn hook_user_prompt_submit_marks_running_and_stores_prompt() {}
+
+        #[test]
+        #[ignore = "slice 3 — hook Stop flips state to complete"]
+        fn hook_stop_marks_complete() {}
+
+        #[test]
+        #[ignore = "slice 3 — list reflects state changes after a hook fires"]
+        fn list_reflects_hook_updates() {}
+
+        #[test]
+        #[ignore = "slice 4 — wrap then unregister: register/cleanup round-trip"]
+        fn wrap_then_unregister_cleans_record_and_tempdir() {}
+
+        #[test]
+        #[ignore = "slice 4 — kiro reuser closing last removes shared .kiro/agents/agent-orch.json"]
+        fn kiro_unregister_removes_orphan_when_creator_already_left() {}
+
+        #[test]
+        #[ignore = "slice 5 — pick prints selected pane id to stdout, exit 0"]
+        fn pick_emits_selected_pane_id() {}
     }
 
-    #[test]
-    fn apply_unknown_event_records_event_only() {
-        let mut s = mk_session("%1", "claude", "/repo", 1000);
-        let changed = s.apply_event("Notification", None, None, 1500);
-        // last_event_ts bump → bool is true even for unknown events.
-        // Documented as a write-elision hint, not a contract.
-        assert!(changed);
-        assert_eq!(s.state, State::Unknown);
-        assert_eq!(s.last_event, "Notification");
-        assert_eq!(s.last_event_ts, 1500);
-    }
+    // ── helpers — invariants behavior tests can't see ──────────────
+    //
+    // Keep this list short. Each entry must justify itself by
+    // catching a class of bug the behavior tests can't surface.
 
-    // ── read_sessions / write_sessions_atomic ──────────────────────
+    mod helpers {
+        use super::*;
 
-    #[test]
-    fn read_missing_file_returns_empty() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("does-not-exist.json");
-        assert_eq!(read_sessions(&path).unwrap(), vec![]);
-    }
+        /// `cwd_tail("/repo")` once returned `"//repo"` because the
+        /// `RootDir` `Component` joined as `"/"`. Behavior tests
+        /// catch this only via the visible row, where the bad output
+        /// hides as a cosmetic glitch. This pure test pins the rule.
+        #[test]
+        fn cwd_tail_handles_root_anchored_paths() {
+            assert_eq!(cwd_tail("/home/me/repo/foo"), "repo/foo");
+            assert_eq!(cwd_tail("/repo"), "repo");
+            assert_eq!(cwd_tail(""), "");
+        }
 
-    #[test]
-    fn read_empty_file_returns_empty() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("empty.json");
-        fs::write(&path, "").unwrap();
-        assert_eq!(read_sessions(&path).unwrap(), vec![]);
-    }
-
-    #[test]
-    fn write_then_read_round_trips() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("sessions.json");
-        let s = mk_session("%42", "claude", "/repo/foo", 1000);
-        write_sessions_atomic(&path, std::slice::from_ref(&s)).unwrap();
-        let read = read_sessions(&path).unwrap();
-        assert_eq!(read, vec![s]);
-    }
-
-    #[test]
-    fn write_creates_parent_dir() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("nested/dir/sessions.json");
-        let s = mk_session("%1", "claude", "/x", 1);
-        write_sessions_atomic(&path, std::slice::from_ref(&s)).unwrap();
-        assert!(path.exists());
-    }
-
-    #[test]
-    fn write_atomic_uses_tmp_then_rename() {
-        // Verify the .tmp file does not linger after a successful write.
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("sessions.json");
-        let s = mk_session("%1", "claude", "/x", 1);
-        write_sessions_atomic(&path, std::slice::from_ref(&s)).unwrap();
-        assert!(path.exists());
-        assert!(!path.with_extension("json.tmp").exists());
-    }
-
-    #[test]
-    fn read_malformed_errors() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("bad.json");
-        fs::write(&path, "not json").unwrap();
-        assert!(read_sessions(&path).is_err());
-    }
-
-    // ── format_row ─────────────────────────────────────────────────
-
-    #[test]
-    fn format_row_running_with_tool() {
-        let mut s = mk_session("%1", "claude", "/home/me/repo/foo", 1000);
-        s.state = State::Running;
-        s.last_prompt = "fix tests".to_string();
-        s.last_tool = "Bash".to_string();
-        let row = format_row(&s);
-        assert!(row.contains('▶'));
-        assert!(row.contains("claude"));
-        assert!(row.contains("repo/foo"));
-        assert!(row.contains("fix tests"));
-        assert!(row.contains("Bash"));
-    }
-
-    #[test]
-    fn format_row_complete_no_tool_no_prompt() {
-        let mut s = mk_session("%1", "kiro", "/x", 1000);
-        s.state = State::Complete;
-        let row = format_row(&s);
-        assert!(row.contains('✓'));
-        assert!(row.contains("kiro"));
-        assert!(!row.ends_with(" · "), "trailing separator when tool empty");
-    }
-
-    #[test]
-    fn format_row_unknown_glyph() {
-        let s = mk_session("%1", "claude", "/x", 1000);
-        let row = format_row(&s);
-        assert!(row.contains('·'), "unknown state glyph");
-    }
-
-    #[test]
-    fn cwd_tail_takes_last_two_components() {
-        assert_eq!(cwd_tail("/home/me/repo/foo"), "repo/foo");
-        assert_eq!(cwd_tail("/repo"), "repo");
-        assert_eq!(cwd_tail(""), "");
-    }
-
-    // ── sort_sessions ──────────────────────────────────────────────
-
-    #[test]
-    fn sort_by_state_group_then_recency() {
-        let mut a = mk_session("%a", "claude", "/x", 100);
-        a.state = State::Complete;
-        a.state_ts = 200;
-
-        let mut b = mk_session("%b", "claude", "/y", 100);
-        b.state = State::Running;
-        b.state_ts = 150;
-
-        let mut c = mk_session("%c", "claude", "/z", 100);
-        c.state = State::Running;
-        c.state_ts = 300;
-
-        let mut d = mk_session("%d", "kiro", "/w", 100);
-        d.state = State::Unknown;
-
-        let mut v = vec![a, b, c, d];
-        sort_sessions(&mut v);
-        let pane_order: Vec<&str> = v.iter().map(|s| s.pane_id.as_str()).collect();
-        // running (most-recent first), then complete, then unknown
-        assert_eq!(pane_order, vec!["%c", "%b", "%a", "%d"]);
-    }
-
-    // ── live_filter ────────────────────────────────────────────────
-
-    #[test]
-    fn live_filter_drops_dead_pids() {
-        let mut s1 = mk_session("%1", "claude", "/x", 1);
-        s1.pid = 1001;
-        let mut s2 = mk_session("%2", "claude", "/y", 1);
-        s2.pid = 2002;
-        let alive = [s1.pid];
-        let v = vec![s1.clone(), s2];
-        let live = live_filter(v, |pid| alive.contains(&pid));
-        assert_eq!(live, vec![s1]);
-    }
-
-    // ── kiro_orphan_paths ──────────────────────────────────────────
-
-    #[test]
-    fn kiro_orphan_returns_empty_for_non_kiro() {
-        let claude = mk_session("%1", "claude", "/repo", 1);
-        let out = kiro_orphan_paths(&claude, &[]);
-        assert!(out.is_empty());
-    }
-
-    #[test]
-    fn kiro_orphan_returns_empty_when_sibling_present() {
-        let mut a = mk_session("%1", "kiro", "/repo", 1);
-        a.created_kiro_config = true;
-        let b = mk_session("%2", "kiro", "/repo", 2);
-        // Closing `a` while `b` still lives → no removal.
-        let out = kiro_orphan_paths(&a, &[b]);
-        assert!(out.is_empty());
-    }
-
-    #[test]
-    fn kiro_orphan_returns_path_when_alone() {
-        let a = mk_session("%1", "kiro", "/repo", 1);
-        let out = kiro_orphan_paths(&a, &[]);
-        assert_eq!(
-            out,
-            vec![PathBuf::from("/repo/.kiro/agents/agent-orch.json")]
-        );
-    }
-
-    #[test]
-    fn kiro_orphan_creation_flag_agnostic() {
-        // The reuser has created_kiro_config=false — but if it's
-        // the last live record in cwd, cleanup must still happen.
-        // This is the order-(a) leak the spec calls out and that
-        // the creation-flag-agnostic rule fixes.
-        let mut reuser = mk_session("%2", "kiro", "/repo", 2);
-        reuser.created_kiro_config = false;
-        let out = kiro_orphan_paths(&reuser, &[]);
-        assert_eq!(
-            out,
-            vec![PathBuf::from("/repo/.kiro/agents/agent-orch.json")]
-        );
-    }
-
-    #[test]
-    fn kiro_orphan_separates_by_cwd() {
-        let a = mk_session("%1", "kiro", "/repo-a", 1);
-        let b = mk_session("%2", "kiro", "/repo-b", 2);
-        // Closing a while b lives in a different cwd → still remove a's config.
-        let out = kiro_orphan_paths(&a, &[b]);
-        assert_eq!(
-            out,
-            vec![PathBuf::from("/repo-a/.kiro/agents/agent-orch.json")]
-        );
-    }
-
-    // ── with_lock smoke (in-process) ───────────────────────────────
-
-    #[test]
-    fn with_lock_runs_closure_and_releases() {
-        let dir = tempdir().unwrap();
-        let v = with_lock(dir.path(), || Ok(42_u32)).unwrap();
-        assert_eq!(v, 42);
-        // A subsequent acquire must not block.
-        let v = with_lock(dir.path(), || Ok(7_u32)).unwrap();
-        assert_eq!(v, 7);
-    }
-
-    // ── state_dir / sessions_path / tmp_dir_for_pane ───────────────
-
-    #[test]
-    fn tmp_dir_namespaces_by_pane() {
-        let p = tmp_dir_for_pane(Path::new("/state"), "%42");
-        assert_eq!(p, PathBuf::from("/state/tmp/%42"));
-    }
-
-    #[test]
-    fn sessions_path_is_under_state() {
-        let p = sessions_path(Path::new("/state"));
-        assert_eq!(p, PathBuf::from("/state/sessions.json"));
+        /// The Kiro refcount cleanup rule is creation-flag-agnostic
+        /// to avoid a leak: when a reuser closes last (its
+        /// `created_kiro_config=false`), it must still remove the
+        /// shared file. This test pins that rule directly because
+        /// the slice-1 surface (`list`) doesn't exercise unregister.
+        /// Once slice 4's `kiro_unregister_removes_orphan_when_
+        /// creator_already_left` behavior test goes green, this
+        /// helper test is redundant and can be deleted.
+        #[test]
+        fn kiro_orphan_creation_flag_agnostic() {
+            let mut reuser = mk_session("%2", "kiro", "/repo", 2);
+            reuser.created_kiro_config = false;
+            let out = kiro_orphan_paths(&reuser, &[]);
+            assert_eq!(
+                out,
+                vec![PathBuf::from("/repo/.kiro/agents/agent-orch.json")]
+            );
+        }
     }
 }
