@@ -45,11 +45,12 @@ fn lock_path(state: &Path) -> PathBuf {
     state.join("sessions.lock")
 }
 
-// Used by slice 2 (wrap) and slice 4 (unregister cleanup); the
-// allow lifts the slice-1-only "unused" lint without hiding it.
-#[allow(dead_code)]
 fn tmp_dir_for_pane(state: &Path, pane_id: &str) -> PathBuf {
     state.join("tmp").join(pane_id)
+}
+
+fn hook_install_marker(state: &Path) -> PathBuf {
+    state.join(".tmux-hook-installed")
 }
 
 // ── 2 · session model ──────────────────────────────────────────────
@@ -369,14 +370,149 @@ enum Cmd {
 }
 
 /// Everything a subcommand needs from the outside world. The binary
-/// builds this from real process state (`Env::from_process`); tests
-/// build it with a tempdir state-dir and `Vec<u8>`-backed stdout /
-/// stderr (`Vec<u8>` already implements `Write`). Borrowed lifetimes
-/// keep the test path zero-allocation.
+/// builds this from real process state in `main`; tests build it with
+/// a tempdir state-dir and `Vec<u8>`-backed stdout / stderr (`Vec<u8>`
+/// already implements `Write`). Borrowed lifetimes keep the test path
+/// zero-allocation.
+///
+/// Each field is the simplest type that captures one thing — no
+/// traits, no closures. Tests inject by setting fields directly.
 pub struct Env<'a> {
     pub state_dir: PathBuf,
     pub stdout: &'a mut dyn Write,
     pub stderr: &'a mut dyn Write,
+    /// `$TMUX_PANE` (`%N`) when running inside tmux, else None.
+    pub pane_id: Option<String>,
+    /// Path to the user's `~/.claude/settings.json` (may not exist).
+    /// Used as the merge base when synthesizing per-launch settings.
+    pub user_claude_settings: PathBuf,
+    /// Path to this binary itself, embedded into hook commands so
+    /// the agent re-invokes us via the same path it was launched
+    /// from. `current_exe()` in production; the dist-path in tests.
+    pub self_path: PathBuf,
+    /// When false, `wrap` skips the tmux side effects (`set-hook`,
+    /// `set-option`) and the terminal `execvp`. Tests verify the
+    /// on-disk side effects (settings file, sessions.json append)
+    /// which are the meaningful work; the unobservable bits are
+    /// covered by smoke (slice 6).
+    pub side_effects_enabled: bool,
+}
+
+/// Merge our four Claude hook commands into the given settings JSON.
+/// Each event's hook list gets one new entry of the form
+/// `{"type":"command", "command":"<self> hook <Event>"}` appended;
+/// the user's existing entries are preserved in front of ours.
+///
+/// Errors if the settings root or the `hooks` field isn't a JSON
+/// object — silently dropping our hooks would leave the user with
+/// a hookless wrapper that never updates state.
+fn merge_claude_hooks(settings: &mut serde_json::Value, self_path: &Path) -> Result<()> {
+    use serde_json::{json, Value};
+    let self_str = self_path.to_string_lossy();
+    let root = settings
+        .as_object_mut()
+        .context("user claude settings root must be a JSON object")?;
+    let hooks_val = root.entry("hooks".to_string()).or_insert_with(|| json!({}));
+    let hooks = hooks_val
+        .as_object_mut()
+        .context("user claude settings.hooks must be a JSON object")?;
+    for event in [
+        EVT_USER_PROMPT_SUBMIT,
+        EVT_PRE_TOOL_USE,
+        EVT_POST_TOOL_USE,
+        EVT_STOP,
+    ] {
+        let arr = hooks.entry(event.to_string()).or_insert_with(|| json!([]));
+        let Value::Array(list) = arr else {
+            anyhow::bail!("user claude settings.hooks.{} must be an array", event);
+        };
+        list.push(json!({
+            "type": "command",
+            "command": format!("{} hook {}", self_str, event),
+        }));
+    }
+    Ok(())
+}
+
+/// Build the argv we hand to `execvp` for a wrapped agent. Returns
+/// `(program, argv)` where `argv[0]` is the program name (POSIX
+/// convention — child sees this as its own `argv[0]`).
+///
+/// For `claude`, splices `--settings <path>` after `argv[0]` so the
+/// agent's launcher sees its own name in slot 0 and its own flags
+/// in subsequent slots. For other kinds, `agent_argv` is passed
+/// through unchanged.
+///
+/// # Panics
+/// Panics if `agent_argv` is empty. Callers must guard upstream
+/// (the wrap match arm uses `anyhow::ensure!` before reaching here).
+fn build_agent_argv(
+    kind: &str,
+    agent_argv: &[String],
+    settings_path: &Path,
+) -> (String, Vec<String>) {
+    let program = agent_argv[0].clone();
+    let mut argv = agent_argv.to_vec();
+    if kind == "claude" {
+        argv.insert(1, "--settings".into());
+        argv.insert(2, settings_path.to_string_lossy().into_owned());
+    }
+    (program, argv)
+}
+
+/// Install the global tmux `pane-exited` hook pointing at this binary.
+/// Idempotent via a marker file under the state dir — calling this
+/// many times across many wrappers does the work exactly once per
+/// state-dir.
+///
+/// Race-tolerant: tmux `set-hook -g` is itself idempotent (last
+/// caller wins, both write the same command), and the marker file
+/// has no content. Two wrappers starting at the same time can both
+/// pass `marker.exists() == false` and both run the set-hook — the
+/// outcome is identical to either running alone.
+fn install_pane_exited_hook(state_dir: &Path, self_path: &Path) -> Result<()> {
+    let marker = hook_install_marker(state_dir);
+    if marker.exists() {
+        return Ok(());
+    }
+    let cmd = format!(
+        "run-shell \"{} unregister #{{hook_pane}}\"",
+        self_path.display()
+    );
+    let status = std::process::Command::new("tmux")
+        .args(["set-hook", "-g", "pane-exited", &cmd])
+        .status()
+        .context("tmux set-hook (is tmux on PATH?)")?;
+    anyhow::ensure!(status.success(), "tmux set-hook failed: {status}");
+    // state_dir already exists — with_lock has run by the time we
+    // reach this function from the wrap arm.
+    fs::write(&marker, b"")?;
+    Ok(())
+}
+
+fn tmux_set_pane_option(pane_id: &str, key: &str, value: &str) -> Result<()> {
+    let status = std::process::Command::new("tmux")
+        .args(["set-option", "-p", "-t", pane_id, key, value])
+        .status()
+        .context("tmux set-option")?;
+    anyhow::ensure!(status.success(), "tmux set-option failed: {status}");
+    Ok(())
+}
+
+/// `execvp` into the agent. Returns only on failure (binary not
+/// found, ENOEXEC, etc.); on success the kernel replaces this
+/// process image so control never returns.
+fn exec_agent(program: &str, argv: &[String]) -> Result<()> {
+    use std::ffi::CString;
+    let prog_c = CString::new(program).context("nul in agent program name")?;
+    let argv_c: Vec<CString> = argv
+        .iter()
+        .map(|a| CString::new(a.as_str()))
+        .collect::<std::result::Result<_, _>>()
+        .context("nul in agent argv")?;
+    let argv_refs: Vec<&std::ffi::CStr> = argv_c.iter().map(|c| c.as_c_str()).collect();
+    nix::unistd::execvp(&prog_c, &argv_refs).with_context(|| format!("execvp {}", program))?;
+    unreachable!("execvp returned Ok without exec")
 }
 
 /// Behavior-test entrypoint. Drives the same clap dispatch as `main`
@@ -401,7 +537,99 @@ where
     };
     let result: Result<i32> = (|| match cli.cmd {
         None => anyhow::bail!("agent-orch (bare): not implemented yet (slice 5)"),
-        Some(Cmd::Wrap { .. }) => anyhow::bail!("agent-orch wrap: not implemented yet (slice 2)"),
+        Some(Cmd::Wrap {
+            kind,
+            cwd,
+            agent_argv,
+        }) => {
+            let pane_id = env
+                .pane_id
+                .clone()
+                .context("agent-orch wrap requires $TMUX_PANE — run inside tmux")?;
+            anyhow::ensure!(
+                !agent_argv.is_empty(),
+                "agent-orch wrap needs an agent command after `--`"
+            );
+
+            // Side effect 1 — register the session under flock. We
+            // do this *first* so a double-register fails before any
+            // disk work; the recorded `pid` is our own (after
+            // `execvp` the kernel keeps the same pid, now the agent).
+            let cwd_string = match cwd {
+                Some(p) => p.to_string_lossy().into_owned(),
+                None => std::env::current_dir()
+                    .context("current_dir for session record")?
+                    .to_string_lossy()
+                    .into_owned(),
+            };
+            let now = now_secs();
+            let new_session = Session {
+                pane_id: pane_id.clone(),
+                pid: std::process::id() as i32,
+                kind: kind.clone(),
+                cwd: cwd_string,
+                started: now,
+                state: State::Unknown,
+                state_ts: now,
+                last_prompt: String::new(),
+                last_tool: String::new(),
+                last_event: String::new(),
+                last_event_ts: 0,
+                created_kiro_config: false,
+            };
+            with_lock(&env.state_dir, || {
+                let path = sessions_path(&env.state_dir);
+                let mut sessions = read_sessions(&path)?;
+                anyhow::ensure!(
+                    !sessions.iter().any(|s| s.pane_id == pane_id),
+                    "pane {} already registered — `agent-orch unregister {}` first",
+                    pane_id,
+                    pane_id
+                );
+                sessions.push(new_session);
+                write_sessions_atomic(&path, &sessions)?;
+                Ok(())
+            })?;
+
+            // Side effect 2 — synthesize per-launch claude settings.
+            // Merges the user's existing ~/.claude/settings.json (if
+            // any) with our four hook commands. The settings dir is
+            // GC'd by `unregister` regardless of how this wrapper
+            // exits, so a crash between here and execvp leaves no
+            // orphan that the registry doesn't know about.
+            let settings_dir = tmp_dir_for_pane(&env.state_dir, &pane_id);
+            fs::create_dir_all(&settings_dir)
+                .with_context(|| format!("mkdir -p {}", settings_dir.display()))?;
+            let settings_path = settings_dir.join("settings.json");
+            let mut settings: serde_json::Value = if env.user_claude_settings.exists() {
+                serde_json::from_slice(&fs::read(&env.user_claude_settings)?)
+                    .with_context(|| format!("parse {}", env.user_claude_settings.display()))?
+            } else {
+                serde_json::json!({})
+            };
+            merge_claude_hooks(&mut settings, &env.self_path)?;
+            fs::write(&settings_path, serde_json::to_vec_pretty(&settings)?)?;
+
+            // Side effect 3 — install the global tmux pane-exited
+            // hook (idempotent via marker file) and tag this pane
+            // with @agent-orch-pane. Skipped under tests.
+            //
+            // Side effect 4 — execvp into the agent. From here, this
+            // process *is* the agent. `build_agent_argv` puts the
+            // program name in argv[0] (POSIX convention) and splices
+            // our flags after it.
+            if env.side_effects_enabled {
+                install_pane_exited_hook(&env.state_dir, &env.self_path)?;
+                tmux_set_pane_option(&pane_id, "@agent-orch-pane", &pane_id)?;
+                let (program, argv) = build_agent_argv(&kind, &agent_argv, &settings_path);
+                // SAFETY: single-threaded immediately before execvp;
+                // the env var only needs to reach the about-to-be-
+                // replaced process image.
+                std::env::set_var("AGENT_ORCH_PANE", &pane_id);
+                exec_agent(&program, &argv)?;
+            }
+            Ok(0)
+        }
         Some(Cmd::Hook { .. }) => anyhow::bail!("agent-orch hook: not implemented yet (slice 3)"),
         Some(Cmd::Pick) => anyhow::bail!("agent-orch pick: not implemented yet (slice 5)"),
         Some(Cmd::Loop) => anyhow::bail!("agent-orch loop: not implemented yet (slice 5)"),
@@ -433,12 +661,21 @@ where
 
 fn main() -> Result<()> {
     let state = state_dir()?;
+    let pane_id = std::env::var("TMUX_PANE").ok().filter(|s| !s.is_empty());
+    let user_claude_settings = std::env::var("HOME")
+        .map(|h| PathBuf::from(h).join(".claude/settings.json"))
+        .unwrap_or_default();
+    let self_path = std::env::current_exe().context("current_exe")?;
     let mut stdout = std::io::stdout();
     let mut stderr = std::io::stderr();
     let mut env = Env {
         state_dir: state,
         stdout: &mut stdout,
         stderr: &mut stderr,
+        pane_id,
+        user_claude_settings,
+        self_path,
+        side_effects_enabled: true,
     };
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let code = run_command(&mut env, argv);
@@ -501,12 +738,35 @@ mod tests {
     }
 
     // 3 · command-runner wiring ───────────────────────────────────────
+    //
+    // `drive` is the simple form for tests that don't care about
+    // wrap-specific Env fields (everything but pane_id and the
+    // settings/self paths). `drive_with` lets a wrap-flavored test
+    // override pane_id and user_claude_settings; both share the same
+    // run_command call so behavior is identical.
 
     fn drive(state: &Path, stdout: &mut Vec<u8>, stderr: &mut Vec<u8>, args: &[&str]) -> i32 {
+        drive_with(state, None, None, stdout, stderr, args)
+    }
+
+    fn drive_with(
+        state: &Path,
+        pane_id: Option<&str>,
+        user_claude_settings: Option<&Path>,
+        stdout: &mut Vec<u8>,
+        stderr: &mut Vec<u8>,
+        args: &[&str],
+    ) -> i32 {
         let mut env = Env {
             state_dir: state.to_path_buf(),
             stdout,
             stderr,
+            pane_id: pane_id.map(String::from),
+            user_claude_settings: user_claude_settings
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| state.join("nonexistent-user-settings.json")),
+            self_path: PathBuf::from("/test/agent-orch"),
+            side_effects_enabled: false,
         };
         run_command(&mut env, args.iter().map(|s| s.to_string()))
     }
@@ -572,21 +832,9 @@ mod tests {
             assert!(!se.is_empty());
         }
 
-        // The bail!() stubs verify dispatch reaches the right arm.
-        // Each becomes a real behavior test in its slice.
-
-        #[test]
-        fn wrap_dispatch_currently_bails_with_slice_2_marker() {
-            let (dir, mut so, mut se) = fixtures();
-            let code = drive(
-                dir.path(),
-                &mut so,
-                &mut se,
-                &["wrap", "claude", "--", "echo"],
-            );
-            assert_eq!(code, 1);
-            assert!(String::from_utf8_lossy(&se).contains("slice 2"));
-        }
+        // Stubs that still bail!() (slices 3-5/7) verify dispatch
+        // reaches the right arm. Each becomes a real behavior test
+        // when its slice lands.
 
         #[test]
         fn hook_dispatch_currently_bails_with_slice_3_marker() {
@@ -596,19 +844,192 @@ mod tests {
             assert!(String::from_utf8_lossy(&se).contains("slice 3"));
         }
 
-        // Placeholders — flip on as each slice lands.
+        // ---- slice 2 — wrap claude ----
 
         #[test]
-        #[ignore = "slice 2 — wrap appends a sessions.json record"]
-        fn wrap_appends_session_record() {}
+        fn wrap_without_tmux_pane_fails_loud() {
+            let (dir, mut so, mut se) = fixtures();
+            let code = drive_with(
+                dir.path(),
+                None, // no pane id
+                None,
+                &mut so,
+                &mut se,
+                &["wrap", "claude", "--", "echo", "hi"],
+            );
+            assert_eq!(code, 1);
+            assert!(
+                String::from_utf8_lossy(&se).contains("$TMUX_PANE"),
+                "stderr: {}",
+                String::from_utf8_lossy(&se)
+            );
+        }
 
         #[test]
-        #[ignore = "slice 2 — wrap installs the global tmux pane-exited hook"]
+        fn wrap_appends_session_record() {
+            let (dir, mut so, mut se) = fixtures();
+            let code = drive_with(
+                dir.path(),
+                Some("%42"),
+                None,
+                &mut so,
+                &mut se,
+                &["wrap", "claude", "--cwd", "/repo/foo", "--", "claude-stub"],
+            );
+            assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&se));
+            let sessions = read_sessions(&sessions_path(dir.path())).unwrap();
+            assert_eq!(sessions.len(), 1);
+            assert_eq!(sessions[0].pane_id, "%42");
+            assert_eq!(sessions[0].kind, "claude");
+            assert_eq!(sessions[0].cwd, "/repo/foo");
+            assert_eq!(sessions[0].pid, std::process::id() as i32);
+            assert_eq!(sessions[0].state, State::Unknown);
+        }
+
+        #[test]
+        fn wrap_refuses_double_register() {
+            let (dir, mut so, mut se) = fixtures();
+            let c1 = drive_with(
+                dir.path(),
+                Some("%9"),
+                None,
+                &mut so,
+                &mut se,
+                &["wrap", "claude", "--", "stub"],
+            );
+            assert_eq!(c1, 0);
+            so.clear();
+            se.clear();
+            let c2 = drive_with(
+                dir.path(),
+                Some("%9"),
+                None,
+                &mut so,
+                &mut se,
+                &["wrap", "claude", "--", "stub"],
+            );
+            assert_eq!(c2, 1);
+            assert!(String::from_utf8_lossy(&se).contains("already registered"));
+        }
+
+        #[test]
+        fn wrap_synthesizes_claude_settings_with_user_base_merged() {
+            let (dir, mut so, mut se) = fixtures();
+            let user = dir.path().join("user-claude-settings.json");
+            fs::write(
+                &user,
+                br#"{"hooks":{"UserPromptSubmit":[{"type":"command","command":"my-existing-hook"}]}}"#,
+            )
+            .unwrap();
+            let code = drive_with(
+                dir.path(),
+                Some("%7"),
+                Some(&user),
+                &mut so,
+                &mut se,
+                &["wrap", "claude", "--", "stub"],
+            );
+            assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&se));
+            let synth_path = tmp_dir_for_pane(dir.path(), "%7").join("settings.json");
+            let synth: serde_json::Value =
+                serde_json::from_slice(&fs::read(&synth_path).unwrap()).unwrap();
+            // User's existing hook still in front.
+            let ups = &synth["hooks"]["UserPromptSubmit"];
+            assert_eq!(ups[0]["command"], "my-existing-hook");
+            assert_eq!(ups[1]["command"], "/test/agent-orch hook UserPromptSubmit");
+            // All four events wired with our hook.
+            for ev in [EVT_PRE_TOOL_USE, EVT_POST_TOOL_USE, EVT_STOP] {
+                let arr = &synth["hooks"][ev];
+                assert!(arr.is_array(), "{ev} not an array");
+                assert_eq!(arr[0]["command"], format!("/test/agent-orch hook {}", ev));
+            }
+        }
+
+        #[test]
+        fn wrap_synthesizes_claude_settings_when_user_settings_missing() {
+            let (dir, mut so, mut se) = fixtures();
+            let code = drive_with(
+                dir.path(),
+                Some("%5"),
+                None,
+                &mut so,
+                &mut se,
+                &["wrap", "claude", "--", "stub"],
+            );
+            assert_eq!(code, 0);
+            let synth: serde_json::Value = serde_json::from_slice(
+                &fs::read(tmp_dir_for_pane(dir.path(), "%5").join("settings.json")).unwrap(),
+            )
+            .unwrap();
+            for ev in [
+                EVT_USER_PROMPT_SUBMIT,
+                EVT_PRE_TOOL_USE,
+                EVT_POST_TOOL_USE,
+                EVT_STOP,
+            ] {
+                let arr = &synth["hooks"][ev];
+                assert_eq!(arr.as_array().unwrap().len(), 1, "{ev} entries");
+            }
+        }
+
+        #[test]
+        fn wrap_rejects_non_object_user_settings_root() {
+            let (dir, mut so, mut se) = fixtures();
+            // A stray array at the root — silent-drop would leave the
+            // synth file with no hooks; we want a loud failure.
+            let user = dir.path().join("user-claude-settings.json");
+            fs::write(&user, b"[]").unwrap();
+            let code = drive_with(
+                dir.path(),
+                Some("%3"),
+                Some(&user),
+                &mut so,
+                &mut se,
+                &["wrap", "claude", "--", "stub"],
+            );
+            assert_eq!(code, 1);
+            assert!(
+                String::from_utf8_lossy(&se).contains("must be a JSON object"),
+                "stderr: {}",
+                String::from_utf8_lossy(&se)
+            );
+            // Pinned partial-progress: registration runs *before*
+            // settings synth, so the failed wrap leaves the session
+            // record in place. The user (or slice 4 unregister) must
+            // clear it manually. If we ever flip to rollback-on-error,
+            // change this assertion to `assert!(sessions.is_empty())`.
+            let sessions = read_sessions(&sessions_path(dir.path())).unwrap();
+            assert_eq!(
+                sessions.len(),
+                1,
+                "registration runs before synth — entry stays on synth failure"
+            );
+        }
+
+        #[test]
+        fn wrap_rejects_non_array_hooks_event() {
+            let (dir, mut so, mut se) = fixtures();
+            let user = dir.path().join("user.json");
+            fs::write(&user, br#"{"hooks":{"Stop":"oops-a-string"}}"#).unwrap();
+            let code = drive_with(
+                dir.path(),
+                Some("%4"),
+                Some(&user),
+                &mut so,
+                &mut se,
+                &["wrap", "claude", "--", "stub"],
+            );
+            assert_eq!(code, 1);
+            assert!(
+                String::from_utf8_lossy(&se).contains("must be an array"),
+                "stderr: {}",
+                String::from_utf8_lossy(&se)
+            );
+        }
+
+        #[test]
+        #[ignore = "slice 2 — wrap installs global tmux pane-exited hook (smoke covers; behavior would shell out to tmux)"]
         fn wrap_installs_pane_exited_hook() {}
-
-        #[test]
-        #[ignore = "slice 2 — wrap synthesizes claude --settings tempfile"]
-        fn wrap_synthesizes_claude_settings_with_user_base_merged() {}
 
         #[test]
         #[ignore = "slice 3 — hook UserPromptSubmit flips state to running and stores prompt"]
@@ -664,6 +1085,38 @@ mod tests {
                 kiro_orphan_paths(&reuser, &[]),
                 vec![PathBuf::from("/repo/.kiro/agents/agent-orch.json")]
             );
+        }
+
+        // build_agent_argv pins the POSIX-style argv we hand to
+        // `execvp`. Behavior tests gate on `side_effects_enabled =
+        // false` and never fire `exec_agent`, so the construction
+        // is pinned here. argv[0] must be the program name (the
+        // child process sees this as its own argv[0]); claude flags
+        // splice in *after* slot 0, never replace it.
+        #[test]
+        fn build_agent_argv_claude_splices_settings_after_slot0() {
+            let argv_in = vec!["claude".to_string(), "--resume".into(), "my-sess".into()];
+            let (program, argv) = build_agent_argv("claude", &argv_in, Path::new("/tmp/s.json"));
+            assert_eq!(program, "claude");
+            assert_eq!(
+                argv,
+                vec!["claude", "--settings", "/tmp/s.json", "--resume", "my-sess"]
+            );
+        }
+
+        #[test]
+        fn build_agent_argv_non_claude_passes_through() {
+            let argv_in = vec!["kiro".to_string(), "chat".into()];
+            let (program, argv) = build_agent_argv("kiro", &argv_in, Path::new("/tmp/s.json"));
+            assert_eq!(program, "kiro");
+            assert_eq!(argv, vec!["kiro", "chat"]);
+        }
+
+        #[test]
+        fn build_agent_argv_claude_no_extra_args() {
+            let argv_in = vec!["claude".to_string()];
+            let (_program, argv) = build_agent_argv("claude", &argv_in, Path::new("/tmp/s.json"));
+            assert_eq!(argv, vec!["claude", "--settings", "/tmp/s.json"]);
         }
     }
 }
