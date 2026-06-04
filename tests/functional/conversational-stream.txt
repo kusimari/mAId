@@ -1,0 +1,29 @@
+[Earlier in this session, the user and the agent had a long unrelated conversation about a different project — included verbatim so you have the full context the agent would have. None of these turns establish state for the question that follows; they are background noise from another part of the user's day.]
+
+USER: hey can you help me think through the cli-config refactor for the unrelated project i was working on yesterday? not the one we'll discuss later — a different one.
+AGENT: Sure. Drop the rough shape and I'll react.
+USER: it's a small typescript cli that reads a yaml config. right now config loading is scattered across three command modules. i want to centralize.
+AGENT: Centralize where? A single `loadConfig()` at the entry point, or a singleton that the commands `import config from "..."` from?
+USER: entry point. each command receives the loaded config as a param. i don't like singletons for testability reasons.
+AGENT: Reasonable. The migration is mostly mechanical — change the command signatures from `(args)` to `(args, config)`, and have the entry point construct it once before dispatch. The risk is if any command does lazy-loading-on-first-use that you'll need to flatten.
+USER: nope, all eager. ok i'll write that up later. unrelated — what was that compose file pattern you mentioned last week for local dev?
+AGENT: The override-file pattern: `compose.yaml` for the production-shape services, `compose.override.yaml` for the dev-only knobs (mounted source dirs, debug ports, looser env). Docker compose merges them automatically when both are present. Keeps the "real" file clean.
+USER: right. good. ok totally different question — the gh-review tool i was experimenting with installed via cargo. is that the only way?
+AGENT: Cargo is the official path per its README. There's no nix flake on the project repo. You could `cargo install` into a per-project root (`cargo install --root <path>`) to keep it out of `~/.cargo`, but the underlying compile still runs.
+USER: ok fine. that's enough setup chatter. last thing before i context-switch — is `gh pr review` line-anchored or does it only do top-level body comments?
+AGENT: `gh pr review` accepts a body and a stance (--approve / --request-changes / --comment). For line-anchored review comments, you need either the web UI or `gh api` against the pulls/.../comments endpoint with the path/line/body fields. The CLI surface is line-coarser by design.
+USER: ok thanks. i'll come back to all that later.
+USER: while i have you — i was reading some docs earlier. is there a reason the standard library's filepath module on windows treats forward slashes as separators in some functions but not others?
+AGENT: Yes, but it's annoying. Most filepath functions on windows accept both `/` and `\` as separators when *parsing* paths (because tons of legacy code uses forward slashes). But functions that *construct* paths emit native separators (so you get `\` back). The asymmetry is "be liberal in what you accept, conservative in what you emit." It bites people who roundtrip a path expecting it to be byte-identical.
+USER: ok that's what i thought.
+USER: hmm i'm hungry. what's a good lunch idea that's not a sandwich, not pasta, and takes under 15 minutes?
+AGENT: Egg fried rice if you have day-old rice; takes 10 minutes once the pan is hot. If no rice, a tortilla quesadilla with whatever cheese plus something acidic (pickle, salsa, tomato) takes 6-8. Both lean on a hot pan and high heat.
+USER: yeah ok i'll do the quesadilla. ok eaten, back at the keyboard.
+USER: i was reading about merkle trees yesterday and one thing i still can't quite intuit — what's the practical advantage of merkle proofs over just hashing the whole dataset and comparing?
+AGENT: Logarithmic size. With n items, a full-dataset hash is one O(n) compute and O(1) storage to compare; a merkle proof is O(log n) storage to *verify* a single item against a known root. If the verifier doesn't have the dataset (just the root), they can be sent the path-to-leaf in O(log n) and verify membership without ever seeing the rest. That's the whole point — you don't need to ship the dataset.
+USER: ahh ok. proof size scales with depth. got it.
+USER: ok one more bikeshed — for the cli-config thing earlier, naming. would you call the parameter `config` or `cfg`?
+AGENT: `config`. `cfg` saves three keystrokes; you read code more than you write it. Reserve abbreviations for places where the noun is repeated dozens of times in close proximity (loop variables, etc.).
+USER: agreed. ok i'm context-switching now to the actual thing i wanted to ask.
+
+Now the user says:
