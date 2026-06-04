@@ -6,14 +6,13 @@
 //!   3. Pure helpers: read/write sessions, format, sort, filter,
 //!      kiro-orphan classification.
 //!   4. Locked-IO helper (acquire flock, run a closure).
-//!   5. `Env` (testable I/O surface — state-dir, stdout, stderr).
-//!   6. Subcommand handlers (`cmd_wrap`, `cmd_hook`, ... — all
-//!      stubs in slice 1, filled in subsequent slices).
-//!      `run_command(env, args)` → exit code: behavior-test entrypoint.
-//!   7. `clap` dispatch in `main` (delegates to `run_command`).
-//!   8. `#[cfg(test)] mod tests` at the bottom — split into
-//!      `mod behavior` (drives `run_command`) and `mod helpers`
-//!      (small, only what behavior tests can't reach).
+//!   5. `Cli` + `Env` + `run_command` + `main` — clap dispatch and
+//!      the testable entrypoint. Handler bodies live inline in the
+//!      `match` arms; extract a helper only when one grows past
+//!      ~20 lines.
+//!   6. `#[cfg(test)] mod tests` — split into `mod behavior`
+//!      (drives `run_command`) and `mod helpers` (small, only
+//!      what behavior tests can't reach).
 //!
 //! Splitting this file is a v2 concern (soft threshold ~1000 LOC).
 
@@ -168,18 +167,24 @@ pub fn read_sessions(path: &Path) -> Result<Vec<Session>> {
     Ok(v)
 }
 
-/// Write the array atomically: write to `<path>.tmp`, then `rename`.
-/// Readers using `read_sessions` never see a partial write because
-/// `rename(2)` is atomic on the same filesystem.
+/// Write the array atomically: write to `<path>.tmp.<pid>`, then `rename`.
+/// Readers using `read_sessions` never see a partial write — `rename(2)`
+/// is atomic on the same filesystem.
 ///
-/// No `fsync` — this is state-dir scratch; loss-after-power-failure
-/// is acceptable (the registry rebuilds on the next agent launch +
-/// pane-exited sweep).
+/// The tmp filename includes our pid so two concurrent writers don't
+/// stomp each other's tmp file. They still race on the rename (last
+/// rename wins), but each writer's content is intact through its own
+/// rename — no torn JSON. Callers who need read-modify-write atomicity
+/// (the common case for the hook subcommand) hold `with_lock` while
+/// reading, mutating, and calling this.
+///
+/// No `fsync` — state-dir scratch; loss-after-power-failure is fine
+/// (the registry rebuilds on the next launch + pane-exited sweep).
 pub fn write_sessions_atomic(path: &Path, sessions: &[Session]) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("mkdir -p {}", parent.display()))?;
     }
-    let tmp = path.with_extension("json.tmp");
+    let tmp = path.with_extension(format!("json.tmp.{}", std::process::id()));
     let bytes = serde_json::to_vec_pretty(sessions)?;
     fs::write(&tmp, &bytes).with_context(|| format!("write {}", tmp.display()))?;
     fs::rename(&tmp, path)
@@ -325,134 +330,13 @@ where
     f()
 }
 
-// ── 5 · Env (testable entrypoint surface) ──────────────────────────
-
-/// Everything a subcommand needs from the outside world. Production
-/// constructs from process state (`Env::from_process`); tests
-/// construct with an injected state-dir and Vec-backed stdout/stderr
-/// (`Env::for_test`). Each handler takes `&mut Env` so behavior tests
-/// can drive the same dispatch path the binary uses.
-///
-/// Kept small on purpose — only what slice 1's surface needs. Future
-/// slices grow this struct (now-injection for clock-pinned tests,
-/// stdin for `hook`, exec-spawner shim for `wrap`) as their tests
-/// demand it.
-pub struct Env {
-    pub state_dir: PathBuf,
-    pub stdout: Box<dyn Write>,
-    pub stderr: Box<dyn Write>,
-}
-
-impl Env {
-    pub fn from_process() -> Result<Self> {
-        Ok(Env {
-            state_dir: state_dir()?,
-            stdout: Box::new(std::io::stdout()),
-            stderr: Box::new(std::io::stderr()),
-        })
-    }
-}
-
-// ── 6 · subcommand handlers ────────────────────────────────────────
-
-fn cmd_wrap(
-    _env: &mut Env,
-    _kind: String,
-    _cwd: Option<PathBuf>,
-    _agent_argv: Vec<String>,
-) -> Result<i32> {
-    anyhow::bail!("agent-orch wrap: not implemented yet (slice 2)")
-}
-
-fn cmd_hook(_env: &mut Env, _event: String) -> Result<i32> {
-    anyhow::bail!("agent-orch hook: not implemented yet (slice 3)")
-}
-
-fn cmd_pick(_env: &mut Env) -> Result<i32> {
-    anyhow::bail!("agent-orch pick: not implemented yet (slice 5)")
-}
-
-fn cmd_loop(_env: &mut Env) -> Result<i32> {
-    anyhow::bail!("agent-orch loop: not implemented yet (slice 5)")
-}
-
-fn cmd_list(env: &mut Env) -> Result<i32> {
-    let sessions = read_sessions(&sessions_path(&env.state_dir))?;
-    if sessions.is_empty() {
-        writeln!(env.stdout, "(no registered sessions)")?;
-        return Ok(0);
-    }
-    let mut sessions = sessions;
-    sort_sessions(&mut sessions);
-    for s in &sessions {
-        writeln!(env.stdout, "{}\t{}", s.pane_id, format_row(s))?;
-    }
-    Ok(0)
-}
-
-fn cmd_unregister(_env: &mut Env, _pane_id: String) -> Result<i32> {
-    anyhow::bail!("agent-orch unregister: not implemented yet (slice 4)")
-}
-
-fn cmd_doctor(_env: &mut Env) -> Result<i32> {
-    anyhow::bail!("agent-orch doctor: not implemented yet (slice 7)")
-}
-
-fn cmd_default(_env: &mut Env) -> Result<i32> {
-    anyhow::bail!("agent-orch (bare): not implemented yet (slice 5)")
-}
-
-/// Behavior-test entrypoint. Drives the same clap dispatch the
-/// binary uses, but with all I/O routed through `env`. Returns the
-/// process-style exit code (0 = ok, non-zero = failure surfaced via
-/// the handler's `Result`). On parse error, the error's message is
-/// written to `env.stderr` and exit code 2 is returned.
-pub fn run_command<I, S>(env: &mut Env, args: I) -> i32
-where
-    I: IntoIterator<Item = S>,
-    S: Into<String>,
-{
-    let argv: Vec<String> = std::iter::once("agent-orch".to_string())
-        .chain(args.into_iter().map(Into::into))
-        .collect();
-    let cli = match Cli::try_parse_from(&argv) {
-        Ok(c) => c,
-        Err(e) => {
-            let _ = writeln!(env.stderr, "{}", e);
-            return 2;
-        }
-    };
-    let result = match cli.cmd {
-        None => cmd_default(env),
-        Some(Cmd::Wrap {
-            kind,
-            cwd,
-            agent_argv,
-        }) => cmd_wrap(env, kind, cwd, agent_argv),
-        Some(Cmd::Hook { event }) => cmd_hook(env, event),
-        Some(Cmd::Pick) => cmd_pick(env),
-        Some(Cmd::Loop) => cmd_loop(env),
-        Some(Cmd::List) => cmd_list(env),
-        Some(Cmd::Unregister { pane_id }) => cmd_unregister(env, pane_id),
-        Some(Cmd::Doctor) => cmd_doctor(env),
-    };
-    match result {
-        Ok(code) => code,
-        Err(e) => {
-            let _ = writeln!(env.stderr, "Error: {:#}", e);
-            1
-        }
-    }
-}
-
-// ── 7 · clap dispatch ──────────────────────────────────────────────
+// ── 5 · clap dispatch + run_command ────────────────────────────────
 
 #[derive(Parser)]
 #[command(
     name = "agent-orch",
     version,
-    about = "Observation-only orchestrator for coding-agent tmux panes.",
-    arg_required_else_help = false
+    about = "Observation-only orchestrator for coding-agent tmux panes."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -463,20 +347,14 @@ struct Cli {
 enum Cmd {
     /// Wrap a coding agent: register, inject hooks, execvp.
     Wrap {
-        /// Agent kind: claude | kiro | other (registers only).
         kind: String,
-        /// Override the recorded cwd (default: current dir).
         #[arg(long)]
         cwd: Option<PathBuf>,
-        /// Agent argv after `--`.
         #[arg(last = true)]
         agent_argv: Vec<String>,
     },
     /// Hook reporter; called by Claude/Kiro on each lifecycle event.
-    Hook {
-        /// Event name (UserPromptSubmit, PreToolUse, PostToolUse, Stop).
-        event: String,
-    },
+    Hook { event: String },
     /// Print one selected pane id from the registry to stdout.
     Pick,
     /// Picker loop (runs inside the orchestrator session).
@@ -490,14 +368,84 @@ enum Cmd {
     Doctor,
 }
 
+/// Everything a subcommand needs from the outside world. The binary
+/// builds this from real process state (`Env::from_process`); tests
+/// build it with a tempdir state-dir and `Vec<u8>`-backed stdout /
+/// stderr (`Vec<u8>` already implements `Write`). Borrowed lifetimes
+/// keep the test path zero-allocation.
+pub struct Env<'a> {
+    pub state_dir: PathBuf,
+    pub stdout: &'a mut dyn Write,
+    pub stderr: &'a mut dyn Write,
+}
+
+/// Behavior-test entrypoint. Drives the same clap dispatch as `main`
+/// but routes all I/O through `env`. Returns the process exit code
+/// (0 ok, 1 handler-error, 2 parse-error). Handler bodies live inline
+/// in the match arms — slices fill them in as they land. Extract a
+/// helper only when a body grows past ~20 lines.
+pub fn run_command<I, S>(env: &mut Env, args: I) -> i32
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let argv = std::iter::once("agent-orch".to_string())
+        .chain(args.into_iter().map(Into::into))
+        .collect::<Vec<_>>();
+    let cli = match Cli::try_parse_from(&argv) {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = writeln!(env.stderr, "{}", e);
+            return 2;
+        }
+    };
+    let result: Result<i32> = (|| match cli.cmd {
+        None => anyhow::bail!("agent-orch (bare): not implemented yet (slice 5)"),
+        Some(Cmd::Wrap { .. }) => anyhow::bail!("agent-orch wrap: not implemented yet (slice 2)"),
+        Some(Cmd::Hook { .. }) => anyhow::bail!("agent-orch hook: not implemented yet (slice 3)"),
+        Some(Cmd::Pick) => anyhow::bail!("agent-orch pick: not implemented yet (slice 5)"),
+        Some(Cmd::Loop) => anyhow::bail!("agent-orch loop: not implemented yet (slice 5)"),
+        Some(Cmd::Unregister { .. }) => {
+            anyhow::bail!("agent-orch unregister: not implemented yet (slice 4)")
+        }
+        Some(Cmd::Doctor) => anyhow::bail!("agent-orch doctor: not implemented yet (slice 7)"),
+        Some(Cmd::List) => {
+            let mut sessions = read_sessions(&sessions_path(&env.state_dir))?;
+            if sessions.is_empty() {
+                writeln!(env.stdout, "(no registered sessions)")?;
+                return Ok(0);
+            }
+            sort_sessions(&mut sessions);
+            for s in &sessions {
+                writeln!(env.stdout, "{}\t{}", s.pane_id, format_row(s))?;
+            }
+            Ok(0)
+        }
+    })();
+    match result {
+        Ok(code) => code,
+        Err(e) => {
+            let _ = writeln!(env.stderr, "Error: {:#}", e);
+            1
+        }
+    }
+}
+
 fn main() -> Result<()> {
-    let mut env = Env::from_process()?;
+    let state = state_dir()?;
+    let mut stdout = std::io::stdout();
+    let mut stderr = std::io::stderr();
+    let mut env = Env {
+        state_dir: state,
+        stdout: &mut stdout,
+        stderr: &mut stderr,
+    };
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let code = run_command(&mut env, argv);
     std::process::exit(code);
 }
 
-// ── 8 · tests ──────────────────────────────────────────────────────
+// ── 6 · tests ──────────────────────────────────────────────────────
 //
 // Two-tier shape:
 //
@@ -521,16 +469,16 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
+    use tempfile::{tempdir, TempDir};
 
-    // ── shared fixtures ────────────────────────────────────────────
+    // 1 · session stub ────────────────────────────────────────────────
 
     fn mk_session(pane: &str, kind: &str, cwd: &str, started: u64) -> Session {
         Session {
-            pane_id: pane.to_string(),
+            pane_id: pane.into(),
             pid: 12345,
-            kind: kind.to_string(),
-            cwd: cwd.to_string(),
+            kind: kind.into(),
+            cwd: cwd.into(),
             started,
             state: State::Unknown,
             state_ts: started,
@@ -542,95 +490,63 @@ mod tests {
         }
     }
 
-    /// Build an `Env` whose state-dir is the given tempdir and whose
-    /// stdout/stderr capture into `Vec<u8>`s the caller can read back.
-    /// Returns `(env, stdout_buf, stderr_buf)` — the buffers are
-    /// `Arc<Mutex<Vec<u8>>>` so the caller can drop the env (which
-    /// closes the writers) and then read the captured bytes.
-    fn test_env(state_dir: PathBuf) -> (Env, SharedBuf, SharedBuf) {
-        let stdout = SharedBuf::new();
-        let stderr = SharedBuf::new();
-        let env = Env {
-            state_dir,
-            stdout: Box::new(stdout.clone()),
-            stderr: Box::new(stderr.clone()),
+    // 2 · env stub ────────────────────────────────────────────────────
+    //
+    // `Vec<u8>` already implements `Write`, so capture is one allocation
+    // each. The TempDir is returned alongside so the caller's scope
+    // keeps it alive for the duration of the test.
+
+    fn fixtures() -> (TempDir, Vec<u8>, Vec<u8>) {
+        (tempdir().unwrap(), Vec::new(), Vec::new())
+    }
+
+    // 3 · command-runner wiring ───────────────────────────────────────
+
+    fn drive(state: &Path, stdout: &mut Vec<u8>, stderr: &mut Vec<u8>, args: &[&str]) -> i32 {
+        let mut env = Env {
+            state_dir: state.to_path_buf(),
+            stdout,
+            stderr,
         };
-        (env, stdout, stderr)
+        run_command(&mut env, args.iter().map(|s| s.to_string()))
     }
 
-    /// Tiny `Write` impl backed by `Arc<Mutex<Vec<u8>>>` so tests can
-    /// pull the captured bytes back out after `run_command` returns.
-    #[derive(Clone)]
-    struct SharedBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-
-    impl SharedBuf {
-        fn new() -> Self {
-            SharedBuf(std::sync::Arc::new(std::sync::Mutex::new(Vec::new())))
-        }
-        fn as_string(&self) -> String {
-            String::from_utf8(self.0.lock().unwrap().clone()).expect("utf-8")
-        }
+    fn seed(state: &Path, sessions: &[Session]) {
+        write_sessions_atomic(&sessions_path(state), sessions).unwrap();
     }
 
-    impl Write for SharedBuf {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(buf);
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    /// Seed a state-dir with a sessions.json containing the given
-    /// records. Used by behavior tests to set up a registry shape
-    /// without going through the (slice-2) `wrap` subcommand.
-    fn seed_sessions(state_dir: &Path, sessions: &[Session]) {
-        write_sessions_atomic(&sessions_path(state_dir), sessions).unwrap();
-    }
-
-    // ── behavior — exercise run_command end-to-end ─────────────────
+    // 4 · behavior — round-trips through run_command ──────────────────
 
     mod behavior {
         use super::*;
 
-        // ---- list ----
-
         #[test]
         fn list_with_no_sessions_prints_marker() {
-            let dir = tempdir().unwrap();
-            let (mut env, stdout, _stderr) = test_env(dir.path().to_path_buf());
-            let code = run_command(&mut env, ["list"]);
-            drop(env); // flush
+            let (dir, mut so, mut se) = fixtures();
+            let code = drive(dir.path(), &mut so, &mut se, &["list"]);
             assert_eq!(code, 0);
-            assert_eq!(stdout.as_string(), "(no registered sessions)\n");
+            assert_eq!(String::from_utf8(so).unwrap(), "(no registered sessions)\n");
         }
 
         #[test]
         fn list_returns_sessions_after_seed() {
-            let dir = tempdir().unwrap();
+            let (dir, mut so, mut se) = fixtures();
             let mut s = mk_session("%42", "claude", "/repo/foo", 1000);
             s.state = State::Running;
-            s.last_prompt = "fix tests".to_string();
-            seed_sessions(dir.path(), std::slice::from_ref(&s));
+            s.last_prompt = "fix tests".into();
+            seed(dir.path(), std::slice::from_ref(&s));
 
-            let (mut env, stdout, _stderr) = test_env(dir.path().to_path_buf());
-            let code = run_command(&mut env, ["list"]);
-            drop(env);
+            let code = drive(dir.path(), &mut so, &mut se, &["list"]);
+            let out = String::from_utf8(so).unwrap();
             assert_eq!(code, 0);
-            let out = stdout.as_string();
-            assert!(out.contains("%42"), "stdout missing pane id: {:?}", out);
-            assert!(out.contains("claude"), "stdout missing kind: {:?}", out);
-            assert!(
-                out.contains("fix tests"),
-                "stdout missing prompt: {:?}",
-                out
-            );
+            assert!(out.contains("%42"), "{out:?}");
+            assert!(out.contains("claude"), "{out:?}");
+            assert!(out.contains("fix tests"), "{out:?}");
         }
 
         #[test]
         fn list_orders_running_before_complete_before_unknown() {
-            let dir = tempdir().unwrap();
+            let (dir, mut so, mut se) = fixtures();
             let mut a = mk_session("%a", "claude", "/x", 100);
             a.state = State::Complete;
             a.state_ts = 200;
@@ -638,66 +554,49 @@ mod tests {
             b.state = State::Running;
             b.state_ts = 300;
             let c = mk_session("%c", "kiro", "/z", 100); // unknown
-            seed_sessions(dir.path(), &[a, b, c]);
+            seed(dir.path(), &[a, b, c]);
 
-            let (mut env, stdout, _stderr) = test_env(dir.path().to_path_buf());
-            run_command(&mut env, ["list"]);
-            drop(env);
-            let out = stdout.as_string();
-            let pos_b = out.find("%b").expect("running row missing");
-            let pos_a = out.find("%a").expect("complete row missing");
-            let pos_c = out.find("%c").expect("unknown row missing");
-            assert!(pos_b < pos_a, "running must come before complete");
-            assert!(pos_a < pos_c, "complete must come before unknown");
+            drive(dir.path(), &mut so, &mut se, &["list"]);
+            let out = String::from_utf8(so).unwrap();
+            let pb = out.find("%b").unwrap();
+            let pa = out.find("%a").unwrap();
+            let pc = out.find("%c").unwrap();
+            assert!(pb < pa && pa < pc, "wrong order in:\n{out}");
         }
 
-        // ---- parse error path ----
-
         #[test]
-        fn unknown_subcommand_writes_to_stderr_and_exits_2() {
-            let dir = tempdir().unwrap();
-            let (mut env, _stdout, stderr) = test_env(dir.path().to_path_buf());
-            let code = run_command(&mut env, ["nope-not-a-subcommand"]);
-            drop(env);
+        fn unknown_subcommand_exits_2_with_stderr() {
+            let (dir, mut so, mut se) = fixtures();
+            let code = drive(dir.path(), &mut so, &mut se, &["nope"]);
             assert_eq!(code, 2);
-            assert!(
-                !stderr.as_string().is_empty(),
-                "expected clap error on stderr"
+            assert!(!se.is_empty());
+        }
+
+        // The bail!() stubs verify dispatch reaches the right arm.
+        // Each becomes a real behavior test in its slice.
+
+        #[test]
+        fn wrap_dispatch_currently_bails_with_slice_2_marker() {
+            let (dir, mut so, mut se) = fixtures();
+            let code = drive(
+                dir.path(),
+                &mut so,
+                &mut se,
+                &["wrap", "claude", "--", "echo"],
             );
-        }
-
-        // ---- handlers stubbed in slice 1; tests exit 1 with bail!() ----
-        //
-        // These verify the dispatch path reaches the right handler,
-        // not the (yet-to-be-built) handler logic. They get rewritten
-        // into real assertions when each slice lands.
-
-        #[test]
-        fn wrap_dispatch_reaches_handler_and_currently_bails() {
-            let dir = tempdir().unwrap();
-            let (mut env, _stdout, stderr) = test_env(dir.path().to_path_buf());
-            let code = run_command(&mut env, ["wrap", "claude", "--", "echo"]);
-            drop(env);
-            assert_eq!(code, 1, "stub bails with Err");
-            assert!(stderr.as_string().contains("slice 2"));
-        }
-
-        #[test]
-        fn hook_dispatch_reaches_handler_and_currently_bails() {
-            let dir = tempdir().unwrap();
-            let (mut env, _stdout, stderr) = test_env(dir.path().to_path_buf());
-            let code = run_command(&mut env, ["hook", "Stop"]);
-            drop(env);
             assert_eq!(code, 1);
-            assert!(stderr.as_string().contains("slice 3"));
+            assert!(String::from_utf8_lossy(&se).contains("slice 2"));
         }
 
-        // ---- placeholders for slice 2-5 behaviors ----
-        //
-        // These name the behavior tests that load-bear when their
-        // slices land. They're #[ignore]'d so cargo test runs green
-        // today; `cargo test -- --ignored` (or removing the attr in
-        // the relevant slice) flips them on.
+        #[test]
+        fn hook_dispatch_currently_bails_with_slice_3_marker() {
+            let (dir, mut so, mut se) = fixtures();
+            let code = drive(dir.path(), &mut so, &mut se, &["hook", "Stop"]);
+            assert_eq!(code, 1);
+            assert!(String::from_utf8_lossy(&se).contains("slice 3"));
+        }
+
+        // Placeholders — flip on as each slice lands.
 
         #[test]
         #[ignore = "slice 2 — wrap appends a sessions.json record"]
@@ -736,18 +635,15 @@ mod tests {
         fn pick_emits_selected_pane_id() {}
     }
 
-    // ── helpers — invariants behavior tests can't see ──────────────
-    //
-    // Keep this list short. Each entry must justify itself by
-    // catching a class of bug the behavior tests can't surface.
+    // helpers — short, justify each entry by a class of bug behavior
+    // tests can't catch.
 
     mod helpers {
         use super::*;
 
-        /// `cwd_tail("/repo")` once returned `"//repo"` because the
-        /// `RootDir` `Component` joined as `"/"`. Behavior tests
-        /// catch this only via the visible row, where the bad output
-        /// hides as a cosmetic glitch. This pure test pins the rule.
+        // `cwd_tail("/repo")` once returned `"//repo"` because the
+        // `RootDir` `Component` joined as `"/"`. Behavior tests would
+        // surface this only as a cosmetic glitch in the visible row.
         #[test]
         fn cwd_tail_handles_root_anchored_paths() {
             assert_eq!(cwd_tail("/home/me/repo/foo"), "repo/foo");
@@ -755,21 +651,17 @@ mod tests {
             assert_eq!(cwd_tail(""), "");
         }
 
-        /// The Kiro refcount cleanup rule is creation-flag-agnostic
-        /// to avoid a leak: when a reuser closes last (its
-        /// `created_kiro_config=false`), it must still remove the
-        /// shared file. This test pins that rule directly because
-        /// the slice-1 surface (`list`) doesn't exercise unregister.
-        /// Once slice 4's `kiro_unregister_removes_orphan_when_
-        /// creator_already_left` behavior test goes green, this
-        /// helper test is redundant and can be deleted.
+        // Kiro refcount cleanup is creation-flag-agnostic: a reuser
+        // closing last (its `created_kiro_config=false`) must still
+        // remove the shared file. Pinned here because slice 1 has no
+        // unregister surface; deletable once slice 4 lands its
+        // behavior test.
         #[test]
         fn kiro_orphan_creation_flag_agnostic() {
             let mut reuser = mk_session("%2", "kiro", "/repo", 2);
             reuser.created_kiro_config = false;
-            let out = kiro_orphan_paths(&reuser, &[]);
             assert_eq!(
-                out,
+                kiro_orphan_paths(&reuser, &[]),
                 vec![PathBuf::from("/repo/.kiro/agents/agent-orch.json")]
             );
         }
