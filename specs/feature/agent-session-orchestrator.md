@@ -480,6 +480,9 @@ agent-orch wrap claude -- --resume my-session
   guard: $TMUX_PANE set; no existing record for that pane
 
   install global tmux hook (idempotent, marker-file gated)
+    // Always installed by `wrap`, regardless of whether the
+    // orchestrator loop is running. The hook only writes to
+    // sessions.json; it doesn't depend on a reader.
     tmux set-hook -g pane-exited 'run-shell "<dist>/agent-orch
       unregister #{hook_pane}"'
 
@@ -559,6 +562,36 @@ agent-orch unregister %43
 
     sessions.json := remove(record); write atomically
 ```
+
+### Decoupling: `wrap` and `loop` are independent
+
+The wrapper and the orchestrator loop never speak directly.
+They communicate only through `sessions.json` on disk:
+
+- **`wrap` is useful on its own.** It registers the launch,
+  installs the global tmux `pane-exited` hook (idempotent —
+  marker-file gated), synthesizes per-launch hook config, then
+  `execvp`s the agent. Nothing in this path waits for, signals
+  to, or assumes the existence of a running loop. Hooks fire
+  and update `sessions.json` whether or not anyone is watching.
+- **`loop` is just a viewer.** It reads `sessions.json` and
+  drives `fzf`. Starting it surfaces whatever's already
+  accumulated; stopping it leaves the registry untouched.
+- **The user's mental model.** Launch agents through `wrap`
+  whenever convenient; open `loop` (via bare `agent-orch` or
+  the user's tmux keybind) only when you want to see the
+  dashboard. The two halves can run in either order, neither
+  blocks the other, and the registry survives across loop
+  restarts (a fresh `loop` invocation just opens onto the
+  current state).
+- **One small consequence for v1.** `agent-orch unregister
+  <pane-id>` is callable directly (it's the tmux hook target);
+  it doesn't go through the loop either. So pane death cleans
+  up the registry whether the loop is up or down.
+
+This decoupling is load-bearing for the "throw `wrap` at
+agents now, look at the dashboard later" workflow that
+motivates the feature.
 
 ### Why this shape
 
@@ -795,6 +828,11 @@ kdevkit §7.
   to `flake.nix`; cargo wrappers thread through `deno task`
   to keep `project.md`'s "every dev verb is `deno task`"
   invariant.
+- 2026-06-04 · PR #18 L486 review. Made the `wrap`/`loop`
+  decoupling explicit — `wrap` does not depend on the loop
+  running; the loop is a viewer that can be opened anytime
+  onto the live registry. Added a Design subsection and
+  clarifying comment in the wrapper flow pseudo-code.
 
 ## Decision Log
 
@@ -888,3 +926,12 @@ kdevkit §7.
   `dist/`.** Lets us promote later to a flake / nix install
   or a registry entry without rewriting; keeps the install
   path one `cargo build --release` for now.
+- **`wrap` and `loop` are independent.** Per PR #18 L486
+  feedback. `wrap` installs the tmux hook, registers, and
+  `execvp`s the agent without depending on the orchestrator
+  loop being up. Hooks update `sessions.json` regardless.
+  `loop` is a viewer that opens onto whatever's already
+  accumulated. The user can throw `wrap` at agents now and
+  open the dashboard later. Spec updated to make this
+  explicit in both the wrapper flow pseudo-code and a new
+  "Decoupling" subsection under Design.
