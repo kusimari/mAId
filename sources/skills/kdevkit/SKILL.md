@@ -10,11 +10,12 @@ tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog
 Three nested loops, with three phases on the feature branch:
 
 ```
-project loop      ← project.md invariants. Cross-feature.
-  feature loop    ← one branch, three phases, one squash-merge.
-    ├─ planning phase    plan(<feature>): commits + Review Gate
-    ├─ dev loop          feat/fix/...: Quality → Test → Code Review → Push → Review (§7)
-    └─ closure phase     close(<feature>): reconcile + squash-merge (§8)
+project loop             ← project.md invariants. Cross-feature.
+  initiative (optional)  ← groups multiple feature loops (§10).
+    feature loop         ← one branch, three phases, one squash-merge.
+      ├─ planning phase    plan(<feature>): commits + Review Gate
+      ├─ dev loop          feat/fix/...: Quality → Test → Code Review → Push → Review (§7)
+      └─ closure phase     close(<feature>): reconcile + squash-merge (§8)
 ```
 
 The branch carries all three phases on the same PR/CR; the body is
