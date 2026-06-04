@@ -4,3 +4,8 @@ node_modules/
 *.log
 result
 result-*
+
+# agent-orch (Rust)
+# Cargo.lock IS committed for binary crates (reproducible builds)
+dist/
+sources/agent-orch/target/
