@@ -82,8 +82,11 @@ Subcommands:
 
 - `agent-orch wrap <kind> [--cwd <dir>] -- <agent-cmd> [args...]`
   — the wrapper. Registers the launch, synthesizes per-launch
-  hook config for the supported kinds, then `Deno.exec`s the
-  agent (or for unsupported kinds, registers and exec's only).
+  hook config for the supported kinds, then spawns the agent as
+  a child (the wrapper stays alive as a parent and forwards
+  signals — neither Deno nor Node exposes `execvp`-style image
+  replacement). On agent exit, the wrapper exits with the
+  agent's exit code.
 - `agent-orch hook <event-name>` — invoked by the agent's hooks.
   Reads the JSON payload from stdin, applies the event to the
   matching session record under `flock`. Always exits 0.
@@ -121,8 +124,15 @@ Subcommands:
 - Registers the launch by appending one record to
   `$STATE_DIR/sessions.json` (under `flock`):
   - `pane_id` (`%N` from `$TMUX_PANE`)
-  - `pid` (the wrapper's `pid`, which becomes the agent's pid
-    after exec)
+  - `pid` (the **spawned agent's** pid — `child.pid` from the
+    spawned process, not the wrapper's. Neither Deno nor Node
+    exposes `execvp`/process-image replacement, so the wrapper
+    stays alive as a parent and forwards signals; recording the
+    child's pid keeps the registry honest about what's actually
+    running.)
+  - `wrapper_pid` (the wrapper's own pid — useful for `doctor`
+    and for the unregister step to distinguish "agent exited
+    cleanly, wrapper still running" from "wrapper crashed")
   - `kind`
   - `cwd`
   - `started` (unix seconds)
@@ -459,20 +469,12 @@ records the cost is ms-scale and we get atomic semantics.
 agent-orch wrap claude -- --resume my-session
 
   ↓ guard: $TMUX_PANE set, no existing record for that pane
-  ↓ register
-    flock $STATE_DIR/sessions.lock
-    sessions.json := append({pane_id:"%42", pid:Deno.pid,
-      kind:"claude", cwd:Deno.cwd(), started:now,
-      state:"unknown", state_ts:now, ...,
-      created_kiro_config:false})
-    tmux set-option -p @agent-orch-pane "%42"
-
   ↓ install global tmux hook (idempotent, marker-file gated)
     tmux set-hook -g pane-exited 'run-shell "<dist>/agent-orch
       unregister #{hook_pane}"'
 
   ↓ synthesize per-launch settings
-    tmp = Deno.makeTempDirSync()
+    tmp = runtime.mktempDir()
     base = readUserSettings("~/.claude/settings.json") ?? {}
     settings = mergeHooks(base, {
       UserPromptSubmit: [hookCmd("UserPromptSubmit")],
@@ -481,12 +483,27 @@ agent-orch wrap claude -- --resume my-session
       Stop:             [hookCmd("Stop")],
     })
     writeFile(`${tmp}/settings.json`, settings)
-    onExit(() => Deno.removeSync(tmp, {recursive:true}))
 
-  ↓ exec the agent (preserves pid as agent's pid)
-    Deno.env.set("AGENT_ORCH_PANE", "%42")
-    Deno.execvp("claude", ["--settings", `${tmp}/settings.json`,
-                            "--resume", "my-session"])
+  ↓ spawn the agent as a child (no execvp — wrapper stays parent)
+    runtime.env.set("AGENT_ORCH_PANE", "%42")
+    child = runtime.spawn("claude",
+      ["--settings", `${tmp}/settings.json`, "--resume", "my-session"],
+      { stdio: "inherit" })
+
+  ↓ register with the child's pid
+    flock $STATE_DIR/sessions.lock
+    sessions.json := append({pane_id:"%42", pid:child.pid,
+      wrapper_pid:runtime.pid, kind:"claude", cwd:runtime.cwd(),
+      started:now, state:"unknown", state_ts:now, ...,
+      created_kiro_config:false})
+    tmux set-option -p @agent-orch-pane "%42"
+
+  ↓ forward signals + wait
+    for sig in [SIGINT, SIGTERM, SIGHUP, SIGQUIT]:
+      runtime.onSignal(sig, () => child.kill(sig))
+    code = await child.exitCode
+    runtime.removeSync(tmp, {recursive:true})
+    runtime.exit(code)
 ```
 
 ### Wrapper flow (Kiro case)
@@ -504,9 +521,11 @@ agent-orch wrap kiro -- chat
       flock $STATE_DIR/sessions.lock
       sessions.json: set this record's created_kiro_config = true
 
-  ↓ exec the agent
-    Deno.env.set("AGENT_ORCH_PANE", "%43")
-    Deno.execvp("kiro", ["chat"])
+  ↓ spawn + register + signal-forward + wait (same shape as Claude)
+    runtime.env.set("AGENT_ORCH_PANE", "%43")
+    child = runtime.spawn("kiro", ["chat"], { stdio: "inherit" })
+    flock ...; sessions.json := append({...pid:child.pid,...})
+    forward signals; code = await child.exitCode; runtime.exit(code)
 ```
 
 ### Unregister flow
@@ -602,8 +621,43 @@ cases:
 - No background daemon, no IPC socket, no proxy of agent I/O.
 - No notification surface (OS toasts, status-bar icons).
 - No automatic `~/.tmux.conf` edits.
-- No TUI yet — the picker is fzf. Promoting to a full ratatui-
-  / Cliffy-style TUI is a v2 if the picker UX feels limiting.
+- No TUI yet — the picker is fzf. The intended v2 TUI path is
+  **Ink** (React-for-CLIs, npm package, consumed via `npm:ink`).
+  Ink fits because the picker grows naturally into a live
+  dashboard (sortable columns, refresh-on-state-change, summary
+  preview); React's component model is the right shape for that.
+  Ink officially does not target Deno but works in practice via
+  Deno's Node-compat layer. The v2 port replaces `pick.ts` and
+  `loop.ts` with Ink components; `sessions.ts` (the model layer)
+  is unchanged.
+
+### Portability hygiene (Deno-now, Node-later)
+
+The tool is written in Deno, but the design avoids Deno-isms
+that would force a redesign on a hypothetical Node port. The
+v1 hit list:
+
+- **Wrap every `Deno.*` call in `runtime.ts`.** Every call site
+  goes through one of `runtime.spawn`, `runtime.mktempDir`,
+  `runtime.kill`, `runtime.env`, `runtime.cwd`, `runtime.exit`,
+  `runtime.readJson`, `runtime.writeJsonAtomic`. A future Node
+  port replaces the file's body, not its callers.
+- **All deps via `npm:` specifiers.** No `https://deno.land/...`
+  URL imports. Every `npm:` line is a `package.json` entry on
+  Node — nothing more.
+- **Prefer `node:`-builtin patterns when possible.** Use
+  `import.meta.dirname` (works on both modern Deno and Node
+  20.11+) instead of `Deno.mainModule`. Use `node:path`,
+  `node:fs/promises` etc. via Deno's compat layer where they
+  cover the need.
+- **No `Deno.permissions.*` runtime calls.** Rely on launch
+  flags only.
+- **Spawn-as-child, not exec-replace** (covered above). Records
+  the child's pid. This is forced by reality on both runtimes;
+  doing it correctly in v1 saves a redesign on port.
+
+These habits cost nothing in v1 and make the eventual port a
+half-day of mechanical edits if it ever happens.
 
 ## Implementation Plan
 
@@ -630,14 +684,22 @@ kdevkit §7.
 2. **Wrapper subcommand (Claude path).**
    - `sources/agent-orch/src/main.ts` — subcommand dispatch.
    - `sources/agent-orch/src/wrap.ts` — Claude path:
-     `$TMUX_PANE` guard, sessions append, tempdir settings
-     synthesis (merge user base + our hooks), `set-option -p
-     @agent-orch-pane`, idempotent global tmux hook install
-     (under `flock` on a marker file), `Deno.execvp` to
-     claude. Tempdir cleanup via `addSignalListener` /
-     `globalThis.addEventListener("unload")`.
+     `$TMUX_PANE` guard, tempdir settings synthesis (merge user
+     base + our hooks), `set-option -p @agent-orch-pane`,
+     idempotent global tmux hook install (under `flock` on a
+     marker file), spawn-as-child via `runtime.spawn`, sessions
+     append with the *child's* pid, signal forwarding for
+     SIGINT/SIGTERM/SIGHUP/SIGQUIT, await child exit, propagate
+     exit code. Tempdir cleanup via the same wait path (no
+     `addEventListener("unload")` needed since the wrapper
+     stays alive).
    - `sources/agent-orch/src/tmux.ts` — thin wrappers around
      tmux commands.
+   - `sources/agent-orch/src/runtime.ts` — portability shim
+     wrapping `Deno.Command`, `Deno.makeTempDir`,
+     `Deno.kill`, env, cwd, exit. Every Deno-specific call
+     site goes through this module so a future Node port is
+     find/replace-grade.
    - Risk: edge cases around `$TMUX_PANE` (nested tmux),
      missing `~/.claude/settings.json`, claude CLI not on
      PATH.
@@ -704,11 +766,16 @@ kdevkit §7.
   names are pinned by Claude / Kiro docs as of 2026-06; the
   per-launch settings synth is one function and easy to update
   if either renames.
-- **`pid` semantics.** `Deno.execvp` (or the Deno equivalent
-  via `Deno.Command(...).spawn()` + `Deno.exit` after `wait`)
-  preserves the wrapper's pid as the agent's pid, so the
-  recorded `pid` matches the running agent. Verified
-  implicitly by smoke (`kill -0 $pid` against the stub agent).
+- **`pid` semantics.** Neither Deno nor Node exposes
+  `execvp`-style image replacement, so the wrapper stays alive
+  as a parent. The recorded `pid` is the spawned agent's
+  `child.pid`, not the wrapper's; the wrapper forwards
+  SIGINT/SIGTERM/SIGHUP/SIGQUIT to the child and exits with the
+  child's exit code on completion. Cost: one extra process per
+  agent (the wrapper). Smoke verifies that
+  `kill -0 child.pid` succeeds while the agent runs and fails
+  after teardown, and that registry liveness sweeps see the
+  child exit.
 - **Concurrent hook fires.** Two agents firing events
   simultaneously hit the same `sessions.lock`. `flock`
   serializes them; worst case is a few ms delay. Acceptable.
@@ -731,6 +798,13 @@ kdevkit §7.
   (subcommands replace the bash trio); `$STATE_DIR` clarified
   as runtime data under `$HOME/.local/state` (not a deployed
   config write). Hot-path latency math captured under risks.
+- 2026-06-04 · Verified Deno↔Node portability before locking
+  in Deno. Two correctness fixes from that pass: (1) replaced
+  `Deno.execvp` (does not exist; same gap on Node) with
+  spawn-as-child + signal-forwarding; registry now records the
+  child's pid. (2) Added a `runtime.ts` portability shim plus
+  npm-specifier discipline as v1 hygiene. Recorded Ink as the
+  intended v2 TUI path so future-us doesn't relitigate.
 
 ## Decision Log
 
@@ -797,3 +871,34 @@ kdevkit §7.
   `dist/`.** Lets us promote later to a flake / nix install or
   a registry entry without rewriting; keeps the install path
   one `deno compile` for now.
+- **Spawn-as-child, not exec-replace.** Verified: neither Deno
+  nor Node exposes `execvp`/process-image replacement. The
+  wrapper stays alive as a parent, spawns the agent as a
+  child, forwards SIGINT/SIGTERM/SIGHUP/SIGQUIT, exits with
+  the child's exit code. The registry records the *child's*
+  pid (`child.pid`), not the wrapper's. Cost: one extra
+  process per agent. Win: the design is portable to Node
+  unchanged. The original spec said "wrapper's pid becomes
+  the agent's pid post-exec" — that was true for the bash
+  prototype but doesn't translate to either runtime.
+- **Ink (npm) as the v2 TUI.** When the fzf picker grows into
+  a live dashboard (sortable columns, refresh-on-state-change,
+  summary preview), port `pick.ts`/`loop.ts` to Ink. React's
+  component model + hooks are the right shape for a
+  state-driven dashboard. Ink targets Node officially but
+  works on Deno via the Node-compat layer
+  (`import { render } from "npm:ink"`); the maintainer
+  declined first-class Deno support, so we accept that we're
+  riding the compat layer. `sessions.ts` (the model layer) is
+  unchanged on the v2 port. Alternative (rejected): Cliffy.
+  Cliffy is a one-shot prompt library, not a persistent-TUI
+  framework — fine for v1's argument parsing, wrong shape
+  for the dashboard.
+- **Portability hygiene to keep a future Deno→Node port
+  cheap.** Wrap every `Deno.*` call in `runtime.ts`; all deps
+  via `npm:` specifiers (no URL imports); use
+  `import.meta.dirname` and `node:`-builtin patterns where
+  they work on both runtimes; no `Deno.permissions.*`. These
+  habits cost nothing in v1 and make a hypothetical port a
+  half-day of mechanical edits. We're not migrating today
+  — this is hygiene, not a migration plan.
