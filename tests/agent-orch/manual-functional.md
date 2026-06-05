@@ -64,6 +64,38 @@ spelled `agent-orch` — adjust if your shell can't resolve it.
 > (or just delete `~/.local/state/agent-orch/sessions.json` to start
 > clean).
 
+## CLI shape (read this first)
+
+`agent-orch wrap` takes a **kind** and then **the actual command
+to run** after `--`:
+
+```
+agent-orch wrap <kind> [--cwd <dir>] -- <agent-cmd> [args...]
+```
+
+- `<kind>` selects the `Wrapper` impl (`claude`, `kiro`, or any
+  string for register-only `Other`). It picks how hooks get
+  injected.
+- `<agent-cmd>` is the program the wrapper actually `execvp`s.
+  This is what runs in the pane after the wrapper sets up the
+  registry and hook config.
+
+The same word appears twice when wrapping the canonical agents:
+
+```sh
+agent-orch wrap claude -- claude                  # plain
+agent-orch wrap claude -- claude --resume foo     # with claude args
+agent-orch wrap kiro   -- kiro                    # plain
+agent-orch wrap kiro   -- kiro chat               # with kiro args
+```
+
+The first `claude` is *the kind* (drives hook injection); the
+second `claude` is *the binary on PATH* the wrapper exec's. They
+just happen to share the name. If you wrote `agent-orch wrap
+claude --` with nothing after the `--`, the wrapper exits with
+`agent-orch wrap needs an agent command after \`--\`` because it
+has no program to exec.
+
 ## Test plan — three agent sessions + one orchestrator viewer
 
 You'll create **four** tmux sessions on the user's running tmux
@@ -91,7 +123,7 @@ session. Run these *outside any tmux*:
 mkdir -p /tmp/proj-a && cd /tmp/proj-a
 tmux new-session -s proj-a -n work
 # you're now inside proj-a; launch claude through the wrapper
-agent-orch wrap claude --
+agent-orch wrap claude -- claude
 # … press Enter through any Claude startup; type a prompt or two
 ```
 
@@ -107,7 +139,7 @@ tmux split-window -h
 # you're now in the right pane. select the LEFT pane:
 tmux select-pane -L
 # launch claude in the left pane
-agent-orch wrap claude --
+agent-orch wrap claude -- claude
 # leave the right pane as a plain shell; do whatever in it.
 # the first window ('notes') is also a plain shell.
 ```
@@ -120,10 +152,10 @@ tmux new-session -s proj-c -n agents
 # split the window vertically (top/bottom)
 tmux split-window -v
 # you're now in the bottom pane. launch claude here:
-agent-orch wrap claude --
+agent-orch wrap claude -- claude
 # return to the top pane (C-b ↑) and launch kiro there:
 tmux select-pane -U
-agent-orch wrap kiro --
+agent-orch wrap kiro -- kiro
 ```
 
 After these three terminals, three (or four — `proj-c` has two)
@@ -311,6 +343,11 @@ tmux kill-session -t viewer
 
 ## Troubleshooting
 
+- **`agent-orch wrap needs an agent command after \`--\``** —
+  you typed `agent-orch wrap <kind> --` with nothing after the
+  `--`. The wrapper has no program to exec. See **CLI shape**
+  above: the kind is repeated as the first agent argv after `--`,
+  e.g. `agent-orch wrap claude -- claude`.
 - **`Error: $TMUX_PANE unset`** — you ran `agent-orch wrap`
   outside tmux. The wrapper requires `$TMUX_PANE` so it can key
   the registry by pane id.
