@@ -21,27 +21,31 @@ The shape, deliberately minimal:
 
 - Coding agents launch through a thin wrapper command:
   `agent-orch wrap <kind> -- <agent-cmd> [args...]`.
-- For Claude Code, the wrapper synthesizes a per-launch settings
-  JSON at `$STATE_DIR/tmp/<pane>/settings.json` and passes it via
-  `claude --settings <path>`, wiring lifecycle hooks
-  (`UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`) to
-  the orchestrator's own `hook` subcommand. **No writes to
-  `~/.claude/settings.json`, ever.** The user's existing
-  settings are merged in as the base.
-- For Kiro CLI, the wrapper writes a project-scoped agent
-  config at `<cwd>/.kiro/agents/agent-orch.json` if it does not
-  already exist, recording in the session record that this
-  wrapper created the file. On `pane-exited`, if no other live
-  Kiro session in the same cwd remains, the cleanup removes
-  it. First-creates, others-reuse, last-out-deletes —
-  concurrent Kiro sessions in the same repo all share one
-  config, and the working tree is left clean when they all exit.
-- After writing per-launch hook config, the wrapper appends a
-  record to `sessions.json` (with its own pid — which becomes
-  the agent's pid post-exec) and **`execvp`s the agent**: the
-  wrapper process is replaced in place by the agent. No parent
-  process, no signal forwarding, no `child.pid`/`wrapper_pid`
-  bookkeeping.
+- **Claude hooks live user-globally.** The user runs
+  `agent-orch setup` once at install; it appends our four
+  lifecycle hook entries (`UserPromptSubmit` / `PreToolUse` /
+  `PostToolUse` / `Stop`) to `~/.claude/settings.json`,
+  tagged so `agent-orch teardown` can remove only ours later.
+  Claude's normal settings precedence chain (user → project →
+  project-local) runs untouched, so login state, MCP servers,
+  and project settings are preserved. The hooks fire on
+  **every** `claude` invocation; the `hook` subcommand
+  filters by `$AGENT_ORCH_PANE` (set only by our wrapper) and
+  exits silently for bare-claude invocations.
+- **Kiro hooks live project-scoped.** The wrapper writes
+  `<cwd>/.kiro/agents/agent-orch.json` if absent, records in
+  the session that it was the creator. On `pane-exited`, if
+  no other live Kiro session in the same cwd remains, the
+  config is removed. First-creates, others-reuse,
+  last-out-deletes (refcount-agnostic). Kiro's user-global
+  path is undocumented; project-scoped is the documented
+  surface.
+- The wrapper itself, regardless of kind, just sets
+  `AGENT_ORCH_PANE=%N`, appends a record to `sessions.json`,
+  and **`execvp`s the agent**: the wrapper process is replaced
+  in place by the agent. The wrapper's pid becomes the agent's
+  pid (POSIX guarantee). No parent process, no signal
+  forwarding, no `child.pid`/`wrapper_pid` bookkeeping.
 - A single `sessions.json` file is the source of truth for
   both registration and state. Every mutation is gated by a
   POSIX advisory lock. The wrapper appends a record on launch;
@@ -241,14 +245,26 @@ verbatim.
 #### Kiro path (per L30 feedback)
 
 Project-scoped `.kiro/agents/agent-orch.json` injection with
-refcount cleanup:
+refcount cleanup. Kiro's hooks schema mirrors Claude's nested
+matcher+hooks shape (`matcher: ""` matches all):
+
+```json
+{
+  "hooks": {
+    "Stop": [{
+      "matcher": "",
+      "hooks": [{ "type": "command",
+                  "command": "<dist>/agent-orch hook Stop" }]
+    }]
+  }
+}
+```
 
 1. If `<cwd>/.kiro/agents/agent-orch.json` does not exist:
-   create the directory if needed, write the file with
-   `agent-orch hook <event>` wired to Kiro's documented hook
-   events (`UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
-   `Stop`). Stamp `created_kiro_config=true` on the session
-   record.
+   create the directory if needed, write the file with the
+   four hook entries (`UserPromptSubmit`, `PreToolUse`,
+   `PostToolUse`, `Stop`). Stamp `created_kiro_config=true`
+   on the session record.
 2. If the file already exists: leave it alone. Stamp
    `created_kiro_config=false`. Multiple Kiro sessions in the
    same cwd share one config; the first one in created it.
@@ -273,6 +289,12 @@ against live sessions.
 
 ### Hook subcommand (`agent-orch hook <event>`)
 
+- **First, filter on `$AGENT_ORCH_PANE`.** If unset or empty,
+  exit 0 silently. This is the load-bearing filter for the
+  Claude top-level install: bare `claude` (with our `setup`
+  installed) fires our hook command on every event, but only
+  wrapped invocations have `AGENT_ORCH_PANE` set in their env.
+  Bare claude → exit 0 in ~5ms. Wrapped claude → continue.
 - Reads `$AGENT_ORCH_PANE` for the pane id (set by the wrapper
   before `execvp`; the env propagates into the agent and into
   the hook's subshell).
@@ -297,7 +319,8 @@ against live sessions.
   5. Write the file back atomically (write to `.tmp`, `rename`
      into place — readers never see partial JSON).
 - Always exits 0. A failing hook subcommand must not block the
-  agent's turn.
+  agent's turn (esp. critical for Claude `Stop` /
+  `UserPromptSubmit`, which exit-2-block).
 
 ### Registry cleanup
 
@@ -305,21 +328,24 @@ against live sessions.
   `pane-exited → agent-orch unregister #{hook_pane}`.
 - `unregister`:
   1. Under `flock`, read `sessions.json`.
-  2. If this is a Kiro record, count live `kind=kiro` records
-     in the same cwd (excluding this one). If zero, remove
-     `<cwd>/.kiro/agents/agent-orch.json` (best-effort
-     `rmdir` of parent dirs).
-  3. If this record had a Claude tempdir (any record, since
-     Kiro doesn't use one), `rm -rf
-     $STATE_DIR/tmp/<pane_id>/`.
-  4. Remove the pane's record. Write back atomically.
+  2. Run the matching `Wrapper` impl's `cleanup` for the
+     record's kind:
+     - **Claude**: no-op (the user-global hooks installed by
+       `setup` stay in place — they're shared across all
+       Claude sessions on the system, not per-pane).
+     - **Kiro**: count live `kind=kiro` records in the same
+       cwd (excluding this one). If zero, remove
+       `<cwd>/.kiro/agents/agent-orch.json` (best-effort
+       `rmdir` of parent dirs).
+     - **Other**: no-op.
+  3. Remove the pane's record. Write back atomically.
 - Sweep at query time: when the picker reads `sessions.json`,
   it filters out records whose `pid` is no longer alive
   (`kill(pid, 0)`). Catches the case where the tmux server
   restarted while the orchestrator was down. The sweep also
   runs cleanup on the sessions it removes.
 
-### Picker (`agent-orch pick` + `loop`)
+### Picker (`agent-orch pick` + `loop-body`)
 
 Picker UX:
 
@@ -352,7 +378,7 @@ Orchestrator session ensure-on-run (bare `agent-orch`):
 
 ```
 if !tmux has-session -t orchestrator:
-  tmux new-session -d -s orchestrator '<dist>/agent-orch loop'
+  tmux new-session -d -s orchestrator '<dist>/agent-orch loop-body'
 tmux switch-client -t orchestrator
 ```
 
@@ -367,13 +393,19 @@ tmux switch-client -t orchestrator
 
 ### Hard constraints
 
-- **No deployed `$HOME` writes.** The binary is invoked from
-  `<repo>/dist/agent-orch/`. Per-user runtime state at
+- **No deployed `$HOME` writes from `deno task deploy`.** The
+  binary is invoked from `<repo>/dist/agent-orch/`. Per-user
+  runtime state at
   `${XDG_STATE_HOME:-$HOME/.local/state}/agent-orch/` is
   acceptable — runtime data has to live under `$HOME`; the
-  invariant is about deployed code/config.
-- **No `~/.claude/settings.json` mutations**, ever. All Claude
-  hook wiring goes through `claude --settings <path>`.
+  invariant is about *deployed code/config* (no symlinks
+  installed by the registry).
+- **`~/.claude/settings.json` is touched only by explicit
+  user-invoked `setup` / `teardown`**, never by `wrap` or any
+  other implicit path. Both verbs are idempotent and
+  tag-scoped — they edit *only* entries marked
+  `"agent-orch": true`, leaving every other field of the
+  user's settings file alone.
 - **No `<cwd>/.kiro/agents/agent-orch.json` orphans.** The
   refcount cleanup contract above is the load-bearing rule.
 - **Observation only.** The wrapper `execvp`s the agent; the
@@ -396,51 +428,87 @@ Mapped onto `project.md`'s four-layer test surface (`test:unit`,
 
 `deno task test:unit` delegates to `cargo test`. Tests live at
 the bottom of `src/main.rs` in a `#[cfg(test)] mod tests`
-block. Coverage:
+block. Coverage by typeclass:
 
-- `Session::apply_event` — one test per event covering state
-  transitions, `last_prompt` truncation, `last_tool` refresh,
-  `state_ts` advance, no-op on missing record.
-- `read_sessions` / `write_sessions_atomic` — round-trip,
-  malformed-line skip, empty file.
-- `format_row` — glyph mapping, `cwd-tail` shortening,
-  empty-tool case.
-- `sort_sessions` — group precedence and within-group order.
-- `live_filter` — drops dead pids (callback-driven).
-- `kiro_orphan_paths` — returns the cwd's `.kiro/agents/
-  agent-orch.json` iff no live Kiro record shares the cwd.
+- **§1 Session** — `apply_event` per-event state transitions
+  (Stop → Complete; UserPromptSubmit → Running with prompt
+  truncation; PreToolUse → Running with tool name;
+  PostToolUse → tool name only); `format_row` glyph + cwd-tail
+  + tool/no-tool variants; `cwd_tail` root-anchored edge
+  cases.
+- **§2 Store** — `read` on empty / missing / malformed file;
+  `mutate` round-trips and observes prior state; concurrent
+  serialization via flock.
+- **§3 Wrapper** — `Claude::prepare` is a pass-through (argv
+  unchanged, no created flag, no per-pane file written);
+  `Kiro::prepare` writes `.kiro/agents/agent-orch.json` first
+  time + reuser leaves flag false; `Kiro::cleanup` keeps
+  config while sibling alive + removes refcount-agnostically
+  on close-creator-first ordering; `wrap()` refuses
+  double-register on alive pid + replaces stale record on
+  dead pid; default `hook` body filters on `$AGENT_ORCH_PANE`
+  unset (silent no-op); `hook` updates state correctly via
+  both Claude and Kiro impls (proves default-method
+  inheritance).
+- **§4 Loop** — `render` filters dead pids via signal-0 probe
+  and sorts.
+- **`setup` / `teardown`** — appends tagged hook entries to
+  `~/.claude/settings.json` (or its tempdir equivalent under
+  `$HOME` override); idempotent on re-run; preserves
+  user-existing entries verbatim; `teardown` removes only
+  tagged entries; `teardown` removes the file when our
+  entries were the only content.
 
-### Smoke (`deno task test:smoke`) — load-bearing
+### Smoke / integration (`deno task agent-orch:integration`) — load-bearing
 
-`tests/functional/agent-orch/smoke` (shell-driven, drives the
-compiled binary):
+`tests/agent-orch/integration.sh` (shell-driven, drives the
+compiled binary against a private tmux server). Each case sets
+`HOME` and `XDG_STATE_HOME` to a tempdir so the test never
+touches the user's real settings.
 
 1. Spawn a fresh tmux server on a private socket
    (`tmux -L agent-orch-test`).
 2. Run `<dist>/agent-orch wrap claude -- <stub-agent>` inside a
    tmux pane, where `<stub-agent>` is a tiny shell script that
-   loops on stdin.
-3. Assert: `sessions.json` has exactly one record with the
-   expected `pane_id`, `kind=claude`, and a live `pid` (and
-   that the recorded `pid` matches the *agent's* pid since
-   `execvp` preserves it).
-4. Call `<dist>/agent-orch hook UserPromptSubmit` directly with
-   synthetic JSON on stdin and `AGENT_ORCH_PANE` set; assert
-   `state=running` and `last_prompt` populated. Repeat for
-   `PreToolUse`, `PostToolUse`, `Stop`; assert transitions.
-5. **Kiro cleanup test (both orderings).** Two passes — close
-   creator-first vs reuser-first — both must end with the
-   `.kiro/agents/agent-orch.json` removed and zero records
-   remaining.
-6. Tear down the tmux server.
+   loops on stdin. Assert `sessions.json` has the expected
+   record + `execvp`-preserved pid.
+3. Drive each hook event directly with synthetic JSON on stdin
+   and `AGENT_ORCH_PANE` set; assert state transitions.
+4. List shows the live row; unregister removes it.
+5. **Kiro refcount.** Two Kiro sessions in the same cwd. Close
+   creator first → config remains (sibling alive). Close
+   reuser → config removed (last out, refcount-agnostic).
+6. **Wrap refuses outside tmux** (`$TMUX_PANE` unset).
+7. **Dead-pid filtering.** Spawn an agent that exits quickly,
+   call `unregister` (simulating tmux pane-exited), assert
+   `list` returns "(no registered sessions)".
+8. **`setup` / `teardown` round-trip.** A pre-existing
+   `~/.claude/settings.json` (in the test's `$HOME` tempdir)
+   is preserved verbatim through a `setup` + `teardown` cycle.
+   With pre-content: tagged entries land alongside; `teardown`
+   leaves the original entries intact. Without pre-content:
+   `setup` creates the file; `teardown` removes it (empty
+   container pruning).
+9. Tear down the tmux server.
 
 The smoke test does not hit a real Claude / Kiro binary. Fast
 (~3s), depends only on `tmux` + `bash` + the compiled binary.
 
 ### Functional (`deno task test:functional`) — user-driven
 
-Out of scope for v1. Manual test = launch real Claude Code +
-Kiro CLI under `agent-orch wrap`, run the picker, jump in/out.
+The full manual functional test plan lives at
+`tests/agent-orch/manual-functional.md`. It walks through:
+
+- `agent-orch setup` once before launching agents.
+- Three project tmux sessions with mixed window/pane layouts
+  (`proj-a` single-pane Claude; `proj-b` two-window with
+  split; `proj-c` Kiro+Claude split).
+- A fourth `viewer` session to bootstrap the orchestrator.
+- Pick → switch-client → M-o round-trip across multiple
+  agents.
+- Lifecycle cleanup verification (Kiro refcount on
+  close-creator-first, dead-pid filtering, full
+  `agent-orch teardown` rolling back the install).
 
 ### Quality gate
 
@@ -647,27 +715,31 @@ impl uses.
 trait Wrapper {
     fn kind(&self) -> &str;
 
-    /// Synthesize/ensure the per-kind hook config and return
-    /// (program, argv) we hand to execvp plus any flag the
-    /// session record needs to carry (today: only Kiro's
-    /// "I created the file" bit).
+    /// Per-kind preparation at wrap time. Returns (program, argv)
+    /// for execvp + any flag the session record needs (today:
+    /// only Kiro's "I created the project config" bit).
+    /// Claude's `prepare` is a no-op — its hooks live globally
+    /// via `setup`, not per-launch. Kiro's writes the project-
+    /// scoped agent config if absent.
     fn prepare(&self, ctx: &WrapCtx) -> Result<Prepared>;
 
-    /// Per-kind cleanup on unregister. Claude removes the
-    /// per-pane tmpdir; Kiro runs the refcount-agnostic
-    /// `.kiro/agents/agent-orch.json` cleanup.
+    /// Per-kind cleanup on unregister. Kiro runs the refcount-
+    /// agnostic `.kiro/agents/agent-orch.json` removal when no
+    /// live Kiro session shares the cwd. Claude is a no-op —
+    /// its global hooks are removed only by `teardown`.
     fn cleanup(&self, store: &Store, removing: &Session,
                others: &[Session]) -> Result<()>;
 
     /// Hook handling — DEFAULT method body, identical for all
-    /// kinds today. A future kind whose hook payload differs
-    /// (different stdin field for the prompt, etc.) can
-    /// override; both Claude and Kiro inherit this default.
+    /// kinds today. Filters on `$AGENT_ORCH_PANE` (set only by
+    /// our wrapper) and exits silently if unset — that's how
+    /// bare-claude (with our `setup` installed) becomes a no-op.
+    /// A future kind whose stdin payload differs can override.
     fn hook(&self, store: &Store, pane_id: &str, event: &str,
             stdin: &mut dyn Read, now: u64) -> Result<()> {
-        // read payload, find matching record, apply event,
-        // write back through store.mutate. One implementation,
-        // lives on the trait.
+        // if AGENT_ORCH_PANE unset → return Ok silently;
+        // else read payload, find matching record, apply event,
+        // write back through store.mutate.
     }
 }
 
@@ -878,12 +950,14 @@ motivates the feature.
   Without the trait, the kind-specific code is 5 scattered
   branches; with it, two named blocks.
 - **`hook` as a typeclass default method.** The hook
-  *handling* is identical across kinds (read stdin → flock →
-  apply event → write back). The hook *injection* differs
-  (Claude tempfile vs Kiro project file) and is already on the
-  trait via `prepare`. So `hook` lives as a default method
-  body — neither Claude nor Kiro override it today, but a
-  future kind can if its payload shape differs.
+  *handling* is identical across kinds (filter on
+  `$AGENT_ORCH_PANE` → read stdin → flock → apply event →
+  write back). The hook *injection* differs (Claude:
+  user-global via `setup`; Kiro: project-scoped via wrap).
+  So `hook` lives as a default method body shared by every
+  impl; injection happens elsewhere (in `Wrapper::prepare`
+  for Kiro, in the `setup` subcommand for Claude). A future
+  kind whose payload shape differs can override.
 - **`execvp`, not spawn-as-child.** `nix::unistd::execvp`
   replaces the wrapper's process image with the agent's. The
   wrapper's pid becomes the agent's pid because POSIX preserves
@@ -891,12 +965,18 @@ motivates the feature.
   signal-forwarding ladder, no `child.pid`/`wrapper_pid`
   bookkeeping. This is the design the bash prototype always
   used; reaching for Rust restores it.
-- **Per-launch hook config beats user-config mutation.** Both
-  Claude (`--settings <path>`) and Kiro (project-scoped
-  `.kiro/agents/`) take per-launch overrides. The Kiro
-  override is project-scoped, not per-launch, so concurrent
-  Kiro sessions in the same repo coordinate via the refcount
-  cleanup rule on `Wrapper::cleanup`.
+- **Each kind gets the simplest documented surface.** Claude's
+  `--settings <path>` is documented as additive but in practice
+  displaces parts of the precedence chain (login state, MCP
+  servers stored outside `settings.json`); we landed on
+  *user-global tagged install* via `agent-orch setup`, with the
+  hook subcommand filtering by `$AGENT_ORCH_PANE`. Kiro's
+  user-global path is undocumented; we landed on
+  *project-scoped per-cwd* via `<cwd>/.kiro/agents/`, with
+  refcount-agnostic cleanup. The asymmetry is honest — each
+  kind uses its most reliable documented surface. The
+  user-facing CLI (`wrap` / `hook` / `pick` / `unregister`) is
+  the same shape for both.
 - **`Store::mutate` collapses the lock dance.** Every
   read-modify-write site went from 3 lines (with_lock + read +
   write) to 1 (`store.mutate(|v| ...)`). The lock is hidden
@@ -913,21 +993,34 @@ motivates the feature.
   hides this — a future popup-overlay variant slots in as a
   second `Loop` impl without touching `wrap` / `hook` /
   `unregister`.
-- **Cleanup co-located with `pane-exited`, not RAII.** With
-  `execvp`, the wrapper process is gone before the agent
-  exits; Rust's `Drop` for tempdirs would fire too early. The
-  unregister handler is the right place for tempdir + Kiro
-  config cleanup, and it's already running on pane death.
-  `Wrapper::cleanup` is where each kind's per-pane cleanup
-  lives.
+- **Per-pane cleanup co-located with `pane-exited`, not RAII.**
+  With `execvp`, the wrapper process is gone before the agent
+  exits; Rust's `Drop` would fire too early. `Wrapper::cleanup`
+  runs in the unregister handler — for Kiro, that's the
+  refcount check + project config removal. For Claude it's a
+  no-op (the user-global hooks installed by `setup` outlive any
+  individual pane and are removed only by `teardown`).
 
 ### Trade-offs we're accepting
 
 - `complete` doesn't distinguish "idle" from "waiting on user".
   User reads the pane after jumping. v2 with `Notification`.
 - Wrapper requires the user to launch through it. Bare `claude`
-  / `kiro` invocations are invisible. README documents the
-  launch verbs; shell aliases are an obvious follow-up.
+  / `kiro` invocations are invisible to the registry. README
+  documents the launch verbs; shell aliases are an obvious
+  follow-up.
+- **Claude users must run `agent-orch setup` once.** Forgetting
+  → wrapped Claude sessions stay forever-`unknown` in the
+  picker (no hooks fire → no state updates). The picker shows
+  this clearly; doctor (deferred) will flag it explicitly.
+- **Bare `claude` invocations pay a small overhead per event.**
+  ~5ms env-var check + exit per fire, ~10–20 fires per turn =
+  ~50–100ms total. Visible if measured; not painful.
+- **`setup`'s recorded binary path can go stale** if the user
+  moves the binary or rebuilds to a different path. Re-running
+  `setup` refreshes the path (idempotence detects the stale
+  entry by tag, rewrites the command). Documented as a doctor
+  follow-up.
 - `dist/` is rebuilt by the user; no auto-rebuild on source
   edit. Cargo's incremental builds make `cargo build` ~1-2s
   on changes; `cargo check` is sub-second.
@@ -1185,26 +1278,47 @@ One commit, one Code Review Gate, one push.
 
 ## What v1 ships and what defers
 
-**Shipped:** `wrap claude`, `wrap kiro`, `hook <event>`, `list`,
-`unregister`, bare invocation (ensure orchestrator session +
-switch-client), `loop-body`. End-to-end exercised by
-`tests/agent-orch/integration.sh` (9 cases) over a private tmux
-server. 22 in-process unit / behavior tests in `src/main.rs`.
+**Shipped (in PR #18 head, `f998a57`):**
+
+- `agent-orch wrap claude / kiro / <other>` — registers the
+  launch and `execvp`s the agent. For Kiro, also writes the
+  project-scoped `<cwd>/.kiro/agents/agent-orch.json` with
+  refcount cleanup. For Claude, just sets `AGENT_ORCH_PANE`
+  and exec's (assumes user has run `setup`).
+- `agent-orch hook <event>` — filters on `$AGENT_ORCH_PANE`,
+  applies the event to the matching session record under
+  flock. Always exits 0.
+- `agent-orch list` — print the live registry.
+- `agent-orch unregister <pane-id>` — tmux pane-exited target;
+  runs per-kind cleanup via the matching `Wrapper` impl.
+- `agent-orch pick` — fzf picker over the registry.
+- `agent-orch loop-body` — picker loop body inside the
+  orchestrator session.
+- `agent-orch` (no args) — ensure orchestrator session +
+  switch-client.
+- End-to-end exercised by `tests/agent-orch/integration.sh`
+  (9 cases on a private tmux server) plus 32 in-process unit
+  + behavior tests in `src/main.rs`.
+
+**Pending the current planning slice:**
+
+- `agent-orch setup` / `agent-orch teardown` — tagged install
+  and removal of hook entries in `~/.claude/settings.json`.
+  Replaces the per-launch `--settings` synth that this spec's
+  earlier revision called for.
 
 **Deferred to follow-up tickets:**
-- `agent-orch doctor` — sanity-check (tmux version, fzf,
-  agent CLIs, state-dir writeability, kiro orphan audit).
-  Mentioned in spec; not implemented in this PR.
-- `sources/agent-orch/README.md` — install instructions, tmux
-  keybind snippet, examples. Not authored in this PR.
-- v2 TUI port to `ratatui` (replaces fzf). Out of scope for v1.
-- v2 distinction of `waiting-on-permission` vs `complete`
-  (Claude `Notification` event). One additional hook entry.
 
-The `tests/functional/agent-orch/smoke` reference earlier in
-this spec is superseded by `tests/agent-orch/integration.sh`,
-which serves the same role and is wired through
-`deno task agent-orch:integration`.
+- `agent-orch doctor` — sanity-check (tmux version, fzf,
+  agent CLIs, state-dir writeability, kiro orphan audit,
+  **stale `~/.claude/settings.json` hooks pointing at a
+  missing binary**, **was-`setup`-ever-run on this host?**).
+- `sources/agent-orch/README.md` — install instructions,
+  tmux keybind snippet, `setup`/`teardown` notes.
+- v2 TUI port to `ratatui` (replaces fzf).
+- v2 distinction of `waiting-on-permission` vs `complete`
+  (Claude `Notification` event). One additional hook entry
+  via `setup`.
 
 ## Decision Log
 
@@ -1261,16 +1375,18 @@ which serves the same role and is wired through
   deployed code/config (no symlinks installed by deploy, no
   settings.json mutations) — runtime state has to live under
   `$HOME` by definition.
-- **Per-launch hook settings via `claude --settings <path>`,
-  not `~/.claude/settings.json` mutation.** Verified: Claude
-  Code's `--settings` flag accepts a JSON file and merges
-  into the precedence chain. Wrapper writes to
-  `$STATE_DIR/tmp/<pane>/settings.json`, `execvp`s the
-  agent, the unregister hook cleans up on `pane-exited`.
-  (No `tempfile::TempDir` because `Drop` would fire before
-  `execvp` if held in scope, and after `execvp` the wrapper
-  is gone — co-locating cleanup with the pane-lifecycle hook
-  is the right shape.)
+- **~~Per-launch hook settings via `claude --settings
+  <path>`~~** *(superseded 2026-06-05 by "Claude top-level +
+  filter; Kiro project-scoped" entry below).* The original
+  call was: wrapper writes a per-pane settings file under
+  `$STATE_DIR/tmp/<pane>/settings.json`, passes it as
+  `--settings`, cleans up on `pane-exited`. Manual functional
+  test surfaced that `--settings` displaces parts of Claude's
+  precedence chain (login state, MCP servers, project
+  settings) — the docs describe additive merge but the `hooks`
+  key behavior is under-specified. We pivoted to top-level
+  install + env-var filter; the per-pane tempdir machinery
+  was removed.
 - **Two states only: `running` / `complete`.** Plus `unknown`
   for hook-less agents. Per the user's brief: keep v1 simple.
   Distinguishing waiting via `Notification` is a small v2.
