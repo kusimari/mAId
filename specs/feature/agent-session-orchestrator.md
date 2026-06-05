@@ -384,6 +384,18 @@ edits.
 
 ## Design
 
+> **Revision note (2026-06-05).** The original design used four
+> commented section-headers (`§1 Session`, `§2 Wrapper`,
+> `§3 Hook`, `§4 Loop`) over loose free functions. This revision
+> promotes them to four real types — typeclasses, in the user's
+> terminology — based on PR #18 review feedback (L28, L120, L257
+> on commit `847a8cd`). Same behavior, same CLI, same integration
+> tests; the change collapses the kind-specific code (today
+> scattered as `kind == "claude"` / `kind == "kiro"` branches in
+> 5 sites) into two named blocks (`impl Wrapper for Claude` and
+> `impl Wrapper for Kiro`) and the lock-and-mutate dance into
+> one `Store::mutate` call per call site.
+
 ### Layout (script-style)
 
 ```
@@ -391,12 +403,11 @@ sources/agent-orch/
 ├── Cargo.toml
 ├── rust-toolchain.toml          pin: stable, minimal profile
 ├── src/
-│   └── main.rs                  ~600 LOC — everything
-├── tests/
-│   └── functional/
-│       ├── stub-agent           shell, ~10 lines
-│       └── smoke                shell, drives the built binary
-└── README.md                    install + tmux keybind notes
+│   └── main.rs                  the whole tool, typeclasses top-to-bottom
+└── README.md                    install + tmux keybind notes (deferred)
+
+tests/agent-orch/
+└── integration.sh               shell-driven E2E: 9 cases on a private tmux server
 
 dist/                            (gitignored; populated by build task)
 └── agent-orch/
@@ -404,13 +415,11 @@ dist/                            (gitignored; populated by build task)
 ```
 
 **One file by default.** `src/main.rs` carries the whole tool —
-clap dispatch, the `Session` model + impls, all subcommand
-handlers as flat top-level functions, helpers right after the
-handler that uses them, tests at the bottom in
-`#[cfg(test)] mod tests`. Split a file out only if/when one file
-genuinely hurts (a soft threshold of ~1000 LOC is fine to ignore
-until then). Splitting earlier is the over-engineering case the
-"Rust as better bash" framing rejects.
+the four typeclasses (each with its own `impl` block), the CLI
++ `main`, and `#[cfg(test)] mod tests` at the bottom. Split a
+file out only if/when one file genuinely hurts (~1000 LOC is
+fine to ignore until then). Splitting earlier is the
+over-engineering case the "Rust as better bash" framing rejects.
 
 ### `Cargo.toml` dep set
 
@@ -472,96 +481,260 @@ Top-level array. Rewrite-on-update under POSIX advisory lock.
 At ≤100 records the cost is sub-millisecond and we get atomic
 semantics for free.
 
-### Wrapper flow (Claude case)
+### Path constants (replacing the trivial path-builder helpers)
 
-```
-agent-orch wrap claude -- --resume my-session
+The spec previously called for five free functions
+(`sessions_path`, `lock_path`, `tmp_dir_for_pane`,
+`hook_install_marker`, etc.) that each did one
+`state.join(...)`. They become:
 
-  guard: $TMUX_PANE set; no existing record for that pane
-
-  install global tmux hook (idempotent, marker-file gated)
-    // Always installed by `wrap`, regardless of whether the
-    // orchestrator loop is running. The hook only writes to
-    // sessions.json; it doesn't depend on a reader.
-    tmux set-hook -g pane-exited 'run-shell "<dist>/agent-orch
-      unregister #{hook_pane}"'
-
-  synthesize per-launch settings
-    out_dir  = $STATE_DIR/tmp/%42
-    out_path = $STATE_DIR/tmp/%42/settings.json
-    base     = read_user_settings("~/.claude/settings.json").unwrap_or(json!({}))
-    settings = merge_hooks(base, [
-      ("UserPromptSubmit", hook_cmd("UserPromptSubmit")),
-      ("PreToolUse",       hook_cmd("PreToolUse")),
-      ("PostToolUse",      hook_cmd("PostToolUse")),
-      ("Stop",             hook_cmd("Stop")),
-    ])
-    write_atomic(out_path, settings)
-
-  register
-    flock $STATE_DIR/sessions.lock
-    sessions.json := append({pane_id:"%42", pid: getpid(),
-      kind:"claude", cwd: current_dir(), started: now(),
-      state:"unknown", state_ts: now(), ...,
-      created_kiro_config: false})
-    tmux set-option -p @agent-orch-pane "%42"
-
-  execvp the agent — wrapper process is replaced in place
-    setenv("AGENT_ORCH_PANE", "%42")
-    execvp("claude", ["claude", "--settings", out_path,
-                      "--resume", "my-session"])
-    // unreachable — execvp returns only on failure
+```rust
+const SESSIONS_FILE: &str = "sessions.json";
+const LOCK_FILE: &str = "sessions.lock";
+const HOOK_MARKER: &str = ".tmux-hook-installed";
 ```
 
-The wrapper's pid is preserved across `execvp` (POSIX guarantee:
-the process image is replaced; the pid stays the same). So the
-`pid` recorded in the registry is the live agent's pid the
-moment the next instruction runs.
+Used inline as `state.join(SESSIONS_FILE)` /
+`state.join(LOCK_FILE)` / `state.join("tmp").join(pane_id)` /
+`state.join(HOOK_MARKER)`. `state_dir()` stays a function (env-
+var logic + fail path).
 
-### Wrapper flow (Kiro case)
+### §1 · `Session` — the record type and operations on it
+
+```rust
+struct Session {
+    pane_id: String,
+    pid: i32,
+    kind: String,
+    cwd: String,
+    started: u64,
+    state: State,
+    state_ts: u64,
+    last_prompt: String,
+    last_tool: String,
+    last_event: String,
+    last_event_ts: u64,
+    created_kiro_config: bool,
+}
+
+impl Session {
+    fn apply_event(&mut self, event: &str, prompt: Option<&str>,
+                   tool: Option<&str>, now: u64);
+    fn format_row(&self) -> String;
+    fn activity(&self) -> u64;       // max(state_ts, last_event_ts, started)
+    fn state_group(&self) -> u8;     // 0/1/2 for sort precedence
+}
+```
+
+`sort_sessions` and `live_only` stay as free functions over
+slices — they operate on collections, not single records. A
+newtype wrapper just to attach two methods is the
+over-abstraction the user pushed back against.
+
+### §2 · `Store` — owns the state-dir, hides the lock
+
+```rust
+struct Store { dir: PathBuf }
+
+impl Store {
+    fn from_env() -> Result<Self>;            // resolves XDG/HOME
+    fn new(dir: PathBuf) -> Self;             // tests pass a tempdir
+
+    /// Eventually-consistent read. No lock — readers tolerate
+    /// stale data; the registry rebuilds on the next mutate.
+    fn read(&self) -> Result<Vec<Session>>;
+
+    /// Read-modify-write under flock. The closure mutates the
+    /// vec in place; Store handles lock + read + atomic write.
+    fn mutate<F>(&self, f: F) -> Result<()>
+    where F: FnOnce(&mut Vec<Session>) -> Result<()>;
+
+    fn dir(&self) -> &Path;
+    fn tmp_dir(&self, pane_id: &str) -> PathBuf;
+    fn hook_marker(&self) -> PathBuf;
+}
+```
+
+Every caller currently doing
+```
+with_lock(state, || {
+    let mut v = read_sessions(state)?;
+    ...mutate v...;
+    write_sessions(state, &v)
+})
+```
+becomes
+```
+store.mutate(|v| { ...mutate v...; Ok(()) })
+```
+
+Three lines collapse to one. The atomic-write mechanics
+(per-pid tmp + `rename`) live as private helpers the `Store`
+impl uses.
+
+### §3 · `Wrapper` trait — typeclass with `Claude` and `Kiro` impls
+
+```rust
+trait Wrapper {
+    fn kind(&self) -> &str;
+
+    /// Synthesize/ensure the per-kind hook config and return
+    /// (program, argv) we hand to execvp plus any flag the
+    /// session record needs to carry (today: only Kiro's
+    /// "I created the file" bit).
+    fn prepare(&self, ctx: &WrapCtx) -> Result<Prepared>;
+
+    /// Per-kind cleanup on unregister. Claude removes the
+    /// per-pane tmpdir; Kiro runs the refcount-agnostic
+    /// `.kiro/agents/agent-orch.json` cleanup.
+    fn cleanup(&self, store: &Store, removing: &Session,
+               others: &[Session]) -> Result<()>;
+
+    /// Hook handling — DEFAULT method body, identical for all
+    /// kinds today. A future kind whose hook payload differs
+    /// (different stdin field for the prompt, etc.) can
+    /// override; both Claude and Kiro inherit this default.
+    fn hook(&self, store: &Store, pane_id: &str, event: &str,
+            stdin: &mut dyn Read, now: u64) -> Result<()> {
+        // read payload, find matching record, apply event,
+        // write back through store.mutate. One implementation,
+        // lives on the trait.
+    }
+}
+
+struct Claude;
+struct Kiro;
+struct Other(String);   // register-only — no per-kind config
+
+struct WrapCtx<'a> {
+    store: &'a Store,
+    self_path: &'a Path,
+    user_claude_settings: &'a Path,
+    pane_id: &'a str,
+    cwd: &'a Path,
+    agent_argv: &'a [String],
+}
+
+struct Prepared {
+    program: String,
+    argv: Vec<String>,
+    created_kiro_config: bool,
+}
+
+fn wrapper_for(kind: &str) -> Box<dyn Wrapper> {
+    match kind {
+        "claude" => Box::new(Claude),
+        "kiro"   => Box::new(Kiro),
+        _        => Box::new(Other(kind.to_string())),
+    }
+}
+```
+
+`Claude::prepare` synthesizes the per-pane settings file under
+`store.tmp_dir(pane_id)`, splices `--settings <path>` after
+`argv[0]`, returns `created_kiro_config: false`.
+
+`Kiro::prepare` writes `<cwd>/.kiro/agents/agent-orch.json` if
+absent, returns `created_kiro_config: <bool>`, leaves argv
+unchanged.
+
+`Other::prepare` returns argv unchanged, `created_kiro_config:
+false` — the wrapper still registers the pane (so the picker
+sees it), but no per-kind hook config means the session stays
+in `unknown` state for its lifetime.
+
+`Claude::cleanup` removes `store.tmp_dir(pane_id)`.
+
+`Kiro::cleanup` checks `others` for any live `kind=kiro &&
+cwd==removing.cwd`; if none, removes the project-scoped
+`.kiro/agents/agent-orch.json`. **Refcount-agnostic** —
+ignores the `created_kiro_config` flag so close-creator-first
+ordering still removes the file when the last reuser exits.
+
+`Other::cleanup` is a no-op.
+
+The `hook` default method body lives on the trait (typeclass
+shape). Both Claude and Kiro inherit it; the per-kind variation
+is in *injection* (which file the hook command lands in), which
+is already on `prepare`. The hook subcommand body becomes a
+one-line dispatch through `wrapper_for(kind).hook(...)`.
+
+### §4 · `Loop` — self-contained picker
+
+```rust
+struct Loop<'a> { store: &'a Store }
+
+impl<'a> Loop<'a> {
+    fn new(store: &'a Store) -> Self;
+
+    /// Read sessions, filter live pids, sort, format rows.
+    /// Returns (pane_id, formatted_row) pairs.
+    fn render(&self) -> Result<Vec<(String, String)>>;
+
+    /// Render rows, run fzf, write the chosen pane id to stdout.
+    fn pick(&self, stdout: &mut dyn Write) -> Result<()>;
+
+    /// Ensure the orchestrator tmux session exists, switch
+    /// client. The loop body itself runs in the spawned
+    /// orchestrator session via `agent-orch loop-body`.
+    fn run(&self, self_path: &Path) -> Result<()>;
+
+    /// Picker loop body — `pick` + `tmux switch-client` → repeat.
+    fn body(&self) -> Result<()>;
+}
+```
+
+The free functions `render_rows`, `pick`, `run_loop`,
+`loop_body` move into `impl Loop`. CLI dispatch becomes
+`Loop::new(&store).pick(...)` etc.
+
+### Wrapper flow (typeclass-shaped)
 
 ```
-agent-orch wrap kiro -- chat
+agent-orch wrap <kind> -- <argv>
 
-  guard, install tmux hook (same as Claude)
+  Cli::parse → store := Store::from_env()
+                w     := wrapper_for(kind)
+                ctx   := WrapCtx { store, self_path, user_claude_settings,
+                                   pane_id, cwd, agent_argv }
 
-  Kiro project-scoped config injection
-    cfg = "<cwd>/.kiro/agents/agent-orch.json"
-    if !exists(cfg):
-      mkdir -p "<cwd>/.kiro/agents"
-      write_atomic(cfg, kiro_hook_config(<dist>/agent-orch))
-      created_kiro_config = true
-    else:
-      created_kiro_config = false
+  prepared = w.prepare(&ctx)?
+    // claude: synth tmpdir/settings.json, splice --settings into argv
+    // kiro:   ensure <cwd>/.kiro/agents/agent-orch.json, set created flag
+    // other:  argv unchanged, no flag
 
-  register (with created_kiro_config flag)
-    flock ...; sessions.json := append({...})
+  store.mutate(|sessions| {
+    ensure no record for ctx.pane_id;
+    sessions.push(Session::new(ctx, w.kind(), prepared.created_kiro_config));
+    Ok(())
+  })?
+    // The Kiro race (close-during-register) is closed here:
+    // ensure_kiro_config and the registry write share one
+    // critical section, so unregister can never observe the gap.
 
-  execvp the agent
-    setenv("AGENT_ORCH_PANE", "%43")
-    execvp("kiro", ["kiro", "chat"])
+  install global tmux pane-exited hook (idempotent via marker)
+  tmux set-option -p @agent-orch-pane <pane_id>
+  setenv("AGENT_ORCH_PANE", pane_id)
+  exec_agent(prepared.program, prepared.argv)   // execvp; never returns on success
 ```
 
-### Unregister flow
+The wrapper's pid is preserved across `execvp` (POSIX
+guarantee), so the `pid` recorded in the registry is the live
+agent's pid the moment the next instruction runs.
+
+### Unregister flow (typeclass-shaped)
 
 ```
-agent-orch unregister %43
+agent-orch unregister <pane>
 
-  flock $STATE_DIR/sessions.lock
-    record = find(pane_id="%43")
-    if !record: exit 0  (already gone)
-
-    if record.kind == "kiro":
-      siblings = sessions.filter(s =>
-        s.kind=="kiro" && s.cwd==record.cwd && s.pane_id!=record.pane_id)
-      if siblings.is_empty():
-        rm "<record.cwd>/.kiro/agents/agent-orch.json"
-        rmdir parent dirs (best-effort)
-
-    rm -rf "$STATE_DIR/tmp/${record.pane_id}/"
-
-    sessions.json := remove(record); write atomically
+  store.mutate(|sessions| {
+    let removing = sessions.remove(pane_id)?;        // None → no-op
+    wrapper_for(&removing.kind).cleanup(store, &removing, sessions)?;
+    Ok(())
+  })
 ```
+
+The whole per-kind branching disappears into `Wrapper::cleanup`.
 
 ### Decoupling: `wrap` and `loop` are independent
 
@@ -595,13 +768,29 @@ motivates the feature.
 
 ### Why this shape
 
-- **Rust, script-style — one `main.rs`.** Reads top-to-bottom
-  like a shell script, with the compiler catching what bash
-  can't. Types declared inline with their use sites. Helpers
-  next to the handler that calls them. Tests at the bottom.
-  The bash version of this is 3 small files; the Rust version
-  matches that scale, not idiomatic-Rust's habit of one-file-
-  per-concept. Pre-modularization is the over-engineering case.
+- **Four typeclasses, one file.** `Session`, `Store`,
+  `Wrapper`, `Loop` are the user's mental model. Promoting them
+  to actual types (struct/trait + impl blocks) makes the file
+  read as four ergonomic surfaces top-to-bottom, each with its
+  own contract. The bash version of this is 3 small files; the
+  Rust version is one file with four named blocks. Pre-
+  modularization (one file per typeclass) is the over-
+  engineering case the "Rust as better bash" framing rejects.
+- **Trait carries its weight.** Today there are exactly two
+  real branches (Claude vs Kiro) and the variation pattern is
+  identical: synth-or-ensure config → contribute to argv →
+  cleanup on exit. A trait with three methods (`prepare`,
+  `cleanup`, default `hook`) captures it. If a third kind
+  (Codex, Aider) ever lands, it slots in as one more `impl`.
+  Without the trait, the kind-specific code is 5 scattered
+  branches; with it, two named blocks.
+- **`hook` as a typeclass default method.** The hook
+  *handling* is identical across kinds (read stdin → flock →
+  apply event → write back). The hook *injection* differs
+  (Claude tempfile vs Kiro project file) and is already on the
+  trait via `prepare`. So `hook` lives as a default method
+  body — neither Claude nor Kiro override it today, but a
+  future kind can if its payload shape differs.
 - **`execvp`, not spawn-as-child.** `nix::unistd::execvp`
   replaces the wrapper's process image with the agent's. The
   wrapper's pid becomes the agent's pid because POSIX preserves
@@ -614,25 +803,30 @@ motivates the feature.
   `.kiro/agents/`) take per-launch overrides. The Kiro
   override is project-scoped, not per-launch, so concurrent
   Kiro sessions in the same repo coordinate via the refcount
-  cleanup rule.
+  cleanup rule on `Wrapper::cleanup`.
+- **`Store::mutate` collapses the lock dance.** Every
+  read-modify-write site went from 3 lines (with_lock + read +
+  write) to 1 (`store.mutate(|v| ...)`). The lock is hidden
+  inside `Store`; callers can't forget to take it.
 - **Single sessions.json beats split files.** Source of truth
   in one place; readers and writers serialize through one
   lock; rewrite-on-update is fine at our scale.
 - **Two states (`running`/`complete`).** Per the user's brief.
   Distinguishing waiting-on-permission from idle is a small v2
   with Claude's `Notification` event.
-- **Hook every event into one subcommand.** Same binary, event
-  name as subcommand argument. Captures `last_prompt` from
-  `UserPromptSubmit.prompt` and `last_tool` from `PreToolUse` /
-  `PostToolUse` — enough for the picker summary.
 - **Dedicated orchestrator session, not popup.** Persistent
   dashboard pane to extend later (live refresh, summary
-  preview); clean "M-o anywhere → orchestrator" verb.
+  preview); clean "M-o anywhere → orchestrator" verb. `Loop`
+  hides this — a future popup-overlay variant slots in as a
+  second `Loop` impl without touching `wrap` / `hook` /
+  `unregister`.
 - **Cleanup co-located with `pane-exited`, not RAII.** With
   `execvp`, the wrapper process is gone before the agent
   exits; Rust's `Drop` for tempdirs would fire too early. The
   unregister handler is the right place for tempdir + Kiro
   config cleanup, and it's already running on pane death.
+  `Wrapper::cleanup` is where each kind's per-pane cleanup
+  lives.
 
 ### Trade-offs we're accepting
 
@@ -673,137 +867,111 @@ motivates the feature.
 
 ## Implementation Plan
 
-Ordered. Each row is one coherent dev-loop iteration: small
-slice → Quality → Test → Code Review → Push → Review per
-kdevkit §7.
+The functional surface (wrap, hook, list, pick, unregister,
+loop-body) shipped under the original four-section design
+across commits `0e0281c` … `847a8cd`. **The remaining work
+is one slice: a pure refactor to the typeclass shape above,
+preserving every behavior.**
 
-1. **Skeleton + flake addition + sessions model + cargo build.**
-   - Add `rust-overlay` to `flake.nix`; expose `cargo`,
-     `rustc`, `clippy`, `rustfmt`, `rust-analyzer` from a
-     pinned stable channel (in the same `mkShell` as Deno).
-   - Add `sources/agent-orch/Cargo.toml` (dep set above) and
-     `rust-toolchain.toml` (pin: stable, minimal profile).
-   - Author `src/main.rs` with: clap dispatch shell (all
-     subcommands as `unimplemented!()` placeholders), the
-     `Session` struct + serde derives + `impl Session` block
-     (`apply_event`, `format_row`), and helpers
-     `read_sessions`, `write_sessions_atomic`, `with_lock`,
-     `sort_sessions`, `live_filter`, `kiro_orphan_paths`. All
-     in one file.
-   - `#[cfg(test)] mod tests` at the bottom covering the
-     pure-logic helpers and `apply_event`.
-   - Add `agent-orch:build` (`cd sources/agent-orch && cargo
-     build --release && mkdir -p ../../dist/agent-orch && cp
-     target/release/agent-orch ../../dist/agent-orch/`),
-     `agent-orch:test` (`cd sources/agent-orch && cargo
-     test`), `agent-orch:check` (`cargo check + clippy +
-     fmt --check`) to top-level `deno.json`.
-   - Wire `deno task test:unit`, `deno task fmt`, `deno task
-     lint`, `deno task check` to also run the cargo
-     equivalents when the agent-orch tree changes (top-level
-     fmt/lint/check still gate Deno paths separately).
-   - Risk: fresh cargo dep download. One-time.
+### Slice — typeclass redesign
 
-2. **Wrapper subcommand (Claude path).**
-   - Implement `cmd_wrap` in `src/main.rs` for `kind=claude`:
-     `$TMUX_PANE` guard, idempotent global tmux hook install
-     (under `flock` on a marker file), settings synthesis at
-     `$STATE_DIR/tmp/<pane>/settings.json` (merge user base +
-     our hooks via `serde_json::Value`), session record
-     append, `tmux set-option -p`, `nix::unistd::execvp`.
-   - Helpers `synth_claude_settings` and (small)
-     `read_user_settings` declared right after `cmd_wrap`.
-   - Risk: edge cases around `$TMUX_PANE` (nested tmux),
-     missing `~/.claude/settings.json`, claude CLI not on
-     PATH.
+One commit, one Code Review Gate, one push.
 
-3. **Hook subcommand.**
-   - Implement `cmd_hook`: read stdin into `serde_json::Value`,
-     read `$AGENT_ORCH_PANE`, take `flock`, find record, call
-     `Session::apply_event`, write atomically. Always exits 0.
-   - Risk: payload field names. Mitigated by the
-     research-verified field names; smoke test stubs cover
-     all four event payloads.
+1. **Path constants.** Replace `sessions_path`, `lock_path`,
+   `tmp_dir_for_pane`, `hook_install_marker` with three `const
+   &str`s used inline at call sites. Drop the helper functions.
+2. **`impl Session`.** Move `format_row`, `state_group`,
+   `activity` onto the existing `Session` impl. Drop the free
+   functions. `apply_event` already lives there.
+3. **`Store` type.** Promote `read_sessions` /
+   `write_sessions` / `with_lock` to private members of a new
+   `struct Store { dir: PathBuf }`. Public surface: `from_env`,
+   `new`, `read`, `mutate(|v| ...)`, `dir`, `tmp_dir(pane_id)`,
+   `hook_marker`. Every caller using the lock dance collapses
+   to one `store.mutate(...)` call.
+4. **`Wrapper` trait + `Claude` / `Kiro` / `Other` impls.**
+   - `kind() -> &str`
+   - `prepare(ctx) -> Result<Prepared>` — moves
+     `synth_claude_settings` + `merge_claude_hooks` (Claude),
+     `ensure_kiro_config` + `build_kiro_config` (Kiro), argv
+     splicing into the impls. `build_agent_argv` is inlined
+     into `Claude::prepare` since it's the only caller now.
+   - `cleanup(store, removing, others)` — Claude removes
+     `store.tmp_dir(pane_id)`; Kiro runs the refcount-agnostic
+     `.kiro/agents/agent-orch.json` cleanup; Other is a no-op.
+   - `hook(store, pane_id, event, stdin, now)` — default
+     method body, the existing `hook` function moved onto the
+     trait. Neither impl overrides today.
+   - `wrapper_for(kind) -> Box<dyn Wrapper>` does the dispatch.
+5. **`Loop` type.** `struct Loop<'a> { store: &'a Store }` with
+   `render`, `pick`, `run`, `body` methods. The free functions
+   `render_rows`, `pick`, `run_loop`, `loop_body` move into
+   `impl Loop`.
+6. **Rewrite `wrap` and `unregister`.** The CLI dispatch in
+   `main` now reads:
+   ```
+   match cmd {
+       Wrap{..}     => wrap(&*wrapper_for(&kind), &ctx, side_effects),
+       Hook{event}  => wrapper_for(&kind_of_pane(&store, &pane)).hook(...),
+       Pick         => Loop::new(&store).pick(&mut io::stdout()),
+       List         => /* unchanged */,
+       Unregister{} => unregister(&store, &pane_id),
+       LoopBody     => Loop::new(&store).body(),
+       None         => Loop::new(&store).run(&self_path),
+   }
+   ```
+   `wrap` body collapses from ~77 lines to ~25; `unregister`
+   from ~34 to ~15. The kind-specific branches in these
+   functions disappear into the trait impls.
+7. **Tests.** Reorganize the existing 22 tests to call the new
+   entrypoints (`Store::mutate`, `Loop::pick`,
+   `Wrapper::prepare`/`cleanup`/`hook`). Each existing
+   behavior assertion lands on the new surface unchanged. No
+   new test cases — this is a refactor.
+8. **Code Review Gate** (kdevkit §7).
+9. **Push.**
+10. **Closure** (kdevkit §8) — Decision Log entry, soft verify
+    `project.md`. Spec already mentions the integration script
+    and `dist/`; nothing to add.
 
-4. **Wrapper Kiro path + unregister cleanup.**
-   - `cmd_wrap` Kiro branch: project-scoped
-     `.kiro/agents/agent-orch.json` write-if-absent + record
-     stamp, then `execvp("kiro", ...)`.
-   - `cmd_unregister`: read sessions, find record, do
-     creation-flag-agnostic Kiro cleanup when no live Kiro
-     records in that cwd remain, `rm -rf
-     $STATE_DIR/tmp/<pane>/`, remove record, write
-     atomically.
-   - Smoke test step 5 (concurrent Kiro both orderings) is
-     load-bearing.
-   - Risk: orphan files if the wrapper crashes mid-flight.
-     Doctor surfaces; acceptable.
+### Out of scope for this slice
 
-5. **Picker + orchestrator loop.**
-   - `cmd_pick`: render rows from sessions.json, run fzf via
-     `std::process::Command` (write rows to stdin, read
-     selection from stdout), print pane id.
-   - `cmd_loop`: the orchestrator-session loop body.
-   - `main` bare invocation — ensure orchestrator session
-     exists, switch-client.
-   - Add the `tui` feature flag (gated `cmd_pick_tui` /
-     `cmd_loop_tui` placeholders behind
-     `#[cfg(feature = "tui")]`) — empty stubs for v1 so the
-     compile path is exercised without pulling `ratatui`.
-   - Risk: fzf + tmux interaction edge cases; smoke catches
-     common ones.
-
-6. **Smoke harness.**
-   - `tests/functional/agent-orch/stub-agent` — `cat`-loop
-     shell script.
-   - `tests/functional/agent-orch/smoke` — six-step harness
-     described in Test Strategy, including both Kiro
-     concurrency orderings, with an extra assert that
-     `recorded_pid == agent_pid` (validates `execvp` pid
-     preservation).
-   - Wire into `deno task test:smoke`.
-   - Risk: tmux availability on the test host; skip clearly.
-
-7. **Doctor + README.**
-   - `cmd_doctor` — tmux ≥ 3.2 (display-popup) and ≥ 1.6
-     (`set-hook -g pane-exited`), `fzf`, `claude` / `kiro`
-     CLIs detected, state dir writeable, dist binary at the
-     expected path, orphan `.kiro/agents/agent-orch.json`
-     audit.
-   - `sources/agent-orch/README.md` — install (`deno task
-     agent-orch:build`, run from `dist/`), `agent-orch wrap`
-     examples, tmux keybind snippet, architecture diagram,
-     v2 ratatui note.
-   - Risk: minimal.
-
-8. **Closure.** Per kdevkit §8. The original
-   `specs/backlog/agent-session-orchestrator.md` is currently
-   untracked in `main`; verify at close-time and `git rm` if
-   it's been added.
+- New functionality: doctor, README, ratatui TUI, waiting-state
+  remain follow-ups. They were deferred in the original ship
+  and stay deferred.
+- Behavioral changes: this is a refactor. CLI surface, on-disk
+  shape, test count and intent all stay the same.
+- Adding more kinds. `Other` is the catch-all; the trait shape
+  makes Codex / Aider a one-impl-block addition when needed,
+  but not in this slice.
 
 ### Risk notes
 
-- **Hook payload shape drift.** Event names and payload field
-  names are pinned by Claude / Kiro docs as of 2026-06; the
-  hook config synth is one function and easy to update if
-  either renames.
-- **`execvp` failure semantics.** `execvp` returns only on
-  failure (e.g., binary not found, ENOEXEC); the wrapper must
-  treat the call as terminal and surface a clear error. The
-  registered session record is left in place — the
-  pane-exited hook handles cleanup either way.
-- **Single-file growth.** `main.rs` is targeted at ~600 LOC.
-  If it crosses ~1000, split out `sessions.rs` (the
-  most-cohesive island: model + apply + format + sort + tests
-  for those). Not before.
-- **Concurrent hook fires.** Two agents firing events
-  simultaneously contend on the `sessions.lock`. POSIX
-  advisory locks via `fs2` serialize them; worst case is a
-  few ms delay. Acceptable.
-- **fzf inside tmux.** Confirmed safe; doctor warns on
-  insufficient tmux version.
-- **Cargo build time.** ~30-60s cold, ~1-2s incremental,
-  sub-second `cargo check`. Acceptable for the dev loop.
+- **Trait dispatch overhead.** `Box<dyn Wrapper>` adds one
+  vtable indirection per call. Hot path is `hook` (one call
+  per agent event); the indirection is sub-microsecond and far
+  below the flock + JSON round-trip already in the path.
+- **Hook subcommand needs the pane's kind.** The CLI's `hook
+  <event>` subcommand only carries `$AGENT_ORCH_PANE`; to
+  dispatch through the right `Wrapper` impl, it does one extra
+  unlocked `Store::read()` to find the matching record's kind.
+  That read is eventually-consistent which is fine — and if
+  the pane isn't registered (stale fire after unregister), the
+  hook no-ops as it does today.
+- **Renaming churn in tests.** 22 tests reorganize. Each
+  test's assertion intent is preserved; only the call shape
+  changes (`hook(state, pane, ...)` →
+  `wrapper_for(kind).hook(&store, pane, ...)`). Risk: easy to
+  introduce a typo in the rename and have a test still pass
+  for the wrong reason. Mitigation: run the integration
+  script after each round; its 9 cases drive the binary
+  end-to-end and won't accept a regression.
+- **`Loop` lifetime.** `Loop<'a> { store: &'a Store }` borrows
+  the store for the picker lifetime. `body()` runs forever in
+  the orchestrator session; that's fine because `main` builds
+  the store, hands a borrow to `Loop::new`, and runs the loop
+  body — the store stays alive until the orchestrator session
+  exits.
 
 ## Session Log
 
@@ -836,10 +1004,22 @@ kdevkit §7.
 - 2026-06-05 · Implementation landed via four progressive slices
   (skeleton → wrap claude → review-driven simplifications) and a
   final consolidation (`bc211fd`) that compressed the design to
-  the four-typeclass shape the user named: §1 Session, §2
-  Wrapper, §3 Hook, §4 Loop. The consolidation closed two
-  correctness bugs caught at code review (kiro register/
-  unregister race; parallel-test env-var pollution).
+  the four-section shape the user named: §1 Session, §2
+  Wrapper, §3 Hook, §4 Loop — but as commented headers over
+  loose free functions, not as actual types. The consolidation
+  closed two correctness bugs caught at code review (kiro
+  register/unregister race; parallel-test env-var pollution).
+- 2026-06-05 · **Re-opened Planning Review Gate** after PR #18
+  review on commit `847a8cd`. User asked to promote the four
+  sections from comment-headers to four real typeclasses
+  (`Session`, `Store`, `Wrapper` trait + Claude/Kiro impls,
+  `Loop`), drop the trivial path-builder helpers in favor of
+  `const &str` + inline `.join`, and put the kind-agnostic
+  `hook` handler on the `Wrapper` trait as a default method
+  body. Rewrote the Design and Implementation Plan sections to
+  describe the typeclass shape; the work is one refactor slice
+  preserving every shipped behavior. Awaiting planning → dev
+  cue before any code changes.
 
 ## What v1 ships and what defers
 
@@ -965,3 +1145,36 @@ which serves the same role and is wired through
   open the dashboard later. Spec updated to make this
   explicit in both the wrapper flow pseudo-code and a new
   "Decoupling" subsection under Design.
+- **Four typeclasses, not four section-headers.** Per PR #18
+  review on commit `847a8cd` (L28, L120, L257). The original
+  consolidation organized the file into four commented
+  sections — `§1 Session`, `§2 Wrapper`, `§3 Hook`, `§4 Loop`
+  — over loose free functions. The user's review reframed
+  these as the right *types*, not just the right *layout*:
+  `Session` (struct + impl for per-record ops), `Store` (the
+  read/write/lock typeclass), `Wrapper` (a trait with `Claude`
+  and `Kiro` impls), and `Loop` (a struct with the picker
+  methods). The trait carries a default `hook` method body
+  shared by both impls today (typeclass shape — Rust's
+  default-method default-impl carries identical handling
+  across kinds without copy-paste; a future kind whose
+  payload differs can override). Net effect: the kind-specific
+  code goes from 5 scattered `kind == "claude" / "kiro"`
+  branches to two named `impl Wrapper for ... { }` blocks; the
+  lock dance goes from 3 lines × 4 callers to one
+  `store.mutate(...)` per caller; the trivial path-builder
+  helpers (`sessions_path`, `lock_path`, `tmp_dir_for_pane`,
+  `hook_install_marker`) collapse to three `const &str`s used
+  inline. Same behavior, same CLI, same integration tests
+  pass unchanged.
+- **Trait carries its weight here.** The Rust-as-better-bash
+  test for whether a trait is justified: there must be ≥2
+  real branches today, and the variation pattern must be
+  identical across them. Both are true: Claude and Kiro both
+  do *synth-or-ensure config → contribute to argv → cleanup
+  on exit*, just with different file targets. A trait of three
+  methods (`prepare`, `cleanup`, default `hook`) captures it.
+  If a third kind (Codex, Aider) ever lands, it slots in as
+  one more `impl` block. Without the trait, kind-specific code
+  scatters across `wrap`, `unregister`, `build_agent_argv`.
+  With it, two named blocks per kind.
