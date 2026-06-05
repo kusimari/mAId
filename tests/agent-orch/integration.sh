@@ -120,7 +120,8 @@ wait_for_sessions 1
 
 SETTINGS="$STATE/tmp/$PANE_ID/settings.json"
 for ev in UserPromptSubmit PreToolUse PostToolUse Stop; do
-  cmd="$(jq -r ".hooks.\"$ev\"[0].command" < "$SETTINGS")"
+  # Claude's nested matcher+hooks shape: `.hooks.<event>[0].hooks[0].command`.
+  cmd="$(jq -r ".hooks.\"$ev\"[0].hooks[0].command" < "$SETTINGS")"
   [[ "$cmd" == *"hook $ev" ]] || fail "case 1: hook $ev command mismatch ($cmd)"
 done
 pass "wrap claude registers session and synthesizes settings"

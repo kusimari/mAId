@@ -475,6 +475,22 @@ fn wrapper_for(kind: &str) -> Box<dyn Wrapper> {
 }
 
 /// Merge our four hook commands into a Claude-style settings JSON.
+///
+/// Claude's hooks schema is nested: each event maps to an array of
+/// matcher-groups, where each matcher-group has a `matcher` string
+/// (tool-name selector; "" matches all) and a `hooks` array of
+/// command entries. Our commands fire unconditionally, so we use
+/// `matcher: ""`.
+///
+/// ```json
+/// "hooks": {
+///   "Stop": [
+///     { "matcher": "",
+///       "hooks": [{ "type": "command", "command": "<self> hook Stop" }] }
+///   ]
+/// }
+/// ```
+///
 /// Errors loud on a non-object root or non-array event entries —
 /// silent-drop would leave the user with a hookless wrapper.
 fn merge_claude_hooks(settings: &mut serde_json::Value, self_path: &Path) -> Result<()> {
@@ -499,23 +515,33 @@ fn merge_claude_hooks(settings: &mut serde_json::Value, self_path: &Path) -> Res
             anyhow::bail!("user claude settings.hooks.{} must be an array", ev);
         };
         list.push(json!({
-            "type": "command",
-            "command": format!("{} hook {}", self_str, ev),
+            "matcher": "",
+            "hooks": [{
+                "type": "command",
+                "command": format!("{} hook {}", self_str, ev),
+            }],
         }));
     }
     Ok(())
 }
 
 /// Build a fresh Kiro agent config wiring our four hook commands.
+/// Same nested matcher+hooks schema as Claude.
 fn build_kiro_config(self_path: &Path) -> serde_json::Value {
     use serde_json::json;
     let s = self_path.to_string_lossy();
+    let entry = |ev: &str| {
+        json!([{
+            "matcher": "",
+            "hooks": [{ "type": "command", "command": format!("{} hook {}", s, ev) }],
+        }])
+    };
     json!({
         "hooks": {
-            EVT_USER_PROMPT_SUBMIT: [{ "command": format!("{} hook {}", s, EVT_USER_PROMPT_SUBMIT) }],
-            EVT_PRE_TOOL_USE:       [{ "command": format!("{} hook {}", s, EVT_PRE_TOOL_USE) }],
-            EVT_POST_TOOL_USE:      [{ "command": format!("{} hook {}", s, EVT_POST_TOOL_USE) }],
-            EVT_STOP:               [{ "command": format!("{} hook {}", s, EVT_STOP) }],
+            EVT_USER_PROMPT_SUBMIT: entry(EVT_USER_PROMPT_SUBMIT),
+            EVT_PRE_TOOL_USE:       entry(EVT_PRE_TOOL_USE),
+            EVT_POST_TOOL_USE:      entry(EVT_POST_TOOL_USE),
+            EVT_STOP:               entry(EVT_STOP),
         }
     })
 }
@@ -581,12 +607,27 @@ pub fn wrap(w: &dyn Wrapper, ctx: &WrapCtx, side_effects: bool) -> Result<Prepar
 
     let now = now_secs();
     let prepared = ctx.store.mutate(|sessions| {
-        anyhow::ensure!(
-            !sessions.iter().any(|s| s.pane_id == ctx.pane_id),
-            "pane {} already registered — `agent-orch unregister {}` first",
-            ctx.pane_id,
-            ctx.pane_id
-        );
+        // If a record exists for this pane, two cases:
+        //  - the recorded pid is alive → genuine double-register, refuse loud.
+        //  - the recorded pid is dead → an earlier wrap exited but the pane
+        //    stayed alive (interactive shell, remain-on-exit, or the
+        //    pane-exited hook didn't fire — server restart, etc.). Run the
+        //    kind-specific cleanup for the stale record and replace it.
+        if let Some(idx) = sessions.iter().position(|s| s.pane_id == ctx.pane_id) {
+            let alive =
+                nix::sys::signal::kill(nix::unistd::Pid::from_raw(sessions[idx].pid), None).is_ok();
+            anyhow::ensure!(
+                !alive,
+                "pane {} already registered — `agent-orch unregister {}` first",
+                ctx.pane_id,
+                ctx.pane_id
+            );
+            let stale = sessions.remove(idx);
+            // Cleanup uses the *remaining* sessions as siblings — the kiro
+            // refcount logic stays correct because `stale` is no longer in
+            // the list.
+            wrapper_for(&stale.kind).cleanup(ctx.store, &stale, sessions)?;
+        }
         let prepared = w.prepare(ctx)?;
         sessions.push(Session {
             pane_id: ctx.pane_id.into(),
@@ -1055,14 +1096,25 @@ mod tests {
         let synth_path = store.tmp_dir("%7").join("settings.json");
         let synth: serde_json::Value =
             serde_json::from_slice(&fs::read(&synth_path).unwrap()).unwrap();
+        // User's existing entry is preserved verbatim in slot 0 (we
+        // didn't rewrite it). Our entry uses the nested matcher+hooks
+        // shape Claude requires.
         let ups = &synth["hooks"]["UserPromptSubmit"];
-        assert_eq!(ups[0]["command"], "my-hook");
-        assert_eq!(ups[1]["command"], "/test/agent-orch hook UserPromptSubmit");
+        assert_eq!(ups[0]["command"], "my-hook"); // user's entry untouched
+        assert_eq!(ups[1]["matcher"], "");
+        assert_eq!(
+            ups[1]["hooks"][0]["command"],
+            "/test/agent-orch hook UserPromptSubmit"
+        );
+        assert_eq!(ups[1]["hooks"][0]["type"], "command");
         for ev in [EVT_PRE_TOOL_USE, EVT_POST_TOOL_USE, EVT_STOP] {
+            let entry = &synth["hooks"][ev][0];
+            assert_eq!(entry["matcher"], "");
             assert_eq!(
-                synth["hooks"][ev][0]["command"],
+                entry["hooks"][0]["command"],
                 format!("/test/agent-orch hook {}", ev)
             );
+            assert_eq!(entry["hooks"][0]["type"], "command");
         }
     }
 
@@ -1149,14 +1201,17 @@ mod tests {
         assert_eq!(p.argv, vec!["kiro", "chat"]);
 
         let parsed: serde_json::Value = serde_json::from_slice(&fs::read(&cfg).unwrap()).unwrap();
+        // Same nested matcher+hooks shape as Claude.
         for ev in [
             EVT_USER_PROMPT_SUBMIT,
             EVT_PRE_TOOL_USE,
             EVT_POST_TOOL_USE,
             EVT_STOP,
         ] {
+            let entry = &parsed["hooks"][ev][0];
+            assert_eq!(entry["matcher"], "");
             assert_eq!(
-                parsed["hooks"][ev][0]["command"],
+                entry["hooks"][0]["command"],
                 format!("/test/agent-orch hook {}", ev)
             );
         }
@@ -1262,7 +1317,10 @@ mod tests {
     }
 
     #[test]
-    fn wrap_refuses_double_register_on_same_pane() {
+    fn wrap_refuses_double_register_when_existing_pid_alive() {
+        // The wrap path records `std::process::id()` (the test
+        // process pid, alive by definition), so a second wrap on
+        // the same pane sees an alive sibling and refuses.
         let (dir, store) = fixtures();
         let cwd = dir.path().to_path_buf();
         let argv = vec!["stub".to_string()];
@@ -1272,6 +1330,97 @@ mod tests {
         wrap(&Claude, &ctx, false).unwrap();
         let err = wrap(&Claude, &ctx, false).unwrap_err();
         assert!(format!("{err:#}").contains("already registered"));
+    }
+
+    /// Spawn `true`, wait for it to exit, return its (now-reaped)
+    /// pid. signal-0 against a reaped pid returns ESRCH, so our
+    /// `kill(_, None).is_ok()` liveness probe reads it as dead —
+    /// exactly what we need to seed a stale record.
+    fn dead_pid() -> i32 {
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id() as i32;
+        let _ = child.wait();
+        // Sanity check: kill(0) must say it's gone.
+        assert!(
+            nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_err(),
+            "selected pid {pid} should be dead after wait"
+        );
+        pid
+    }
+
+    #[test]
+    fn wrap_replaces_stale_record_with_dead_pid() {
+        // An earlier wrap exited (agent crashed, pane stayed alive
+        // as an interactive shell, etc.) but the pane-exited hook
+        // didn't fire. The next wrap on the same pane should
+        // auto-cleanup the stale record and proceed, not refuse.
+        let (dir, store) = fixtures();
+        let cwd = dir.path().to_path_buf();
+        let dp = dead_pid();
+        store
+            .mutate(|v| {
+                let mut s = mk("%5", "claude", cwd.to_str().unwrap(), 1);
+                s.pid = dp;
+                v.push(s);
+                Ok(())
+            })
+            .unwrap();
+        // Pre-condition: stale record exists.
+        assert_eq!(store.read().unwrap().len(), 1);
+
+        // Now wrap on the same pane — should silently replace.
+        let argv = vec!["stub".to_string()];
+        let self_path = PathBuf::from("/test/agent-orch");
+        let user = dir.path().join("u.json");
+        let ctx = ctx(&store, "%5", &cwd, &argv, &user, &self_path);
+        wrap(&Claude, &ctx, false).unwrap();
+
+        let v = store.read().unwrap();
+        assert_eq!(v.len(), 1, "old record replaced, not duplicated");
+        assert_eq!(v[0].pid, std::process::id() as i32);
+    }
+
+    #[test]
+    fn wrap_replaces_stale_kiro_runs_per_kind_cleanup() {
+        // Stale-record replacement also runs the prior kind's
+        // cleanup. For Kiro, that's the refcount-agnostic check —
+        // and since the stale record was the only kiro session in
+        // that cwd, the project config gets removed.
+        let (dir, store) = fixtures();
+        let cwd = dir.path().to_path_buf();
+        let cfg = cwd.join(".kiro").join("agents").join("agent-orch.json");
+        fs::create_dir_all(cfg.parent().unwrap()).unwrap();
+        fs::write(&cfg, b"{}").unwrap();
+
+        let dp = dead_pid();
+        store
+            .mutate(|v| {
+                let mut s = mk("%9", "kiro", cwd.to_str().unwrap(), 1);
+                s.pid = dp;
+                s.created_kiro_config = true;
+                v.push(s);
+                Ok(())
+            })
+            .unwrap();
+
+        // Wrap a fresh kiro on the same pane. Stale cleanup removes
+        // the old config; prepare immediately writes a new one.
+        let argv = vec!["kiro".to_string()];
+        let self_path = PathBuf::from("/test/agent-orch");
+        let user = dir.path().join("u.json");
+        let ctx = ctx(&store, "%9", &cwd, &argv, &user, &self_path);
+        wrap(&Kiro, &ctx, false).unwrap();
+
+        // The new wrap re-created the kiro config (its prepare runs
+        // ensure_kiro_config and sees the file absent after stale
+        // cleanup ran).
+        assert!(cfg.exists());
+        let v = store.read().unwrap();
+        assert_eq!(v.len(), 1);
+        assert!(
+            v[0].created_kiro_config,
+            "fresh wrap should be the creator since stale cleanup removed the file"
+        );
     }
 
     #[test]
