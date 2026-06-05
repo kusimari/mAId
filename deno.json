@@ -20,7 +20,8 @@
 
     "agent-orch:build": "cd sources/agent-orch && cargo build --release && mkdir -p ../../dist/agent-orch && cp target/release/agent-orch ../../dist/agent-orch/",
     "agent-orch:test": "cd sources/agent-orch && cargo test",
-    "agent-orch:check": "cd sources/agent-orch && cargo fmt --check && cargo clippy --all-targets -- -D warnings"
+    "agent-orch:check": "cd sources/agent-orch && cargo fmt --check && cargo clippy --all-targets -- -D warnings",
+    "agent-orch:integration": "deno task agent-orch:build && tests/agent-orch/integration.sh"
   },
   "imports": {
     "@std/assert": "jsr:@std/assert@1"
