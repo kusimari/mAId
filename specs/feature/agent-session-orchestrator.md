@@ -833,6 +833,36 @@ kdevkit §7.
   running; the loop is a viewer that can be opened anytime
   onto the live registry. Added a Design subsection and
   clarifying comment in the wrapper flow pseudo-code.
+- 2026-06-05 · Implementation landed via four progressive slices
+  (skeleton → wrap claude → review-driven simplifications) and a
+  final consolidation (`bc211fd`) that compressed the design to
+  the four-typeclass shape the user named: §1 Session, §2
+  Wrapper, §3 Hook, §4 Loop. The consolidation closed two
+  correctness bugs caught at code review (kiro register/
+  unregister race; parallel-test env-var pollution).
+
+## What v1 ships and what defers
+
+**Shipped:** `wrap claude`, `wrap kiro`, `hook <event>`, `list`,
+`unregister`, bare invocation (ensure orchestrator session +
+switch-client), `loop-body`. End-to-end exercised by
+`tests/agent-orch/integration.sh` (9 cases) over a private tmux
+server. 22 in-process unit / behavior tests in `src/main.rs`.
+
+**Deferred to follow-up tickets:**
+- `agent-orch doctor` — sanity-check (tmux version, fzf,
+  agent CLIs, state-dir writeability, kiro orphan audit).
+  Mentioned in spec; not implemented in this PR.
+- `sources/agent-orch/README.md` — install instructions, tmux
+  keybind snippet, examples. Not authored in this PR.
+- v2 TUI port to `ratatui` (replaces fzf). Out of scope for v1.
+- v2 distinction of `waiting-on-permission` vs `complete`
+  (Claude `Notification` event). One additional hook entry.
+
+The `tests/functional/agent-orch/smoke` reference earlier in
+this spec is superseded by `tests/agent-orch/integration.sh`,
+which serves the same role and is wired through
+`deno task agent-orch:integration`.
 
 ## Decision Log
 

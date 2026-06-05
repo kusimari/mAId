@@ -73,15 +73,21 @@ mAId/
 │   ├── deploy.ts           ← deploy + undeploy logic
 │   ├── sources.ts
 │   └── schema.ts
-├── sources/                everything the registry points at
+├── sources/                everything the registry points at +
+│   │                       a self-contained Rust crate (agent-orch)
 │   ├── skills/<name>/SKILL.md
 │   ├── agents/<name>.md
 │   ├── commands/<name>.md
 │   ├── claude/CLAUDE.md    (→ ~/.claude/CLAUDE.md)
-│   └── kiro/KIRO.md        (→ ~/.kiro/steering/KIRO.md)
+│   ├── kiro/KIRO.md        (→ ~/.kiro/steering/KIRO.md)
+│   └── agent-orch/         tmux session orchestrator — Rust, single-file,
+│                           built via `deno task agent-orch:build` to dist/
+├── dist/                   gitignored; agent-orch:build's output
 ├── tests/
 │   ├── schema_test.ts
 │   ├── deploy_test.ts
+│   ├── agent-orch/
+│   │   └── integration.sh      ← shell-driven E2E test for agent-orch
 │   └── functional/
 │       ├── run                 ← harness (see Testing)
 │       └── skills/<name>.smoke ← fixtures: prompt + expect_substr or expected_narrative
