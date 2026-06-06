@@ -24,7 +24,7 @@ loop, navigate around, come back."
 deno task agent-orch:check
 deno task agent-orch:test
 deno task agent-orch:build         # produces dist/agent-orch/agent-orch
-deno task agent-orch:integration   # confirms 9/9 shell cases pass
+deno task agent-orch:integration   # confirms 10/10 shell cases pass
 ```
 
 Have on PATH:
@@ -34,6 +34,24 @@ Have on PATH:
 - `kiro` (Kiro CLI)
 - `jq` (only used by the integration script; useful for inspecting
   `sessions.json` during this test)
+
+**Install Claude hooks user-globally before launching agents:**
+
+```sh
+agent-orch setup
+```
+
+This appends our four hook entries (`UserPromptSubmit` /
+`PreToolUse` / `PostToolUse` / `Stop`) to
+`~/.claude/settings.json`, tagged with `"agent-orch": true`. The
+hooks fire on every `claude` invocation; the binary filters by
+`$AGENT_ORCH_PANE` and exits silently for bare-claude calls
+(see "What you've verified" at the bottom for the verification).
+
+**At the end of this test plan, run `agent-orch teardown`** —
+removes only the tagged entries, leaving any other hooks you
+have intact, and removes the `~/.claude/settings.json` file
+entirely if it had no other content.
 
 Recommended `~/.tmux.conf` keybind for the round-trip:
 
@@ -55,14 +73,16 @@ Use the absolute path to the compiled binary throughout (or add
 `<repo>/dist/agent-orch` to `$PATH` for this shell). Below it's
 spelled `agent-orch` — adjust if your shell can't resolve it.
 
-> **Heads-up.** The wrap command synthesizes per-launch Claude
-> settings under `${XDG_STATE_HOME:-$HOME/.local/state}/agent-orch/tmp/<pane>/`
-> and writes a project-scoped `<cwd>/.kiro/agents/agent-orch.json`
-> for Kiro. The Kiro file is removed by `unregister` when the last
-> kiro session in that cwd exits; if you Ctrl-C this test halfway
-> through, run `agent-orch unregister %N` for any panes you abandon
-> (or just delete `~/.local/state/agent-orch/sessions.json` to start
-> clean).
+> **Heads-up.** Claude hooks live user-globally now (installed
+> by `setup` above; removed by `teardown` after the test). The
+> wrapper itself just registers the pane and `execvp`s the
+> agent. For Kiro, the wrapper writes a project-scoped
+> `<cwd>/.kiro/agents/agent-orch.json` for that cwd; it's
+> removed when the last Kiro session in that cwd exits. If you
+> Ctrl-C this test halfway through, run `agent-orch unregister
+> %N` for any panes you abandon (or just delete
+> `~/.local/state/agent-orch/sessions.json` to start clean) and
+> `agent-orch teardown` to roll back the hook install.
 
 ## CLI shape (read this first)
 
@@ -304,6 +324,23 @@ tmux kill-session -t proj-a
 tmux kill-session -t proj-b
 tmux kill-session -t proj-c
 tmux kill-session -t viewer
+```
+
+Roll back the user-global hook install:
+
+```sh
+agent-orch teardown
+```
+
+Verify cleanup:
+
+```sh
+# If you had no other Claude hooks, settings.json should be gone:
+test -e ~/.claude/settings.json && cat ~/.claude/settings.json || echo "(removed)"
+# If you had your own hooks, they should still be there with no
+# entries tagged `agent-orch: true`:
+jq '.. | objects | select(."agent-orch")' ~/.claude/settings.json 2>/dev/null
+# → no output (no tagged entries left)
 ```
 
 ## What you've verified

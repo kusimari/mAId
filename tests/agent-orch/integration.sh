@@ -45,9 +45,11 @@ debug_dump() {
   tmux -L "$TMUX_SOCKET" ls 2>&1 >&2 || true
 }
 
+SETUP_HOME=""
+FRESH_HOME=""
 cleanup() {
   tmux -L "$TMUX_SOCKET" kill-server 2>/dev/null || true
-  rm -rf "$STATE_PARENT" "$TMUX_TMPDIR"
+  rm -rf "$STATE_PARENT" "$TMUX_TMPDIR" "$SETUP_HOME" "$FRESH_HOME"
 }
 trap cleanup EXIT
 
@@ -106,7 +108,9 @@ wait_for_sessions() {
 
 T set-option -g remain-on-exit on 2>/dev/null || true
 
-# ── case 1 — wrap claude registers a session and synthesizes settings
+# ── case 1 — wrap claude registers a session ───────────────────────
+# Claude hooks live globally now (installed by `setup`, exercised in
+# case 10 below). The wrapper itself just registers + execvp's.
 
 log "case 1: wrap claude inside tmux"
 PANE_ID="$(spawn w1 "$STATE_PARENT" claude sleep 300)"
@@ -116,15 +120,7 @@ wait_for_sessions 1
 [[ "$(jq 'length' <<<"$(sessions_json)")" -eq 1 ]] || fail "case 1: expected 1 session, got $(jq 'length' <<<"$(sessions_json)")"
 [[ "$(field 0 pane_id)" == "$PANE_ID" ]] || fail "case 1: pane_id mismatch (got $(field 0 pane_id))"
 [[ "$(field 0 kind)" == "claude" ]] || fail "case 1: kind != claude"
-[[ -f "$STATE/tmp/$PANE_ID/settings.json" ]] || fail "case 1: per-pane settings.json missing"
-
-SETTINGS="$STATE/tmp/$PANE_ID/settings.json"
-for ev in UserPromptSubmit PreToolUse PostToolUse Stop; do
-  # Claude's nested matcher+hooks shape: `.hooks.<event>[0].hooks[0].command`.
-  cmd="$(jq -r ".hooks.\"$ev\"[0].hooks[0].command" < "$SETTINGS")"
-  [[ "$cmd" == *"hook $ev" ]] || fail "case 1: hook $ev command mismatch ($cmd)"
-done
-pass "wrap claude registers session and synthesizes settings"
+pass "wrap claude registers session"
 
 # ── case 2 — hook subcommand updates state ─────────────────────────
 
@@ -159,13 +155,12 @@ trace "$LIST_OUT"
 [[ "$LIST_OUT" == *"fix the failing test"* ]] || fail "case 5: list missing prompt"
 pass "list reflects accumulated state"
 
-# ── case 6 — unregister removes record and tmp dir ─────────────────
+# ── case 6 — unregister removes the record ─────────────────────────
 
-log "case 6: unregister removes record + tmp dir"
+log "case 6: unregister removes the record"
 env "XDG_STATE_HOME=$STATE_PARENT" "$BIN" unregister "$PANE_ID"
 [[ "$(jq 'length' <<<"$(sessions_json)")" -eq 0 ]] || fail "case 6: record not removed"
-[[ ! -d "$STATE/tmp/$PANE_ID" ]] || fail "case 6: tmp dir not removed"
-pass "unregister cleaned record and per-pane tmp dir"
+pass "unregister cleaned record"
 
 # ── case 7 — kiro refcount cleanup (close-creator-first) ───────────
 
@@ -194,24 +189,79 @@ out="$(env "XDG_STATE_HOME=$STATE_PARENT" "$BIN" wrap claude -- sleep 1 2>&1 || 
 [[ "$out" == *"\$TMUX_PANE"* ]] || fail "case 8: missing TMUX_PANE error: $out"
 pass "wrap refuses without \$TMUX_PANE"
 
-# ── case 9 — list filters dead-pid records at query time ───────────
+# ── case 9 — global tmux pane-exited hook is registered ────────────
+# tmux's pane-exited hook only fires when the pane's process exits
+# *naturally* (the shell/agent terminates), and in our private-server
+# test environment with `remain-on-exit on` it's stubbornly hard to
+# reproduce that timing reliably from a script. The integration script
+# verifies the hook is REGISTERED (so the wrapper installed it
+# correctly); the hook-fires-on-real-pane-death path is exercised by
+# the manual functional test plan when the user closes a real shell.
 
-log "case 9: list filters dead-pid records (pid-liveness sweep)"
-# Spawn an agent that exits quickly; the registry record persists but
-# its pid is dead. `list` is documented as unfiltered (the spec leans on
-# the picker's render_rows for liveness), so we drive the picker proxy
-# via an `unregister` after the pane dies — this is what the tmux
-# pane-exited hook would do in a real run.
-P9="$(spawn d1 "$STATE_PARENT" claude sleep 0.2)"
-trace "d1 pane=$P9"
-wait_for_sessions 1
-sleep 0.6 # let the agent process actually die
-# Confirm record is still present (list is unfiltered).
-[[ "$(jq 'length' <<<"$(sessions_json)")" -eq 1 ]] || fail "case 9: pre-cleanup record missing"
-# Simulate the pane-exited hook firing.
-env "XDG_STATE_HOME=$STATE_PARENT" "$BIN" unregister "$P9"
-LIST_OUT="$(env "XDG_STATE_HOME=$STATE_PARENT" "$BIN" list)"
-[[ "$LIST_OUT" == "(no registered sessions)" ]] || fail "case 9: list still shows dead pane: $LIST_OUT"
-pass "list reflects unregister of dead-pid pane"
+log "case 9: global tmux pane-exited hook is registered"
+hook_cmd="$(T show-hook -g pane-exited 2>/dev/null || true)"
+[[ "$hook_cmd" == *"agent-orch"* ]] \
+  || fail "case 9: tmux pane-exited hook not registered ($hook_cmd) — case 1 prerequisite failed"
+[[ "$hook_cmd" == *"unregister"* ]] \
+  || fail "case 9: hook command doesn't reference unregister ($hook_cmd)"
+pass "global tmux pane-exited hook is registered with the unregister command"
 
-log "all 9 cases passed"
+# ── case 10 — setup / teardown round-trip on user-global settings ──
+#
+# `setup` writes tagged hook entries to ~/.claude/settings.json (under
+# our $HOME tempdir for isolation). `teardown` removes only those
+# entries. Pre-existing user content survives both.
+
+log "case 10: setup/teardown preserves user-existing settings"
+SETUP_HOME="$(mktemp -d)"
+SETUP_FILE="$SETUP_HOME/.claude/settings.json"
+mkdir -p "$SETUP_HOME/.claude"
+# Seed with a user entry the test must preserve.
+cat > "$SETUP_FILE" <<'EOF'
+{
+  "permissions": ["read"],
+  "hooks": {
+    "UserPromptSubmit": [
+      { "matcher": "", "hooks": [{ "type": "command", "command": "user-hook" }] }
+    ]
+  }
+}
+EOF
+
+env "HOME=$SETUP_HOME" "$BIN" setup
+# Verify our entries landed alongside the user's, tagged.
+n_ups="$(jq '.hooks.UserPromptSubmit | length' < "$SETUP_FILE")"
+[[ "$n_ups" -eq 2 ]] || fail "case 10: expected 2 UserPromptSubmit entries after setup, got $n_ups"
+n_stop="$(jq '.hooks.Stop | length' < "$SETUP_FILE")"
+[[ "$n_stop" -eq 1 ]] || fail "case 10: expected 1 Stop entry after setup, got $n_stop"
+tagged="$(jq '.hooks.UserPromptSubmit[1]."x-agent-orch-managed"' < "$SETUP_FILE")"
+[[ "$tagged" == "true" ]] || fail "case 10: x-agent-orch-managed tag missing"
+
+# Idempotent: second setup doesn't duplicate.
+env "HOME=$SETUP_HOME" "$BIN" setup
+n_ups2="$(jq '.hooks.UserPromptSubmit | length' < "$SETUP_FILE")"
+[[ "$n_ups2" -eq 2 ]] || fail "case 10: setup duplicated entries (got $n_ups2 UserPromptSubmit)"
+
+env "HOME=$SETUP_HOME" "$BIN" teardown
+# User content preserved exactly.
+n_after="$(jq '.hooks.UserPromptSubmit | length' < "$SETUP_FILE")"
+[[ "$n_after" -eq 1 ]] || fail "case 10: expected 1 UserPromptSubmit after teardown, got $n_after"
+cmd_after="$(jq -r '.hooks.UserPromptSubmit[0].hooks[0].command' < "$SETUP_FILE")"
+[[ "$cmd_after" == "user-hook" ]] || fail "case 10: user hook lost ($cmd_after)"
+stop_present="$(jq '(.hooks // {}) | has("Stop")' < "$SETUP_FILE")"
+[[ "$stop_present" == "false" ]] || fail "case 10: Stop key not pruned"
+[[ "$(jq -r '.permissions[0]' < "$SETUP_FILE")" == "read" ]] \
+  || fail "case 10: permissions sibling field clobbered"
+pass "setup/teardown preserves user-existing settings"
+
+# Pre-existing-empty case: setup creates the file, teardown removes it.
+log "case 10b: setup/teardown round-trips on a fresh \$HOME"
+FRESH_HOME="$(mktemp -d)"
+env "HOME=$FRESH_HOME" "$BIN" setup
+[[ -f "$FRESH_HOME/.claude/settings.json" ]] || fail "case 10b: setup didn't create settings.json"
+env "HOME=$FRESH_HOME" "$BIN" teardown
+[[ ! -f "$FRESH_HOME/.claude/settings.json" ]] || fail "case 10b: teardown didn't remove settings.json"
+# SETUP_HOME and FRESH_HOME are cleaned up by the EXIT trap.
+pass "setup/teardown removes settings.json when only our content remained"
+
+log "all 10 cases passed"

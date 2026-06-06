@@ -6,9 +6,11 @@
 //!   §2 · `Store`    — owns the state-dir, hides flock; exposes
 //!                     `read()` (no lock) and `mutate(|v| ...)`.
 //!   §3 · `Wrapper`  — trait with `Claude` / `Kiro` / `Other` impls.
-//!                     `prepare` (per-kind config + argv splice),
-//!                     `cleanup` (per-kind unregister), and a default
-//!                     `hook` method body shared across kinds.
+//!                     `prepare` (per-kind config — Claude no-op,
+//!                     Kiro project-scoped), `cleanup` (per-kind
+//!                     unregister), and a default `hook` method body
+//!                     shared across kinds. Claude hooks live
+//!                     user-globally via `setup` / `teardown`.
 //!   §4 · `Loop`     — picker (`render`, `pick`, `run`, `body`).
 //!
 //! The CLI dispatch (`main`) wires these together. Tests at the
@@ -33,6 +35,14 @@ const EVT_POST_TOOL_USE: &str = "PostToolUse";
 const EVT_STOP: &str = "Stop";
 
 const ORCHESTRATOR_SESSION: &str = "orchestrator";
+
+/// Marker field on hook entries we wrote to a Claude settings file
+/// via `setup`. `teardown` removes only entries carrying this tag,
+/// leaving user-authored entries verbatim. The `x-` prefix is the
+/// conventional "tool-private extension" signal in JSON config —
+/// makes accidental collision with user-authored decoration
+/// effectively zero.
+const AGENT_ORCH_TAG: &str = "x-agent-orch-managed";
 
 fn now_secs() -> u64 {
     SystemTime::now()
@@ -229,10 +239,6 @@ impl Store {
         &self.dir
     }
 
-    pub fn tmp_dir(&self, pane_id: &str) -> PathBuf {
-        self.dir.join("tmp").join(pane_id)
-    }
-
     pub fn hook_marker(&self) -> PathBuf {
         self.dir.join(HOOK_MARKER)
     }
@@ -303,7 +309,6 @@ impl Store {
 pub struct WrapCtx<'a> {
     pub store: &'a Store,
     pub self_path: &'a Path,
-    pub user_claude_settings: &'a Path,
     pub pane_id: &'a str,
     pub cwd: &'a Path,
     pub agent_argv: &'a [String],
@@ -330,6 +335,11 @@ pub trait Wrapper {
     /// today. A future kind whose stdin payload differs can override.
     /// Always exits Ok — a failing hook reporter must not block the
     /// agent's turn.
+    ///
+    /// Caller verifies pane ownership; the CLI dispatch (`Cmd::Hook`)
+    /// filters on `$AGENT_ORCH_PANE` before reaching here. Direct
+    /// callers must do the same — this body acts on whatever
+    /// `pane_id` it was given.
     fn hook(
         &self,
         store: &Store,
@@ -366,32 +376,20 @@ impl Wrapper for Claude {
         "claude"
     }
 
+    /// No-op. Claude hooks live user-globally via
+    /// `agent-orch setup`, not per-launch. The wrapper just
+    /// passes argv through unchanged.
     fn prepare(&self, ctx: &WrapCtx) -> Result<Prepared> {
-        let dir = ctx.store.tmp_dir(ctx.pane_id);
-        fs::create_dir_all(&dir).with_context(|| format!("mkdir -p {}", dir.display()))?;
-        let path = dir.join("settings.json");
-        let mut settings: serde_json::Value = if ctx.user_claude_settings.exists() {
-            serde_json::from_slice(&fs::read(ctx.user_claude_settings)?)
-                .with_context(|| format!("parse {}", ctx.user_claude_settings.display()))?
-        } else {
-            serde_json::json!({})
-        };
-        merge_claude_hooks(&mut settings, ctx.self_path)?;
-        fs::write(&path, serde_json::to_vec_pretty(&settings)?)?;
-
-        let program = ctx.agent_argv[0].clone();
-        let mut argv = ctx.agent_argv.to_vec();
-        argv.insert(1, "--settings".into());
-        argv.insert(2, path.to_string_lossy().into_owned());
         Ok(Prepared {
-            program,
-            argv,
+            program: ctx.agent_argv[0].clone(),
+            argv: ctx.agent_argv.to_vec(),
             created_kiro_config: false,
         })
     }
 
-    fn cleanup(&self, store: &Store, removing: &Session, _others: &[Session]) -> Result<()> {
-        let _ = fs::remove_dir_all(store.tmp_dir(&removing.pane_id));
+    /// No-op. The user-global hooks installed by `setup` outlive
+    /// any individual pane and are removed only by `teardown`.
+    fn cleanup(&self, _store: &Store, _removing: &Session, _others: &[Session]) -> Result<()> {
         Ok(())
     }
 }
@@ -474,7 +472,9 @@ fn wrapper_for(kind: &str) -> Box<dyn Wrapper> {
     }
 }
 
-/// Merge our four hook commands into a Claude-style settings JSON.
+/// Add our four hook entries to a Claude-style settings JSON,
+/// each tagged with `"x-agent-orch-managed": true` so `unmerge`
+/// can find and remove only ours.
 ///
 /// Claude's hooks schema is nested: each event maps to an array of
 /// matcher-groups, where each matcher-group has a `matcher` string
@@ -486,10 +486,16 @@ fn wrapper_for(kind: &str) -> Box<dyn Wrapper> {
 /// "hooks": {
 ///   "Stop": [
 ///     { "matcher": "",
-///       "hooks": [{ "type": "command", "command": "<self> hook Stop" }] }
+///       "hooks": [{ "type": "command", "command": "<self> hook Stop" }],
+///       "x-agent-orch-managed": true }
 ///   ]
 /// }
 /// ```
+///
+/// **Idempotent.** If a tagged entry already exists for an event,
+/// the existing command is rewritten to match `self_path` (handles
+/// the binary-moved case). New events are appended; user-authored
+/// entries (without the tag) are preserved verbatim.
 ///
 /// Errors loud on a non-object root or non-array event entries —
 /// silent-drop would leave the user with a hookless wrapper.
@@ -514,15 +520,138 @@ fn merge_claude_hooks(settings: &mut serde_json::Value, self_path: &Path) -> Res
         let Value::Array(list) = arr else {
             anyhow::bail!("user claude settings.hooks.{} must be an array", ev);
         };
-        list.push(json!({
-            "matcher": "",
-            "hooks": [{
-                "type": "command",
-                "command": format!("{} hook {}", self_str, ev),
-            }],
-        }));
+        let cmd = format!("{} hook {}", self_str, ev);
+        // Idempotence + path refresh: if our tagged entry is
+        // already there, rewrite its command (in case the binary
+        // moved). Otherwise append a fresh tagged entry.
+        if let Some(existing) = list.iter_mut().find(|e| {
+            e.get(AGENT_ORCH_TAG)
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        }) {
+            // Happy path: rewrite the command in slot 0 of the
+            // nested hooks array. `continue` exits the per-event
+            // loop so we don't fall through to the overwrite.
+            if let Some(inner) = existing.get_mut("hooks").and_then(|h| h.as_array_mut()) {
+                if let Some(first) = inner.first_mut() {
+                    first["command"] = json!(cmd);
+                    continue;
+                }
+            }
+            // Fall-through: tagged entry has unexpected shape
+            // (missing `hooks` array, empty array, wrong type).
+            // Overwrite it cleanly.
+            *existing = json!({
+                "matcher": "",
+                "hooks": [{ "type": "command", "command": cmd }],
+                AGENT_ORCH_TAG: true,
+            });
+        } else {
+            list.push(json!({
+                "matcher": "",
+                "hooks": [{ "type": "command", "command": cmd }],
+                AGENT_ORCH_TAG: true,
+            }));
+        }
     }
     Ok(())
+}
+
+/// Reverse of `merge_claude_hooks`: remove every tagged entry from
+/// the settings JSON. Prunes empty containers — if an event's array
+/// becomes empty, drop the key; if `hooks` becomes empty, drop the
+/// `hooks` key. Caller decides whether to delete the file when the
+/// result is `{}`.
+fn unmerge_claude_hooks(settings: &mut serde_json::Value) {
+    let Some(root) = settings.as_object_mut() else {
+        return;
+    };
+    let Some(hooks) = root.get_mut("hooks").and_then(|v| v.as_object_mut()) else {
+        return;
+    };
+    let event_names: Vec<String> = hooks.keys().cloned().collect();
+    for ev in event_names {
+        let Some(arr) = hooks.get_mut(&ev).and_then(|v| v.as_array_mut()) else {
+            continue;
+        };
+        arr.retain(|e| {
+            !e.get(AGENT_ORCH_TAG)
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        });
+        if arr.is_empty() {
+            hooks.remove(&ev);
+        }
+    }
+    if hooks.is_empty() {
+        root.remove("hooks");
+    }
+}
+
+/// `agent-orch setup` — install our four hook entries into the
+/// Claude settings file at `path` (typically
+/// `~/.claude/settings.json`). Creates the file (and parent dir)
+/// if absent. Idempotent: re-running rewrites our tagged entries'
+/// command paths in case the binary moved, but doesn't duplicate.
+fn run_setup(path: &Path, self_path: &Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("mkdir -p {}", parent.display()))?;
+    }
+    let mut settings: serde_json::Value = if path.exists() {
+        let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+        if bytes.is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?
+        }
+    } else {
+        serde_json::json!({})
+    };
+    merge_claude_hooks(&mut settings, self_path)?;
+    write_json_atomic(path, &settings)
+}
+
+/// `agent-orch teardown` — remove our tagged hook entries from
+/// the Claude settings file at `path`. Prunes empty containers;
+/// removes the file entirely if the result is `{}`. No-op if the
+/// file is absent.
+fn run_teardown(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    if bytes.is_empty() {
+        // Empty file → nothing to do; leave it alone.
+        return Ok(());
+    }
+    let mut settings: serde_json::Value =
+        serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
+    unmerge_claude_hooks(&mut settings);
+    let is_empty_obj = settings.as_object().map(|o| o.is_empty()).unwrap_or(false);
+    if is_empty_obj {
+        fs::remove_file(path).with_context(|| format!("rm {}", path.display()))?;
+        Ok(())
+    } else {
+        write_json_atomic(path, &settings)
+    }
+}
+
+/// Atomic write for arbitrary JSON files: per-pid tmp + rename.
+/// Used by setup/teardown writing the user's settings file.
+fn write_json_atomic(path: &Path, value: &serde_json::Value) -> Result<()> {
+    let tmp = path.with_extension(format!("json.tmp.{}", std::process::id()));
+    let bytes = serde_json::to_vec_pretty(value)?;
+    fs::write(&tmp, &bytes).with_context(|| format!("write {}", tmp.display()))?;
+    fs::rename(&tmp, path)
+        .with_context(|| format!("rename {} → {}", tmp.display(), path.display()))?;
+    Ok(())
+}
+
+/// Resolve `~/.claude/settings.json`. Used by `main`'s setup /
+/// teardown dispatch. Tests use injected paths.
+fn user_claude_settings_path() -> Result<PathBuf> {
+    let home = std::env::var("HOME").context("$HOME unset")?;
+    Ok(PathBuf::from(home).join(".claude/settings.json"))
 }
 
 /// Build a fresh Kiro agent config wiring our four hook commands.
@@ -786,6 +915,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Install agent-orch hooks into ~/.claude/settings.json (idempotent).
+    Setup,
+    /// Remove agent-orch hooks from ~/.claude/settings.json.
+    Teardown,
     /// Wrap a coding agent: register, inject hooks, execvp.
     Wrap {
         kind: String,
@@ -816,6 +949,9 @@ fn main() -> Result<()> {
         // Bare invocation: ensure orchestrator session + switch-client.
         None => Loop::new(&store).run(&self_path),
 
+        Some(Cmd::Setup) => run_setup(&user_claude_settings_path()?, &self_path),
+        Some(Cmd::Teardown) => run_teardown(&user_claude_settings_path()?),
+
         Some(Cmd::Wrap {
             kind,
             cwd,
@@ -825,9 +961,6 @@ fn main() -> Result<()> {
                 .ok()
                 .filter(|s| !s.is_empty())
                 .context("agent-orch wrap requires $TMUX_PANE — run inside tmux")?;
-            let user_claude_settings = std::env::var("HOME")
-                .map(|h| PathBuf::from(h).join(".claude/settings.json"))
-                .unwrap_or_default();
             let resolved_cwd = match cwd {
                 Some(p) => p,
                 None => std::env::current_dir().context("current_dir")?,
@@ -835,7 +968,6 @@ fn main() -> Result<()> {
             let ctx = WrapCtx {
                 store: &store,
                 self_path: &self_path,
-                user_claude_settings: &user_claude_settings,
                 pane_id: &pane_id,
                 cwd: &resolved_cwd,
                 agent_argv: &agent_argv,
@@ -929,21 +1061,20 @@ mod tests {
         (dir, store)
     }
 
-    /// Build a WrapCtx for a test. Both `store` and `cwd` are inside
-    /// the tempdir so claude/kiro side effects land where the test
-    /// expects. `self_path` is a stable string the test asserts on.
+    /// Build a WrapCtx for a test. `store` and `cwd` are inside the
+    /// tempdir so any per-kind side effects (Kiro project config)
+    /// land where the test expects. `self_path` is a stable string
+    /// the test asserts on.
     fn ctx<'a>(
         store: &'a Store,
         pane_id: &'a str,
         cwd: &'a Path,
         argv: &'a [String],
-        user_settings: &'a Path,
         self_path: &'a Path,
     ) -> WrapCtx<'a> {
         WrapCtx {
             store,
             self_path,
-            user_claude_settings: user_settings,
             pane_id,
             cwd,
             agent_argv: argv,
@@ -1070,115 +1201,232 @@ mod tests {
     // 5 · Wrapper — Claude prepare + cleanup ─────────────────────
 
     #[test]
-    fn claude_prepare_synthesizes_settings_with_user_base_merged() {
+    fn claude_prepare_passes_argv_through_unchanged() {
+        // Claude::prepare is now a no-op — hooks live globally
+        // via setup. argv is whatever the user passed after `--`.
         let (dir, store) = fixtures();
-        let user = dir.path().join("user.json");
-        fs::write(
-            &user,
-            br#"{"hooks":{"UserPromptSubmit":[{"type":"command","command":"my-hook"}]}}"#,
-        )
-        .unwrap();
         let argv = vec!["claude".to_string(), "--resume".into(), "abc".into()];
         let self_path = PathBuf::from("/test/agent-orch");
         let cwd = dir.path().to_path_buf();
-        let ctx = ctx(&store, "%7", &cwd, &argv, &user, &self_path);
+        let ctx = ctx(&store, "%7", &cwd, &argv, &self_path);
         let p = Claude.prepare(&ctx).unwrap();
-
         assert_eq!(p.program, "claude");
-        // argv: program at slot 0, --settings + path spliced after
-        assert_eq!(p.argv[0], "claude");
-        assert_eq!(p.argv[1], "--settings");
-        assert!(p.argv[2].ends_with("settings.json"));
-        assert_eq!(p.argv[3], "--resume");
-        assert_eq!(p.argv[4], "abc");
+        assert_eq!(p.argv, vec!["claude", "--resume", "abc"]);
         assert!(!p.created_kiro_config);
-
-        let synth_path = store.tmp_dir("%7").join("settings.json");
-        let synth: serde_json::Value =
-            serde_json::from_slice(&fs::read(&synth_path).unwrap()).unwrap();
-        // User's existing entry is preserved verbatim in slot 0 (we
-        // didn't rewrite it). Our entry uses the nested matcher+hooks
-        // shape Claude requires.
-        let ups = &synth["hooks"]["UserPromptSubmit"];
-        assert_eq!(ups[0]["command"], "my-hook"); // user's entry untouched
-        assert_eq!(ups[1]["matcher"], "");
-        assert_eq!(
-            ups[1]["hooks"][0]["command"],
-            "/test/agent-orch hook UserPromptSubmit"
-        );
-        assert_eq!(ups[1]["hooks"][0]["type"], "command");
-        for ev in [EVT_PRE_TOOL_USE, EVT_POST_TOOL_USE, EVT_STOP] {
-            let entry = &synth["hooks"][ev][0];
-            assert_eq!(entry["matcher"], "");
-            assert_eq!(
-                entry["hooks"][0]["command"],
-                format!("/test/agent-orch hook {}", ev)
-            );
-            assert_eq!(entry["hooks"][0]["type"], "command");
-        }
     }
 
     #[test]
-    fn claude_prepare_no_user_settings_writes_fresh() {
+    fn claude_cleanup_is_a_noop() {
         let (dir, store) = fixtures();
-        let argv = vec!["claude".to_string()];
-        let self_path = PathBuf::from("/test/agent-orch");
-        let cwd = dir.path().to_path_buf();
-        let user = dir.path().join("nonexistent.json");
-        let ctx = ctx(&store, "%5", &cwd, &argv, &user, &self_path);
-        Claude.prepare(&ctx).unwrap();
+        let removing = mk("%9", "claude", dir.path().to_str().unwrap(), 1);
+        // No assertions on the filesystem; the contract is "do nothing,
+        // succeed". Just verify it returns Ok.
+        Claude.cleanup(&store, &removing, &[]).unwrap();
+    }
 
-        let synth: serde_json::Value =
-            serde_json::from_slice(&fs::read(store.tmp_dir("%5").join("settings.json")).unwrap())
-                .unwrap();
+    // 6a · setup / teardown — Claude user-global hook install ────
+
+    #[test]
+    fn setup_creates_settings_with_tagged_entries() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let self_path = PathBuf::from("/test/agent-orch");
+        run_setup(&path, &self_path).unwrap();
+
+        let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         for ev in [
             EVT_USER_PROMPT_SUBMIT,
             EVT_PRE_TOOL_USE,
             EVT_POST_TOOL_USE,
             EVT_STOP,
         ] {
-            assert_eq!(synth["hooks"][ev].as_array().unwrap().len(), 1, "{ev}");
+            let arr = v["hooks"][ev].as_array().unwrap();
+            assert_eq!(arr.len(), 1, "{ev}");
+            assert_eq!(arr[0]["matcher"], "");
+            assert_eq!(arr[0][AGENT_ORCH_TAG], true);
+            assert_eq!(
+                arr[0]["hooks"][0]["command"],
+                format!("/test/agent-orch hook {}", ev)
+            );
+            assert_eq!(arr[0]["hooks"][0]["type"], "command");
         }
     }
 
     #[test]
-    fn claude_prepare_rejects_non_object_user_settings_root() {
-        let (dir, store) = fixtures();
-        let user = dir.path().join("user.json");
-        fs::write(&user, b"[]").unwrap();
-        let argv = vec!["claude".to_string()];
+    fn setup_preserves_user_existing_entries_and_appends_ours() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        // User has their own UserPromptSubmit hook (no tag).
+        fs::write(
+            &path,
+            br#"{
+              "permissions": ["read"],
+              "hooks": {
+                "UserPromptSubmit": [{
+                  "matcher": "",
+                  "hooks": [{"type":"command","command":"my-hook"}]
+                }]
+              }
+            }"#,
+        )
+        .unwrap();
         let self_path = PathBuf::from("/test/agent-orch");
-        let cwd = dir.path().to_path_buf();
-        let ctx = ctx(&store, "%3", &cwd, &argv, &user, &self_path);
-        let err = Claude.prepare(&ctx).unwrap_err();
+        run_setup(&path, &self_path).unwrap();
+
+        let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        // Sibling fields untouched.
+        assert_eq!(v["permissions"][0], "read");
+        // User's UserPromptSubmit entry preserved at slot 0; ours appended.
+        let ups = v["hooks"]["UserPromptSubmit"].as_array().unwrap();
+        assert_eq!(ups.len(), 2);
+        assert_eq!(ups[0]["hooks"][0]["command"], "my-hook");
+        assert!(ups[0].get(AGENT_ORCH_TAG).is_none());
+        assert_eq!(ups[1][AGENT_ORCH_TAG], true);
+        // Other events have just our entry.
+        for ev in [EVT_PRE_TOOL_USE, EVT_POST_TOOL_USE, EVT_STOP] {
+            let arr = v["hooks"][ev].as_array().unwrap();
+            assert_eq!(arr.len(), 1);
+            assert_eq!(arr[0][AGENT_ORCH_TAG], true);
+        }
+    }
+
+    #[test]
+    fn setup_idempotent_no_duplicate_entries() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let self_path = PathBuf::from("/test/agent-orch");
+        run_setup(&path, &self_path).unwrap();
+        run_setup(&path, &self_path).unwrap();
+
+        let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        for ev in [
+            EVT_USER_PROMPT_SUBMIT,
+            EVT_PRE_TOOL_USE,
+            EVT_POST_TOOL_USE,
+            EVT_STOP,
+        ] {
+            assert_eq!(
+                v["hooks"][ev].as_array().unwrap().len(),
+                1,
+                "{ev} duplicated"
+            );
+        }
+    }
+
+    #[test]
+    fn setup_refreshes_command_path_on_rerun() {
+        // Path-refresh case: user moved/rebuilt the binary. Re-running
+        // setup with a new self_path rewrites the tagged entry's
+        // command, doesn't add a second.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        run_setup(&path, &PathBuf::from("/old/agent-orch")).unwrap();
+        run_setup(&path, &PathBuf::from("/new/agent-orch")).unwrap();
+
+        let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let arr = v["hooks"]["Stop"].as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["hooks"][0]["command"], "/new/agent-orch hook Stop");
+    }
+
+    #[test]
+    fn setup_rejects_non_object_user_settings_root() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(&path, b"[]").unwrap();
+        let err = run_setup(&path, &PathBuf::from("/x/agent-orch")).unwrap_err();
         assert!(format!("{err:#}").contains("must be a JSON object"));
     }
 
     #[test]
-    fn claude_prepare_rejects_non_array_hooks_event() {
-        let (dir, store) = fixtures();
-        let user = dir.path().join("user.json");
-        fs::write(&user, br#"{"hooks":{"Stop":"oops-a-string"}}"#).unwrap();
-        let argv = vec!["claude".to_string()];
-        let self_path = PathBuf::from("/test/agent-orch");
-        let cwd = dir.path().to_path_buf();
-        let ctx = ctx(&store, "%4", &cwd, &argv, &user, &self_path);
-        let err = Claude.prepare(&ctx).unwrap_err();
+    fn setup_rejects_non_array_hooks_event() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(&path, br#"{"hooks":{"Stop":"oops"}}"#).unwrap();
+        let err = run_setup(&path, &PathBuf::from("/x/agent-orch")).unwrap_err();
         assert!(format!("{err:#}").contains("must be an array"));
     }
 
     #[test]
-    fn claude_cleanup_removes_per_pane_tmpdir() {
-        let (dir, store) = fixtures();
-        // Prime the tmpdir as if Claude::prepare ran.
-        let pane_dir = store.tmp_dir("%9");
-        fs::create_dir_all(&pane_dir).unwrap();
-        fs::write(pane_dir.join("settings.json"), b"{}").unwrap();
-        assert!(pane_dir.exists());
+    fn teardown_removes_only_tagged_entries_and_preserves_user_ones() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        // Mixed: user entry + ours.
+        fs::write(
+            &path,
+            br#"{
+              "permissions": ["read"],
+              "hooks": {
+                "UserPromptSubmit": [
+                  { "matcher": "", "hooks": [{"type":"command","command":"my-hook"}] },
+                  { "matcher": "", "hooks": [{"type":"command","command":"/x hook UserPromptSubmit"}], "x-agent-orch-managed": true }
+                ],
+                "Stop": [
+                  { "matcher": "", "hooks": [{"type":"command","command":"/x hook Stop"}], "x-agent-orch-managed": true }
+                ]
+              }
+            }"#,
+        )
+        .unwrap();
+        run_teardown(&path).unwrap();
 
-        let removing = mk("%9", "claude", dir.path().to_str().unwrap(), 1);
-        Claude.cleanup(&store, &removing, &[]).unwrap();
-        assert!(!pane_dir.exists());
+        let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(v["permissions"][0], "read");
+        // UserPromptSubmit kept the user's entry, dropped ours.
+        let ups = v["hooks"]["UserPromptSubmit"].as_array().unwrap();
+        assert_eq!(ups.len(), 1);
+        assert_eq!(ups[0]["hooks"][0]["command"], "my-hook");
+        // Stop's array became empty → key removed entirely.
+        assert!(v["hooks"].get("Stop").is_none());
+    }
+
+    #[test]
+    fn teardown_removes_file_when_only_our_content_remains() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        run_setup(&path, &PathBuf::from("/x/agent-orch")).unwrap();
+        assert!(path.exists());
+        run_teardown(&path).unwrap();
+        assert!(!path.exists(), "file should be removed when result is {{}}");
+    }
+
+    #[test]
+    fn teardown_keeps_file_when_user_content_remains() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(
+            &path,
+            br#"{"permissions":["read"],"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"/x hook Stop"}],"x-agent-orch-managed":true}]}}"#,
+        )
+        .unwrap();
+        run_teardown(&path).unwrap();
+        assert!(path.exists());
+        let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(v["permissions"][0], "read");
+        assert!(v.get("hooks").is_none(), "hooks should be pruned");
+    }
+
+    #[test]
+    fn teardown_noop_on_missing_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("does-not-exist.json");
+        run_teardown(&path).unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn setup_then_teardown_full_round_trip_restores_pre_state() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let original = br#"{"permissions":["read"],"hooks":{"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"my-hook"}]}]}}"#;
+        fs::write(&path, original).unwrap();
+        run_setup(&path, &PathBuf::from("/x/agent-orch")).unwrap();
+        run_teardown(&path).unwrap();
+
+        // Re-read and re-parse to compare structurally (formatting may differ).
+        let after: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let before: serde_json::Value = serde_json::from_slice(original).unwrap();
+        assert_eq!(after, before);
     }
 
     // 6 · Wrapper — Kiro prepare + cleanup (refcount) ────────────
@@ -1189,8 +1437,7 @@ mod tests {
         let cwd = dir.path().to_path_buf();
         let argv = vec!["kiro".to_string(), "chat".into()];
         let self_path = PathBuf::from("/test/agent-orch");
-        let user = dir.path().join("nonexistent.json");
-        let ctx = ctx(&store, "%1", &cwd, &argv, &user, &self_path);
+        let ctx = ctx(&store, "%1", &cwd, &argv, &self_path);
         let p = Kiro.prepare(&ctx).unwrap();
 
         assert!(p.created_kiro_config);
@@ -1223,13 +1470,12 @@ mod tests {
         let cwd = dir.path().to_path_buf();
         let argv = vec!["kiro".to_string()];
         let self_path = PathBuf::from("/test/agent-orch");
-        let user = dir.path().join("nonexistent.json");
         // First creates.
-        let ctx_a = ctx(&store, "%1", &cwd, &argv, &user, &self_path);
+        let ctx_a = ctx(&store, "%1", &cwd, &argv, &self_path);
         let pa = Kiro.prepare(&ctx_a).unwrap();
         assert!(pa.created_kiro_config);
         // Second reuses.
-        let ctx_b = ctx(&store, "%2", &cwd, &argv, &user, &self_path);
+        let ctx_b = ctx(&store, "%2", &cwd, &argv, &self_path);
         let pb = Kiro.prepare(&ctx_b).unwrap();
         assert!(!pb.created_kiro_config);
     }
@@ -1287,8 +1533,7 @@ mod tests {
         let cwd = dir.path().to_path_buf();
         let argv = vec!["claude-stub".to_string()];
         let self_path = PathBuf::from("/test/agent-orch");
-        let user = dir.path().join("nonexistent.json");
-        let ctx = ctx(&store, "%42", &cwd, &argv, &user, &self_path);
+        let ctx = ctx(&store, "%42", &cwd, &argv, &self_path);
         wrap(&Claude, &ctx, false).unwrap();
 
         let v = store.read().unwrap();
@@ -1306,8 +1551,7 @@ mod tests {
         let cwd = dir.path().to_path_buf();
         let argv = vec!["kiro-stub".to_string()];
         let self_path = PathBuf::from("/test/agent-orch");
-        let user = dir.path().join("nonexistent.json");
-        let ctx = ctx(&store, "%9", &cwd, &argv, &user, &self_path);
+        let ctx = ctx(&store, "%9", &cwd, &argv, &self_path);
         wrap(&Kiro, &ctx, false).unwrap();
 
         let v = store.read().unwrap();
@@ -1325,8 +1569,7 @@ mod tests {
         let cwd = dir.path().to_path_buf();
         let argv = vec!["stub".to_string()];
         let self_path = PathBuf::from("/test/agent-orch");
-        let user = dir.path().join("u.json");
-        let ctx = ctx(&store, "%5", &cwd, &argv, &user, &self_path);
+        let ctx = ctx(&store, "%5", &cwd, &argv, &self_path);
         wrap(&Claude, &ctx, false).unwrap();
         let err = wrap(&Claude, &ctx, false).unwrap_err();
         assert!(format!("{err:#}").contains("already registered"));
@@ -1371,8 +1614,7 @@ mod tests {
         // Now wrap on the same pane — should silently replace.
         let argv = vec!["stub".to_string()];
         let self_path = PathBuf::from("/test/agent-orch");
-        let user = dir.path().join("u.json");
-        let ctx = ctx(&store, "%5", &cwd, &argv, &user, &self_path);
+        let ctx = ctx(&store, "%5", &cwd, &argv, &self_path);
         wrap(&Claude, &ctx, false).unwrap();
 
         let v = store.read().unwrap();
@@ -1407,8 +1649,7 @@ mod tests {
         // the old config; prepare immediately writes a new one.
         let argv = vec!["kiro".to_string()];
         let self_path = PathBuf::from("/test/agent-orch");
-        let user = dir.path().join("u.json");
-        let ctx = ctx(&store, "%9", &cwd, &argv, &user, &self_path);
+        let ctx = ctx(&store, "%9", &cwd, &argv, &self_path);
         wrap(&Kiro, &ctx, false).unwrap();
 
         // The new wrap re-created the kiro config (its prepare runs
@@ -1429,8 +1670,7 @@ mod tests {
         let cwd = dir.path().to_path_buf();
         let argv: Vec<String> = vec![];
         let self_path = PathBuf::from("/test/agent-orch");
-        let user = dir.path().join("u.json");
-        let ctx = ctx(&store, "%1", &cwd, &argv, &user, &self_path);
+        let ctx = ctx(&store, "%1", &cwd, &argv, &self_path);
         let err = wrap(&Claude, &ctx, false).unwrap_err();
         assert!(format!("{err:#}").contains("after `--`"));
     }
@@ -1443,8 +1683,7 @@ mod tests {
         let cwd = dir.path().to_path_buf();
         let argv = vec!["stub".to_string()];
         let self_path = PathBuf::from("/test/agent-orch");
-        let user = dir.path().join("u.json");
-        let ctx = ctx(&store, "%9", &cwd, &argv, &user, &self_path);
+        let ctx = ctx(&store, "%9", &cwd, &argv, &self_path);
         wrap(&Claude, &ctx, false).unwrap();
 
         let payload = br#"{"prompt":"fix the test"}"#.to_vec();
@@ -1468,8 +1707,7 @@ mod tests {
         let cwd = dir.path().to_path_buf();
         let argv = vec!["stub".to_string()];
         let self_path = PathBuf::from("/test/agent-orch");
-        let user = dir.path().join("u.json");
-        let ctx = ctx(&store, "%1", &cwd, &argv, &user, &self_path);
+        let ctx = ctx(&store, "%1", &cwd, &argv, &self_path);
         wrap(&Claude, &ctx, false).unwrap();
 
         Claude
@@ -1502,8 +1740,7 @@ mod tests {
         let cwd = dir.path().to_path_buf();
         let argv = vec!["stub".to_string()];
         let self_path = PathBuf::from("/test/agent-orch");
-        let user = dir.path().join("u.json");
-        let ctx = ctx(&store, "%7", &cwd, &argv, &user, &self_path);
+        let ctx = ctx(&store, "%7", &cwd, &argv, &self_path);
         wrap(&Kiro, &ctx, false).unwrap();
 
         Kiro.hook(
@@ -1526,8 +1763,7 @@ mod tests {
         let cwd = dir.path().to_path_buf();
         let argv = vec!["stub".to_string()];
         let self_path = PathBuf::from("/test/agent-orch");
-        let user = dir.path().join("u.json");
-        let ctx = ctx(&store, "%1", &cwd, &argv, &user, &self_path);
+        let ctx = ctx(&store, "%1", &cwd, &argv, &self_path);
         wrap(&Kiro, &ctx, false).unwrap();
         let cfg = cwd.join(".kiro/agents/agent-orch.json");
         assert!(cfg.exists());
@@ -1541,22 +1777,6 @@ mod tests {
     fn unregister_idempotent_on_unknown_pane() {
         let (_dir, store) = fixtures();
         unregister(&store, "%does-not-exist").unwrap();
-    }
-
-    #[test]
-    fn unregister_claude_removes_per_pane_tmpdir() {
-        let (dir, store) = fixtures();
-        let cwd = dir.path().to_path_buf();
-        let argv = vec!["stub".to_string()];
-        let self_path = PathBuf::from("/test/agent-orch");
-        let user = dir.path().join("u.json");
-        let ctx = ctx(&store, "%4", &cwd, &argv, &user, &self_path);
-        wrap(&Claude, &ctx, false).unwrap();
-
-        let pane_tmp = store.tmp_dir("%4");
-        assert!(pane_tmp.join("settings.json").exists());
-        unregister(&store, "%4").unwrap();
-        assert!(!pane_tmp.exists());
     }
 
     #[test]
