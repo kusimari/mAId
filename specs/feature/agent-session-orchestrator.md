@@ -393,21 +393,39 @@ watcher thread:
   swaps inode). On debounced sessions.json change:
     write `POST / HTTP/1.1\r\nContent-Length:N\r\n\r\nreload(<self> render)`
     to <state>/fzf.sock as a UnixStream. fzf parses HTTP/1.1 over UDS.
-  fzf exits → channel disconnects → watcher thread exits.
+  thread exits when the watcher's channel is dropped (on fzf
+  child shutdown / Loop::body's stack unwind).
 ```
+
+**fzf does not exit on selection.** `execute-silent` and
+`clear-query` are *non-terminal* actions — fzf runs the
+command, captures its exit code, and stays alive with the same
+query, cursor, and row list. The terminal actions that *do*
+exit fzf are `accept`, `accept-non-empty`, `abort`, `become(...)` —
+none are in our bind. So an `enter` press fires `tmux
+switch-client`, the user's tmux client lands on the agent's
+pane, and fzf is untouched in the orchestrator pane behind the
+scenes. Press M-o (the keybind installed by `setup`) and the
+tmux client returns to the orchestrator session, with fzf
+right there waiting — query cleared, cursor preserved by
+content match, rows up to date with whatever reloads the
+watcher pushed while the user was away.
+
+The orchestrator pane is occupied by fzf for as long as the
+user keeps the picker open. fzf actually exits only on:
+- Esc / Ctrl-C (default `abort` binding)
+- the orchestrator tmux session being killed
+- the fzf process being killed directly
+
+When fzf does eventually exit, the Rust main thread's
+`child.wait()` returns, `Loop::body` returns, the watcher
+debouncer drops, the watcher thread's channel disconnects
+and the thread exits cleanly.
 
 The recursion through `tmux new-session -d ... 'agent-orch loop'`
 re-enters the same verb, which detects "now I'm inside the
 orchestrator session" and falls through to the picker path. One
 verb, one mental model.
-
-The `enter:execute-silent(tmux switch-client -t {1})+clear-query`
-bind runs the switch-client *without* exiting fzf — the user
-lands on the agent's pane while fzf is still alive in the
-orchestrator session's pane. Press M-o (the keybind installed
-by `setup`) and the client is back in the orchestrator session,
-with fzf showing the latest state (the watcher pushed any
-hook-driven updates while you were away).
 
 `{1}` is the original column-1 (pane id) regardless of
 `--with-nth` (which controls display only). `--track --id-nth=1`
@@ -885,7 +903,10 @@ impl<'a> Loop<'a> {
 
     /// Picker body — event-driven persistent fzf with
     /// `--listen=<sock>`, watcher pushes `reload(...)` over
-    /// the socket on each `sessions.json` change.
+    /// the socket on each `sessions.json` change. fzf stays
+    /// alive across selections (`execute-silent` is
+    /// non-terminal); only Esc / Ctrl-C / pane death exits it.
+    /// Returns when the fzf child exits.
     fn body(&self) -> Result<()>;
 }
 ```
@@ -1177,9 +1198,16 @@ swaps the inode; per-file watch goes stale). Debounce window
 background thread runs the watcher; `mpsc::channel` glues
 them. Main thread `wait`s on the fzf child; the watcher
 thread on each debounced event opens a fresh `UnixStream`,
-writes the reload POST, drops the connection. fzf-still-alive
-is the loop terminator; fzf exits → channel disconnects →
-watcher thread exits.
+writes the reload POST, drops the connection.
+
+**Lifecycle.** fzf is the loop. Selections fire
+`execute-silent(tmux switch-client ...)` — non-terminal — so
+fzf stays alive across an arbitrary number of picks. fzf
+exits only when the user hits Esc / Ctrl-C, kills the
+orchestrator tmux session, or kills the fzf process directly.
+On exit, `child.wait()` returns, `Loop::body` returns, the
+debouncer drops, and the watcher thread's channel disconnects
+cleanly.
 
 #### tmux keybind in `setup` (live-only)
 
