@@ -110,10 +110,19 @@ Subcommands (parsed via `clap` derive):
   Otherwise applies the event to the matching session record
   under `flock`. Always exits 0 even on internal errors — a
   failing hook reporter must never block the agent's turn.
-- `agent-orch pick` — print one selected entry's pane id to
-  stdout, exit. Used inside the loop.
-- `agent-orch loop-body` — the picker loop body that runs inside
-  the orchestrator session.
+- `agent-orch pick` — one-shot picker. Spawns fzf, blocks on
+  selection, prints the chosen pane id to stdout, exits. Used
+  for scripting / ad-hoc queries.
+- `agent-orch render` — print the formatted picker rows
+  (`<pane_id>\t<row>` per line) to stdout. Used by `loop-body`
+  for initial population and by fzf's `reload(<cmd>)` action.
+- `agent-orch loop-body` — the persistent event-driven picker
+  that runs inside the orchestrator session. Spawns fzf with
+  `--listen=<state>/fzf.sock`, watches the registry parent
+  directory via `notify`, pushes `reload(...)` over the socket
+  on debounced changes. fzf stays alive across selections;
+  `enter` runs `tmux switch-client` via `execute-silent` so
+  the picker survives the round-trip.
 - `agent-orch list` — print the live registry as a table.
 - `agent-orch unregister <pane-id>` — remove an entry. Called
   by the tmux `pane-exited` hook. Runs per-kind cleanup via the
@@ -345,7 +354,7 @@ against live sessions.
   restarted while the orchestrator was down. The sweep also
   runs cleanup on the sessions it removes.
 
-### Picker (`agent-orch pick` + `loop-body`)
+### Picker (`agent-orch pick` + `loop-body` + `render`)
 
 Picker UX:
 
@@ -359,20 +368,47 @@ Picker UX:
 - `--preview` shows the full record (state, full prompt, last
   event, started-ago, state age).
 
-Picker loop (runs inside the orchestrator session):
+Three subcommands cover three roles:
+
+- `agent-orch pick` — one-shot picker. Spawns fzf, blocks on
+  selection, prints the chosen pane id to stdout. Used for
+  scripting / ad-hoc queries (`agent-orch pick | xargs -I{}
+  tmux switch-client -t {}`). Polls the registry once at
+  spawn time.
+- `agent-orch render` — print the formatted picker rows to
+  stdout. One `<pane_id>\t<row>` per line. Used by
+  `loop-body` and by fzf's `reload(<cmd>)` action.
+- `agent-orch loop-body` — the **persistent** event-driven
+  picker that runs inside the orchestrator session.
+
+Picker loop (event-driven, runs inside the orchestrator session):
 
 ```
-loop:
-  while true:
-    sel = `agent-orch pick`
-    if sel: tmux switch-client -t sel
-    else: sleep 0.2
+fzf --listen=<state>/fzf.sock \
+    --with-nth=2.. --track --id-nth=1 \
+    --bind 'enter:execute-silent(tmux switch-client -t {1})+clear-query' \
+  < <(<self> render)              # initial population
+
+main thread: wait on fzf child
+watcher thread:
+  notify-debouncer-mini watches <state>/ (parent dir, atomic-rename
+  swaps inode). On debounced sessions.json change:
+    write `POST / HTTP/1.1\r\nContent-Length:N\r\n\r\nreload(<self> render)`
+    to <state>/fzf.sock as a UnixStream. fzf parses HTTP/1.1 over UDS.
+  fzf exits → channel disconnects → watcher thread exits.
 ```
 
-`pick` invokes `fzf` via `std::process::Command`, feeds it the
-formatted rows on stdin, captures the selection on stdout, prints
-the pane id. fzf is a hard dependency for v1; doctor checks for
-it.
+The `enter:execute-silent(tmux switch-client -t {1})+clear-query`
+bind runs the switch-client *without* exiting fzf — the user
+lands on the agent's pane while fzf is still alive in the
+orchestrator session's pane. Press M-o (the keybind installed
+by `setup`) and the client is back in the orchestrator session,
+with fzf showing the latest state (the watcher pushed any
+hook-driven updates while you were away).
+
+`{1}` is the original column-1 (pane id) regardless of
+`--with-nth` (which controls display only). `--track --id-nth=1`
+keeps the cursor on the same pane id across reloads.
 
 Orchestrator session ensure-on-run (bare `agent-orch`):
 
@@ -384,9 +420,17 @@ tmux switch-client -t orchestrator
 
 ### "Back to orchestrator" UX
 
-- Documented in the README: user adds
-  `bind-key -n M-o switch-client -t orchestrator` to their
-  `~/.tmux.conf`. The orchestrator never edits user dotfiles.
+- **`agent-orch setup` installs the M-o keybind on the live
+  tmux server** (`tmux bind-key -n M-o switch-client -t
+  orchestrator`). Live-only — the binding persists for the
+  life of the tmux server but is lost on `tmux kill-server`
+  or reboot. Re-run `setup` to restore. **Persistent install
+  across reboots is a follow-up.**
+- Fallback path that always works: run `agent-orch` (no args)
+  from any shell pane. Bare invocation does ensure-session +
+  switch-client. Useful when you don't have the keybind
+  installed (fresh machine, just rebooted, etc.) or when a
+  shell pane is more accessible than the keybind.
 - The wrapper's per-pane `@agent-orch-pane` user option lets
   future features introspect pane ownership without re-reading
   the registry.
@@ -1058,11 +1102,193 @@ loop-body) and the typeclass refactor (`Session`, `Store`,
 `Wrapper` trait + Claude/Kiro/Other impls, `Loop`) shipped
 across commits `0e0281c` … `463eccc`, plus two correctness
 fixes (hook schema + stale-record auto-replace) in `db902ad`.
+Setup/teardown for Claude user-global hook install shipped
+in `b416c50`.
 
-**The remaining work is one slice: move Claude hook injection
-from per-launch to user-global via `setup` / `teardown`.**
+**The remaining work is one slice: convert `loop-body` from a
+poll loop to an event-driven persistent fzf, and add a
+live-server-only tmux keybind to `setup`.**
 
-### Slice — `agent-orch setup` / `teardown` for Claude
+### Slice — event-driven `loop-body` + tmux keybind in `setup`
+
+One commit, one Code Review Gate, one push.
+
+#### Event-driven loop-body
+
+Replace the current poll-shaped `Loop::body`:
+
+```
+while true:
+    pid = fzf < (render rows)
+    tmux switch-client -t pid
+```
+
+With a **persistent fzf** that survives across selections and
+re-renders on registry changes:
+
+```
+spawn fzf --listen=<state>/fzf.sock \
+          --with-nth=2.. --track --id-nth=1 \
+          --bind 'enter:execute-silent(tmux switch-client -t {1})+clear-query' \
+       < <(<self> render)        # initial population
+
+watch <state>/ via notify (parent dir, atomic-rename swaps inode)
+on debounced change:
+    push `reload(<self> render)` to fzf.sock as HTTP/1.1 over UnixStream
+wait for fzf to exit (Ctrl-C, ^D, etc.)
+```
+
+Two new subcommands wire this in:
+
+- `agent-orch render` — prints the formatted picker rows to
+  stdout. Same logic as `Loop::render` produces today, but
+  exposed as its own subcommand so fzf's `reload(<cmd>)`
+  invocation can call it.
+- `loop-body` body changes from poll to event-driven; the
+  startup is: ensure socket-path is fresh (rm if present),
+  spawn fzf, poll-existence the `.sock` file (~10–50ms typical
+  bind window), start the watcher, push the first reload (so
+  the picker shows live state even without a session change).
+
+**fzf flags (load-bearing):**
+- `--listen=<sock>` — Unix socket path ending in `.sock`. fzf
+  speaks HTTP/1.1 over it; POST body is raw `reload(...)`
+  action text.
+- `--with-nth=2..` — display only columns 2.. (the formatted
+  row); column 1 (pane id) stays in the placeholder substrate.
+- `--track --id-nth=1` — fzf 0.71.0+; cursor follows the row
+  whose column-1 value matches across reloads. Plain `--track`
+  is index-based and doesn't survive reload.
+- `--bind 'enter:execute-silent(tmux switch-client -t {1})+clear-query'`
+  — `execute-silent` runs `tmux switch-client` without exiting
+  fzf; `+clear-query` clears the typed search; `{1}` is the
+  raw column-1 value (pane id).
+
+**Reload-push transport:** hand-rolled HTTP/1.1 over
+`UnixStream::connect`. fzf parses the same protocol over UDS
+as it does over TCP. ~30 lines of Rust, std-only, no HTTP
+client crate.
+
+**Watcher:** `notify` 8.x + `notify-debouncer-mini` 0.7.
+Watch the *parent dir* of `sessions.json` (atomic-rename
+swaps the inode; per-file watch goes stale). Debounce window
+~150ms. Cross-platform via `recommended_watcher`.
+
+**Architecture (no async):** main thread spawns fzf as child;
+background thread runs the watcher; `mpsc::channel` glues
+them. Main thread `wait`s on the fzf child; the watcher
+thread on each debounced event opens a fresh `UnixStream`,
+writes the reload POST, drops the connection. fzf-still-alive
+is the loop terminator; fzf exits → channel disconnects →
+watcher thread exits.
+
+#### tmux keybind in `setup` (live-only)
+
+`agent-orch setup` already writes Claude hooks. Add: run
+`tmux bind-key -n M-o switch-client -t orchestrator` against
+the live tmux server so the user gets the round-trip
+keybind immediately. **Live-only.** Persistence across
+`tmux kill-server` / reboot is deferred — running `setup`
+again restores the binding. No edits to the user's tmux
+conf in this slice.
+
+`agent-orch teardown` symmetrically runs
+`tmux unbind-key -n M-o`.
+
+Both calls swallow errors with a one-line warning if the
+live-server install fails (no tmux running, wrong socket,
+etc.). The Claude-side install is independent and proceeds.
+
+#### Why event-driven, not poll
+
+Today's poll loop has two real problems the user named:
+
+1. **Stale view between selections.** If a hook fires while
+   fzf is up, the user sees the old state until they Esc
+   and re-pick. With persistent fzf + reload, state lands
+   in <100ms.
+2. **Lost query and cursor on every round-trip.** Restarting
+   fzf drops what the user typed and where the cursor was.
+   `--track --id-nth=1` + `execute-silent` keeps both.
+
+The cost is real — two new deps (`notify`,
+`notify-debouncer-mini`) — but the UX win is load-bearing
+for "open the orchestrator and leave it open."
+
+#### Implementation steps
+
+1. Add `notify = "8"` + `notify-debouncer-mini = "0.7"` to
+   `Cargo.toml`.
+2. Add `Cmd::Render` to the CLI enum; implement `cmd_render`
+   that runs `Loop::render` against `Store::from_env` and
+   prints the rows to stdout (one `<pane_id>\t<row>` per
+   line).
+3. Rewrite `Loop::body`:
+   - Build the socket path (`store.dir().join("fzf.sock")`)
+     and remove any existing file at that path.
+   - Spawn fzf with the flags above; pipe `agent-orch render`
+     output to its stdin (or `cat` initial render then
+     `--listen` push).
+   - Poll-existence the `.sock` file with a short retry loop
+     (50ms × 20 attempts).
+   - Spawn a background thread running `notify-debouncer-mini`
+     watching `store.dir()` non-recursively. On each
+     debounced event whose path matches `sessions.json`,
+     write a reload POST to the socket.
+   - Wait for the fzf child to exit. On exit, drop the
+     watcher (channel close → thread exits).
+4. Update `cmd_setup` (the `Cmd::Setup` arm in `main`) to
+   also run `tmux bind-key -n M-o switch-client -t orchestrator`
+   after the Claude-side install. Soft-fail on tmux-not-running
+   with a single-line warning to stderr.
+5. Update `cmd_teardown` symmetrically: `tmux unbind-key -n M-o`.
+6. Tests:
+   - Unit-test `cmd_render` produces the expected rows for a
+     seeded store.
+   - Unit-test the reload-message construction (build the
+     `POST / HTTP/1.1\r\n...\r\n\r\nreload(...)` string from a
+     given socket path + render command, no network IO).
+   - The full event-driven loop is hard to unit-test (needs
+     a real fzf binary + a real socket); integration is the
+     load-bearing test.
+7. Integration: a new case (case 11) verifies setup/teardown
+   register and unregister the keybind on the private tmux
+   server. Existing case 10 covers the Claude side; case 11
+   adds:
+   ```
+   T set-option -g remain-on-exit on   # already done
+   env HOME=$SETUP_HOME $BIN setup
+   T show-options -g | grep "M-o" || fail
+   env HOME=$SETUP_HOME $BIN teardown
+   T show-options -g | grep "M-o" && fail
+   ```
+   The full event-driven loop body is exercised by the
+   manual functional test (real fzf, real tmux, real
+   round-trip).
+8. Manual functional plan update: the "open the orchestrator,
+   pick, M-o back, pick again" loop now has the explicit
+   verification "your typed query and cursor position survive
+   the round-trip; state updates from hooks land in the
+   picker without you having to do anything."
+9. Code Review Gate.
+10. Push.
+11. Closure: Decision Log entry capturing the live-only
+    tmux-keybind decision and the event-driven loop design.
+
+### Out of scope for this slice
+
+- **Persistent tmux keybind across reboots.** The user's
+  `~/.tmux.conf` may be nix-managed and read-only. Live-only
+  install ships first to validate the UX; a persistent
+  install (sidecar conf + one user-added source-line) lands
+  as a follow-up if reboots become annoying.
+- `agent-orch doctor` — still deferred. Will gate fzf
+  version (≥ 0.71.0 for `--id-nth`, ≥ 0.66.0 for
+  `--listen=<sock>`), warn on missing live keybind, audit
+  stale Claude hooks.
+- ratatui v2.
+
+### Old slice (shipped) — `agent-orch setup` / `teardown` for Claude
 
 One commit, one Code Review Gate, one push.
 
@@ -1273,8 +1499,26 @@ One commit, one Code Review Gate, one push.
       filtering on `$AGENT_ORCH_PANE`** — chosen. Bare claude
       gets a 5ms env-check + exit 0 per event; wrapped claude
       runs the existing logic. Kiro stays project-scoped (its
-      user-global path is undocumented). Awaiting planning →
-      dev cue before code changes.
+      user-global path is undocumented). Landed in `b416c50`.
+- 2026-06-06 · **Re-opened Planning Review Gate** for an
+  event-driven `loop-body` and a tmux keybind in `setup`.
+  Today's `loop-body` is a poll loop that re-spawns fzf on
+  every selection; user feedback was that state changes from
+  hooks don't reach the picker until the next pick, and the
+  typed query / cursor are lost on every round-trip. Researched
+  the fzf `--listen` / `notify` combination and confirmed the
+  documented primitives: fzf 0.66.0+ supports `--listen=<sock>`
+  with HTTP-over-Unix-socket reload pushes; 0.71.0+ adds
+  `--track --id-nth=N` for content-match cursor preservation
+  across reload; `notify` 8.x with `notify-debouncer-mini` 0.7
+  collapses atomic-rename's create+modify+rename burst into one
+  logical event. Architecture: spawn fzf as child + watcher
+  thread + `mpsc::channel`; on debounced change, write a
+  hand-rolled HTTP/1.1 POST to the socket. No async runtime
+  needed. Two new deps. Live-only tmux keybind installed by
+  `setup` (run `tmux bind-key -n M-o ...` against the live
+  server); persistence across reboots deferred. Awaiting
+  planning → dev cue before code changes.
 
 ## What v1 ships and what defers
 
@@ -1300,19 +1544,41 @@ One commit, one Code Review Gate, one push.
   (9 cases on a private tmux server) plus 32 in-process unit
   + behavior tests in `src/main.rs`.
 
+**Shipped since (`b416c50`):** `agent-orch setup` /
+`agent-orch teardown` — tagged install and removal of hook
+entries in `~/.claude/settings.json`. Replaces the per-launch
+`--settings` synth.
+
 **Pending the current planning slice:**
 
-- `agent-orch setup` / `agent-orch teardown` — tagged install
-  and removal of hook entries in `~/.claude/settings.json`.
-  Replaces the per-launch `--settings` synth that this spec's
-  earlier revision called for.
+- **Event-driven `loop-body`.** Spawn fzf with `--listen`,
+  watch `sessions.json` parent dir via `notify`, push
+  `reload(...)` on change. Persistent picker survives
+  selections; cursor position and typed query survive
+  round-trips via `--track --id-nth=1`.
+- **`agent-orch render`** subcommand — prints the formatted
+  picker rows to stdout for fzf's reload to consume.
+- **Live-only tmux keybind in `setup` / `teardown`** —
+  `tmux bind-key -n M-o switch-client -t orchestrator` /
+  `tmux unbind-key -n M-o`. Persistence across reboots is
+  deferred.
 
 **Deferred to follow-up tickets:**
 
-- `agent-orch doctor` — sanity-check (tmux version, fzf,
-  agent CLIs, state-dir writeability, kiro orphan audit,
-  **stale `~/.claude/settings.json` hooks pointing at a
-  missing binary**, **was-`setup`-ever-run on this host?**).
+- **Persistent tmux keybind** across `tmux kill-server` /
+  reboot. Two paths under consideration: (a) edit the user's
+  tmux conf with sentinel markers (won't work for nix-managed
+  read-only confs); (b) write a sidecar `tmux.conf` under our
+  state dir and have the user add one `source-file -q ...`
+  line to their conf. Pick after the live-only version proves
+  out in real use.
+- `agent-orch doctor` — sanity-check (tmux version ≥ 3.2;
+  fzf version ≥ 0.71.0 for `--id-nth`; agent CLIs;
+  state-dir writeability; kiro orphan audit; **stale
+  `~/.claude/settings.json` hooks pointing at a missing
+  binary**; **was `setup` ever run on this host?**;
+  **is the M-o keybind currently registered on the live tmux
+  server?**).
 - `sources/agent-orch/README.md` — install instructions,
   tmux keybind snippet, `setup`/`teardown` notes.
 - v2 TUI port to `ratatui` (replaces fzf).
@@ -1488,3 +1754,52 @@ One commit, one Code Review Gate, one push.
   project-scoped config is born/cleaned per cwd by
   wrap/unregister. Each kind gets the simplest mechanism that
   works reliably for *that* kind given *its* documented surface.
+
+- **Event-driven `loop-body`** (poll-loop replacement).
+  Today's loop spawns fzf, gets a selection, switches client,
+  re-spawns fzf — every iteration. State updates from hooks
+  during a pick don't reach the picker until the next pick;
+  typed query and cursor are lost on every round-trip.
+  Replaced with a persistent fzf + `notify`-driven reload:
+  - `fzf --listen=<state>/fzf.sock` opens an HTTP-over-UDS
+    control plane.
+  - `--bind 'enter:execute-silent(tmux switch-client -t {1})+clear-query'`
+    runs the switch *without* exiting fzf; the picker stays
+    on screen across selections.
+  - `--track --id-nth=1` (fzf 0.71.0+) keeps the cursor on
+    the same row by content match across reloads.
+  - `notify` + `notify-debouncer-mini` watches the parent dir
+    of `sessions.json`; on debounced change, the watcher
+    thread POSTs `reload(<self> render)` to the socket as
+    hand-rolled HTTP/1.1.
+  - `agent-orch render` is a new subcommand that prints the
+    formatted picker rows so fzf's reload command can shell
+    out to it.
+
+  Two new deps (`notify`, `notify-debouncer-mini`). No async
+  runtime needed; main thread waits on the fzf child, watcher
+  thread runs via `mpsc::channel`. Drop the old poll body.
+
+  Trade-off accepted: fzf < 0.71.0 silently degrades cursor
+  preservation; fzf < 0.66.0 doesn't support
+  `--listen=<sock>`. Doctor (deferred) gates versions; for
+  now a clear error message at startup if the socket fails
+  to bind.
+
+- **Live-only tmux keybind in `setup` / `teardown`.** Run
+  `tmux bind-key -n M-o switch-client -t orchestrator` at
+  setup time and `tmux unbind-key -n M-o` at teardown. The
+  binding persists for the life of the tmux server; survives
+  `tmux source-file` and explicit detach/attach but **not**
+  `tmux kill-server` or reboot. The user's tmux conf is not
+  edited — the next slice will tackle persistence (sidecar
+  conf + one user-added source-line). Live-only ships first
+  because (a) implementation is ~10 lines, (b) it validates
+  the UX assumption that M-o is the right back-to-orchestrator
+  verb before we invest in conf-file edits, and (c) on this
+  user's nix-managed setup the user's tmux conf may be
+  read-only — we don't yet know which persistence pattern
+  fits best for that case. Re-running `agent-orch setup`
+  after a reboot restores the binding; doctor (deferred)
+  will flag "keybind not currently registered" so the user
+  knows when to do that.
