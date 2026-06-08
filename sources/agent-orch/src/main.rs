@@ -592,11 +592,19 @@ fn unmerge_claude_hooks(settings: &mut serde_json::Value) {
 }
 
 /// `agent-orch setup` — install our four hook entries into the
+/// `agent-orch setup` — install our four hook entries into the
 /// Claude settings file at `path` (typically
 /// `~/.claude/settings.json`). Creates the file (and parent dir)
 /// if absent. Idempotent: re-running rewrites our tagged entries'
 /// command paths in case the binary moved, but doesn't duplicate.
-fn run_setup(path: &Path, self_path: &Path) -> Result<()> {
+///
+/// `key`: optional tmux prefix-table suffix to bind for
+/// switching back to the orchestrator session (e.g. `Some("O")`
+/// → `<prefix> O` runs `switch-client -t orchestrator`). When
+/// `None`, no keybind is installed. When `Some`, any pre-existing
+/// switch-to-orchestrator binding (from a previous `setup` with
+/// a different key) is removed first so re-keying is clean.
+fn run_setup(path: &Path, self_path: &Path, key: Option<&str>) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("mkdir -p {}", parent.display()))?;
     }
@@ -612,14 +620,21 @@ fn run_setup(path: &Path, self_path: &Path) -> Result<()> {
     };
     merge_claude_hooks(&mut settings, self_path)?;
     write_json_atomic(path, &settings)?;
-    install_tmux_keybind();
+    if let Some(suffix) = key {
+        // Remove any prior binding (might be a different key from
+        // an earlier setup) before installing the new one.
+        uninstall_tmux_keybind();
+        install_tmux_keybind(suffix);
+    }
     Ok(())
 }
 
 /// `agent-orch teardown` — remove our tagged hook entries from
 /// the Claude settings file at `path`. Prunes empty containers;
 /// removes the file entirely if the result is `{}`. No-op if the
-/// file is absent.
+/// file is absent. Always self-discovers and removes any prefix
+/// binding whose action is `switch-client -t orchestrator` —
+/// no key argument needed.
 fn run_teardown(path: &Path) -> Result<()> {
     uninstall_tmux_keybind();
     if !path.exists() {
@@ -642,54 +657,79 @@ fn run_teardown(path: &Path) -> Result<()> {
     }
 }
 
-/// Best-effort: bind `M-o` to `switch-client -t orchestrator`
-/// on the running tmux server. Live-only — survives until the
-/// server exits. If tmux isn't running (no server, no $TMUX,
-/// not on PATH), silently no-op; the user can run `setup` again
-/// after starting tmux. Persistence beyond a server restart is
-/// the user's job (config-managed `~/.tmux.conf` via
-/// home-manager / chezmoi / yadm / ansible-pull, or whatever
-/// their dotfiles setup is — see the spec's Decision Log).
-///
-/// `$AGENT_ORCH_TMUX_SOCKET` is honored as `-L <name>` so the
-/// integration script can target its private tmux server.
-fn install_tmux_keybind() {
+/// Run a tmux command, honoring `$AGENT_ORCH_TMUX_SOCKET` as
+/// `-L <name>` (used by the integration script to target a
+/// private server) and suppressing stderr (best-effort: a
+/// "no server" message during first-run is normal).
+fn tmux_cmd(args: &[&str]) -> std::process::Command {
     let mut cmd = std::process::Command::new("tmux");
     if let Ok(name) = std::env::var("AGENT_ORCH_TMUX_SOCKET") {
         if !name.is_empty() {
             cmd.arg("-L").arg(name);
         }
     }
-    // stderr suppressed: tmux prints "error connecting to ..."
-    // when no server is running, which is a normal state for a
-    // first-run setup (user hasn't started tmux yet). Silent
-    // no-op is the contract.
-    let _ = cmd
-        .args([
-            "bind-key",
-            "-n",
-            "M-o",
-            "switch-client",
-            "-t",
-            ORCHESTRATOR_SESSION,
-        ])
-        .stderr(std::process::Stdio::null())
-        .status();
+    cmd.args(args).stderr(std::process::Stdio::null());
+    cmd
 }
 
-/// Best-effort reverse of `install_tmux_keybind`. `unbind-key`
-/// errors if the binding isn't there; we ignore the status.
+/// Best-effort: bind `<prefix> <suffix>` to
+/// `switch-client -t orchestrator` on the running tmux server.
+/// Prefix-bound (default `C-b`) rather than root-bound so inner
+/// TUIs (claude/kiro) never see the keystroke and can't race
+/// with tmux for it — same idiom as every other tmux command
+/// (`C-b c`, `C-b "`, `C-b d`).
+///
+/// Live-only — survives until the server exits. If tmux isn't
+/// running (no server, no $TMUX, not on PATH), silently no-op;
+/// the user can re-run `setup` after starting tmux. Persistence
+/// across server restarts is the user's job (bake the
+/// equivalent line into `~/.tmux.conf` via home-manager /
+/// chezmoi / yadm / ansible-pull / your dotfiles setup — see
+/// the spec's Decision Log).
+fn install_tmux_keybind(suffix: &str) {
+    let _ = tmux_cmd(&[
+        "bind-key",
+        "-T",
+        "prefix",
+        suffix,
+        "switch-client",
+        "-t",
+        ORCHESTRATOR_SESSION,
+    ])
+    .status();
+}
+
+/// Self-discovering reverse: scan the prefix table for any
+/// binding whose action is `switch-client -t orchestrator` and
+/// unbind it. Lets the user re-key without remembering the old
+/// suffix and lets `teardown` work without a `--key` flag.
 fn uninstall_tmux_keybind() {
-    let mut cmd = std::process::Command::new("tmux");
-    if let Ok(name) = std::env::var("AGENT_ORCH_TMUX_SOCKET") {
-        if !name.is_empty() {
-            cmd.arg("-L").arg(name);
-        }
-    }
-    let _ = cmd
-        .args(["unbind-key", "-n", "M-o"])
+    let out = tmux_cmd(&["list-keys", "-T", "prefix"])
         .stderr(std::process::Stdio::null())
-        .status();
+        .stdout(std::process::Stdio::piped())
+        .output();
+    let Ok(out) = out else { return };
+    if !out.status.success() {
+        return;
+    }
+    // Each line looks like:
+    //   bind-key    -T prefix O       switch-client -t orchestrator
+    // Capture the suffix (the column after `-T prefix`) on lines
+    // ending in our action string.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let target_action = format!("switch-client -t {}", ORCHESTRATOR_SESSION);
+    for line in stdout.lines() {
+        if !line.contains(&target_action) {
+            continue;
+        }
+        let Some(after) = line.split("-T prefix").nth(1) else {
+            continue;
+        };
+        let Some(suffix) = after.split_whitespace().next() else {
+            continue;
+        };
+        let _ = tmux_cmd(&["unbind-key", "-T", "prefix", suffix]).status();
+    }
 }
 
 /// Atomic write for arbitrary JSON files: per-pid tmp + rename.
@@ -1093,8 +1133,19 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Install agent-orch hooks into ~/.claude/settings.json (idempotent).
-    Setup,
+    /// With `--key X`, also bind `<tmux-prefix> X` to `switch-client -t
+    /// orchestrator` on the running tmux server. Key is whatever you
+    /// want to type after your tmux prefix (`O`, `a`, `F1`, etc.).
+    Setup {
+        /// Tmux prefix-table key suffix to bind for "switch back to
+        /// orchestrator" (e.g. `O` → press your tmux prefix then `O`).
+        /// Omit to install hooks only, no keybind.
+        #[arg(long)]
+        key: Option<String>,
+    },
     /// Remove agent-orch hooks from ~/.claude/settings.json.
+    /// Self-discovers and removes any prefix binding whose action is
+    /// `switch-client -t orchestrator` — no `--key` argument needed.
     Teardown,
     /// Wrap a coding agent: register, inject hooks, execvp.
     Wrap {
@@ -1137,7 +1188,9 @@ fn main() -> Result<()> {
             }
         }
 
-        Some(Cmd::Setup) => run_setup(&user_claude_settings_path()?, &self_path),
+        Some(Cmd::Setup { key }) => {
+            run_setup(&user_claude_settings_path()?, &self_path, key.as_deref())
+        }
         Some(Cmd::Teardown) => run_teardown(&user_claude_settings_path()?),
 
         Some(Cmd::Wrap {
@@ -1427,7 +1480,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("settings.json");
         let self_path = PathBuf::from("/test/agent-orch");
-        run_setup(&path, &self_path).unwrap();
+        run_setup(&path, &self_path, None).unwrap();
 
         let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         for ev in [
@@ -1467,7 +1520,7 @@ mod tests {
         )
         .unwrap();
         let self_path = PathBuf::from("/test/agent-orch");
-        run_setup(&path, &self_path).unwrap();
+        run_setup(&path, &self_path, None).unwrap();
 
         let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         // Sibling fields untouched.
@@ -1491,8 +1544,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("settings.json");
         let self_path = PathBuf::from("/test/agent-orch");
-        run_setup(&path, &self_path).unwrap();
-        run_setup(&path, &self_path).unwrap();
+        run_setup(&path, &self_path, None).unwrap();
+        run_setup(&path, &self_path, None).unwrap();
 
         let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         for ev in [
@@ -1516,8 +1569,8 @@ mod tests {
         // command, doesn't add a second.
         let dir = tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        run_setup(&path, &PathBuf::from("/old/agent-orch")).unwrap();
-        run_setup(&path, &PathBuf::from("/new/agent-orch")).unwrap();
+        run_setup(&path, &PathBuf::from("/old/agent-orch"), None).unwrap();
+        run_setup(&path, &PathBuf::from("/new/agent-orch"), None).unwrap();
 
         let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         let arr = v["hooks"]["Stop"].as_array().unwrap();
@@ -1530,7 +1583,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("settings.json");
         fs::write(&path, b"[]").unwrap();
-        let err = run_setup(&path, &PathBuf::from("/x/agent-orch")).unwrap_err();
+        let err = run_setup(&path, &PathBuf::from("/x/agent-orch"), None).unwrap_err();
         assert!(format!("{err:#}").contains("must be a JSON object"));
     }
 
@@ -1539,7 +1592,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("settings.json");
         fs::write(&path, br#"{"hooks":{"Stop":"oops"}}"#).unwrap();
-        let err = run_setup(&path, &PathBuf::from("/x/agent-orch")).unwrap_err();
+        let err = run_setup(&path, &PathBuf::from("/x/agent-orch"), None).unwrap_err();
         assert!(format!("{err:#}").contains("must be an array"));
     }
 
@@ -1580,7 +1633,7 @@ mod tests {
     fn teardown_removes_file_when_only_our_content_remains() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        run_setup(&path, &PathBuf::from("/x/agent-orch")).unwrap();
+        run_setup(&path, &PathBuf::from("/x/agent-orch"), None).unwrap();
         assert!(path.exists());
         run_teardown(&path).unwrap();
         assert!(!path.exists(), "file should be removed when result is {{}}");
@@ -1616,7 +1669,7 @@ mod tests {
         let path = dir.path().join("settings.json");
         let original = br#"{"permissions":["read"],"hooks":{"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"my-hook"}]}]}}"#;
         fs::write(&path, original).unwrap();
-        run_setup(&path, &PathBuf::from("/x/agent-orch")).unwrap();
+        run_setup(&path, &PathBuf::from("/x/agent-orch"), None).unwrap();
         run_teardown(&path).unwrap();
 
         // Re-read and re-parse to compare structurally (formatting may differ).

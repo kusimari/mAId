@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # tests/agent-orch/functional-setup.sh — spin up the functional fixture.
 #
+# Usage: functional-setup.sh <KEY>
+#
+# <KEY> is the tmux prefix-table suffix to bind for "switch back
+# to orchestrator" — e.g. `O` makes `<your-tmux-prefix> O` jump to
+# the orchestrator session. Pick any unbound key in your prefix
+# table; pass `none` to install hooks only with no keybind.
+#
 # Spawns four sessions on the user's running tmux server:
 #
 #   proj-a       1 window, 1 pane: claude wrapped
@@ -11,8 +18,9 @@
 #   viewer       a plain shell session, ready for you to bootstrap the
 #                orchestrator from
 #
-# Then runs `agent-orch setup` to install the user-global Claude
-# hooks and the M-o keybind. Leaves the orchestrator session
+# Then runs `agent-orch setup --key <KEY>` (or `setup` if <KEY> is
+# `none`) to install the user-global Claude hooks and the
+# orchestrator-switch keybind. Leaves the orchestrator session
 # uncreated — you bootstrap it interactively from the `viewer`
 # session by attaching and running `agent-orch`.
 #
@@ -28,8 +36,8 @@
 # Hand-off:
 #
 #   $ tmux attach -t viewer
-#   $ agent-orch                  # bootstraps the orchestrator session
-#   (M-o for picker)
+#   $ agent-orch                       # bootstraps the orchestrator
+#   (<your-tmux-prefix> <KEY> from any wrapped pane to come back)
 #
 # Tear down with: tests/agent-orch/functional-teardown.sh
 
@@ -38,6 +46,16 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 BIN="$ROOT/dist/agent-orch/agent-orch"
+
+# ── argv ───────────────────────────────────────────────────────────
+
+if [[ $# -ne 1 ]]; then
+  echo "usage: $0 <KEY>" >&2
+  echo "       $0 O          # bind <prefix> O to switch-client" >&2
+  echo "       $0 none       # install hooks only, no keybind" >&2
+  exit 2
+fi
+KEY="$1"
 
 # Resolve the real tmux on PATH (avoids zsh-tmux-plugin alias clobbering).
 TMUX_BIN="$(command -v tmux)"
@@ -169,13 +187,24 @@ log "viewer (plain shell — you'll bootstrap the orchestrator from here)"
 ensure_session viewer "$HOME"
 ok "viewer ready (no agent wrapped)"
 
-# ── install user-global hooks + M-o keybind ────────────────────────
+# ── install user-global hooks + (optional) keybind ─────────────────
 
-log "installing user-global Claude hooks + M-o keybind"
-"$BIN" setup
+if [[ "$KEY" == "none" ]]; then
+  log "installing user-global Claude hooks (no keybind)"
+  "$BIN" setup
+else
+  log "installing user-global Claude hooks + prefix '$KEY' keybind"
+  "$BIN" setup --key "$KEY"
+fi
 ok "setup complete"
 
 # ── done ───────────────────────────────────────────────────────────
+
+if [[ "$KEY" == "none" ]]; then
+  switch_hint="(no keybind installed — use \`tmux switch-client -t orchestrator\` directly)"
+else
+  switch_hint="(<tmux-prefix> $KEY from any wrapped pane → orchestrator)"
+fi
 
 cat <<EOF
 
@@ -189,7 +218,7 @@ cat <<EOF
        (this creates the orchestrator session and switches your
        client into it; you should see the fzf picker)
 
-    3. Press M-o from any wrapped pane to come back to the picker.
+    3. $switch_hint
 
   Tear down with:
     $HERE/functional-teardown.sh

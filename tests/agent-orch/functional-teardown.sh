@@ -4,8 +4,9 @@
 # Kills the four sessions the setup script creates (proj-a, proj-b,
 # proj-c, viewer) plus the orchestrator session if you bootstrapped
 # one, runs `agent-orch teardown` to remove the user-global Claude
-# hooks and M-o keybind, and clears the registry file. Idempotent
-# — safe to run when nothing is set up.
+# hooks and any prefix-table keybind that routes to orchestrator
+# (self-discovered — no key argument needed), and clears the
+# registry file. Idempotent — safe to run when nothing is set up.
 
 set -euo pipefail
 
@@ -44,7 +45,7 @@ fi
 
 if [[ -x "$BIN" ]]; then
   "$BIN" teardown
-  ok "removed Claude hooks + M-o keybind"
+  ok "removed Claude hooks + orchestrator-switch keybind (if any)"
 else
   warn "binary at $BIN missing — skipping teardown"
 fi
