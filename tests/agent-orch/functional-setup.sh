@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+# tests/agent-orch/functional-setup.sh — spin up the functional fixture.
+#
+# Spawns four sessions on the user's running tmux server:
+#
+#   proj-a       1 window, 1 pane: claude wrapped
+#   proj-b       2 windows. window 2 has a horizontal split — claude
+#                wrapped in left pane, plain shell in right pane
+#   proj-c       1 window, vertical split — kiro on top, claude
+#                bottom (both wrapped)
+#   viewer       a plain shell session, ready for you to bootstrap the
+#                orchestrator from
+#
+# Then runs `agent-orch setup` to install the user-global Claude
+# hooks and the M-o keybind. Leaves the orchestrator session
+# uncreated — you bootstrap it interactively from the `viewer`
+# session by attaching and running `agent-orch`.
+#
+# Why launch agents via `tmux send-keys` into a fresh login shell
+# (rather than as the new-session command directly): the user's
+# zsh login shell is what promotes `~/.toolbox/bin` to the front
+# of $PATH. Running the wrap as a non-login shell would resolve
+# `claude` to whatever's first in the bare-PATH ordering (often
+# `~/.local/bin/claude`, the no-Bedrock-auth standalone). By
+# letting zsh -l finish initializing first, then sending the wrap
+# invocation, the wrapper's execvp resolves the toolbox shim.
+#
+# Hand-off:
+#
+#   $ tmux attach -t viewer
+#   $ agent-orch                  # bootstraps the orchestrator session
+#   (M-o for picker)
+#
+# Tear down with: tests/agent-orch/functional-teardown.sh
+
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$HERE/../.." && pwd)"
+BIN="$ROOT/dist/agent-orch/agent-orch"
+
+# Resolve the real tmux on PATH (avoids zsh-tmux-plugin alias clobbering).
+TMUX_BIN="$(command -v tmux)"
+
+# Sessions this script creates. Teardown reads the same list.
+SESSIONS=(proj-a proj-b proj-c viewer)
+CWDS=(/tmp/proj-a /tmp/proj-b /tmp/proj-c "$HOME")
+
+log()  { printf '\033[36m[i]\033[0m %s\n' "$*"; }
+ok()   { printf '\033[32m[ok]\033[0m %s\n' "$*"; }
+skip() { printf '\033[33m[skip]\033[0m %s\n' "$*"; }
+fail() { printf '\033[31m[fail]\033[0m %s\n' "$*" >&2; exit 1; }
+
+T() { "$TMUX_BIN" "$@"; }
+
+# ── pre-flight ─────────────────────────────────────────────────────
+
+[[ -n "$TMUX_BIN" ]]      || fail "tmux not on PATH"
+command -v fzf >/dev/null || fail "fzf not on PATH"
+[[ -x "$BIN" ]]           || fail "binary not built — run \`deno task agent-orch:build\` first"
+T list-sessions >/dev/null 2>&1 || fail "no tmux server running — start one first"
+
+# Refuse to run inside tmux: send-keys timing into a pane the user
+# might be looking at is asking for trouble, and the orchestrator
+# bootstrap step needs an *outside* client to switch.
+[[ -z "${TMUX:-}" ]] || fail "do not run this from inside tmux — run it from a plain terminal"
+
+# ── helpers ────────────────────────────────────────────────────────
+
+ensure_session() {
+  local name="$1" cwd="$2"
+  if T has-session -t "$name" 2>/dev/null; then
+    return 0
+  fi
+  mkdir -p "$cwd"
+  T new-session -d -s "$name" -c "$cwd" zsh -l
+}
+
+# True if the registry has a record for the given pane id.
+already_wrapped() {
+  local pane="$1" reg="$HOME/.local/state/agent-orch/sessions.json"
+  [[ -f "$reg" ]] || return 1
+  command grep -q "\"pane_id\": \"$pane\"" "$reg" 2>/dev/null
+}
+
+# Send the wrap invocation to a target pane. The pane's zsh login
+# shell does its full PATH setup before we type, so `claude` /
+# `kiro-cli` resolve via toolbox shims.
+send_wrap() {
+  local target="$1" cwd="$2" kind="$3"
+  shift 3
+  local agent_argv=("$@")
+  # Build a properly-quoted command line.
+  local cmd
+  printf -v cmd '%q wrap %q --cwd %q --' "$BIN" "$kind" "$cwd"
+  for a in "${agent_argv[@]}"; do
+    printf -v cmd '%s %q' "$cmd" "$a"
+  done
+  # Wait for shell prompt to settle before typing. ~250ms suffices
+  # in practice; bump if you see commands lost on slow machines.
+  sleep 0.3
+  T send-keys -t "$target" "$cmd" Enter
+}
+
+pane_of()    { T display-message -p -t "$1" '#{pane_id}'; }
+
+# ── proj-a — single-pane Claude session ────────────────────────────
+
+log "proj-a (single-pane Claude)"
+ensure_session proj-a /tmp/proj-a
+PANE_A="$(pane_of proj-a)"
+if already_wrapped "$PANE_A"; then
+  skip "proj-a · pane $PANE_A already wrapped — leaving alone"
+else
+  send_wrap "$PANE_A" /tmp/proj-a claude claude
+  ok "proj-a · claude wrapped (pane $PANE_A)"
+fi
+
+# ── proj-b — two windows, split second window ──────────────────────
+
+log "proj-b (two windows, split window 2)"
+ensure_session proj-b /tmp/proj-b
+PROJB_WIN1="$(T list-windows -t proj-b -F '#{window_id}' | head -1)"
+PROJB_WIN_COUNT="$(T list-windows -t proj-b | wc -l)"
+if [[ "$PROJB_WIN_COUNT" -lt 2 ]]; then
+  T rename-window -t "$PROJB_WIN1" notes
+  T new-window -t proj-b -n code -c /tmp/proj-b
+  T split-window -h -t proj-b:code -c /tmp/proj-b
+  T select-pane -t proj-b:code -L
+fi
+PROJB_CODE_LEFT="$(T display-message -p -t proj-b:code '#{pane_id}')"
+if already_wrapped "$PROJB_CODE_LEFT"; then
+  skip "proj-b · pane $PROJB_CODE_LEFT already wrapped"
+else
+  send_wrap "$PROJB_CODE_LEFT" /tmp/proj-b claude claude
+  ok "proj-b · claude wrapped (pane $PROJB_CODE_LEFT, window 'code', left)"
+fi
+
+# ── proj-c — vertical split, Kiro top + Claude bottom ──────────────
+
+log "proj-c (Kiro top, Claude bottom)"
+ensure_session proj-c /tmp/proj-c
+PROJC_PANE_COUNT="$(T list-panes -t proj-c | wc -l)"
+if [[ "$PROJC_PANE_COUNT" -lt 2 ]]; then
+  T split-window -v -t proj-c -c /tmp/proj-c
+fi
+# Sort panes by `pane_top` so we get top→bottom regardless of how
+# tmux numbered them after the split.
+PROJC_TOP="$(T list-panes -t proj-c -F '#{pane_id} #{pane_top}' \
+  | sort -k2 -n | awk 'NR==1{print $1}')"
+PROJC_BOTTOM="$(T list-panes -t proj-c -F '#{pane_id} #{pane_top}' \
+  | sort -k2 -n | awk 'NR==2{print $1}')"
+if already_wrapped "$PROJC_BOTTOM"; then
+  skip "proj-c · bottom pane $PROJC_BOTTOM already wrapped"
+else
+  send_wrap "$PROJC_BOTTOM" /tmp/proj-c claude claude
+  ok "proj-c · claude wrapped (pane $PROJC_BOTTOM, bottom)"
+fi
+if already_wrapped "$PROJC_TOP"; then
+  skip "proj-c · top pane $PROJC_TOP already wrapped"
+else
+  send_wrap "$PROJC_TOP" /tmp/proj-c kiro kiro-cli
+  ok "proj-c · kiro wrapped (pane $PROJC_TOP, top)"
+fi
+
+# ── viewer — plain shell, you'll bootstrap the orchestrator from here ──
+
+log "viewer (plain shell — you'll bootstrap the orchestrator from here)"
+ensure_session viewer "$HOME"
+ok "viewer ready (no agent wrapped)"
+
+# ── install user-global hooks + M-o keybind ────────────────────────
+
+log "installing user-global Claude hooks + M-o keybind"
+"$BIN" setup
+ok "setup complete"
+
+# ── done ───────────────────────────────────────────────────────────
+
+cat <<EOF
+
+  Sessions ready: ${SESSIONS[*]}
+
+    1. Attach the viewer in a real terminal:
+         tmux attach -t viewer
+
+    2. From inside viewer, bootstrap the orchestrator:
+         agent-orch
+       (this creates the orchestrator session and switches your
+       client into it; you should see the fzf picker)
+
+    3. Press M-o from any wrapped pane to come back to the picker.
+
+  Tear down with:
+    $HERE/functional-teardown.sh
+
+EOF
