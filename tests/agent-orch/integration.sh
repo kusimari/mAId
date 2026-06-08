@@ -124,26 +124,28 @@ pass "wrap claude registers session"
 
 # ── case 2 — hook subcommand updates state ─────────────────────────
 
-log "case 2: hook UserPromptSubmit flips state to running"
+log "case 2: hook UserPromptSubmit flips state to thinking"
 echo '{"prompt":"fix the failing test"}' \
   | env "XDG_STATE_HOME=$STATE_PARENT" "AGENT_ORCH_PANE=$PANE_ID" \
     "$BIN" hook UserPromptSubmit
-[[ "$(field 0 state)" == "running" ]] || fail "case 2: state != running ($(field 0 state))"
+[[ "$(field 0 state)" == "thinking" ]] || fail "case 2: state != thinking ($(field 0 state))"
 [[ "$(field 0 last_prompt)" == "fix the failing test" ]] || fail "case 2: last_prompt mismatch"
-pass "hook UserPromptSubmit marked running and stored prompt"
+pass "hook UserPromptSubmit marked thinking and stored prompt"
 
-log "case 3: hook PreToolUse updates last_tool"
-echo '{"tool_name":"Bash"}' \
+log "case 3: hook PreToolUse switches to active and stores tool"
+echo '{"tool_name":"Bash","tool_input":{"command":"cargo test"}}' \
   | env "XDG_STATE_HOME=$STATE_PARENT" "AGENT_ORCH_PANE=$PANE_ID" \
     "$BIN" hook PreToolUse
-[[ "$(field 0 last_tool)" == "Bash" ]] || fail "case 3: last_tool != Bash"
-pass "hook PreToolUse stored tool name"
+[[ "$(field 0 state)" == "active" ]] || fail "case 3: state != active ($(field 0 state))"
+[[ "$(field 0 last_tool_name)" == "Bash" ]] || fail "case 3: last_tool_name != Bash"
+[[ "$(field 0 last_tool_preview)" == "cargo test" ]] || fail "case 3: last_tool_preview != cargo test"
+pass "hook PreToolUse marked active and stored tool name + preview"
 
-log "case 4: hook Stop flips state to complete"
+log "case 4: hook Stop flips state to idle"
 echo '{}' | env "XDG_STATE_HOME=$STATE_PARENT" "AGENT_ORCH_PANE=$PANE_ID" \
     "$BIN" hook Stop
-[[ "$(field 0 state)" == "complete" ]] || fail "case 4: state != complete"
-pass "hook Stop marked complete"
+[[ "$(field 0 state)" == "idle" ]] || fail "case 4: state != idle ($(field 0 state))"
+pass "hook Stop marked idle"
 
 # ── case 5 — render emits the live row (drives the loop body) ─────
 # `render` is the hidden subcommand the event-driven loop body
@@ -157,7 +159,13 @@ trace "$RENDER_OUT"
 [[ "$(printf '%s\n' "$RENDER_OUT" | wc -l)" -eq 1 ]] || fail "case 5: expected 1 row"
 [[ "$RENDER_OUT" == "$PANE_ID"$'\t'* ]] || fail "case 5: pane id not in column 1"
 [[ "$RENDER_OUT" == *"claude"* ]] || fail "case 5: render missing kind"
-[[ "$RENDER_OUT" == *"fix the failing test"* ]] || fail "case 5: render missing prompt"
+# After Stop fired in case 4, the row is in `idle` state — content is
+# "done in <duration> · <N> tools · <ago>" not the prompt. Assert on
+# the idle-row markers instead. (The earlier active-state assertion
+# was tied to the legacy 3-state schema; the active-row format is
+# covered by unit tests.)
+[[ "$RENDER_OUT" == *"done in"* ]] || fail "case 5: render missing 'done in'"
+[[ "$RENDER_OUT" == *"tools"*  ]] || fail "case 5: render missing 'tools' marker"
 pass "render emits tab-separated rows in picker-sort order"
 
 # ── case 6 — unregister removes the record ─────────────────────────

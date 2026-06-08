@@ -35,7 +35,27 @@ const HOOK_MARKER: &str = ".tmux-hook-installed";
 const EVT_USER_PROMPT_SUBMIT: &str = "UserPromptSubmit";
 const EVT_PRE_TOOL_USE: &str = "PreToolUse";
 const EVT_POST_TOOL_USE: &str = "PostToolUse";
+const EVT_POST_TOOL_USE_FAILURE: &str = "PostToolUseFailure";
+const EVT_NOTIFICATION: &str = "Notification";
 const EVT_STOP: &str = "Stop";
+
+/// All Claude hook events `setup` installs, in display order. Adding
+/// an event means adding it here and to `apply_event`.
+const HOOK_EVENTS: &[&str] = &[
+    EVT_USER_PROMPT_SUBMIT,
+    EVT_PRE_TOOL_USE,
+    EVT_POST_TOOL_USE,
+    EVT_POST_TOOL_USE_FAILURE,
+    EVT_NOTIFICATION,
+    EVT_STOP,
+];
+
+/// After this many seconds with no hook event, an `Active` session
+/// is downgraded to `Stalled` at render time. Catches the case where
+/// the hook reporter died, the agent crashed mid-tool, or a tool is
+/// running for genuinely longer than expected. Render-only — never
+/// written to the registry, so once an event arrives the row recovers.
+const STALL_AFTER_SECS: u64 = 90;
 
 const ORCHESTRATOR_SESSION: &str = "orchestrator";
 
@@ -57,12 +77,24 @@ fn now_secs() -> u64 {
 // ─────────────────────────────────────────────────────────────────────────────
 // §1 · Session
 
+/// Lifecycle state per session, derived from hook events and
+/// downgraded at render time when activity goes silent. The
+/// distinction that matters most: `Active` (a tool is in flight),
+/// `Thinking` (the agent is deciding what to do — LLM round-trip
+/// or between tools), `Waiting` (Claude raised a notification —
+/// permission prompt, idle timer, etc.; the user needs to look),
+/// `Idle` (Stop fired — last turn complete), `Cold` (registered
+/// but no hooks ever fired), `Stalled` (was Active but no event
+/// in `STALL_AFTER_SECS` — render-only, recovers on next event).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum State {
-    Unknown,
-    Running,
-    Complete,
+    Cold,
+    Thinking,
+    Active,
+    Waiting,
+    Idle,
+    Stalled,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -77,75 +109,178 @@ pub struct Session {
     #[serde(default)]
     pub last_prompt: String,
     #[serde(default)]
-    pub last_tool: String,
-    #[serde(default)]
     pub last_event: String,
     #[serde(default)]
     pub last_event_ts: u64,
+    /// Timestamp `UserPromptSubmit` fired for the current turn. 0
+    /// outside an active turn. Used to derive elapsed time and the
+    /// completed-turn duration when `Stop` lands.
+    #[serde(default)]
+    pub prompt_started_at: u64,
+    /// Timestamp `PreToolUse` fired for the current tool. 0 between
+    /// tools. Used to render `0:04` next to a running tool.
+    #[serde(default)]
+    pub tool_started_at: u64,
+    /// `Bash` / `Edit` / etc. — the bare tool name from the most
+    /// recent Pre/PostToolUse payload.
+    #[serde(default)]
+    pub last_tool_name: String,
+    /// Short preview of the tool's input, e.g. `cargo test` for a
+    /// Bash call or `tests/foo.rs` for an Edit. Truncated.
+    #[serde(default)]
+    pub last_tool_preview: String,
+    /// Tool-call count since the last `UserPromptSubmit`. Resets to
+    /// 0 on the next prompt submit; final value is shown on Idle
+    /// rows as "done in 2m31s · 6 tools".
+    #[serde(default)]
+    pub tools_this_turn: u32,
+    /// Wall-clock duration of the most recently completed turn
+    /// (Stop_ts - prompt_started_at). 0 if no turn has completed.
+    #[serde(default)]
+    pub last_turn_duration: u64,
     #[serde(default)]
     pub created_kiro_config: bool,
 }
 
 impl Session {
     /// Apply one hook event. Bumps `last_event` / `last_event_ts`
-    /// unconditionally; per-event updates below.
-    fn apply_event(&mut self, event: &str, prompt: Option<&str>, tool: Option<&str>, now: u64) {
+    /// unconditionally; per-event state transitions below. Hooks
+    /// must never block the agent — this body's only failure mode
+    /// is silent default of unknown event names.
+    fn apply_event(&mut self, event: &str, payload: &serde_json::Value, now: u64) {
         self.last_event = event.into();
         self.last_event_ts = now;
         match event {
             EVT_USER_PROMPT_SUBMIT => {
-                self.state = State::Running;
+                self.state = State::Thinking;
                 self.state_ts = now;
-                if let Some(p) = prompt {
+                self.prompt_started_at = now;
+                self.tool_started_at = 0;
+                self.tools_this_turn = 0;
+                self.last_tool_name.clear();
+                self.last_tool_preview.clear();
+                if let Some(p) = payload.get("prompt").and_then(|v| v.as_str()) {
                     // 80 scalar values, not graphemes — preview-only,
                     // splitting a flag emoji's components is fine.
                     self.last_prompt = p.chars().take(80).collect();
                 }
             }
             EVT_PRE_TOOL_USE => {
-                self.state = State::Running;
+                self.state = State::Active;
                 self.state_ts = now;
-                if let Some(t) = tool {
-                    self.last_tool = t.into();
+                self.tool_started_at = now;
+                if let Some(name) = payload.get("tool_name").and_then(|v| v.as_str()) {
+                    self.last_tool_name = name.into();
+                }
+                self.last_tool_preview =
+                    tool_input_preview(&self.last_tool_name, payload.get("tool_input"));
+            }
+            EVT_POST_TOOL_USE | EVT_POST_TOOL_USE_FAILURE => {
+                self.state = State::Thinking;
+                self.state_ts = now;
+                self.tool_started_at = 0;
+                self.tools_this_turn = self.tools_this_turn.saturating_add(1);
+                if let Some(name) = payload.get("tool_name").and_then(|v| v.as_str()) {
+                    self.last_tool_name = name.into();
                 }
             }
-            EVT_POST_TOOL_USE => {
-                if let Some(t) = tool {
-                    self.last_tool = t.into();
-                }
+            EVT_NOTIFICATION => {
+                // Claude raised a user-visible notification —
+                // commonly a permission prompt or an idle timer.
+                // The agent is not making progress until the user
+                // intervenes. Sticky until the next event clears it.
+                self.state = State::Waiting;
+                self.state_ts = now;
+                self.tool_started_at = 0;
             }
             EVT_STOP => {
-                self.state = State::Complete;
+                self.state = State::Idle;
                 self.state_ts = now;
+                self.tool_started_at = 0;
+                if self.prompt_started_at > 0 {
+                    self.last_turn_duration = now.saturating_sub(self.prompt_started_at);
+                }
             }
             _ => {} // unknown event: only the bumps above
         }
     }
 
-    /// Picker row: `<glyph> <kind> <cwd-tail> · <prompt> [· <tool>]`.
-    fn format_row(&self) -> String {
-        let glyph = match self.state {
-            State::Running => "▶",
-            State::Complete => "✓",
-            State::Unknown => "·",
-        };
-        let prompt = if self.last_prompt.is_empty() {
+    /// Render-time decoration: an `Active` session whose last event
+    /// was more than `STALL_AFTER_SECS` ago is shown as `Stalled`.
+    /// Never written to the registry — recovers as soon as the next
+    /// hook event fires. Caller passes `now` so tests can be
+    /// deterministic.
+    fn effective_state(&self, now: u64) -> State {
+        if matches!(self.state, State::Active)
+            && now.saturating_sub(self.last_event_ts) > STALL_AFTER_SECS
+        {
+            State::Stalled
+        } else {
+            self.state.clone()
+        }
+    }
+
+    /// Picker row content. Shape varies by state:
+    ///   Active    `▶ <kind> <cwd> · <Tool(preview)> · 0:04`
+    ///   Thinking  `◉ <kind> <cwd> · "<prompt>" · thinking · 1:02`
+    ///   Waiting   `⚠ <kind> <cwd> · waiting (permission?) · 0:23`
+    ///   Idle      `· <kind> <cwd> · done in 2m31s · 6 tools · 7m ago`
+    ///   Cold      `· <kind> <cwd> · —`
+    ///   Stalled   `⊘ <kind> <cwd> · stalled at <Tool(preview)> · 2m04s`
+    /// Caller passes `now` so the elapsed/ago figures are
+    /// rendered consistently across all rows in one snapshot.
+    fn format_row(&self, now: u64) -> String {
+        let st = self.effective_state(now);
+        let glyph = state_glyph(&st);
+        let head = format!("{} {} {}", glyph, self.kind, cwd_tail(&self.cwd));
+        match st {
+            State::Active => {
+                let tool = self.tool_label();
+                let elapsed = duration_short(now.saturating_sub(self.tool_started_at));
+                format!("{head} · {tool} · {elapsed}")
+            }
+            State::Thinking => {
+                let prompt = self.prompt_or_dash();
+                let elapsed = duration_short(now.saturating_sub(self.prompt_started_at));
+                format!("{head} · {prompt} · thinking · {elapsed}")
+            }
+            State::Waiting => {
+                let elapsed = duration_short(now.saturating_sub(self.last_event_ts));
+                format!("{head} · waiting · {elapsed}")
+            }
+            State::Idle => {
+                let dur = duration_short(self.last_turn_duration);
+                let ago = ago(now.saturating_sub(self.last_event_ts));
+                format!(
+                    "{head} · done in {dur} · {} tools · {ago}",
+                    self.tools_this_turn
+                )
+            }
+            State::Stalled => {
+                let tool = self.tool_label();
+                let since = duration_short(now.saturating_sub(self.last_event_ts));
+                format!("{head} · stalled at {tool} · {since} silent")
+            }
+            State::Cold => format!("{head} · —"),
+        }
+    }
+
+    fn tool_label(&self) -> String {
+        if self.last_tool_name.is_empty() {
+            "—".into()
+        } else if self.last_tool_preview.is_empty() {
+            self.last_tool_name.clone()
+        } else {
+            format!("{}({})", self.last_tool_name, self.last_tool_preview)
+        }
+    }
+
+    fn prompt_or_dash(&self) -> &str {
+        if self.last_prompt.is_empty() {
             "—"
         } else {
             self.last_prompt.as_str()
-        };
-        let mut row = format!(
-            "{} {} {} · {}",
-            glyph,
-            self.kind,
-            cwd_tail(&self.cwd),
-            prompt
-        );
-        if !self.last_tool.is_empty() {
-            row.push_str(" · ");
-            row.push_str(&self.last_tool);
         }
-        row
     }
 
     /// "Active at" — max(state_ts, last_event_ts, started). Used by sort.
@@ -153,13 +288,91 @@ impl Session {
         self.state_ts.max(self.last_event_ts).max(self.started)
     }
 
-    /// Sort precedence: running (0) > complete (1) > unknown (2).
-    fn state_group(&self) -> u8 {
-        match self.state {
-            State::Running => 0,
-            State::Complete => 1,
-            State::Unknown => 2,
+    /// Sort precedence: doing-something > waiting > idle > cold.
+    /// Stalled sorts with idle so a stuck row doesn't squat at the
+    /// top forever.
+    fn state_group(&self, now: u64) -> u8 {
+        match self.effective_state(now) {
+            State::Active => 0,
+            State::Thinking => 1,
+            State::Waiting => 2,
+            State::Idle => 3,
+            State::Stalled => 4,
+            State::Cold => 5,
         }
+    }
+}
+
+/// Glyph prefix per state. Plain ASCII/Unicode without ANSI; fzf
+/// renders the row on its own line so we don't need color escapes
+/// for the picker's pre-built theme to look reasonable. Color
+/// support lives in a follow-up if the user wants it.
+fn state_glyph(state: &State) -> &'static str {
+    match state {
+        State::Active => "▶",
+        State::Thinking => "◉",
+        State::Waiting => "⚠",
+        State::Idle => "·",
+        State::Stalled => "⊘",
+        State::Cold => "·",
+    }
+}
+
+/// Short duration for in-progress timers: `0:04`, `1:23`, `2m04s`,
+/// `1h17m`. Threshold flips at 100s and at 1h to keep the column
+/// width under 6 chars.
+fn duration_short(secs: u64) -> String {
+    if secs < 100 {
+        let m = secs / 60;
+        let s = secs % 60;
+        format!("{}:{:02}", m, s)
+    } else if secs < 3600 {
+        let m = secs / 60;
+        let s = secs % 60;
+        format!("{}m{:02}s", m, s)
+    } else {
+        let h = secs / 3600;
+        let m = (secs % 3600) / 60;
+        format!("{}h{:02}m", h, m)
+    }
+}
+
+/// Human "<n> ago" for stale events. `now`-relative. Rounds toward
+/// the nearest unit: `just now` for <5s, `4s ago`, `7m ago`,
+/// `2h ago`, `3d ago`.
+fn ago(secs: u64) -> String {
+    if secs < 5 {
+        return "just now".into();
+    }
+    if secs < 60 {
+        return format!("{}s ago", secs);
+    }
+    if secs < 3600 {
+        return format!("{}m ago", secs / 60);
+    }
+    if secs < 86400 {
+        return format!("{}h ago", secs / 3600);
+    }
+    format!("{}d ago", secs / 86400)
+}
+
+/// Short preview of a tool's input. Returns "" when we don't
+/// know how to summarize this tool. Per-tool whitelist — keeps
+/// the row predictable; an unknown tool prints just its name.
+fn tool_input_preview(tool: &str, input: Option<&serde_json::Value>) -> String {
+    let Some(v) = input else { return String::new() };
+    let pick = |key: &str| -> Option<String> {
+        v.get(key)
+            .and_then(|x| x.as_str())
+            .map(|s| s.chars().take(40).collect::<String>())
+    };
+    match tool {
+        "Bash" => pick("command").unwrap_or_default(),
+        "Edit" | "Write" | "Read" | "NotebookEdit" => pick("file_path").unwrap_or_default(),
+        "Grep" | "Glob" => pick("pattern").unwrap_or_default(),
+        "Agent" | "Task" => pick("description").unwrap_or_default(),
+        "WebFetch" | "WebSearch" => pick("url").or_else(|| pick("query")).unwrap_or_default(),
+        _ => String::new(),
     }
 }
 
@@ -184,10 +397,11 @@ fn cwd_tail(cwd: &str) -> String {
     }
 }
 
-/// Sort: running > complete > unknown; within group, most-recently-active first.
-fn sort_sessions(sessions: &mut [Session]) {
+/// Sort: active > thinking > waiting > idle > stalled > cold;
+/// within group, most-recently-active first.
+fn sort_sessions(sessions: &mut [Session], now: u64) {
     sessions.sort_by(|a, b| {
-        let group = a.state_group().cmp(&b.state_group());
+        let group = a.state_group(now).cmp(&b.state_group(now));
         if group.is_ne() {
             return group;
         }
@@ -358,12 +572,9 @@ pub trait Wrapper {
         } else {
             serde_json::from_slice(&buf).unwrap_or(serde_json::json!({}))
         };
-        let prompt = payload.get("prompt").and_then(|v| v.as_str());
-        let tool = payload.get("tool_name").and_then(|v| v.as_str());
-
         store.mutate(|sessions| {
             if let Some(s) = sessions.iter_mut().find(|s| s.pane_id == pane_id) {
-                s.apply_event(event, prompt, tool, now);
+                s.apply_event(event, &payload, now);
             }
             Ok(()) // stale fire after unregister: silent no-op.
         })
@@ -513,13 +724,8 @@ fn merge_claude_hooks(settings: &mut serde_json::Value, self_path: &Path) -> Res
         .or_insert_with(|| json!({}))
         .as_object_mut()
         .context("user claude settings.hooks must be a JSON object")?;
-    for ev in [
-        EVT_USER_PROMPT_SUBMIT,
-        EVT_PRE_TOOL_USE,
-        EVT_POST_TOOL_USE,
-        EVT_STOP,
-    ] {
-        let arr = hooks.entry(ev.to_string()).or_insert_with(|| json!([]));
+    for ev in HOOK_EVENTS {
+        let arr = hooks.entry((*ev).to_string()).or_insert_with(|| json!([]));
         let Value::Array(list) = arr else {
             anyhow::bail!("user claude settings.hooks.{} must be an array", ev);
         };
@@ -860,12 +1066,17 @@ pub fn wrap(w: &dyn Wrapper, ctx: &WrapCtx, side_effects: bool) -> Result<Prepar
             kind: w.kind().into(),
             cwd: ctx.cwd.to_string_lossy().into_owned(),
             started: now,
-            state: State::Unknown,
+            state: State::Cold,
             state_ts: now,
             last_prompt: String::new(),
-            last_tool: String::new(),
             last_event: String::new(),
             last_event_ts: 0,
+            prompt_started_at: 0,
+            tool_started_at: 0,
+            last_tool_name: String::new(),
+            last_tool_preview: String::new(),
+            tools_this_turn: 0,
+            last_turn_duration: 0,
             created_kiro_config: prepared.created_kiro_config,
         });
         Ok(prepared)
@@ -906,13 +1117,17 @@ impl<'a> Loop<'a> {
     }
 
     /// Read sessions, filter live pids, sort, format rows.
-    /// Returns `(pane_id, formatted_row)` pairs.
+    /// Returns `(pane_id, formatted_row)` pairs. `now` is captured
+    /// once so all rows in one snapshot share the same time
+    /// reference (otherwise a "5s ago" / "0:04" reading drifts
+    /// across rows in a slow render).
     pub fn render(&self) -> Result<Vec<(String, String)>> {
+        let now = now_secs();
         let mut sessions = live_only(self.store.read()?);
-        sort_sessions(&mut sessions);
+        sort_sessions(&mut sessions, now);
         Ok(sessions
             .into_iter()
-            .map(|s| (s.pane_id.clone(), s.format_row()))
+            .map(|s| (s.pane_id.clone(), s.format_row(now)))
             .collect())
     }
 
@@ -1001,9 +1216,22 @@ impl<'a> Loop<'a> {
         // selections still work without auto-reload).
         let (tx, rx) = mpsc::channel::<()>();
         let watch_dir = self.store.dir().to_path_buf();
+        let watcher_tx = tx.clone();
         thread::spawn(move || {
-            if let Err(e) = run_watcher(&watch_dir, tx) {
+            if let Err(e) = run_watcher(&watch_dir, watcher_tx) {
                 eprintln!("agent-orch watcher: {e:#}");
+            }
+        });
+
+        // Heartbeat thread: emit a tick once a second so the
+        // picker re-renders even when no hook event has fired.
+        // This keeps elapsed-time columns moving (`0:04` → `0:05`)
+        // and lets `effective_state` demote a silent Active row to
+        // Stalled live, without waiting on the next hook write.
+        let heartbeat_tx = tx;
+        thread::spawn(move || {
+            while heartbeat_tx.send(()).is_ok() {
+                thread::sleep(Duration::from_secs(1));
             }
         });
 
@@ -1292,14 +1520,32 @@ mod tests {
             kind: kind.into(),
             cwd: cwd.into(),
             started,
-            state: State::Unknown,
+            state: State::Cold,
             state_ts: started,
             last_prompt: String::new(),
-            last_tool: String::new(),
             last_event: String::new(),
             last_event_ts: 0,
+            prompt_started_at: 0,
+            tool_started_at: 0,
+            last_tool_name: String::new(),
+            last_tool_preview: String::new(),
+            tools_this_turn: 0,
+            last_turn_duration: 0,
             created_kiro_config: false,
         }
+    }
+
+    /// Helper: build the JSON payload an apply_event call expects.
+    fn payload(prompt: Option<&str>, tool: Option<&str>) -> serde_json::Value {
+        use serde_json::json;
+        let mut obj = serde_json::Map::new();
+        if let Some(p) = prompt {
+            obj.insert("prompt".into(), json!(p));
+        }
+        if let Some(t) = tool {
+            obj.insert("tool_name".into(), json!(t));
+        }
+        json!(obj)
     }
 
     // 2 · Store + WrapCtx fixtures ───────────────────────────────
@@ -1333,49 +1579,153 @@ mod tests {
     // 3 · Session — apply_event + format_row + sort ──────────────
 
     #[test]
-    fn session_apply_event_transitions_running_then_complete() {
+    fn session_apply_event_walks_thinking_active_thinking_idle() {
         let mut s = mk("%1", "claude", "/repo", 1000);
-        s.apply_event(EVT_USER_PROMPT_SUBMIT, Some("hello"), None, 1100);
-        assert_eq!(s.state, State::Running);
+
+        // Submit prompt → Thinking, prompt_started_at recorded.
+        s.apply_event(EVT_USER_PROMPT_SUBMIT, &payload(Some("hello"), None), 1100);
+        assert_eq!(s.state, State::Thinking);
         assert_eq!(s.last_prompt, "hello");
+        assert_eq!(s.prompt_started_at, 1100);
+        assert_eq!(s.tools_this_turn, 0);
 
-        s.apply_event(EVT_PRE_TOOL_USE, None, Some("Bash"), 1200);
-        assert_eq!(s.last_tool, "Bash");
+        // Tool starts → Active, tool_started_at recorded.
+        s.apply_event(EVT_PRE_TOOL_USE, &payload(None, Some("Bash")), 1200);
+        assert_eq!(s.state, State::Active);
+        assert_eq!(s.tool_started_at, 1200);
+        assert_eq!(s.last_tool_name, "Bash");
 
-        s.apply_event(EVT_STOP, None, None, 1300);
-        assert_eq!(s.state, State::Complete);
+        // Tool ends → back to Thinking, count bumped.
+        s.apply_event(EVT_POST_TOOL_USE, &payload(None, Some("Bash")), 1250);
+        assert_eq!(s.state, State::Thinking);
+        assert_eq!(s.tool_started_at, 0);
+        assert_eq!(s.tools_this_turn, 1);
+
+        // Stop → Idle, last_turn_duration recorded.
+        s.apply_event(EVT_STOP, &payload(None, None), 1300);
+        assert_eq!(s.state, State::Idle);
+        assert_eq!(s.last_turn_duration, 200); // 1300 - 1100
+    }
+
+    #[test]
+    fn session_apply_event_notification_sets_waiting() {
+        let mut s = mk("%1", "claude", "/repo", 1);
+        s.apply_event(EVT_USER_PROMPT_SUBMIT, &payload(Some("ok"), None), 100);
+        s.apply_event(EVT_NOTIFICATION, &payload(None, None), 200);
+        assert_eq!(s.state, State::Waiting);
+    }
+
+    #[test]
+    fn session_apply_event_post_tool_failure_counts_and_thinks() {
+        // PostToolUseFailure should be treated like PostToolUse:
+        // count it as a completed tool call and return to Thinking.
+        let mut s = mk("%1", "claude", "/repo", 1);
+        s.apply_event(EVT_USER_PROMPT_SUBMIT, &payload(Some("x"), None), 100);
+        s.apply_event(EVT_PRE_TOOL_USE, &payload(None, Some("Bash")), 110);
+        s.apply_event(EVT_POST_TOOL_USE_FAILURE, &payload(None, Some("Bash")), 120);
+        assert_eq!(s.state, State::Thinking);
+        assert_eq!(s.tools_this_turn, 1);
     }
 
     #[test]
     fn session_apply_event_truncates_long_prompt() {
         let mut s = mk("%1", "claude", "/repo", 1);
-        s.apply_event(EVT_USER_PROMPT_SUBMIT, Some(&"x".repeat(200)), None, 2);
+        s.apply_event(
+            EVT_USER_PROMPT_SUBMIT,
+            &payload(Some(&"x".repeat(200)), None),
+            2,
+        );
         assert_eq!(s.last_prompt.chars().count(), 80);
     }
 
     #[test]
-    fn session_format_row_includes_kind_and_prompt_and_tool() {
+    fn session_format_row_active_shows_tool_and_elapsed() {
         let mut s = mk("%1", "claude", "/home/me/repo/foo", 1000);
-        s.state = State::Running;
-        s.last_prompt = "fix tests".into();
-        s.last_tool = "Bash".into();
-        let row = s.format_row();
-        assert!(row.contains('▶'));
-        assert!(row.contains("claude"));
+        s.state = State::Active;
+        s.tool_started_at = 1100;
+        s.last_event_ts = 1100; // recent — not stalled
+        s.last_tool_name = "Bash".into();
+        s.last_tool_preview = "cargo test".into();
+        let row = s.format_row(1104);
+        assert!(row.contains('▶'), "row: {row}");
         assert!(row.contains("repo/foo"));
-        assert!(row.contains("fix tests"));
-        assert!(row.contains("Bash"));
+        assert!(row.contains("Bash(cargo test)"));
+        assert!(row.contains("0:04"));
     }
 
     #[test]
-    fn session_state_group_orders_running_complete_unknown() {
+    fn session_format_row_thinking_shows_prompt_and_thinking() {
+        let mut s = mk("%1", "claude", "/repo", 1000);
+        s.state = State::Thinking;
+        s.last_prompt = "fix tests".into();
+        s.prompt_started_at = 1100;
+        let row = s.format_row(1162);
+        assert!(row.contains('◉'), "row: {row}");
+        assert!(row.contains("fix tests"));
+        assert!(row.contains("thinking"));
+        assert!(row.contains("1:02"));
+    }
+
+    #[test]
+    fn session_format_row_waiting_shows_glyph_and_age() {
+        let mut s = mk("%1", "claude", "/repo", 1);
+        s.state = State::Waiting;
+        s.last_event_ts = 100;
+        let row = s.format_row(123);
+        assert!(row.contains('⚠'), "row: {row}");
+        assert!(row.contains("waiting"));
+    }
+
+    #[test]
+    fn session_format_row_idle_shows_done_in_and_tools_and_ago() {
+        let mut s = mk("%1", "claude", "/repo", 1);
+        s.state = State::Idle;
+        s.last_event_ts = 1000; // Stop fired here
+        s.last_turn_duration = 151; // 2m31s
+        s.tools_this_turn = 6;
+        let row = s.format_row(1420); // 7m later
+        assert!(row.starts_with("· "), "row: {row}");
+        assert!(row.contains("done in 2m31s"));
+        assert!(row.contains("6 tools"));
+        assert!(row.contains("7m ago"));
+    }
+
+    #[test]
+    fn session_format_row_cold_shows_em_dash() {
+        let s = mk("%1", "claude", "/repo", 1);
+        assert!(s.format_row(2).contains("·"));
+        assert!(s.format_row(2).contains("—"));
+    }
+
+    #[test]
+    fn session_effective_state_demotes_active_to_stalled_after_silence() {
+        let mut s = mk("%1", "claude", "/repo", 1);
+        s.state = State::Active;
+        s.last_event_ts = 100;
+        // Within window: stays Active.
+        assert_eq!(s.effective_state(100 + STALL_AFTER_SECS), State::Active);
+        // Past window: demoted.
+        assert_eq!(
+            s.effective_state(100 + STALL_AFTER_SECS + 1),
+            State::Stalled
+        );
+    }
+
+    #[test]
+    fn session_state_group_orders_doing_first_idle_last() {
         let mut s = mk("%1", "claude", "/x", 0);
-        s.state = State::Running;
-        assert_eq!(s.state_group(), 0);
-        s.state = State::Complete;
-        assert_eq!(s.state_group(), 1);
-        s.state = State::Unknown;
-        assert_eq!(s.state_group(), 2);
+        let now = 1_000_000;
+        s.state = State::Active;
+        s.last_event_ts = now;
+        assert_eq!(s.state_group(now), 0);
+        s.state = State::Thinking;
+        assert_eq!(s.state_group(now), 1);
+        s.state = State::Waiting;
+        assert_eq!(s.state_group(now), 2);
+        s.state = State::Idle;
+        assert_eq!(s.state_group(now), 3);
+        s.state = State::Cold;
+        assert_eq!(s.state_group(now), 5);
     }
 
     #[test]
@@ -1387,19 +1737,59 @@ mod tests {
     }
 
     #[test]
-    fn sort_sessions_running_first_complete_next_unknown_last_recent_first() {
+    fn duration_short_formats_across_thresholds() {
+        assert_eq!(duration_short(0), "0:00");
+        assert_eq!(duration_short(4), "0:04");
+        assert_eq!(duration_short(99), "1:39");
+        assert_eq!(duration_short(151), "2m31s");
+        assert_eq!(duration_short(3600), "1h00m");
+        assert_eq!(duration_short(4577), "1h16m");
+    }
+
+    #[test]
+    fn ago_formats_across_thresholds() {
+        assert_eq!(ago(0), "just now");
+        assert_eq!(ago(3), "just now");
+        assert_eq!(ago(7), "7s ago");
+        assert_eq!(ago(120), "2m ago");
+        assert_eq!(ago(7200), "2h ago");
+    }
+
+    #[test]
+    fn tool_input_preview_picks_per_tool_field() {
+        use serde_json::json;
+        assert_eq!(
+            tool_input_preview("Bash", Some(&json!({"command": "cargo test"}))),
+            "cargo test"
+        );
+        assert_eq!(
+            tool_input_preview("Edit", Some(&json!({"file_path": "/x/y.rs"}))),
+            "/x/y.rs"
+        );
+        assert_eq!(
+            tool_input_preview("UnknownTool", Some(&json!({"command": "x"}))),
+            ""
+        );
+    }
+
+    #[test]
+    fn sort_sessions_active_first_thinking_next_idle_last_recent_first() {
+        let now = 1_000_000;
         let mut a = mk("%a", "claude", "/x", 100);
-        a.state = State::Complete;
+        a.state = State::Idle;
         a.state_ts = 200;
+        a.last_event_ts = 200;
         let mut b = mk("%b", "claude", "/y", 100);
-        b.state = State::Running;
+        b.state = State::Active;
         b.state_ts = 150;
+        b.last_event_ts = now - 5; // recent so not stalled, but older than c
         let mut c = mk("%c", "claude", "/z", 100);
-        c.state = State::Running;
+        c.state = State::Active;
         c.state_ts = 300;
-        let d = mk("%d", "kiro", "/w", 100);
+        c.last_event_ts = now; // most recent activity
+        let d = mk("%d", "kiro", "/w", 100); // Cold
         let mut v = vec![a, b, c, d];
-        sort_sessions(&mut v);
+        sort_sessions(&mut v, now);
         assert_eq!(
             v.iter().map(|s| s.pane_id.as_str()).collect::<Vec<_>>(),
             vec!["%c", "%b", "%a", "%d"]
@@ -1483,12 +1873,8 @@ mod tests {
         run_setup(&path, &self_path, None).unwrap();
 
         let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        for ev in [
-            EVT_USER_PROMPT_SUBMIT,
-            EVT_PRE_TOOL_USE,
-            EVT_POST_TOOL_USE,
-            EVT_STOP,
-        ] {
+        for ev in HOOK_EVENTS {
+            let ev = *ev;
             let arr = v["hooks"][ev].as_array().unwrap();
             assert_eq!(arr.len(), 1, "{ev}");
             assert_eq!(arr[0]["matcher"], "");
@@ -1532,8 +1918,8 @@ mod tests {
         assert!(ups[0].get(AGENT_ORCH_TAG).is_none());
         assert_eq!(ups[1][AGENT_ORCH_TAG], true);
         // Other events have just our entry.
-        for ev in [EVT_PRE_TOOL_USE, EVT_POST_TOOL_USE, EVT_STOP] {
-            let arr = v["hooks"][ev].as_array().unwrap();
+        for ev in HOOK_EVENTS.iter().filter(|e| **e != EVT_USER_PROMPT_SUBMIT) {
+            let arr = v["hooks"][*ev].as_array().unwrap();
             assert_eq!(arr.len(), 1);
             assert_eq!(arr[0][AGENT_ORCH_TAG], true);
         }
@@ -1548,12 +1934,8 @@ mod tests {
         run_setup(&path, &self_path, None).unwrap();
 
         let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        for ev in [
-            EVT_USER_PROMPT_SUBMIT,
-            EVT_PRE_TOOL_USE,
-            EVT_POST_TOOL_USE,
-            EVT_STOP,
-        ] {
+        for ev in HOOK_EVENTS {
+            let ev = *ev;
             assert_eq!(
                 v["hooks"][ev].as_array().unwrap().len(),
                 1,
@@ -1697,7 +2079,10 @@ mod tests {
         assert_eq!(p.argv, vec!["kiro", "chat"]);
 
         let parsed: serde_json::Value = serde_json::from_slice(&fs::read(&cfg).unwrap()).unwrap();
-        // Same nested matcher+hooks shape as Claude.
+        // Kiro's project config currently mirrors the original Claude
+        // 4-event set (the new Notification / PostToolUseFailure events
+        // ship to ~/.claude/settings.json only). The wider Kiro hook
+        // integration is a separate decision — see project memory.
         for ev in [
             EVT_USER_PROMPT_SUBMIT,
             EVT_PRE_TOOL_USE,
@@ -1790,7 +2175,7 @@ mod tests {
         assert_eq!(v[0].pane_id, "%42");
         assert_eq!(v[0].kind, "claude");
         assert_eq!(v[0].pid, std::process::id() as i32);
-        assert_eq!(v[0].state, State::Unknown);
+        assert_eq!(v[0].state, State::Cold);
         assert!(!v[0].created_kiro_config);
     }
 
@@ -1946,12 +2331,12 @@ mod tests {
             )
             .unwrap();
         let v = store.read().unwrap();
-        assert_eq!(v[0].state, State::Running);
+        assert_eq!(v[0].state, State::Thinking);
         assert_eq!(v[0].last_prompt, "fix the test");
     }
 
     #[test]
-    fn hook_stop_marks_complete() {
+    fn hook_stop_marks_idle() {
         let (dir, store) = fixtures();
         let cwd = dir.path().to_path_buf();
         let argv = vec!["stub".to_string()];
@@ -1962,7 +2347,7 @@ mod tests {
         Claude
             .hook(&store, "%1", EVT_STOP, &mut Cursor::new(b"{}".to_vec()), 99)
             .unwrap();
-        assert_eq!(store.read().unwrap()[0].state, State::Complete);
+        assert_eq!(store.read().unwrap()[0].state, State::Idle);
     }
 
     #[test]
@@ -2000,7 +2385,7 @@ mod tests {
             42,
         )
         .unwrap();
-        assert_eq!(store.read().unwrap()[0].state, State::Running);
+        assert_eq!(store.read().unwrap()[0].state, State::Thinking);
         assert_eq!(store.read().unwrap()[0].last_prompt, "hi");
     }
 
@@ -2034,11 +2419,12 @@ mod tests {
         store
             .mutate(|v| {
                 let mut alive = mk("%alive", "claude", "/x", 1);
-                alive.state = State::Running;
+                alive.state = State::Active;
                 alive.state_ts = 100;
+                alive.last_event_ts = now_secs();
                 let mut dead = mk("%dead", "claude", "/y", 2);
                 dead.pid = 1; // overwhelmingly likely dead/inaccessible
-                dead.state = State::Running;
+                dead.state = State::Active;
                 v.push(alive);
                 v.push(dead);
                 Ok(())
@@ -2062,8 +2448,10 @@ mod tests {
         store
             .mutate(|v| {
                 let mut s = mk("%alive", "claude", "/repo/foo", 1);
-                s.state = State::Running;
+                s.state = State::Thinking;
                 s.last_prompt = "do a thing".into();
+                s.prompt_started_at = 100;
+                s.last_event_ts = now_secs();
                 v.push(s);
                 Ok(())
             })
