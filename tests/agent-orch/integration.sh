@@ -145,15 +145,20 @@ echo '{}' | env "XDG_STATE_HOME=$STATE_PARENT" "AGENT_ORCH_PANE=$PANE_ID" \
 [[ "$(field 0 state)" == "complete" ]] || fail "case 4: state != complete"
 pass "hook Stop marked complete"
 
-# ── case 5 — list emits the live row ───────────────────────────────
+# ── case 5 — render emits the live row (drives the loop body) ─────
+# `render` is the hidden subcommand the event-driven loop body
+# wires into fzf's `reload(...)` action. Each row is
+# `<pane_id>\t<formatted-row>`; pane id sits in column 1 so fzf's
+# `--id-nth=1 --with-nth=2..` can track and hide it respectively.
 
-log "case 5: list emits the live row"
-LIST_OUT="$(env "XDG_STATE_HOME=$STATE_PARENT" "$BIN" list)"
-trace "$LIST_OUT"
-[[ "$LIST_OUT" == *"$PANE_ID"* ]] || fail "case 5: list missing pane id"
-[[ "$LIST_OUT" == *"claude"* ]] || fail "case 5: list missing kind"
-[[ "$LIST_OUT" == *"fix the failing test"* ]] || fail "case 5: list missing prompt"
-pass "list reflects accumulated state"
+log "case 5: render emits a tab-separated row per registered pane"
+RENDER_OUT="$(env "XDG_STATE_HOME=$STATE_PARENT" "$BIN" render)"
+trace "$RENDER_OUT"
+[[ "$(printf '%s\n' "$RENDER_OUT" | wc -l)" -eq 1 ]] || fail "case 5: expected 1 row"
+[[ "$RENDER_OUT" == "$PANE_ID"$'\t'* ]] || fail "case 5: pane id not in column 1"
+[[ "$RENDER_OUT" == *"claude"* ]] || fail "case 5: render missing kind"
+[[ "$RENDER_OUT" == *"fix the failing test"* ]] || fail "case 5: render missing prompt"
+pass "render emits tab-separated rows in picker-sort order"
 
 # ── case 6 — unregister removes the record ─────────────────────────
 
@@ -264,4 +269,34 @@ env "HOME=$FRESH_HOME" "$BIN" teardown
 # SETUP_HOME and FRESH_HOME are cleaned up by the EXIT trap.
 pass "setup/teardown removes settings.json when only our content remained"
 
-log "all 10 cases passed"
+# ── case 11 — setup/teardown register/unregister the M-o keybind ──
+#
+# `setup` should bind `M-o` to `switch-client -t orchestrator` on
+# the running tmux server (best-effort — the spec accepts that this
+# is live-only and won't survive a server restart). `teardown`
+# should unbind it. We point the binary at our private tmux socket
+# via `$AGENT_ORCH_TMUX_SOCKET` so the assertions don't touch the
+# user's real server.
+
+log "case 11: setup installs and teardown removes the M-o keybind"
+KEY_HOME="$(mktemp -d)"
+mkdir -p "$KEY_HOME/.claude"
+
+# Pre-condition: no M-o binding yet.
+T list-keys -T root 2>/dev/null | grep -q '^bind-key  *-T root M-o ' \
+  && fail "case 11: M-o already bound on test server before setup"
+
+env "HOME=$KEY_HOME" "AGENT_ORCH_TMUX_SOCKET=$TMUX_SOCKET" "$BIN" setup
+T list-keys -T root 2>/dev/null | grep -E '^bind-key +-T root +M-o +' >/dev/null \
+  || fail "case 11: setup did not install the M-o keybind"
+T list-keys -T root 2>/dev/null | grep -E '^bind-key +-T root +M-o +' \
+  | grep -q "switch-client -t orchestrator" \
+  || fail "case 11: M-o keybind doesn't route to switch-client orchestrator"
+
+env "HOME=$KEY_HOME" "AGENT_ORCH_TMUX_SOCKET=$TMUX_SOCKET" "$BIN" teardown
+T list-keys -T root 2>/dev/null | grep -E '^bind-key +-T root +M-o +' >/dev/null \
+  && fail "case 11: teardown did not remove the M-o keybind"
+rm -rf "$KEY_HOME"
+pass "setup/teardown installs and removes the M-o keybind on the live tmux server"
+
+log "all 11 cases passed"

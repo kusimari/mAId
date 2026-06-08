@@ -11,7 +11,7 @@
 //!                     unregister), and a default `hook` method body
 //!                     shared across kinds. Claude hooks live
 //!                     user-globally via `setup` / `teardown`.
-//!   §4 · `Loop`     — picker (`render`, `pick`, `run`, `body`).
+//!   §4 · `Loop`     — picker (`render`, `render_to`, `run`, `body`).
 //!
 //! The CLI dispatch (`main`) wires these together. Tests at the
 //! bottom drive each typeclass directly with a tempdir `Store`;
@@ -22,8 +22,11 @@ use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{Read, Write};
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const SESSIONS_FILE: &str = "sessions.json";
 const LOCK_FILE: &str = "sessions.lock";
@@ -608,7 +611,9 @@ fn run_setup(path: &Path, self_path: &Path) -> Result<()> {
         serde_json::json!({})
     };
     merge_claude_hooks(&mut settings, self_path)?;
-    write_json_atomic(path, &settings)
+    write_json_atomic(path, &settings)?;
+    install_tmux_keybind();
+    Ok(())
 }
 
 /// `agent-orch teardown` — remove our tagged hook entries from
@@ -616,6 +621,7 @@ fn run_setup(path: &Path, self_path: &Path) -> Result<()> {
 /// removes the file entirely if the result is `{}`. No-op if the
 /// file is absent.
 fn run_teardown(path: &Path) -> Result<()> {
+    uninstall_tmux_keybind();
     if !path.exists() {
         return Ok(());
     }
@@ -634,6 +640,56 @@ fn run_teardown(path: &Path) -> Result<()> {
     } else {
         write_json_atomic(path, &settings)
     }
+}
+
+/// Best-effort: bind `M-o` to `switch-client -t orchestrator`
+/// on the running tmux server. Live-only — survives until the
+/// server exits. If tmux isn't running (no server, no $TMUX,
+/// not on PATH), silently no-op; the user can run `setup` again
+/// after starting tmux. Persistence beyond a server restart is
+/// the user's job (config-managed `~/.tmux.conf` via
+/// home-manager / chezmoi / yadm / ansible-pull, or whatever
+/// their dotfiles setup is — see the spec's Decision Log).
+///
+/// `$AGENT_ORCH_TMUX_SOCKET` is honored as `-L <name>` so the
+/// integration script can target its private tmux server.
+fn install_tmux_keybind() {
+    let mut cmd = std::process::Command::new("tmux");
+    if let Ok(name) = std::env::var("AGENT_ORCH_TMUX_SOCKET") {
+        if !name.is_empty() {
+            cmd.arg("-L").arg(name);
+        }
+    }
+    // stderr suppressed: tmux prints "error connecting to ..."
+    // when no server is running, which is a normal state for a
+    // first-run setup (user hasn't started tmux yet). Silent
+    // no-op is the contract.
+    let _ = cmd
+        .args([
+            "bind-key",
+            "-n",
+            "M-o",
+            "switch-client",
+            "-t",
+            ORCHESTRATOR_SESSION,
+        ])
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+/// Best-effort reverse of `install_tmux_keybind`. `unbind-key`
+/// errors if the binding isn't there; we ignore the status.
+fn uninstall_tmux_keybind() {
+    let mut cmd = std::process::Command::new("tmux");
+    if let Ok(name) = std::env::var("AGENT_ORCH_TMUX_SOCKET") {
+        if !name.is_empty() {
+            cmd.arg("-L").arg(name);
+        }
+    }
+    let _ = cmd
+        .args(["unbind-key", "-n", "M-o"])
+        .stderr(std::process::Stdio::null())
+        .status();
 }
 
 /// Atomic write for arbitrary JSON files: per-pid tmp + rename.
@@ -820,39 +876,22 @@ impl<'a> Loop<'a> {
             .collect())
     }
 
-    /// Render rows, run fzf, print the chosen pane id to `stdout`.
-    /// Empty registry → silent. fzf cancel → silent.
-    pub fn pick(&self, stdout: &mut dyn Write) -> Result<()> {
-        let rows = self.render()?;
-        if rows.is_empty() {
-            return Ok(());
-        }
-        let mut child = std::process::Command::new("fzf")
-            .arg("--with-nth=2..")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .spawn()
-            .context("spawn fzf (is it on PATH?)")?;
-        {
-            let stdin = child.stdin.as_mut().context("fzf stdin")?;
-            for (id, row) in &rows {
-                writeln!(stdin, "{}\t{}", id, row)?;
-            }
-        }
-        let out = child.wait_with_output().context("fzf wait")?;
-        if !out.status.success() {
-            return Ok(());
-        }
-        let line = String::from_utf8_lossy(&out.stdout);
-        if let Some(pane) = line.split('\t').next() {
-            writeln!(stdout, "{}", pane.trim())?;
+    /// Print the rendered rows to `stdout`, one tab-separated
+    /// `<pane_id>\t<formatted-row>` line each. Used by the
+    /// hidden `agent-orch render` subcommand which the
+    /// event-driven `body` invokes via fzf's `reload(...)` action.
+    pub fn render_to(&self, stdout: &mut dyn Write) -> Result<()> {
+        for (id, row) in self.render()? {
+            writeln!(stdout, "{}\t{}", id, row)?;
         }
         Ok(())
     }
 
     /// Ensure the orchestrator tmux session exists, switch the
-    /// client to it. The picker loop body runs inside that session
-    /// via `agent-orch loop-body`.
+    /// client to it. The picker loop body runs inside that
+    /// session via a bare `agent-orch` invocation — bare
+    /// detects whether it's already inside the orchestrator
+    /// session and, if so, runs `body` instead of recursing.
     pub fn run(&self, self_path: &Path) -> Result<()> {
         let has = std::process::Command::new("tmux")
             .args(["has-session", "-t", ORCHESTRATOR_SESSION])
@@ -860,7 +899,7 @@ impl<'a> Loop<'a> {
             .context("tmux has-session")?
             .success();
         if !has {
-            let cmd = format!("{} loop-body", self_path.display());
+            let cmd = self_path.display().to_string();
             let status = std::process::Command::new("tmux")
                 .args(["new-session", "-d", "-s", ORCHESTRATOR_SESSION, &cmd])
                 .status()
@@ -875,28 +914,166 @@ impl<'a> Loop<'a> {
         Ok(())
     }
 
-    /// Picker loop body — pick + tmux switch-client → repeat.
-    /// Runs inside the orchestrator session.
-    pub fn body(&self) -> Result<()> {
+    /// Event-driven picker loop body. Runs inside the
+    /// orchestrator session.
+    ///
+    /// `fzf --listen` opens a Unix socket for control commands.
+    /// `--with-nth=2..` shows every column except the pane id;
+    /// `--track --id-nth=1` sticks the highlight to the same
+    /// pane id across reloads (so a state change to the focused
+    /// row doesn't lose the highlight). `enter:execute-silent
+    /// (tmux switch-client -t {1})` is non-terminal — fzf stays
+    /// alive across selections. We push a `reload(self render)`
+    /// command to the listen socket whenever sessions.json
+    /// changes; debounced 100ms by `notify-debouncer-mini`.
+    pub fn body(&self, self_path: &Path) -> Result<()> {
+        let sock_path = pick_listen_socket();
+        let sock = sock_path.to_string_lossy().to_string();
+        let render_cmd = format!("{} render", self_path.display());
+        let bind = "enter:execute-silent(tmux switch-client -t {1})+clear-query";
+
+        let mut child = std::process::Command::new("fzf")
+            .args([
+                &format!("--listen={sock}"),
+                "--with-nth=2..",
+                "--track",
+                "--id-nth=1",
+                "--bind",
+                bind,
+            ])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .context("spawn fzf (is it on PATH?)")?;
+
+        // Seed the initial row set on stdin, then close it so
+        // fzf treats the source as exhausted; subsequent updates
+        // arrive via reload commands on the listen socket.
+        {
+            let stdin = child.stdin.as_mut().context("fzf stdin")?;
+            for (id, row) in self.render()? {
+                writeln!(stdin, "{}\t{}", id, row)?;
+            }
+        }
+        drop(child.stdin.take());
+
+        // Watcher → main thread channel. Watcher errors are
+        // surfaced once on stderr, then we keep going (fzf
+        // selections still work without auto-reload).
+        let (tx, rx) = mpsc::channel::<()>();
+        let watch_dir = self.store.dir().to_path_buf();
+        thread::spawn(move || {
+            if let Err(e) = run_watcher(&watch_dir, tx) {
+                eprintln!("agent-orch watcher: {e:#}");
+            }
+        });
+
         loop {
-            let mut buf = Vec::new();
-            if let Err(e) = self.pick(&mut buf) {
-                eprintln!("pick: {e:#}");
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                continue;
+            // Block up to 200ms on a watcher tick. If one
+            // arrives, push reload to fzf. Either way, poll the
+            // child between iterations so we can exit when fzf
+            // does (Esc / Ctrl-C / kill).
+            match rx.recv_timeout(Duration::from_millis(200)) {
+                Ok(()) => {
+                    // Drain any backlog so we coalesce bursts
+                    // into one reload.
+                    while rx.try_recv().is_ok() {}
+                    if let Err(e) = push_reload(&sock_path, &render_cmd) {
+                        eprintln!("agent-orch reload: {e:#}");
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    // Watcher died; loop continues without
+                    // auto-reload. fzf selections still work.
+                }
             }
-            let line = String::from_utf8_lossy(&buf);
-            let pane = line.trim();
-            if pane.is_empty() {
-                std::thread::sleep(std::time::Duration::from_millis(200));
-                continue;
+            if let Some(_status) = child.try_wait().context("fzf try_wait")? {
+                break;
             }
-            let _ = std::process::Command::new("tmux")
-                .args(["switch-client", "-t", pane])
-                .status();
-            std::io::stderr().flush().ok();
+        }
+        let _ = fs::remove_file(&sock_path);
+        Ok(())
+    }
+}
+
+/// Pick a path for fzf's listen socket. Prefer
+/// `${XDG_RUNTIME_DIR}` (typically tmpfs, per-user, cleaned at
+/// logout); fall back to `$TMPDIR` / `/tmp`. Per-pid filename so
+/// concurrent orchestrator sessions don't collide.
+fn pick_listen_socket() -> PathBuf {
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+        .or_else(|| std::env::var_os("TMPDIR").map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("/tmp"));
+    dir.join(format!("agent-orch-fzf-{}.sock", std::process::id()))
+}
+
+/// Watch the store dir for sessions.json changes; emit one
+/// `()` per debounced batch. Debounce window is 100ms — short
+/// enough that the picker feels live, long enough to coalesce
+/// the tmp+rename pair an atomic write produces.
+fn run_watcher(dir: &Path, tx: mpsc::Sender<()>) -> Result<()> {
+    use notify::RecursiveMode;
+    use notify_debouncer_mini::new_debouncer;
+
+    fs::create_dir_all(dir).with_context(|| format!("mkdir -p {}", dir.display()))?;
+    // Watch the directory (not the file) — the file may not
+    // exist yet on first run, and atomic rename swaps inodes
+    // anyway, which would invalidate a file-level watch.
+    let (notify_tx, notify_rx) = mpsc::channel();
+    let mut debouncer =
+        new_debouncer(Duration::from_millis(100), notify_tx).context("notify debouncer")?;
+    debouncer
+        .watcher()
+        .watch(dir, RecursiveMode::NonRecursive)
+        .with_context(|| format!("watch {}", dir.display()))?;
+
+    let target = SESSIONS_FILE;
+    for batch in notify_rx {
+        let events = batch.unwrap_or_default();
+        let interesting = events.iter().any(|e| {
+            e.path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n == target)
+                .unwrap_or(false)
+        });
+        if interesting && tx.send(()).is_err() {
+            // main loop dropped the receiver — fzf exited
+            break;
         }
     }
+    Ok(())
+}
+
+/// Push `reload(<cmd>)` to fzf's listen socket. fzf speaks
+/// HTTP/1.1 over the UDS — the request body is the action
+/// string, no special framing beyond Content-Length.
+fn push_reload(sock: &Path, render_cmd: &str) -> Result<()> {
+    let body = format!("reload({render_cmd})");
+    let mut stream =
+        UnixStream::connect(sock).with_context(|| format!("connect {}", sock.display()))?;
+    stream
+        .set_write_timeout(Some(Duration::from_millis(500)))
+        .ok();
+    stream
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .ok();
+    let request = format!(
+        "POST / HTTP/1.1\r\nHost: fzf\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    stream
+        .write_all(request.as_bytes())
+        .context("write reload")?;
+    // Drain the response so fzf doesn't see a half-closed
+    // socket. We don't parse it — any 2xx/4xx is acceptable;
+    // a connection error already surfaces above.
+    let mut sink = Vec::new();
+    let _ = stream.read_to_end(&mut sink);
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -928,16 +1105,16 @@ enum Cmd {
         agent_argv: Vec<String>,
     },
     /// Hook reporter; called by Claude/Kiro on each lifecycle event.
+    #[command(hide = true)]
     Hook { event: String },
-    /// Print one selected pane id from the registry to stdout.
-    Pick,
-    /// Print the live registry, one pane per line.
-    List,
-    /// Remove a record (called by tmux pane-exited and on demand).
+    /// Remove a record (called by tmux pane-exited).
+    #[command(hide = true)]
     Unregister { pane_id: String },
-    /// Picker loop body — runs inside the orchestrator session.
-    #[command(name = "loop-body")]
-    LoopBody,
+    /// Print one tab-separated <pane_id>\t<row> per session,
+    /// in picker-sort order, dead pids filtered out. Used by
+    /// the loop body's fzf reload action.
+    #[command(hide = true)]
+    Render,
 }
 
 fn main() -> Result<()> {
@@ -946,8 +1123,19 @@ fn main() -> Result<()> {
     let self_path = std::env::current_exe().context("current_exe")?;
 
     match cli.cmd {
-        // Bare invocation: ensure orchestrator session + switch-client.
-        None => Loop::new(&store).run(&self_path),
+        // Bare invocation. Self-detects:
+        //  - inside the `orchestrator` tmux session → run the
+        //    event-driven picker `body` (this is what tmux
+        //    spawned when the session was created);
+        //  - anywhere else → ensure the orchestrator session
+        //    exists and switch-client to it.
+        None => {
+            if inside_orchestrator() {
+                Loop::new(&store).body(&self_path)
+            } else {
+                Loop::new(&store).run(&self_path)
+            }
+        }
 
         Some(Cmd::Setup) => run_setup(&user_claude_settings_path()?, &self_path),
         Some(Cmd::Teardown) => run_teardown(&user_claude_settings_path()?),
@@ -995,27 +1183,35 @@ fn main() -> Result<()> {
             Ok(())
         }
 
-        Some(Cmd::Pick) => {
-            let mut stdout = std::io::stdout();
-            Loop::new(&store).pick(&mut stdout)
-        }
-
-        Some(Cmd::List) => {
-            let mut sessions = store.read()?;
-            if sessions.is_empty() {
-                println!("(no registered sessions)");
-                return Ok(());
-            }
-            sort_sessions(&mut sessions);
-            for s in &sessions {
-                println!("{}\t{}", s.pane_id, s.format_row());
-            }
-            Ok(())
-        }
-
         Some(Cmd::Unregister { pane_id }) => unregister(&store, &pane_id),
 
-        Some(Cmd::LoopBody) => Loop::new(&store).body(),
+        Some(Cmd::Render) => {
+            let mut stdout = std::io::stdout();
+            Loop::new(&store).render_to(&mut stdout)
+        }
+    }
+}
+
+/// True iff the current process is running inside the
+/// `orchestrator` tmux session. Used by bare `agent-orch` to
+/// decide between `run` (bootstrap from outside) and `body`
+/// (the picker tmux spawned from `run`). `$TMUX` set + tmux's
+/// `display-message #{session_name}` returning `orchestrator`
+/// is the load-bearing check; either alone misclassifies (a
+/// user inside any tmux session running bare `agent-orch` would
+/// otherwise spawn a body in their own session).
+fn inside_orchestrator() -> bool {
+    if std::env::var_os("TMUX").is_none() {
+        return false;
+    }
+    let out = std::process::Command::new("tmux")
+        .args(["display-message", "-p", "#{session_name}"])
+        .output();
+    match out {
+        Ok(o) if o.status.success() => {
+            String::from_utf8_lossy(&o.stdout).trim() == ORCHESTRATOR_SESSION
+        }
+        _ => false,
     }
 }
 
@@ -1800,5 +1996,36 @@ mod tests {
         // dead pid filtered out; alive remains
         assert_eq!(rows.len(), 1, "rows: {rows:?}");
         assert_eq!(rows[0].0, "%alive");
+    }
+
+    #[test]
+    fn loop_render_to_emits_tab_separated_rows() {
+        // Drives the surface backing `agent-orch render`: each
+        // session becomes one `<pane_id>\t<formatted-row>` line.
+        // The `\t` split is load-bearing — fzf's `--with-nth=2..`
+        // skips the pane id column in display while `--id-nth=1`
+        // tracks selection by pane id across reloads.
+        let (_dir, store) = fixtures();
+        store
+            .mutate(|v| {
+                let mut s = mk("%alive", "claude", "/repo/foo", 1);
+                s.state = State::Running;
+                s.last_prompt = "do a thing".into();
+                v.push(s);
+                Ok(())
+            })
+            .unwrap();
+
+        let mut buf = Vec::new();
+        Loop::new(&store).render_to(&mut buf).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 1);
+        let mut parts = lines[0].splitn(2, '\t');
+        assert_eq!(parts.next().unwrap(), "%alive");
+        let row = parts.next().unwrap();
+        assert!(row.contains("claude"));
+        assert!(row.contains("repo/foo"));
+        assert!(row.contains("do a thing"));
     }
 }

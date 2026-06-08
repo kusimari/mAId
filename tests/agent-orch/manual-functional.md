@@ -35,39 +35,37 @@ Have on PATH:
 - `jq` (only used by the integration script; useful for inspecting
   `sessions.json` during this test)
 
-**Install Claude hooks user-globally before launching agents:**
+**Install Claude hooks and the `M-o` tmux keybind:**
 
 ```sh
 agent-orch setup
 ```
 
-This appends our four hook entries (`UserPromptSubmit` /
-`PreToolUse` / `PostToolUse` / `Stop`) to
-`~/.claude/settings.json`, tagged with `"agent-orch": true`. The
-hooks fire on every `claude` invocation; the binary filters by
-`$AGENT_ORCH_PANE` and exits silently for bare-claude calls
-(see "What you've verified" at the bottom for the verification).
+This does two things:
+
+1. Appends our four hook entries (`UserPromptSubmit` /
+   `PreToolUse` / `PostToolUse` / `Stop`) to
+   `~/.claude/settings.json`, each tagged with
+   `"x-agent-orch-managed": true`. The hooks fire on every
+   `claude` invocation; the binary filters by
+   `$AGENT_ORCH_PANE` and exits silently for bare-claude
+   calls.
+2. Installs `bind-key -n M-o switch-client -t orchestrator`
+   on the running tmux server. Live-only: the binding
+   survives until the tmux server exits. If you restart the
+   server, run `agent-orch setup` again. (Persistence beyond a
+   server restart is the user's job — bake the same line into
+   your `~/.tmux.conf` via home-manager / chezmoi / yadm /
+   ansible-pull or whatever your dotfiles setup is.)
+
+If tmux isn't running yet when you call `setup`, the keybind
+install silently no-ops; just rerun `setup` after starting tmux.
 
 **At the end of this test plan, run `agent-orch teardown`** —
-removes only the tagged entries, leaving any other hooks you
-have intact, and removes the `~/.claude/settings.json` file
-entirely if it had no other content.
-
-Recommended `~/.tmux.conf` keybind for the round-trip:
-
-```tmux
-# Press M-o (Alt-o) from any tmux pane to jump back to the
-# orchestrator session.
-bind-key -n M-o switch-client -t orchestrator
-```
-
-If you don't want to edit `~/.tmux.conf`, set it on the running
-server before the test:
-
-```sh
-tmux set -g status-keys vi    # or whatever you have
-tmux bind-key -n M-o switch-client -t orchestrator
-```
+removes only the tagged hook entries (preserving any other
+hooks you have), removes the `~/.claude/settings.json` file
+entirely if it had no other content, and runs `unbind-key -n
+M-o`.
 
 Use the absolute path to the compiled binary throughout (or add
 `<repo>/dist/agent-orch` to `$PATH` for this shell). Below it's
@@ -78,11 +76,11 @@ spelled `agent-orch` — adjust if your shell can't resolve it.
 > wrapper itself just registers the pane and `execvp`s the
 > agent. For Kiro, the wrapper writes a project-scoped
 > `<cwd>/.kiro/agents/agent-orch.json` for that cwd; it's
-> removed when the last Kiro session in that cwd exits. If you
-> Ctrl-C this test halfway through, run `agent-orch unregister
-> %N` for any panes you abandon (or just delete
-> `~/.local/state/agent-orch/sessions.json` to start clean) and
-> `agent-orch teardown` to roll back the hook install.
+> removed when the last Kiro session in that cwd exits. If
+> something gets wedged mid-test, just delete
+> `~/.local/state/agent-orch/sessions.json` to clear the
+> registry and `agent-orch teardown` to roll back the hook +
+> keybind install.
 
 ## CLI shape (read this first)
 
@@ -179,10 +177,12 @@ agent-orch wrap kiro -- kiro
 ```
 
 After these three terminals, three (or four — `proj-c` has two)
-agents should be running. Confirm from anywhere:
+agents should be running. Confirm from anywhere by inspecting
+the on-disk registry directly:
 
 ```sh
-agent-orch list
+jq -r '.[] | "\(.pane_id)\t\(.kind)\t\(.cwd)\t\(.state)"' \
+  ~/.local/state/agent-orch/sessions.json
 ```
 
 You should see four rows — three Claude (one per project) and one
@@ -204,12 +204,18 @@ agent-orch
 
 `agent-orch` (no args) does three things:
 
-1. Notices there's no `orchestrator` tmux session yet; creates it
-   detached, running `agent-orch loop-body`.
+1. Notices there's no `orchestrator` tmux session yet; creates
+   it detached, running a bare `agent-orch` (which self-detects
+   that it's now inside the orchestrator session and runs the
+   event-driven picker body instead of recursing).
 2. `tmux switch-client -t orchestrator` — your viewer terminal's
    client now displays the orchestrator session, NOT `viewer`.
-3. The orchestrator session's pane is running the loop body,
-   which renders the picker.
+3. The orchestrator session's pane is running the body: it
+   spawns `fzf` with `--listen`, then watches
+   `~/.local/state/agent-orch/` and pushes a `reload` to fzf
+   whenever `sessions.json` changes — so the picker updates
+   live as agents transition between states without ever
+   tearing down the picker process.
 
 What you should see: an `fzf` picker listing all four wrapped
 agents. Each row shows `<state-glyph> <kind> <cwd-tail> · <prompt>
@@ -219,11 +225,12 @@ unknown (`·`) last; within each group, most-recently-active first.
 ### Step 3 — pick and switch
 
 In the picker, type to filter or use arrow keys; press `Enter` on
-one of the rows. `fzf` exits, the loop body reads the chosen pane
-id, and runs `tmux switch-client -t %ID`. Your terminal now
-displays the **agent's pane** in its **agent's session** —
-exactly the pane and window the agent is in, even if the session
-has multiple windows or splits.
+one of the rows. The `enter` keybind is bound to
+`execute-silent(tmux switch-client -t {1})` — fzf does **not**
+exit, it just runs the switch-client side effect and clears the
+query. Your terminal now displays the **agent's pane** in its
+**agent's session** — exactly the pane and window the agent is
+in, even if the session has multiple windows or splits.
 
 Verify:
 
@@ -239,14 +246,15 @@ nested.
 
 ### Step 4 — back to orchestrator
 
-You're now sitting in an agent's pane. Press your `M-o` keybind
-(or `tmux switch-client -t orchestrator` directly if you didn't
-add the keybind). The terminal flips back to the orchestrator
-session.
+You're now sitting in an agent's pane. Press `M-o` (Alt-o) — the
+keybind `setup` installed. The terminal flips back to the
+orchestrator session.
 
-The picker re-renders against the current registry (state may
-have advanced if your agents were processing — `▶` for running,
-`✓` if `Stop` fired since you last looked).
+The picker is the **same fzf process** you left when you pressed
+Enter — but the watcher will have pushed reload commands while
+you were away, so the rows reflect the current registry (state
+may have advanced if your agents were processing — `▶` for
+running, `✓` if `Stop` fired since you last looked).
 
 Pick a different agent. Switch in. Press `M-o`. Switch in
 again. The loop is the user-loop you'd actually use.
@@ -285,31 +293,33 @@ Pick any wrapped agent. Then in another terminal:
 
 ```sh
 # Find the agent's pid:
-agent-orch list
+jq -r '.[] | "\(.pane_id)\t\(.pid)"' ~/.local/state/agent-orch/sessions.json
 # kill it directly (simulating a crash before pane-exited could fire):
 kill -9 <pid>
 ```
 
 The `pane-exited` hook should still fire when the pane goes
 away — but if for some reason it doesn't (server restart, etc.),
-the loop's `render` step filters dead pids via signal-0 probe.
-Confirm by re-rendering the picker (press M-o to come back if
-you're not already in orchestrator) — the dead row should be
-gone.
+the loop's render step filters dead pids via signal-0 probe.
+Confirm by switching back to orchestrator (press `M-o`) — the
+dead row should be gone (the watcher reloads as soon as the
+registry mutates; if it doesn't mutate because nothing
+unregistered, the dead-pid filter still drops it on the next
+reload).
 
 ### Step 7 — clean up
 
 Exit each agent (Ctrl-D / quit verb). Each pane-exit fires
-`unregister`, the row disappears from `agent-orch list`, the
-per-pane Claude `tmp/<pane>/settings.json` directory gets
-removed, the project-scoped Kiro config gets removed when its
-last pane exits.
+`unregister`, the row disappears from the registry (and from
+the picker, courtesy of the watcher's reload), and the
+project-scoped Kiro config gets removed when its last pane
+exits in that cwd.
 
 Final state:
 
 ```sh
-agent-orch list
-# → (no registered sessions)
+cat ~/.local/state/agent-orch/sessions.json 2>/dev/null
+# → []
 ls ~/.local/state/agent-orch/tmp/ 2>&1
 # → empty (or No such file or directory)
 ls /tmp/proj-c/.kiro/ 2>&1
@@ -346,12 +356,13 @@ jq '.. | objects | select(."agent-orch")' ~/.claude/settings.json 2>/dev/null
 ## What you've verified
 
 - **Real tmux integration** — `set-hook -g pane-exited`,
-  `set-option -p`, `switch-client -t %ID`, `new-session -d
-  agent-orch loop-body` all work against the actual tmux server,
-  not the private socket the integration script uses.
+  `set-option -p`, `switch-client -t %ID`, `bind-key -n M-o`,
+  `new-session -d agent-orch` (which self-detects + runs the
+  body) all work against the actual tmux server, not the
+  private socket the integration script uses.
 - **Real `execvp`** — the wrapper's pid is preserved as the
-  agent's pid; `kill -9 <pid_from_list>` actually kills the
-  agent.
+  agent's pid; `kill -9 <pid>` from the registry actually kills
+  the agent.
 - **Real Claude / Kiro hooks** — the per-launch settings file
   (Claude) and project-scoped agent config (Kiro) actually fire
   the hook subcommand on real prompts. State transitions
@@ -390,11 +401,15 @@ jq '.. | objects | select(."agent-orch")' ~/.claude/settings.json 2>/dev/null
   the registry by pane id.
 - **`pane %N already registered`** — you wrapped twice in the
   same pane, or a previous wrap crashed without `unregister`
-  firing. Run `agent-orch unregister %N` and try again.
+  firing. The wrapper auto-replaces the stale record if the
+  recorded pid is dead; if the pid is somehow still alive,
+  manually edit `~/.local/state/agent-orch/sessions.json` to
+  drop the offending entry.
 - **fzf picker shows nothing** — either no wrapped agents, or
-  all their pids are dead. Run `agent-orch list` to see the raw
-  registry; if rows show but the picker is empty, the live-pid
-  probe is dropping them all.
+  all their pids are dead. Inspect the raw registry with
+  `cat ~/.local/state/agent-orch/sessions.json`; if rows are
+  present but the picker is empty, the live-pid probe is
+  dropping them all.
 - **Tmux says `no current client`** — `switch-client -t ...`
   needs an attached client. If you're running `agent-orch` from
   a non-tmux shell to bootstrap the orchestrator, the bare

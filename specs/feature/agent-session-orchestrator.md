@@ -88,7 +88,7 @@ ever updated the session.
 ### Single binary, minimal CLI
 
 The orchestrator ships as one Rust binary: `agent-orch`. The
-user-facing CLI is **five verbs**:
+user-facing CLI is **three named verbs plus a bare invocation**:
 
 - `agent-orch setup` — install the machinery: write Claude
   hooks into `~/.claude/settings.json` (idempotent, tagged) and
@@ -104,20 +104,21 @@ user-facing CLI is **five verbs**:
   sets `$AGENT_ORCH_PANE`, then `execvp`s the agent. Claude
   hooks are already wired by `setup`; Kiro uses the
   project-scoped config the wrapper just wrote.
-- `agent-orch loop` (or `agent-orch` bare — same thing) — open
-  the UX. Self-detects whether it's running inside the
-  orchestrator tmux session: if not, ensures the session exists
-  and `switch-client`s the user to it; if yes, runs the
-  event-driven picker. fzf stays alive across selections;
-  `enter` runs `tmux switch-client` via `execute-silent` so the
-  picker survives the round-trip; the registry file is watched
-  via `notify` and `reload(...)` is pushed to fzf over a Unix
-  socket whenever a hook updates state.
-- `agent-orch doctor` — verify the install: tmux ≥ 3.2, fzf ≥
-  0.71.0 on PATH, agent CLIs detected, state dir writeable, the
-  `M-o` keybind currently registered, no stale Claude hooks
-  pointing at a missing binary, no orphan
-  `.kiro/agents/agent-orch.json`.
+- `agent-orch` (no args) — open the UX. Self-detects whether
+  it's running inside the orchestrator tmux session: if not,
+  ensures the session exists and `switch-client`s the user to
+  it; if yes, runs the event-driven picker. fzf stays alive
+  across selections; `enter` runs `tmux switch-client` via
+  `execute-silent` so the picker survives the round-trip; the
+  registry file is watched via `notify` and `reload(...)` is
+  pushed to fzf over a Unix socket whenever a hook updates
+  state.
+
+`agent-orch doctor` is planned but deferred to a follow-up
+ticket: it'll verify tmux ≥ 3.2, fzf ≥ 0.71.0 on PATH, agent
+CLIs detected, state dir writeable, the `M-o` keybind currently
+registered, no stale Claude hooks pointing at a missing binary,
+no orphan `.kiro/agents/agent-orch.json`.
 
 **Three internal subcommands** — exist only because external
 systems (Claude hooks, tmux pane-exited, fzf reload) shell out
@@ -1274,46 +1275,56 @@ for "open the orchestrator and leave it open."
      anything once `loop` is event-driven).
    - Drop `Cmd::List` and `cmd_list` (debugging-only verb;
      `cat sessions.json | jq` covers the use case).
-   - Mark `Cmd::Hook`, `Cmd::Unregister`, `Cmd::Render`,
-     `Cmd::LoopBody` with `#[command(hide = true)]` so they
-     don't appear in `--help` (still callable; hooks/tmux/fzf
-     shell out to them).
-   - Rename `Cmd::LoopBody` → `Cmd::Loop` (user-visible).
-     `Loop::run` and `Loop::body` collapse to one function;
-     the verb's body self-detects whether we're inside the
-     orchestrator session via `$TMUX` + `tmux display-message
-     -p '#{session_name}'`. Outside → ensure-and-switch.
-     Inside → run the event-driven picker.
+   - Mark `Cmd::Hook`, `Cmd::Unregister`, `Cmd::Render`
+     with `#[command(hide = true)]` so they don't appear in
+     `--help` (still callable; hooks/tmux/fzf shell out to
+     them).
+   - Drop `Cmd::LoopBody` entirely. The bare invocation
+     (`agent-orch` with no subcommand) becomes self-detecting:
+     `$TMUX` set + `tmux display-message -p '#{session_name}'`
+     returning `orchestrator` → run the event-driven picker
+     `body`; otherwise → ensure the orchestrator session
+     exists and `switch-client` to it. `Loop::run` and
+     `Loop::body` stay as separate methods (different
+     responsibilities), but the CLI surface is one bare
+     invocation routing to either of them.
 2. Add `notify = "8"` + `notify-debouncer-mini = "0.7"` to
    `Cargo.toml`.
 3. Add `Cmd::Render` to the CLI enum (hidden); implement
-   `cmd_render` that runs the same row-formatting as today's
-   `Loop::render` against `Store::from_env` and prints the
-   rows to stdout (one `<pane_id>\t<row>` per line).
-4. Rewrite `Loop::body` (the picker-side branch of
-   `Cmd::Loop`):
-   - Build the socket path (`store.dir().join("fzf.sock")`)
-     and remove any existing file at that path.
-   - Spawn fzf with the flags above; pipe `agent-orch render`
-     output to its stdin for initial population.
-   - Poll-existence the `.sock` file with a short retry loop
-     (50ms × 20 attempts).
+   `Loop::render_to(&mut dyn Write)` that runs the same
+   row-formatting as today's `Loop::render` and writes one
+   `<pane_id>\t<row>` per line.
+4. Rewrite `Loop::body`:
+   - Build the socket path (per-pid file under
+     `${XDG_RUNTIME_DIR:-$TMPDIR:-/tmp}`).
+   - Spawn fzf with `--listen=<sock> --with-nth=2.. --track
+     --id-nth=1 --bind 'enter:execute-silent(tmux switch-
+     client -t {1})+clear-query'`. Pipe the initial row set
+     to fzf's stdin, then close stdin so fzf treats the
+     source as exhausted; subsequent updates arrive via
+     reload commands on the listen socket.
    - Spawn a background thread running `notify-debouncer-mini`
      watching `store.dir()` non-recursively. On each
      debounced event whose path matches `sessions.json`,
-     write a reload POST to the socket.
-   - Wait for the fzf child to exit. On exit, drop the
-     watcher (channel close → thread exits).
-5. Update `Loop::run` (the outside-orchestrator branch) — no
-   change to its existing behavior; it still ensures the
-   `orchestrator` session and `switch-client`s. The recursion
-   target updates from `<self> loop-body` to `<self> loop`
-   (same verb; self-detects on re-entry).
-6. Update `cmd_setup` to also run
+     send `()` over an mpsc channel.
+   - Main thread loops on `recv_timeout(200ms)` polling fzf's
+     `try_wait` between iterations; on each watcher tick,
+     drain the backlog and POST `reload(<self> render)` to
+     the socket.
+   - When fzf exits, remove the socket file and return.
+5. `Loop::run` is unchanged otherwise; it still ensures the
+   `orchestrator` session and `switch-client`s. The
+   `new-session` command becomes a bare `<self>` invocation
+   (no `loop-body` subcommand) — the new session detects it's
+   inside the orchestrator and runs `body` automatically.
+6. Update `run_setup` to also call
    `tmux bind-key -n M-o switch-client -t orchestrator` after
-   the Claude-side install. Soft-fail on tmux-not-running
-   with a single-line warning to stderr.
-7. Update `cmd_teardown` symmetrically: `tmux unbind-key -n M-o`.
+   the Claude-side install. Best-effort with stderr suppressed
+   so a "no tmux server" message doesn't leak when the user
+   hasn't started tmux yet. `$AGENT_ORCH_TMUX_SOCKET` honored
+   as `-L <name>` so the integration script can target its
+   private server.
+7. Update `run_teardown` symmetrically: `tmux unbind-key -n M-o`.
 8. Tests:
    - Drop tests that exercise the pick/list verbs as separate
      entry points. Keep the rendering-related coverage by
@@ -1600,24 +1611,26 @@ One commit, one Code Review Gate, one push.
   `setup` (run `tmux bind-key -n M-o ...` against the live
   server); persistence across reboots deferred.
 - 2026-06-06 · **CLI prune** added to the same slice. User
-  asked to keep agent-orch minimal: setup, teardown, wrap,
-  loop, doctor — five user-facing verbs. The previous spec had
-  grown to nine. Pruned `pick` and `list`, hid `hook`,
-  `unregister`, `render`, `loop-body` from `--help`. Collapsed
-  `loop-body` and the bare-invocation path into one `loop` verb
-  that self-detects via `$TMUX`. Awaiting planning → dev cue
-  before code changes.
+  asked to keep agent-orch minimal. The previous spec had
+  grown to nine subcommands. Pruned `pick` and `list`, hid
+  `hook`, `unregister`, `render` from `--help`, dropped
+  `loop-body` entirely — the bare invocation now self-detects
+  via `$TMUX` + `tmux display-message #{session_name}` whether
+  it's inside the orchestrator session and routes to either
+  bootstrap-and-switch or the event-driven body. `doctor`
+  deferred to a follow-up ticket. Final shape: three named
+  verbs + bare invocation.
 
 ## What v1 ships and what defers
 
-**v1 user-facing CLI (target shape, all five verbs):**
+**v1 user-facing CLI (shipped):**
 
 ```
 agent-orch setup       # install Claude hooks + tmux keybind
 agent-orch teardown    # uninstall
 agent-orch wrap <kind> -- <agent-cmd> [args...]
-agent-orch loop        # open the UX (or `agent-orch` bare)
-agent-orch doctor      # verify
+agent-orch             # open the UX (self-detects in/out of
+                       # the orchestrator session)
 ```
 
 Plus three hidden internal verbs that exist only because external
@@ -1639,7 +1652,7 @@ systems shell out to them: `hook` (Claude/Kiro), `unregister`
   switch-client.
 - Currently *also* shipped but to be **removed** in the next
   slice as user-facing verbs: `pick`, `list`, `loop-body`. None
-  of them are part of the target five-verb surface.
+  of them are part of the final user-facing CLI surface.
 
 End-to-end exercised by `tests/agent-orch/integration.sh` (10
 cases on a private tmux server) plus 39 in-process unit +
@@ -1647,13 +1660,12 @@ behavior tests in `src/main.rs`.
 
 **Pending the current planning slice:**
 
-- **Prune the CLI** to the five user-facing verbs. Drop
-  `pick` and `list` entirely. Hide `hook`, `unregister`,
-  `render`, and the internal-recursion target via
-  `#[command(hide = true)]`. Collapse `loop-body` and the
-  bare-invocation path into one `loop` verb that
-  self-detects whether it's running inside the orchestrator
-  session.
+- **Prune the CLI** to the user-facing verbs. Drop `pick`
+  and `list` entirely. Hide `hook`, `unregister`, `render`
+  via `#[command(hide = true)]`. Drop `loop-body`; the bare
+  invocation self-detects whether it's running inside the
+  orchestrator session and routes to either bootstrap-and-
+  switch or the event-driven body.
 - **Event-driven `loop`.** Spawn fzf with `--listen`, watch
   `sessions.json` parent dir via `notify`, push `reload(...)`
   on change. Persistent picker survives selections; cursor
@@ -1862,26 +1874,30 @@ behavior tests in `src/main.rs`.
   wrap/unregister. Each kind gets the simplest mechanism that
   works reliably for *that* kind given *its* documented surface.
 
-- **CLI pruned to five user-facing verbs.** The CLI had grown
+- **CLI pruned to three user-facing verbs.** The CLI had grown
   to nine subcommands (`wrap`, `hook`, `pick`, `list`,
   `unregister`, `loop-body`, `render`, `setup`, `teardown`)
   plus the bare-invocation path. Several were either dead
-  (`pick`: no longer called once `loop` is event-driven),
+  (`pick`: no longer called once the loop is event-driven),
   debug-only (`list`: `cat sessions.json | jq` covers the use
   case), or implementation-recursion targets that don't
   belong in `--help` (`hook`, `unregister`, `render`,
   `loop-body`). Pruned to:
 
-      setup | teardown | wrap | loop | doctor
+      setup | teardown | wrap
 
   Plus three hidden internal verbs (`hook`, `unregister`,
   `render`) that stay callable because Claude/Kiro/tmux/fzf
   shell out to them, but don't appear in `--help` via
-  clap's `#[command(hide = true)]`. `loop-body` collapses
-  into `loop` (self-detects via `$TMUX` whether it's running
-  inside the orchestrator session). The bare invocation
-  (`agent-orch` with no args) is an alias for `agent-orch
-  loop`. One mental model, one verb per concept.
+  clap's `#[command(hide = true)]`. The bare invocation
+  (`agent-orch` with no args) is the user's "open the
+  orchestrator" entry point — it self-detects via `$TMUX` +
+  `tmux display-message #{session_name}` whether it's
+  inside the orchestrator session and routes to either
+  bootstrap-and-switch (outside) or run-the-event-driven-body
+  (inside). No separate `loop` / `loop-body` verb. One mental
+  model, one verb per concept. (`doctor` is deferred — see
+  the deferred-work list.)
 
 - **Event-driven `loop`** (poll-loop replacement).
   Today's loop spawns fzf, gets a selection, switches client,
