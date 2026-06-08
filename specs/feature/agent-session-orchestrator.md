@@ -471,10 +471,34 @@ keeps the cursor on the same pane id across reloads.
 - **Public-repo hygiene** (mAId-wide). No internal product /
   team / ticket names in scripts, examples, or this spec.
 - **Standalone first.** No mAId registry entry in v1. The
-  install path is `dist/agent-orch/` populated by `deno task
-  agent-orch:build` (which delegates to `cargo build
-  --release`). Promoting to a flake / nix package or a
-  registry-deployed symlink is a follow-up.
+  binary is a plain Rust executable at `dist/agent-orch/`,
+  produced by `cargo build --release`. The user copies (or
+  symlinks) it onto `PATH`. Future packaging — distro
+  packages, a `nix flake` for users who want it,
+  registry-deployed symlinks — is purely additive.
+
+### Runtime prerequisites
+
+The compiled `agent-orch` binary is **environment-agnostic**.
+It does not depend on nix, on any package manager, or on
+mAId's repo layout. It needs:
+
+- `tmux` ≥ 3.2 on `PATH` (`set-hook`, `set-option`,
+  `bind-key`, `switch-client`, etc.).
+- `fzf` ≥ 0.71.0 on `PATH` (for `--listen=<sock>` ≥ 0.66.0
+  and `--track --id-nth=N` ≥ 0.71.0; `agent-orch doctor`
+  will gate this).
+- The wrapped agent's CLI on `PATH` (`claude`, `kiro`, etc.)
+  for the kinds the user actually wraps.
+- A writable `$HOME` (for Claude `setup` / `teardown` to
+  edit `~/.claude/settings.json`) and a writable
+  `${XDG_STATE_HOME:-$HOME/.local/state}/agent-orch/` (for
+  the registry, lock file, and fzf control socket).
+
+That's the full prereq list. Anything else mentioned elsewhere
+in this spec — `flake.nix`, `nix develop`, `direnv`,
+`rust-overlay` — is **build-time tooling for mAId
+contributors**, not a constraint on users running the binary.
 
 ## Test Strategy
 
@@ -1084,11 +1108,12 @@ motivates the feature.
   `setup` refreshes the path (idempotence detects the stale
   entry by tag, rewrites the command). Documented as a doctor
   follow-up.
-- `dist/` is rebuilt by the user; no auto-rebuild on source
-  edit. Cargo's incremental builds make `cargo build` ~1-2s
-  on changes; `cargo check` is sub-second.
-- Cold cargo build adds ~30-60s to a fresh checkout. Tolerable;
-  flake-cached after the first build.
+- `dist/` is rebuilt by the contributor; no auto-rebuild on
+  source edit. Cargo's incremental builds make `cargo build`
+  ~1-2s on changes; `cargo check` is sub-second. Cold cargo
+  build adds ~30-60s on a fresh checkout — a one-time cost
+  for contributors, not a runtime cost for users (who just
+  run the compiled binary).
 - Single-file growth: at ~1000 LOC `main.rs` will start hurting
   to navigate. We'll split out the largest cohesive piece (the
   `Session` model + apply + sort, into `sessions.rs`) when that
@@ -1332,10 +1357,12 @@ for "open the orchestrator and leave it open."
 ### Out of scope for this slice
 
 - **Persistent tmux keybind across reboots.** The user's
-  `~/.tmux.conf` may be nix-managed and read-only. Live-only
-  install ships first to validate the UX; a persistent
-  install (sidecar conf + one user-added source-line) lands
-  as a follow-up if reboots become annoying.
+  tmux conf may be on a read-only filesystem (declarative
+  config managers like nix-home-manager, chezmoi, yadm,
+  ansible-pull all do this). Live-only install ships first
+  to validate the UX; a persistent install (sidecar conf +
+  one user-added source-line) lands as a follow-up if
+  reboots become annoying.
 - `agent-orch doctor` — still deferred. Will gate fzf
   version (≥ 0.71.0 for `--id-nth`, ≥ 0.66.0 for
   `--listen=<sock>`), warn on missing live keybind, audit
@@ -1643,11 +1670,14 @@ behavior tests in `src/main.rs`.
 
 - **Persistent tmux keybind** across `tmux kill-server` /
   reboot. Two paths under consideration: (a) edit the user's
-  tmux conf with sentinel markers (won't work for nix-managed
-  read-only confs); (b) write a sidecar `tmux.conf` under our
-  state dir and have the user add one `source-file -q ...`
-  line to their conf. Pick after the live-only version proves
-  out in real use.
+  tmux conf with sentinel markers; (b) write a sidecar
+  `tmux.conf` under our state dir and have the user add one
+  `source-file -q ...` line to their conf themselves.
+  Path (a) breaks for users whose tmux conf is on a read-only
+  filesystem (declarative-config managers like nix, chezmoi,
+  yadm, ansible-pull); path (b) costs the user one-time
+  manual edit but works everywhere. Pick after the live-only
+  version proves out in real use.
 - `agent-orch doctor` — sanity-check (tmux version ≥ 3.2;
   fzf version ≥ 0.71.0 for `--id-nth`; agent CLIs;
   state-dir writeability; kiro orphan audit; **stale
@@ -1753,8 +1783,9 @@ behavior tests in `src/main.rs`.
   the portable target. The Deno→Node hygiene that justified
   the shim doesn't apply.
 - **Stay out of `$HOME` for deployed code. v1 ships to
-  `dist/`.** Lets us promote later to a flake / nix install
-  or a registry entry without rewriting; keeps the install
+  `dist/`.** Lets users package the binary however suits
+  their environment later (distro package, flake, ansible
+  copy, plain symlink) without rewriting; keeps the install
   path one `cargo build --release` for now.
 - **`wrap` and `loop` are independent.** Per PR #18 L486
   feedback. `wrap` installs the tmux hook, registers, and
@@ -1893,10 +1924,12 @@ behavior tests in `src/main.rs`.
   conf + one user-added source-line). Live-only ships first
   because (a) implementation is ~10 lines, (b) it validates
   the UX assumption that M-o is the right back-to-orchestrator
-  verb before we invest in conf-file edits, and (c) on this
-  user's nix-managed setup the user's tmux conf may be
-  read-only — we don't yet know which persistence pattern
-  fits best for that case. Re-running `agent-orch setup`
-  after a reboot restores the binding; doctor (deferred)
-  will flag "keybind not currently registered" so the user
-  knows when to do that.
+  verb before we invest in conf-file edits, and (c) some
+  users have a read-only tmux conf (managed by
+  home-manager, chezmoi, ansible-pull, etc.) — we don't yet
+  know which persistence pattern fits best across all
+  those shapes, and shipping live-only first lets us learn
+  before committing. Re-running `agent-orch setup` after a
+  reboot restores the binding; doctor (deferred) will flag
+  "keybind not currently registered" so the user knows when
+  to do that.
