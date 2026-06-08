@@ -11,8 +11,10 @@
 # Spawns four sessions on the user's running tmux server:
 #
 #   proj-a       1 window, 1 pane: claude wrapped
-#   proj-b       2 windows. window 2 has a horizontal split — claude
-#                wrapped in left pane, plain shell in right pane
+#   proj-b       2 windows. window 2 ("code") has a horizontal split
+#                with TWO claudes side-by-side, both wrapped, both
+#                rooted at /tmp/proj-b — exercises multiple agents
+#                in one window sharing a cwd
 #   proj-c       1 window, vertical split — kiro on top, claude
 #                bottom (both wrapped)
 #   viewer       a plain shell session, ready for you to bootstrap the
@@ -134,9 +136,20 @@ else
   ok "proj-a · claude wrapped (pane $PANE_A)"
 fi
 
-# ── proj-b — two windows, split second window ──────────────────────
+# ── proj-b — two windows; window 2 = two claudes side-by-side ──────
+#
+# Window 1 ("notes") is just a plain shell. Window 2 ("code") has a
+# horizontal split: claude on the left, claude on the right, BOTH
+# wrapped, BOTH rooted at /tmp/proj-b. Exercises:
+#   - two separate claude lifecycles per pane (the registry must
+#     keep both rows distinct via $TMUX_PANE / $AGENT_ORCH_PANE);
+#   - two claudes sharing one cwd (no per-cwd refcount logic for
+#     claude — kiro is the only kind with that pattern, so this
+#     should be a no-op aside from the two registry rows);
+#   - hook events fire independently per pane → picker shows each
+#     row advancing on its own.
 
-log "proj-b (two windows, split window 2)"
+log "proj-b (two windows; window 2 = two claudes side-by-side)"
 ensure_session proj-b /tmp/proj-b
 PROJB_WIN1="$(T list-windows -t proj-b -F '#{window_id}' | head -1)"
 PROJB_WIN_COUNT="$(T list-windows -t proj-b | wc -l)"
@@ -144,14 +157,24 @@ if [[ "$PROJB_WIN_COUNT" -lt 2 ]]; then
   T rename-window -t "$PROJB_WIN1" notes
   T new-window -t proj-b -n code -c /tmp/proj-b
   T split-window -h -t proj-b:code -c /tmp/proj-b
-  T select-pane -t proj-b:code -L
 fi
-PROJB_CODE_LEFT="$(T display-message -p -t proj-b:code '#{pane_id}')"
+# Resolve left and right panes by `pane_left` (column position) —
+# don't trust pane index ordering after splits.
+PROJB_CODE_LEFT="$(T list-panes -t proj-b:code -F '#{pane_id} #{pane_left}' \
+  | sort -k2 -n | awk 'NR==1{print $1}')"
+PROJB_CODE_RIGHT="$(T list-panes -t proj-b:code -F '#{pane_id} #{pane_left}' \
+  | sort -k2 -n | awk 'NR==2{print $1}')"
 if already_wrapped "$PROJB_CODE_LEFT"; then
-  skip "proj-b · pane $PROJB_CODE_LEFT already wrapped"
+  skip "proj-b · left pane $PROJB_CODE_LEFT already wrapped"
 else
   send_wrap "$PROJB_CODE_LEFT" /tmp/proj-b claude claude
   ok "proj-b · claude wrapped (pane $PROJB_CODE_LEFT, window 'code', left)"
+fi
+if already_wrapped "$PROJB_CODE_RIGHT"; then
+  skip "proj-b · right pane $PROJB_CODE_RIGHT already wrapped"
+else
+  send_wrap "$PROJB_CODE_RIGHT" /tmp/proj-b claude claude
+  ok "proj-b · claude wrapped (pane $PROJB_CODE_RIGHT, window 'code', right)"
 fi
 
 # ── proj-c — vertical split, Kiro top + Claude bottom ──────────────
