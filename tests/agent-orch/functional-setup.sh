@@ -4,9 +4,10 @@
 # Usage: functional-setup.sh <KEY>
 #
 # <KEY> is the tmux prefix-table suffix to bind for "switch back
-# to orchestrator" — e.g. `O` makes `<your-tmux-prefix> O` jump to
-# the orchestrator session. Pick any unbound key in your prefix
-# table; pass `none` to install hooks only with no keybind.
+# to the orchestrator session" — e.g. `O` makes
+# `<your-tmux-prefix> O` jump to the agent-orch session. Pick any
+# unbound key in your prefix table; pass `none` to install hooks
+# only with no keybind.
 #
 # Spawns four sessions on the user's running tmux server:
 #
@@ -17,14 +18,13 @@
 #                in one window sharing a cwd
 #   proj-c       1 window, vertical split — kiro on top, claude
 #                bottom (both wrapped)
-#   viewer       a plain shell session, ready for you to bootstrap the
-#                orchestrator from
+#   agent-orch   the orchestrator session itself, hosting the fzf
+#                picker. Bootstrapped detached; you attach with
+#                `tmux attach -t agent-orch`.
 #
 # Then runs `agent-orch setup --key <KEY>` (or `setup` if <KEY> is
 # `none`) to install the user-global Claude hooks and the
-# orchestrator-switch keybind. Leaves the orchestrator session
-# uncreated — you bootstrap it interactively from the `viewer`
-# session by attaching and running `agent-orch`.
+# orchestrator-switch keybind.
 #
 # Why launch agents via `tmux send-keys` into a fresh login shell
 # (rather than as the new-session command directly): the user's
@@ -37,9 +37,8 @@
 #
 # Hand-off:
 #
-#   $ tmux attach -t viewer
-#   $ agent-orch                       # bootstraps the orchestrator
-#   (<your-tmux-prefix> <KEY> from any wrapped pane to come back)
+#   $ tmux attach -t agent-orch        # already running, picker visible
+#   $ <prefix> <KEY>                   # from any wrapped pane, jumps back here
 #
 # Tear down with: tests/agent-orch/functional-teardown.sh
 
@@ -63,8 +62,7 @@ KEY="$1"
 TMUX_BIN="$(command -v tmux)"
 
 # Sessions this script creates. Teardown reads the same list.
-SESSIONS=(proj-a proj-b proj-c viewer)
-CWDS=(/tmp/proj-a /tmp/proj-b /tmp/proj-c "$HOME")
+SESSIONS=(proj-a proj-b proj-c agent-orch)
 
 log()  { printf '\033[36m[i]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[32m[ok]\033[0m %s\n' "$*"; }
@@ -110,7 +108,6 @@ send_wrap() {
   local target="$1" cwd="$2" kind="$3"
   shift 3
   local agent_argv=("$@")
-  # Build a properly-quoted command line.
   local cmd
   printf -v cmd '%q wrap %q --cwd %q --' "$BIN" "$kind" "$cwd"
   for a in "${agent_argv[@]}"; do
@@ -122,7 +119,7 @@ send_wrap() {
   T send-keys -t "$target" "$cmd" Enter
 }
 
-pane_of()    { T display-message -p -t "$1" '#{pane_id}'; }
+pane_of() { T display-message -p -t "$1" '#{pane_id}'; }
 
 # ── proj-a — single-pane Claude session ────────────────────────────
 
@@ -204,12 +201,6 @@ else
   ok "proj-c · kiro wrapped (pane $PROJC_TOP, top)"
 fi
 
-# ── viewer — plain shell, you'll bootstrap the orchestrator from here ──
-
-log "viewer (plain shell — you'll bootstrap the orchestrator from here)"
-ensure_session viewer "$HOME"
-ok "viewer ready (no agent wrapped)"
-
 # ── install user-global hooks + (optional) keybind ─────────────────
 
 if [[ "$KEY" == "none" ]]; then
@@ -221,27 +212,40 @@ else
 fi
 ok "setup complete"
 
+# ── agent-orch — bootstrap the orchestrator session itself ─────────
+#
+# Bare `agent-orch` from a non-tmux shell creates the orchestrator
+# session detached, then tries `switch-client -t agent-orch` —
+# which fails with "no current client" since we're outside tmux.
+# That's fine: the session is created and running the body, the
+# user attaches later. Replicate just the session-create half here
+# without the failing switch-client call.
+
+if T has-session -t agent-orch 2>/dev/null; then
+  skip "agent-orch session already exists"
+else
+  log "agent-orch (the orchestrator session itself)"
+  T new-session -d -s agent-orch "$BIN"
+  ok "agent-orch session ready (running fzf picker)"
+fi
+
 # ── done ───────────────────────────────────────────────────────────
 
 if [[ "$KEY" == "none" ]]; then
-  switch_hint="(no keybind installed — use \`tmux switch-client -t orchestrator\` directly)"
+  switch_hint="no keybind installed — use \`tmux switch-client -t agent-orch\` directly"
 else
-  switch_hint="(<tmux-prefix> $KEY from any wrapped pane → orchestrator)"
+  switch_hint="<tmux-prefix> $KEY from any wrapped pane → agent-orch"
 fi
 
 cat <<EOF
 
   Sessions ready: ${SESSIONS[*]}
 
-    1. Attach the viewer in a real terminal:
-         tmux attach -t viewer
+    Attach the orchestrator picker:
+      tmux attach -t agent-orch
 
-    2. From inside viewer, bootstrap the orchestrator:
-         agent-orch
-       (this creates the orchestrator session and switches your
-       client into it; you should see the fzf picker)
-
-    3. $switch_hint
+    Switch back from any wrapped pane:
+      $switch_hint
 
   Tear down with:
     $HERE/functional-teardown.sh

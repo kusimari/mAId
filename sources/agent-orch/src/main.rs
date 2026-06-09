@@ -57,7 +57,12 @@ const HOOK_EVENTS: &[&str] = &[
 /// written to the registry, so once an event arrives the row recovers.
 const STALL_AFTER_SECS: u64 = 90;
 
-const ORCHESTRATOR_SESSION: &str = "orchestrator";
+/// Name of the tmux session that hosts the orchestrator picker.
+/// Matches the binary name so a fresh user can find it via
+/// `tmux ls`. Anywhere we write `switch-client -t agent-orch`
+/// in tmux state (the keybind, the new-session bootstrap, the
+/// teardown self-discovery probe) flows from this constant.
+const ORCHESTRATOR_SESSION: &str = "agent-orch";
 
 /// Marker field on hook entries we wrote to a Claude settings file
 /// via `setup`. `teardown` removes only entries carrying this tag,
@@ -806,7 +811,7 @@ fn unmerge_claude_hooks(settings: &mut serde_json::Value) {
 ///
 /// `key`: optional tmux prefix-table suffix to bind for
 /// switching back to the orchestrator session (e.g. `Some("O")`
-/// → `<prefix> O` runs `switch-client -t orchestrator`). When
+/// → `<prefix> O` runs `switch-client -t agent-orch`). When
 /// `None`, no keybind is installed. When `Some`, any pre-existing
 /// switch-to-orchestrator binding (from a previous `setup` with
 /// a different key) is removed first so re-keying is clean.
@@ -839,7 +844,7 @@ fn run_setup(path: &Path, self_path: &Path, key: Option<&str>) -> Result<()> {
 /// the Claude settings file at `path`. Prunes empty containers;
 /// removes the file entirely if the result is `{}`. No-op if the
 /// file is absent. Always self-discovers and removes any prefix
-/// binding whose action is `switch-client -t orchestrator` —
+/// binding whose action is `switch-client -t agent-orch` —
 /// no key argument needed.
 fn run_teardown(path: &Path) -> Result<()> {
     uninstall_tmux_keybind();
@@ -879,7 +884,7 @@ fn tmux_cmd(args: &[&str]) -> std::process::Command {
 }
 
 /// Best-effort: bind `<prefix> <suffix>` to
-/// `switch-client -t orchestrator` on the running tmux server.
+/// `switch-client -t agent-orch` on the running tmux server.
 /// Prefix-bound (default `C-b`) rather than root-bound so inner
 /// TUIs (claude/kiro) never see the keystroke and can't race
 /// with tmux for it — same idiom as every other tmux command
@@ -906,7 +911,7 @@ fn install_tmux_keybind(suffix: &str) {
 }
 
 /// Self-discovering reverse: scan the prefix table for any
-/// binding whose action is `switch-client -t orchestrator` and
+/// binding whose action is `switch-client -t agent-orch` and
 /// unbind it. Lets the user re-key without remembering the old
 /// suffix and lets `teardown` work without a `--key` flag.
 fn uninstall_tmux_keybind() {
@@ -919,7 +924,7 @@ fn uninstall_tmux_keybind() {
         return;
     }
     // Each line looks like:
-    //   bind-key    -T prefix O       switch-client -t orchestrator
+    //   bind-key    -T prefix O       switch-client -t agent-orch
     // Capture the suffix (the column after `-T prefix`) on lines
     // ending in our action string.
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -1373,7 +1378,7 @@ enum Cmd {
     },
     /// Remove agent-orch hooks from ~/.claude/settings.json.
     /// Self-discovers and removes any prefix binding whose action is
-    /// `switch-client -t orchestrator` — no `--key` argument needed.
+    /// `switch-client -t agent-orch` — no `--key` argument needed.
     Teardown,
     /// Wrap a coding agent: register, inject hooks, execvp.
     Wrap {

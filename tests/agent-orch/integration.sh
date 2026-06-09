@@ -280,7 +280,7 @@ pass "setup/teardown removes settings.json when only our content remained"
 # ── case 11 — setup --key / teardown register/unregister keybind ──
 #
 # `setup --key X` should bind `<prefix> X` to
-# `switch-client -t orchestrator` on the running tmux server.
+# `switch-client -t agent-orch` on the running tmux server.
 # `teardown` should unbind it without needing the key argument
 # (it self-discovers any prefix binding routing to the
 # orchestrator). Re-running `setup --key Y` should swap cleanly
@@ -293,12 +293,12 @@ KEY_HOME="$(mktemp -d)"
 mkdir -p "$KEY_HOME/.claude"
 
 # Pre-condition: no orchestrator binding in the prefix table.
-T list-keys -T prefix 2>/dev/null | grep -q "switch-client -t orchestrator" \
+T list-keys -T prefix 2>/dev/null | grep -q "switch-client -t agent-orch" \
   && fail "case 11a: prefix already routes somewhere to orchestrator before setup"
 
 env "HOME=$KEY_HOME" "AGENT_ORCH_TMUX_SOCKET=$TMUX_SOCKET" "$BIN" setup --key X
 T list-keys -T prefix 2>/dev/null | grep -E '^bind-key +-T prefix +X ' \
-  | grep -q "switch-client -t orchestrator" \
+  | grep -q "switch-client -t agent-orch" \
   || fail "case 11a: setup --key X did not install prefix X → orchestrator"
 pass "setup --key X installed prefix X keybind"
 
@@ -309,13 +309,13 @@ env "HOME=$KEY_HOME" "AGENT_ORCH_TMUX_SOCKET=$TMUX_SOCKET" "$BIN" setup --key Y
 T list-keys -T prefix 2>/dev/null | grep -E '^bind-key +-T prefix +X ' >/dev/null \
   && fail "case 11b: re-keying did not remove the old X binding"
 T list-keys -T prefix 2>/dev/null | grep -E '^bind-key +-T prefix +Y ' \
-  | grep -q "switch-client -t orchestrator" \
+  | grep -q "switch-client -t agent-orch" \
   || fail "case 11b: re-keying did not install the new Y binding"
 pass "setup --key Y swapped X→Y cleanly"
 
 log "case 11c: teardown self-discovers and removes the keybind"
 env "HOME=$KEY_HOME" "AGENT_ORCH_TMUX_SOCKET=$TMUX_SOCKET" "$BIN" teardown
-T list-keys -T prefix 2>/dev/null | grep -q "switch-client -t orchestrator" \
+T list-keys -T prefix 2>/dev/null | grep -q "switch-client -t agent-orch" \
   && fail "case 11c: teardown did not remove the orchestrator binding"
 rm -rf "$KEY_HOME"
 pass "teardown self-discovered and removed the keybind"
@@ -324,7 +324,7 @@ log "case 11d: setup without --key installs hooks but no keybind"
 KEY_HOME="$(mktemp -d)"
 mkdir -p "$KEY_HOME/.claude"
 env "HOME=$KEY_HOME" "AGENT_ORCH_TMUX_SOCKET=$TMUX_SOCKET" "$BIN" setup
-T list-keys -T prefix 2>/dev/null | grep -q "switch-client -t orchestrator" \
+T list-keys -T prefix 2>/dev/null | grep -q "switch-client -t agent-orch" \
   && fail "case 11d: setup without --key installed a keybind anyway"
 [[ -f "$KEY_HOME/.claude/settings.json" ]] \
   || fail "case 11d: setup without --key skipped the Claude hook install"

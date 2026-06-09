@@ -2,11 +2,11 @@
 # tests/agent-orch/functional-teardown.sh — undo functional-setup.sh.
 #
 # Kills the four sessions the setup script creates (proj-a, proj-b,
-# proj-c, viewer) plus the orchestrator session if you bootstrapped
-# one, runs `agent-orch teardown` to remove the user-global Claude
-# hooks and any prefix-table keybind that routes to orchestrator
-# (self-discovered — no key argument needed), and clears the
-# registry file. Idempotent — safe to run when nothing is set up.
+# proj-c, agent-orch), runs `agent-orch teardown` to remove the
+# user-global Claude hooks and any prefix-table keybind that routes
+# to the agent-orch session (self-discovered — no key argument
+# needed), and clears the registry file. Idempotent — safe to run
+# when nothing is set up.
 
 set -euo pipefail
 
@@ -16,7 +16,7 @@ BIN="$ROOT/dist/agent-orch/agent-orch"
 
 TMUX_BIN="$(command -v tmux)"
 
-SESSIONS=(orchestrator proj-a proj-b proj-c viewer)
+SESSIONS=(agent-orch proj-a proj-b proj-c)
 REG="$HOME/.local/state/agent-orch/sessions.json"
 
 ok()   { printf '\033[32m[ok]\033[0m %s\n' "$*"; }
