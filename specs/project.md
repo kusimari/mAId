@@ -103,8 +103,13 @@ mAId/
      manual. Which commands run which suite. Which are
      load-bearing vs. nice-to-have. -->
 
-Four-layer test surface; each layer is a `deno task` so the
-§8 Test Gate can pick the right one for the situation.
+Test surface is split between **mAId-wide** layers
+(deno-driven, content-side) and **agent-orch** layers (Rust +
+shell, the tmux orchestrator under `sources/agent-orch/`).
+Each layer is a `deno task` so the §8 Test Gate can pick the
+right one for the situation.
+
+### mAId-wide
 
 - **`deno task test:unit`** (alias: `deno task test`) — 22
   tests covering schema parsing and deploy/undeploy
@@ -133,31 +138,86 @@ Four-layer test surface; each layer is a `deno task` so the
   functional. Use before merging a SKILL.md or harness
   change.
 
-The §8 Test Gate uses `test:unit` by default. SKILL.md prose
-revisions add `test:functional` (judge mode) as their A/B
-evidence. The §9 close-out can run `test:smoke` after a
-deploy to confirm symlinks resolved.
+### agent-orch (Rust + shell)
+
+- **`deno task agent-orch:test`** — `cargo test`. ~50 unit
+  tests covering the state machine, store, wrapper trait
+  impls, hook event dispatch, and JSON merge for setup /
+  teardown. ~100ms. Load-bearing. Runs in the §8 Test Gate
+  when agent-orch code changed.
+- **`deno task agent-orch:check`** — `cargo fmt --check` +
+  `cargo clippy --all-targets -- -D warnings`. The agent-orch
+  quality gate.
+- **`deno task agent-orch:integration`** — builds + runs
+  `tests/agent-orch/integration.sh`. Drives the compiled
+  binary against a **private tmux server** with
+  `XDG_STATE_HOME` pointed at a tempdir. Exercises real
+  tmux side effects (`set-hook`, `set-option`,
+  `switch-client`, `bind-key`) and real argv across
+  `execvp`. ~10s. Load-bearing — covers what the in-process
+  unit tests can't reach. Skips silently if tmux/jq/the
+  dist binary are missing, so CI without tmux still
+  passes.
+- **`tests/agent-orch/functional-{setup,test,teardown}.sh`**
+  — three scripts that drive the **user's real tmux server**
+  with real claude/kiro-cli CLIs. `functional-setup.sh
+  <KEY>` spawns the four-session fixture (proj-a, proj-b,
+  proj-c, agent-orch) and installs hooks + the
+  `<prefix> <KEY>` keybind. `functional-test.sh` fires real
+  prompts and asserts the registry reflects actual agent
+  activity. `functional-teardown.sh` reverses everything.
+  Slow (real LLM round-trips), costs API credits.
+
+### The §8 Test Gate
+
+For mAId-wide changes (skills, agents, registry, deploy
+logic): `deno task test:unit`. SKILL.md prose revisions add
+`test:functional` (judge mode) as A/B evidence.
+
+For agent-orch changes: `deno task agent-orch:check` +
+`deno task agent-orch:test` + `deno task agent-orch:integration`.
+The functional scripts are not mandatory for the §8 gate —
+they're user-driven (see below).
+
+### When the build env has tmux + claude + kiro-cli
+
+If the build environment has `tmux`, `fzf`, `claude`, and
+`kiro-cli` available on PATH, the agent-orch dev loop SHOULD
+also run `tests/agent-orch/functional-setup.sh O` →
+`functional-test.sh` → `functional-teardown.sh` after the
+unit + integration gates. This is the only thing that catches
+end-to-end regressions like "hooks aren't firing on the
+toolbox shim" or "the heartbeat thread quietly stopped". When
+those CLIs aren't available (CI, fresh container), the loop
+skips this layer with a clear message.
 
 ### Functional tests are user-driven
 
 Agentic runs (an AI assistant working through this project)
-**must** stop at `test:smoke`. The judge-mode functional
-suite costs API credits and takes minutes; whether to spend
-that budget on a given change is a human call. The agent
-prepares the fixture, names the exact command, and hands
-off — it does not run it.
+**must** stop at `test:smoke` for mAId-wide changes and at
+`agent-orch:integration` for agent-orch changes. The judge-
+mode and functional suites cost API credits and take minutes
+per run; whether to spend that budget on a given change is a
+human call. The agent prepares the fixture, names the exact
+command, and hands off — it does not run them.
 
 Commands the user runs by hand:
 
-- All functional fixtures: `deno task test:functional`
-- A single fixture: `./tests/functional/run <name>` (e.g.
+- mAId-wide: `deno task test:functional`, or a single
+  fixture via `./tests/functional/run <name>` (e.g.
   `./tests/functional/run notes-git-commit`).
+- agent-orch: `tests/agent-orch/functional-setup.sh O`
+  (or any unbound prefix-suffix key), then `tmux attach -t
+  agent-orch` to verify by hand. Run
+  `tests/agent-orch/functional-test.sh` for asserted
+  scenarios. Tear down with `functional-teardown.sh`.
 
 The fixture file's basename (without `.smoke`) is the
-`<name>`.
+`<name>` for mAId-wide functional fixtures.
 
 Quality gate: `deno task fmt` + `deno task lint` + `deno task
-check`. Run after any implementation slice.
+check` for mAId-wide changes; `deno task agent-orch:check` for
+agent-orch changes. Run after any implementation slice.
 
 ## Deployment
 
