@@ -53,12 +53,20 @@ The shape, deliberately minimal:
   client to it, and runs the picker body. Picking a row jumps
   the client to the agent's pane via `tmux switch-client -t %ID`.
 - The picker is event-driven and persistent across selections.
-  fzf runs once with `--listen=<sock>`; a `notify`-watcher and
-  a 1-second heartbeat thread push `reload(...)` over the UDS
-  whenever `sessions.json` changes or a timer needs to tick.
-  `enter` runs `tmux switch-client` via `execute-silent` so fzf
-  stays alive across selections — the user comes back to the
-  same picker process, with cursor and query preserved.
+  fzf runs once with `--listen=<sock>` and a `--preview` window
+  on the right. A `notify`-watcher pushes `reload(...)` to fzf
+  whenever `sessions.json` actually changes; a 1-second
+  heartbeat pushes `refresh-preview` so the preview window
+  stays live without disturbing the list cursor. `enter` runs
+  `tmux switch-client` via `execute-silent` so fzf stays alive
+  across selections — the user comes back to the same picker
+  process, with cursor and query preserved.
+- The right-side preview shows the last N lines of the focused
+  agent's tmux pane via `tmux capture-pane`. That's what tells
+  the user whether the (idle-glyph) agent is actually idle, or
+  asking for a permission prompt, or showing a "Not logged in"
+  error — pane content is the source of truth, the row is just
+  the index.
 - "Back to orchestrator" is a user-chosen prefix-table keybind:
   `agent-orch setup --key X` binds `<your-tmux-prefix> X` to
   `switch-client -t agent-orch`. Prefix-bound (not root-bound)
@@ -77,52 +85,87 @@ registry-deployed symlink is purely additive.
 
 ## Requirements
 
-### Lifecycle states (v1)
+### Lifecycle: two states + pane preview
 
-Six states, distinguished at the **row content** level — not
-just glyphs. Active rows show what's running; idle rows
-summarize what just finished.
+Two-state machine driving the row glyph; a fzf preview pane
+showing the agent's actual screen content tells the user the
+nuance.
 
-| State    | Glyph | Triggered by                                 | Row content                                           |
-|----------|-------|----------------------------------------------|-------------------------------------------------------|
-| Cold     | `·`   | wrap registered, no hooks fired yet          | `<kind> <cwd> · —`                                    |
-| Thinking | `◉`   | `UserPromptSubmit` or `PostToolUse` fired    | `<kind> <cwd> · "<prompt>" · thinking · 1:02`         |
-| Active   | `▶`   | `PreToolUse` fired, no `PostToolUse` yet     | `<kind> <cwd> · Bash(cargo test) · 0:04`              |
-| Waiting  | `⚠`   | `Notification` fired                         | `<kind> <cwd> · waiting · 0:23`                       |
-| Idle     | `·`   | `Stop` fired                                 | `<kind> <cwd> · done in 2m31s · 6 tools · 7m ago`     |
-| Stalled  | `⊘`   | render-time: Active + no event in `>90s`     | `<kind> <cwd> · stalled at <Tool> · 2m04s silent`     |
+| State   | Glyph | Triggered by                                            |
+|---------|-------|---------------------------------------------------------|
+| running | `▶`   | `PreToolUse` fired without a matching `PostToolUse` yet |
+| idle    | `·`   | everything else (`Stop`, `Notification`, no events ever, silence after a turn) |
 
-`Stalled` is render-time decoration — never written to the
-registry, recovers as soon as the next hook event arrives.
-Catches the cases where a tool is genuinely long-running, the
-agent crashed mid-tool, or the hook reporter died.
+That's the entire state machine. The user only cares about
+"actively doing something" vs "not". Distinguishing _why_ a
+session is idle (finished, waiting on permission, crashed mid-
+tool, never been driven) is what the **pane preview** does.
 
-Sort order in the picker: Active > Thinking > Waiting > Idle >
-Stalled > Cold. Within group, most-recently-active first.
+The picker has two columns:
+
+```
+┌──────────────────────────────────────────┬──────────────────────────────┐
+│ ▶ claude proj-a                          │  ⚠ Not logged in             │
+│ · claude proj-b                          │    Please run /login         │
+│ ▶ claude proj-c                          │                              │
+│ · kiro   proj-c                          │                              │
+└──────────────────────────────────────────┴──────────────────────────────┘
+       picker rows                              fzf --preview
+       (running first, idle next)               last N lines of focused
+                                                pane via tmux capture-pane
+```
+
+Row content is intentionally minimal: `<glyph> <kind> <cwd>`.
+No prompt text, no tool name, no duration counter — those
+caused flicker (every reload blocks fzf's input briefly) and
+duplicated information the preview already shows. The preview
+window updates at 1 Hz via fzf's `refresh-preview` action,
+which is non-blocking and doesn't disturb the cursor or query.
+
+Sort order: running first (most-recently-active first within
+that group), then idle (most-recently-active first). A
+just-finished idle agent stays near the top so the user sees
+it; a long-idle one drifts down.
 
 ### State derivation
 
-Hook events drive the state machine in §1 `apply_event`.
-Mapping:
+Hook events drive `Session::apply_event`. Mapping:
 
-- `UserPromptSubmit` → Thinking. Records `prompt_started_at`,
-  resets `tool_started_at`, resets `tools_this_turn`, captures
-  prompt (truncated to 80 chars).
-- `PreToolUse` → Active. Records `tool_started_at`, captures
-  tool name + per-tool input preview.
-- `PostToolUse` → Thinking. Bumps `tools_this_turn`.
-- `PostToolUseFailure` → Thinking. Same as PostToolUse —
-  failed tool still bumps the count.
-- `Notification` → Waiting. Sticky until next hook event
-  clears it. Fires for permission prompts, idle nudges, etc.
-- `Stop` → Idle. Records `last_turn_duration` =
-  `Stop_ts - prompt_started_at`.
+- `UserPromptSubmit` → no state change. Stamps
+  `last_event_ts` (used by sort and the implicit
+  "recently active" hint).
+- `PreToolUse` → state := running.
+- `PostToolUse` / `PostToolUseFailure` → state := idle.
+  Tool finished; whatever the agent does next (more
+  tools, Stop, notification) is up to it.
+- `Notification` → state := idle. The preview window
+  shows the actual notification body so the user knows
+  what the agent is asking about.
+- `Stop` → state := idle.
 
-Per-tool input preview is whitelisted by tool name to keep the
-row predictable: Bash → `command`, Edit/Write/Read → `file_path`,
-Grep/Glob → `pattern`, Agent/Task → `description`, WebFetch/Search
-→ `url` or `query`. Unknown tools render just the tool name. All
-previews truncate to 40 chars.
+`apply_event` always bumps `last_event` and `last_event_ts`
+unconditionally — used by sort and by the preview's "ago"
+hint.
+
+### Pane preview (`agent-orch peek <pane-id>`)
+
+A new hidden subcommand wraps `tmux capture-pane -p -t
+<pane-id> -E -1 -S -<N>` to dump the last `<N>` visible lines
+of the agent's pane to stdout. fzf's `--preview` invokes it
+on every focused row, so the user sees the actual screen
+content of whichever agent the cursor is on.
+
+`<N>` is small (default ~10 lines) so:
+- the preview window stays compact;
+- ANSI/Unicode noise from the agent's TUI drawing doesn't
+  overwhelm the relevant content;
+- capture is fast (capture-pane on a single pane is
+  microseconds).
+
+`peek` writes raw output (no ANSI stripping in v1 — fzf's
+preview window renders ANSI fine). If terminal width is too
+narrow for a useful preview, the user can resize fzf's
+preview ratio via the standard tmux/fzf controls.
 
 ### Single binary, three user-facing verbs + bare invocation
 
@@ -133,11 +176,12 @@ agent-orch wrap <kind> [--cwd <dir>] -- <agent-cmd> [args...]
 agent-orch                   # open the UX (self-detects in/out of agent-orch session)
 ```
 
-Plus three hidden internal verbs that exist only because external
+Plus four hidden internal verbs that exist only because external
 systems shell out to them: `hook` (Claude lifecycle event
 callback), `unregister` (tmux `pane-exited` target), `render`
-(fzf `reload(...)` target). All three carry `#[command(hide = true)]`
-so they don't appear in `--help`.
+(fzf `reload(...)` target), `peek` (fzf `--preview` target —
+dumps the last N lines of a pane via `tmux capture-pane`). All
+carry `#[command(hide = true)]` so they don't appear in `--help`.
 
 `agent-orch doctor` is planned but deferred to a follow-up
 ticket: it'll verify tmux ≥ 3.2, fzf ≥ 0.71.0 on PATH, agent
@@ -161,7 +205,9 @@ a missing binary, no orphan `.kiro/agents/agent-orch.json`.
   1. Verifies no live double-register, replaces stale.
   2. Runs the kind's `prepare` (Kiro writes its project-scoped
      config; Claude is a pass-through).
-  3. Pushes a `Cold` Session record.
+  3. Pushes a fresh `Idle` Session record (no hooks have
+     fired yet; the pane preview will show the agent's
+     startup screen).
 - Outside the lock:
   4. Installs the global tmux `pane-exited` hook (idempotent
      via marker file + tmux's own `set-hook -g` idempotence).
@@ -212,25 +258,38 @@ Self-detecting:
 - `--listen=<sock>` — Unix socket fzf listens on for
   HTTP/1.1 control commands.
 - `--with-nth=2..` — show every column except the pane id.
-- `--track --id-nth=1` — keep the highlight on the same pane
-  id across reloads (so a state change to the focused row
-  doesn't lose the cursor).
+- `--track --id-nth=1` — keep the highlight on the same
+  pane id across reloads.
+- `--preview='<self> peek {1}' --preview-window=right:50%`
+  — show last N lines of the focused pane.
 - `--bind 'enter:execute-silent(tmux switch-client -t {1})+clear-query'`
   — non-terminal binding. fzf stays alive across selections.
 
-Two background threads feed reload commands over the socket:
-- **Watcher.** `notify-debouncer-mini` watches the store dir;
-  100ms debounce; sends `()` over an mpsc channel when
-  `sessions.json` changes.
-- **Heartbeat.** Sends `()` every 1 second so timer columns
-  advance even with no hook traffic, and `effective_state`
-  demotes Active → Stalled live.
+Two background threads drive updates over the socket — **but
+only one of them ever fires `reload(...)`**. The flicker the
+v1 design suffered came from heartbeat-driven reloads: every
+`reload(...)` blocks fzf's input briefly (the prompt dims, the
+cursor freezes), so at 1 Hz the picker felt alive but
+unusable.
 
-Main thread blocks on the channel with a 200ms timeout, polls
-the fzf child's `try_wait` between iterations, and POSTs
-`reload(<self> render)` to the socket whenever a tick arrives
-(coalesces backlogs to one reload per drain). When fzf exits,
-the body returns and the orchestrator session terminates.
+- **Watcher.** `notify-debouncer-mini` watches the store dir;
+  100ms debounce. When `sessions.json` actually changes (a
+  hook event landed, an unregister fired), POST
+  `reload(<self> render)` to fzf. The list refresh is needed
+  because rows can appear / disappear / change state.
+- **Heartbeat.** Every 1 second, POST `refresh-preview` to
+  fzf. This re-runs the preview command (`<self> peek
+  <focused-pane>`) but does **not** touch the list — the
+  cursor stays put, the query stays put, the prompt stays
+  bright. The preview window updates in place so the user
+  sees the agent's pane content tick forward.
+
+Main thread blocks on the watcher channel with a 200ms
+timeout, polls fzf's `try_wait` between iterations, drains
+backlogs, and dispatches the right action (reload vs
+refresh-preview) based on which channel sent the tick. When
+fzf exits, the body returns and the orchestrator session
+terminates.
 
 ### "Back to orchestrator" UX
 
@@ -318,15 +377,11 @@ exercised through its own surface against a tempdir `Store`.
 
 Coverage:
 
-- **§1 Session — state machine.** `apply_event` walks the
-  full lifecycle (cold → thinking → active → thinking → idle).
-  `Notification` → Waiting. `PostToolUseFailure` counts as a
-  completed tool. Prompt truncation. `format_row` per-state
-  content shape. `effective_state` demotion of Active →
-  Stalled past `STALL_AFTER_SECS`. Sort order across all six
-  states. `cwd_tail` root-anchored edge cases.
-  `duration_short` and `ago` formatting across thresholds.
-  `tool_input_preview` per-tool whitelist.
+- **§1 Session — state machine.** `apply_event` flips state
+  to running on `PreToolUse`, idle on every other event.
+  Sort order: running before idle; within group most-
+  recently-active first. `cwd_tail` root-anchored edge
+  cases. `format_row` produces `<glyph> <kind> <cwd>`.
 - **§2 Store** — `read` on empty / missing / malformed file;
   `mutate` round-trips and observes prior state.
 - **§3 Wrapper** — `Claude::prepare` is a pass-through;
@@ -341,15 +396,17 @@ Coverage:
   default-method inheritance).
 - **§4 Loop — render** filters dead pids and sorts live ones.
   `render_to` emits one tab-separated `<pane_id>\t<row>` line
-  per session.
+  per session. `peek` writes `tmux capture-pane` output for
+  a given pane; gracefully handles missing-pane (returns
+  empty) without erroring.
 - **`setup` / `teardown` JSON merge** — creates settings with
-  tagged entries (six events); preserves user-existing
-  entries and appends ours; idempotent (no duplicates on
-  re-run); refreshes command path on re-run; rejects
-  non-object root + non-array event; teardown removes only
-  tagged entries; teardown removes the file when only our
-  content remained; full setup → teardown round-trip
-  restores pre-state byte-for-byte.
+  tagged entries; preserves user-existing entries and appends
+  ours; idempotent (no duplicates on re-run); refreshes
+  command path on re-run; rejects non-object root +
+  non-array event; teardown removes only tagged entries;
+  teardown removes the file when only our content remained;
+  full setup → teardown round-trip restores pre-state
+  byte-for-byte.
 
 Quality gate: `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings`.
 
@@ -365,11 +422,10 @@ half of the system unit tests can't reach.
 Cases:
 
 1. `wrap claude` registers a session and stamps the pane id.
-2. `hook UserPromptSubmit` flips state to thinking and stores
-   prompt.
-3. `hook PreToolUse` flips state to active and stores tool
-   name + input preview.
-4. `hook Stop` flips state to idle.
+2. `hook UserPromptSubmit` keeps state idle (only `PreToolUse`
+   flips it to running).
+3. `hook PreToolUse` flips state to running.
+4. `hook PostToolUse` (or `Stop`) flips state back to idle.
 5. `render` emits a tab-separated `<pane_id>\t<row>` per
    registered pane, in picker-sort order.
 6. `unregister <pane>` removes the record.
@@ -417,18 +473,24 @@ integration tests):
 
 Scenarios the functional test asserts:
 
-- **State transitions reflect real agent activity.** Submit a
-  prompt to proj-a's claude via `send-keys`, wait, assert the
-  registry row moves through Thinking and (if a tool fires)
-  Active before reaching Idle.
+- **Running flips on real tool execution.** Submit a prompt
+  that forces claude to use a tool (e.g. "list files in
+  cwd"). Wait. Assert the row's state hits running while
+  the tool is in flight, then settles back to idle within
+  N seconds of the tool finishing. The narrow window
+  matters — a fast tool may flip running→idle inside a
+  single poll cycle, so the test polls at high frequency.
 - **Two agents in one window track independently.** Submit
   different prompts to proj-b's left and right claudes;
-  assert both rows have their own state, prompt, tool, and
-  duration without cross-contamination.
+  assert both rows have their own state and `last_event_ts`
+  without cross-contamination.
 - **Mixed kinds in one window.** proj-c's kiro and claude
   panes are both in the registry. Claude advances normally;
-  kiro's row stays cold (state-tracking is out-of-scope, but
-  registration must still work).
+  kiro's row stays idle (state-tracking is out-of-scope,
+  but registration must still work).
+- **Pane preview shows the agent's screen content.** Run
+  `agent-orch peek <pane>` directly; assert output matches
+  what's currently visible in the pane (last N lines).
 - **Kiro refcount-agnostic cleanup under real `pane-exited`.**
   Close proj-c's kiro pane; assert the project-scoped Kiro
   config is removed (or kept, if claude+kiro share a cwd via
@@ -439,6 +501,14 @@ Scenarios the functional test asserts:
 - **Dead-pid filter drops crashed agents from the picker.**
   Kill an agent's pid directly; on next render the row is
   gone.
+- **Stale-environment safety.** A pane whose parent zsh has
+  `~/.local/bin` ahead of `~/.toolbox/bin` in PATH (the
+  tmux-resurrect-restored case on Amazon-internal machines)
+  resolves `claude` to the standalone Anthropic install,
+  which can't authenticate. Functional test starts each
+  session **fresh** (no resurrect), so this is documented
+  as a known env-side risk in Design Rationale rather than
+  asserted on. See "Stale-shell PATH risk" below.
 
 Functional tests **gate on prerequisites being available**:
 tmux, fzf, claude, and kiro-cli on PATH. Missing any → skip
@@ -504,29 +574,24 @@ One record per wrapped pane:
   "cwd": "/tmp/proj-a",
   "started": 1780619367,
 
-  "state": "active",              // cold|thinking|active|waiting|idle|stalled
+  "state": "running",                // running | idle
   "state_ts": 1780619400,
 
-  "last_prompt": "fix the failing test",
   "last_event": "PreToolUse",
   "last_event_ts": 1780619400,
 
-  "prompt_started_at": 1780619395,  // 0 outside an active turn
-  "tool_started_at":   1780619400,  // 0 between tools
-  "last_tool_name":    "Bash",
-  "last_tool_preview": "cargo test",
-
-  "tools_this_turn":     2,
-  "last_turn_duration":  151,       // seconds
-
-  "created_kiro_config": false      // refcount cleanup signal
+  "created_kiro_config": false       // refcount cleanup signal
 }
 ```
 
-All fields after `state_ts` carry `#[serde(default)]` so legacy
-registries deserialize without a migration shim. `Stalled` is
-never persisted — it's render-time-only, derived by
-`effective_state(now)` from `last_event_ts`.
+That's the entire schema. The picker row is `<glyph> <kind>
+<cwd>` — derivable from these fields plus a glyph lookup. The
+preview is generated on demand from the live tmux pane via
+`tmux capture-pane`; we don't snapshot it into the registry.
+All fields after `state_ts` carry `#[serde(default)]` so
+legacy registries (with extra fields like `last_prompt` /
+`tools_this_turn` from earlier shapes) deserialize cleanly —
+extras are ignored.
 
 ### §1 · Session
 
@@ -534,18 +599,20 @@ never persisted — it's render-time-only, derived by
 struct Session { ... }                            // see shape above
 
 impl Session {
-    fn apply_event(&mut self, event: &str, payload: &serde_json::Value, now: u64);
-    fn format_row(&self, now: u64) -> String;     // shape varies by state
-    fn effective_state(&self, now: u64) -> State; // demote Active→Stalled
-    fn activity(&self) -> u64;                    // for sort
-    fn state_group(&self, now: u64) -> u8;        // sort precedence
+    fn apply_event(&mut self, event: &str, now: u64);
+    fn format_row(&self) -> String;               // "<glyph> <kind> <cwd>"
+    fn activity(&self) -> u64;                    // for sort: max(state_ts, last_event_ts)
+    fn is_running(&self) -> bool;                 // for sort precedence
 }
 ```
 
-`apply_event` is the entire state machine. One match arm per
-event; `_` falls through to a bump of `last_event` + `last_event_ts`
-only. Caller (the `hook` subcommand) handles "bare claude"
-filtering; `apply_event` itself is unconditional.
+`apply_event` is the entire state machine: `PreToolUse` →
+`state := running`, everything else → `state := idle`. One
+match arm per event; `_` falls through to a `last_event_ts`
+bump only. The caller (`hook` subcommand) handles "bare
+claude" filtering; `apply_event` itself is unconditional.
+Payload parsing isn't needed — the state machine doesn't
+read prompt / tool fields anymore.
 
 ### §2 · Store
 
@@ -602,18 +669,27 @@ struct Loop<'a> { store: &'a Store }
 impl<'a> Loop<'a> {
     fn render(&self) -> Result<Vec<(String, String)>>;     // (pane_id, row)
     fn render_to(&self, stdout: &mut dyn Write) -> Result<()>;
-    fn run(&self, self_path: &Path) -> Result<()>;          // outside-orchestrator path
-    fn body(&self, self_path: &Path) -> Result<()>;         // inside-orchestrator picker
+    fn peek(&self, pane_id: &str, lines: u32, stdout: &mut dyn Write) -> Result<()>;
+    fn run(&self, self_path: &Path) -> Result<()>;          // outside-agent-orch path
+    fn body(&self, self_path: &Path) -> Result<()>;         // inside-agent-orch picker
 }
 ```
 
-`render` captures `now` once so all rows in one snapshot share a
-time reference (otherwise "5s ago" / "0:04" readings drift
-across rows in a slow render).
+`render` returns one row per live session, sorted (running
+first; within group most-recently-active first); rows are
+plain `<glyph> <kind> <cwd>`.
 
-`body` spawns fzf + watcher + heartbeat threads as described in
-Requirements → Picker. When fzf exits (Esc / kill), the body
-returns and the orchestrator session terminates.
+`peek` shells out to `tmux capture-pane -p -t <pane_id> -E -1
+-S -<lines>` and writes to stdout. The hidden `agent-orch
+peek` subcommand wraps this for fzf's `--preview`.
+
+`body` spawns fzf with `--preview`, then runs two threads:
+- **Watcher** posts `reload(<self> render)` to fzf when
+  `sessions.json` changes (debounced 100ms).
+- **Heartbeat** posts `refresh-preview` to fzf every 1s.
+
+When fzf exits (Esc / kill), the body returns and the
+agent-orch session terminates.
 
 ### CLI
 
@@ -626,6 +702,8 @@ enum Cmd {
     #[command(hide = true)] Hook        { event: String },
     #[command(hide = true)] Unregister  { pane_id: String },
     #[command(hide = true)] Render,
+    #[command(hide = true)] Peek        { pane_id: String,
+                                          #[arg(long, default_value_t = 10)] lines: u32 },
 }
 
 // `None` (no subcommand) → bare invocation.
@@ -676,44 +754,83 @@ codebase top-to-bottom.
   it. The user picks the suffix at install time
   (`setup --key X`); we don't presume one.
 
-- **Six-state lifecycle, not three.** v0 had `running` /
-  `complete` / `unknown`. That couldn't tell you whether an
-  agent was actively running a tool, thinking between tools,
-  waiting on user input, or done minutes ago. The picker
-  rendered the same `▶` glyph and the same prompt-only row
-  in all of those cases. Six states each pull their own
-  information density: Active shows the in-flight tool with a
-  preview; Thinking shows the prompt with a hint; Waiting
-  flags user intervention; Idle summarizes the completed
-  turn (duration + tool count + age); Stalled is render-time
-  decoration when an Active row has been silent for >90s;
-  Cold is the fresh-wrap state.
+- **Two-state lifecycle, not six.** An earlier iteration had
+  six states (cold / thinking / active / waiting / idle /
+  stalled) packed into the row content. Two problems showed
+  up in real use: (a) the row lied — it said "thinking" when
+  claude had actually crashed and printed "Not logged in"
+  to the pane, because no `Stop` ever fires on crash; (b)
+  cramming "what tool", "what prompt", "how long" into the
+  row text meant every heartbeat had to redraw the row,
+  which `reload(...)` does by blocking fzf's input — at 1
+  Hz the picker felt continuously frozen. Switched to a
+  binary running / idle distinction (running = `PreToolUse`
+  fired without matching `PostToolUse`; idle = everything
+  else) plus a fzf preview window showing the agent's
+  actual pane content via `tmux capture-pane`. The user
+  reads the truth from the pane, not from a guessed-at row
+  text. Row content stays minimal so the list rarely needs
+  to reload.
 
-- **Heartbeat thread re-renders at 1Hz.** Without it, timer
-  columns (`0:04`, `7m ago`) would only advance when a real
-  hook event fired the watcher. Stalled demotion would
-  also lag — Active rows would look fine until the next
-  unrelated registry mutation triggered a render. The
-  heartbeat piggybacks on the existing watcher mpsc channel;
-  at 1Hz the cost is one re-render per second, which is
-  trivially cheap.
+- **Heartbeat → `refresh-preview`, not `reload`.** Both
+  fzf actions update the picker, but they have very
+  different cost. `reload(...)` re-runs the source command,
+  blocks input while it does, and clears the prompt — at
+  1 Hz the cursor jitters and the search query feels
+  broken. `refresh-preview` re-runs only the preview command
+  for the focused row, doesn't touch the list, and doesn't
+  block input. So the heartbeat (1 Hz, just to keep the
+  preview live as the agent works) sends `refresh-preview`;
+  the watcher (rare, only on real `sessions.json` changes)
+  sends `reload`. Net result: list rows are stable, preview
+  ticks live, no flicker.
+
+- **Pane preview as the truth signal.** The state column is
+  a glyph at-a-glance signal; the preview is what the user
+  reads to act. `agent-orch peek <pane-id>` wraps `tmux
+  capture-pane -p -t <pane> -E -1 -S -<N>` and dumps the
+  last N visible lines to stdout. fzf shows them in the
+  `--preview` window. When claude is "Not logged in", you
+  see the message. When kiro is asking for permission, you
+  see the prompt. When an agent is between turns, you see
+  the prompt cursor. No row schema can capture that nuance
+  reliably; pane content always can.
 
 - **PATH-resolved agent binary.** The wrapper does
   `execvp("claude", ...)` — no path lookup, no PATH munging.
   Whichever `claude` is first in the **launching shell's**
-  PATH wins. This is correct: the wrapper has no way to know
-  which `claude` the user wants, and the launching shell's
-  setup is exactly the policy the user already chose. On
-  Amazon-internal machines that have both `~/.toolbox/bin/claude`
-  (the Bedrock-auth shim) and `~/.local/bin/claude` (Claude
-  Code's native install — created by the toolbox shim's own
-  `post-install` hook), PATH ordering decides which one
-  runs. Login shells go through `.zprofile` / `.profile`;
-  interactive shells layer additional PATH prepending on
-  top. This is why `functional-setup.sh` launches the wrap
-  via `tmux send-keys` into a fresh `zsh -l` session — by
-  the time it types, the login shell's full PATH setup is
-  complete and `~/.toolbox/bin` is in front.
+  PATH wins. This is correct: a fresh `zsh -l` resolves
+  `claude` exactly the way the user expects (their
+  `.zprofile` / `.zshrc` runs and the toolbox shim or
+  whatever else they have lands at the right precedence).
+  Bare `claude` typed in that same shell would resolve to
+  the same binary, so the wrapper isn't doing anything
+  surprising. The flakiness mentioned below is purely about
+  shells whose PATH was inherited from a stale source.
+
+- **Stale-shell PATH risk.** On Amazon-internal machines,
+  Claude Code's toolbox installer creates two
+  `claude` binaries: `~/.toolbox/bin/claude` (Bedrock-auth
+  shim, the one users want) and `~/.local/bin/claude`
+  (Anthropic-native standalone, used by IDE integrations).
+  The user's `~/.zprofile` typically prepends `~/.local/bin`
+  to PATH. Whether the toolbox shim wins depends on whether
+  the toolbox installer's PATH-prepend ran during the
+  shell's startup, OR the shell inherited PATH from a
+  parent that already had `.toolbox/bin` promoted. tmux-
+  resurrect saves panes and restores them by spawning new
+  shells that **inherit the tmux server's environ at
+  restore time** — if that environ has `.local/bin` ahead
+  of `.toolbox/bin`, every restored pane's `claude` lookup
+  hits the standalone (no Bedrock auth). This isn't a wrap
+  bug; bare `claude` from such a pane would resolve the
+  same way. The right fix is in env-workplace (rearrange
+  `.zprofile` to put `.toolbox/bin` ahead of `.local/bin`,
+  or stop creating the `.local/bin/claude` symlink). The
+  spec records it here so anyone hitting "Not logged in"
+  on a wrapped pane knows where to look. `agent-orch
+  doctor` (follow-up) will detect and surface the
+  mismatch.
 
 - **Claude hooks user-globally, not per-launch.** v0 wrote a
   per-launch settings file and pointed claude at it. That
@@ -740,18 +857,20 @@ codebase top-to-bottom.
   leaves their state at Cold. Backlog item tracks the right
   fix.
 
-- **Event-driven picker, not a poll loop.** v0 re-spawned
-  fzf every 500ms. The user lost cursor position, lost typed
-  query, and the orchestrator pane flickered. Switched to
-  fzf's `--listen=<sock>` + `notify-debouncer-mini` watching
-  `sessions.json`'s parent dir + 1-second heartbeat. fzf
-  stays alive across selections; `enter` is bound to
-  `execute-silent(tmux switch-client -t {1})+clear-query`,
-  which is non-terminal — fzf doesn't exit. The watcher
-  pushes `reload(<self> render)` over hand-rolled HTTP/1.1
-  to fzf's UDS whenever sessions.json changes. The picker
-  feels live: state advances as agents work, you switch
-  back and the cursor is where you left it, no flicker.
+- **Event-driven picker, not a poll loop.** An earlier
+  iteration re-spawned fzf every 500ms. The user lost
+  cursor position, lost typed query, and the picker
+  flickered. Switched to fzf's `--listen=<sock>` so the
+  same fzf process accepts control commands over a Unix
+  socket; `enter` is bound to `execute-silent(tmux
+  switch-client -t {1})+clear-query`, which is
+  non-terminal — fzf doesn't exit on selection. A watcher
+  thread sends `reload(<self> render)` only when
+  `sessions.json` actually changes; a heartbeat sends
+  `refresh-preview` at 1 Hz to keep the preview window
+  live. Result: a single long-lived fzf process, list
+  cursor / query / search state preserved across
+  switches, no flicker.
 
 - **Self-discovering teardown.** v0 had `agent-orch teardown
   --key X` to undo a prior `setup --key X`. Forgetting the
@@ -774,25 +893,51 @@ codebase top-to-bottom.
 
 ## Implementation Plan
 
-v1 ships in the single slice that's now landed. Two follow-up
-slices are tracked separately.
+v1 lands the bones (binary, hooks, picker shell). The
+loop-UI redesign (two-state + pane preview) and the
+stale-shell PATH risk are the next slice.
 
-### Shipped — v1
+### Shipped — v1 bones
 
 - Single binary, three user-facing verbs + bare invocation.
-- Six-state lifecycle with per-state row content and
-  heartbeat-driven re-renders.
-- Claude hook reporter (six events) wired through user-global
-  `setup` / `teardown`.
+- Claude hook reporter wired through user-global `setup` /
+  `teardown` (hooks installed in `~/.claude/settings.json`,
+  tagged for clean removal).
 - Kiro observation-only (registers + lifecycle cleanup; state
-  stays cold).
+  stays idle without hook reporting).
 - Event-driven persistent picker via fzf `--listen` +
   `notify-debouncer-mini`.
 - User-specified prefix-table keybind via `setup --key X` +
   self-discovering teardown.
-- Three test layers: 50+ unit tests, 11+ integration cases
-  on a private tmux server, three functional scripts driving
-  the user's live server.
+- Three test layers: unit tests, integration cases on a
+  private tmux server, functional scripts driving the user's
+  live server.
+
+### Slice — loop UI redesign
+
+Replace the multi-state lifecycle with the two-state +
+pane-preview shape described in Requirements. Concretely:
+
+- Trim `Session` to the lean shape: drop
+  `last_prompt` / `last_tool_name` / `last_tool_preview` /
+  `prompt_started_at` / `tool_started_at` / `tools_this_turn` /
+  `last_turn_duration` / `effective_state` / `Stalled`. State
+  enum becomes `Running | Idle`.
+- `apply_event`: `PreToolUse` → running; everything else →
+  idle. No payload parsing; just bump `last_event_ts`.
+- `format_row` returns `<glyph> <kind> <cwd>` only.
+- New hidden `peek <pane-id> [--lines N]` subcommand wrapping
+  `tmux capture-pane`. Default N = 10.
+- `Loop::body` invokes fzf with `--preview='<self> peek {1}'
+  --preview-window=right:50%`. Watcher thread continues to
+  send `reload(...)` on sessions.json change; heartbeat
+  thread switches from `reload` to `refresh-preview` at 1 Hz.
+- Drop the `setup` install of `Notification` and
+  `PostToolUseFailure` hooks (no longer drive distinct
+  states; the preview surfaces those situations directly).
+- Update unit + integration tests to the new shape.
+- Add functional test scenario: `agent-orch peek <pane>`
+  output matches captured pane content.
 
 ### Follow-up — Kiro state tracking
 
@@ -803,10 +948,26 @@ test scenarios. Tracked in `specs/backlog/`.
 
 ### Follow-up — `agent-orch doctor`
 
-Sanity-check skill: tmux ≥ 3.2, fzf ≥ 0.71.0 on PATH; agent
-CLIs detected; state dir writeable; orchestrator-switch
-keybind currently registered; no stale Claude hooks pointing
-at a missing binary; no orphan `<cwd>/.kiro/agents/agent-orch.json`.
+Sanity-check skill. Required checks:
+- tmux ≥ 3.2, fzf ≥ 0.71.0 on PATH.
+- Each wrappable agent CLI detected (`claude`,
+  `kiro-cli`).
+- State dir writeable.
+- Orchestrator-switch keybind currently registered in the
+  prefix table.
+- No stale Claude hook entries in `~/.claude/settings.json`
+  pointing at a missing binary path.
+- No orphan `<cwd>/.kiro/agents/agent-orch.json`.
+- **PATH-mismatch heuristic**: for each registered pane,
+  resolve the parent shell's `which claude` (and
+  `which kiro-cli`) and compare to the toolbox-managed
+  binary the user expects. Flag any pane where the resolved
+  binary is the standalone `~/.local/bin/claude` while the
+  toolbox shim exists at `~/.toolbox/bin/claude`. This
+  catches the tmux-resurrect-restored case (see "Stale-
+  shell PATH risk" in Design Rationale) without changing
+  wrap behavior.
+
 Tracked in `specs/backlog/`.
 
 ### Follow-up — persistent tmux keybind across server restarts
