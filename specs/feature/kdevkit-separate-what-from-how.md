@@ -597,6 +597,23 @@ Risk notes:
   to assert V-model framing + scaffolding-not-rigid stance,
   not strict heading order.
 
+- 2026-06-10 · functional smokes verified · agent ran the
+  three relevant smokes after deploying the worktree
+  symlinks (per-feature override; project.md's
+  user-driven default still applies elsewhere): the new
+  `kdevkit-requirements-user-facing` smoke passes on both
+  claude and kiro — judges credit three-layer framing,
+  experience-layer prompt with multiple feature-type
+  examples, smell test, and V-model pairing. Regression
+  smokes `kdevkit-feature-planning` and
+  `kdevkit-feature-loop` pass on both tools. One soft
+  observation from the kiro judge on the new fixture
+  (still passing): the response was implicit rather than
+  explicit on naming "Feature Brief = capability" as a
+  distinct layer. Not load-bearing for the contract, not
+  a regression — captured for follow-up if a real failure
+  exposes it.
+
 ## Decision Log
 
 <!-- append: decision · rationale · alternatives rejected -->
