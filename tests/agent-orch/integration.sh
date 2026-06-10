@@ -171,23 +171,47 @@ pass "Notification flipped to waiting"
 echo '{}' | env "XDG_STATE_HOME=$STATE_PARENT" "AGENT_ORCH_PANE=$PANE_ID" \
     "$BIN" hook Stop
 
-# ── case 5 — render emits the live row (drives the loop body) ─────
+# ── case 5 — render emits a multi-line item (drives the loop body) ─
 # `render` is the hidden subcommand the event-driven loop body
-# wires into fzf's `reload(...)` action. Each row is
-# `<pane_id>\t<formatted-row>`; pane id sits in column 1 so fzf's
-# `--id-nth=1 --with-nth=2..` can track and hide it respectively.
-# Row format is `<glyph> <kind> <cwd-tail>` — terse by design;
-# the preview window carries the live signal.
+# wires into fzf's `reload(...)` action. Each item is:
+#   <pane_id>\t<header>\n<snippet line 1>\n<line 2>\n<line 3>
+# Items are NUL-separated. The leading `<pane_id>\t` is what
+# fzf's `--id-nth=1` keys on; `--with-nth=2..` hides it from
+# display. Pass AGENT_ORCH_TMUX_SOCKET so resolve_pane_addr +
+# capture_snippet target our private server.
 
-log "case 5: render emits a tab-separated row per registered pane"
-RENDER_OUT="$(env "XDG_STATE_HOME=$STATE_PARENT" "$BIN" render)"
-trace "$RENDER_OUT"
-[[ "$(printf '%s\n' "$RENDER_OUT" | wc -l)" -eq 1 ]] || fail "case 5: expected 1 row"
-[[ "$RENDER_OUT" == "$PANE_ID"$'\t'* ]] || fail "case 5: pane id not in column 1"
-[[ "$RENDER_OUT" == *"claude"* ]] || fail "case 5: render missing kind"
+log "case 5: render emits a multi-line item per registered pane"
+# Capture to a file, not $(...), so trailing newlines and NUL
+# bytes survive bash's command-substitution sanitisation.
+RENDER_FILE="$STATE_PARENT/render-out"
+env "XDG_STATE_HOME=$STATE_PARENT" "AGENT_ORCH_TMUX_SOCKET=$TMUX_SOCKET" \
+  "$BIN" render > "$RENDER_FILE"
+trace "$(od -c "$RENDER_FILE" | head -10)"
+
+# With 1 registered pane: zero NULs (NUL is the inter-item
+# separator, no trailing NUL by design).
+nul_count="$(tr -cd '\0' < "$RENDER_FILE" | wc -c)"
+[[ "$nul_count" -eq 0 ]] || fail "case 5: expected 0 NULs (1 item), got $nul_count"
+
+# 1 header + 3 snippet lines = 3 newlines between them. Empty
+# snippet lines are still present (kept for fixed item height
+# so fzf doesn't reflow on every reload).
+nl_count="$(tr -cd '\n' < "$RENDER_FILE" | wc -c)"
+[[ "$nl_count" -eq 3 ]] || fail "case 5: expected 3 newlines (1 header + 3 snippet), got $nl_count"
+
+# Header line (first line) must start with "<pane_id>\t".
+header="$(head -1 "$RENDER_FILE")"
+[[ "$header" == "$PANE_ID"$'\t'* ]] || fail "case 5: pane id not in column 1: $header"
+[[ "$header" == *"claude"* ]] || fail "case 5: header missing kind"
 # Case 4 left the row in `done` state; the corresponding glyph is `✓`.
-[[ "$RENDER_OUT" == *"✓"* ]] || fail "case 5: render missing done glyph (expected ✓)"
-pass "render emits tab-separated <pane>\\t<glyph kind cwd> rows"
+[[ "$header" == *"✓"* ]] || fail "case 5: header missing done glyph (expected ✓)"
+
+# Header has the resolved tmux address (session:window.pane).
+# We don't assert the exact value (depends on tmux's pane id
+# scheme on the private server) but it must not be the
+# `?:?.<pane-id>` fallback.
+[[ "$header" != *"?:?."* ]] || fail "case 5: address resolution fell back: $header"
+pass "render emits multi-line item: <pane_id>\\t<header>\\n<snippet x 3>"
 
 # ── case 5b — peek shells out to tmux capture-pane ─────────────────
 # The agent-orch peek subcommand wraps `tmux capture-pane`. We
@@ -210,6 +234,21 @@ PEEK_NONE="$(env "XDG_STATE_HOME=$STATE_PARENT" "AGENT_ORCH_TMUX_SOCKET=$TMUX_SO
   "$BIN" peek '%no-such-pane' 2>&1)" || fail "case 5c: peek on unknown pane should exit 0"
 [[ -z "$PEEK_NONE" ]] || fail "case 5c: expected empty, got: $PEEK_NONE"
 pass "peek on unknown pane gracefully empty"
+
+# ── case 5d — peek invokes capture-pane with -e for ANSI ──────────
+# Verifies the right tmux flags are wired up. We can't easily
+# inject coloured cell content into the integration fixture's
+# `sleep 300` pane (no shell to interpret the escape sequence),
+# so we exercise the surface-level flag path: peek a real pane,
+# assert the call succeeds and produces output. The
+# end-to-end ANSI rendering is asserted by the functional layer
+# where real claude/kiro produce coloured output naturally.
+
+log "case 5d: peek call succeeds (capture-pane -e flag wired)"
+PEEK_OUT2="$(env "XDG_STATE_HOME=$STATE_PARENT" "AGENT_ORCH_TMUX_SOCKET=$TMUX_SOCKET" \
+  "$BIN" peek "$PANE_ID" --lines 10)"
+[[ -n "$PEEK_OUT2" ]] || fail "case 5d: peek produced no output for live pane"
+pass "peek invocation succeeds (-e flag exercise)"
 
 # ── case 6 — unregister removes the record ─────────────────────────
 
@@ -380,4 +419,4 @@ env "HOME=$KEY_HOME" "AGENT_ORCH_TMUX_SOCKET=$TMUX_SOCKET" "$BIN" teardown
 rm -rf "$KEY_HOME"
 pass "setup without --key installed hooks only, teardown was a clean no-op for the keybind"
 
-log "all cases passed (1, 2, 3, 4, 4b, 4c, 5, 5b, 5c, 6-10, 11a-d)"
+log "all cases passed (1, 2, 3, 4, 4b, 4c, 5, 5b, 5c, 5d, 6-10, 11a-d)"
