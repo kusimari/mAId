@@ -561,55 +561,55 @@ right one.
 
 <!-- ordered checklist; one slice per item -->
 
-- [ ] Edit `interviews.md`'s feature template — switch
+- [x] Edit `interviews.md`'s feature template — switch
       `## Implementation Plan` body placeholder from
       prose-numbered to `- [ ]` checkbox shape per
       Requirements §3 above.
-- [ ] Edit SKILL.md §6 — add the one-sentence
+- [x] Edit SKILL.md §6 — add the one-sentence
       codebase-grounding cue immediately before the
       "When entering a feature with no spec on disk..."
       paragraph. Wording per Requirements §1 above.
-- [ ] Edit SKILL.md §8.1 — rewrite the reconcile cue
+- [x] Edit SKILL.md §8.1 — rewrite the reconcile cue
       to name `- [ ]` markers explicitly. Decision Log
       and unresolved-questions sweeps stay verbatim.
-- [ ] Edit SKILL.md §8.2 — lift from "soft / offer"
+- [x] Edit SKILL.md §8.2 — lift from "soft / offer"
       to per-touched-section structured ask. Wording
       per Requirements §2 above. The asking is
       mandatory; staging accepted edits stays.
-- [ ] Edit SKILL.md §9 — add the
+- [x] Edit SKILL.md §9 — add the
       "Spec-discipline anti-patterns" subsection
       (4 bullets) between "Commit hygiene" and
       "Skill-file placement". Wording per
       Requirements §4 above.
-- [ ] Bump SKILL.md frontmatter `version` from
+- [x] Bump SKILL.md frontmatter `version` from
       `3.2.0` to `3.3.0`. Frontmatter `description`
       left unchanged unless review surfaces an
       inaccuracy.
-- [ ] Run Quality Gate — `deno task fmt && deno
+- [x] Run Quality Gate — `deno task fmt && deno
       task lint && deno task check`. Markdown
       changes only; fmt may reformat; lint/check
       no-ops for `.md`.
-- [ ] Run Test Gate — `deno task test:unit` (23
+- [x] Run Test Gate — `deno task test:unit` (23
       tests stay green); `deno task test:smoke`
       after worktree-redirect deploy.
-- [ ] Add fixture
+- [x] Add fixture
       `tests/functional/skills/kdevkit-codebase-grounding.smoke` —
       `prompt:` + `expected_narrative:` per Test
       Strategy §1 above. Public-repo-safe example:
       feature name `metric-export`.
-- [ ] Add fixture
+- [x] Add fixture
       `tests/functional/skills/kdevkit-closure-verify-and-anti-patterns.smoke` —
       `prompt:` + `expected_narrative:` per Test
       Strategy §2 above. Public-repo-safe example:
       feature name `add-prom-export`, file
       `maid/deploy.ts`.
-- [ ] Audit two existing closure-fixtures
+- [x] Audit two existing closure-fixtures
       (`kdevkit-feature-closure`,
       `kdevkit-closure-after-long-session`) for
       assertions that conflict with the §8.2 lift.
       Patch any "soft / offer" hard-assertions to
       align with per-section ask.
-- [ ] Run §7 Test Gate with functional smokes
+- [x] Run §7 Test Gate with functional smokes
       (per-feature override). Deploy worktree:
       `deno task deploy --force`. Run the two new
       fixtures + the two regression fixtures.
@@ -618,18 +618,18 @@ right one.
       `retry_budget`. Restore symlinks to
       primary checkout when done:
       `cd ../mAId && deno task deploy --force`.
-- [ ] Run Code Review Gate — per
+- [x] Run Code Review Gate — per
       `code_review.reviewer: host-native`,
       threshold 70, hard-stop, retry-budget 2.
       Reviewer sees `project.md` + diff
       (SKILL.md + interviews.md + 2 new
       fixtures); no feature spec.
-- [ ] Push. Open Agent-dev Review Gate per §7 /
+- [x] Push. Open Agent-dev Review Gate per §7 /
       §9. Body: Approach (the four adoptions) +
       Reading order (SKILL.md §6 / §8 / §9 as
       intent; interviews.md as contract; new
       fixtures as plumbing).
-- [ ] Closure — §8.1 reconcile (this spec's
+- [x] Closure — §8.1 reconcile (this spec's
       checkboxes ticked); §8.2 per-section verify
       ask (this feature touches Agent Development
       / kdevkit block by version-bumping the
@@ -692,6 +692,20 @@ Risk notes:
 ## Session Log
 
 <!-- append: date · what was done · decisions made -->
+
+- 2026-06-10 · closure · all 15 Implementation Plan
+  items ticked. Quality + Test gates green; 5 functional
+  smokes (2 new + 3 patched regression) green on claude
+  + kiro. Code Review Gate score 74; surfaced 4 findings
+  all addressed pre-push (stream-closure fixture
+  initially missed in the closure-fixture sweep; §6 cue
+  used `specs/feature/` instead of `$SPEC_ROOT/feature/`;
+  per-commit tick discipline lacked §5 backing; §8.2
+  used HTML entities for placeholder). Original Open
+  Questions all resolved (eight-dimension hardcoding
+  flagged for future; CLAUDE.md overlap confirmed
+  non-existent; fixture dual-coverage acceptable per
+  code review).
 
 - 2026-06-10 · feature spec authored · §6 four
   interviews completed autonomously per the
