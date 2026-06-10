@@ -8,19 +8,23 @@
 ## Feature Brief
 
 Replace mAId's Deno+TypeScript build/CLI surface with a Cargo
-workspace using xtask for build automation. The `maid/` crate
-goes away — its 552 LOC of validate/deploy logic moves into
-`xtask/`, a workspace member specifically for build glue.
-`sources/agent-orch/` (already Rust on the sister branch)
-becomes the second workspace member, getting `cargo build -p`
-and `cargo test -p` for free. Native cargo verbs replace the
-old `deno task fmt/lint/check/test`; the four custom verbs
-that aren't cargo-native — `validate`, `deploy`, `undeploy`,
-`status` — become `cargo xtask <verb>`. `./install` becomes
-a thin passthrough into `cargo xtask install`. Net result:
-one toolchain (Rust), no extra build-system deps (`pkgs.deno`
-dropped, `pkgs.just` not added), and a workspace shape that
-lets future Rust tools drop in as new sub-packages.
+workspace. The `maid/` crate goes away — its 552 LOC of
+validate/deploy logic moves into a new workspace member named
+**`transform/`** (the crate functionally *transforms* checked-in
+markdown into per-tool symlink layouts). `sources/agent-orch/`
+(already Rust on the sister branch) becomes another workspace
+member alongside it, getting `cargo build -p` and `cargo test
+-p` for free. Native cargo verbs replace the old `deno task
+fmt/lint/check/test`; the four custom verbs that aren't
+cargo-native — `validate`, `deploy`, `undeploy`, `status` —
+become `cargo xtask <verb>` via a `.cargo/config.toml` alias
+that maps `xtask` to `run -p transform --release --`. The
+`./install` passthrough is **deleted**; users invoke
+`cargo xtask install` directly (cargo is a hard requirement,
+documented in the flake). Net result: one toolchain (Rust),
+no extra build-system deps (`pkgs.deno` dropped, `pkgs.just`
+not added), and a workspace shape that lets future Rust tools
+drop in as new sub-packages.
 
 ## Requirements
 
@@ -28,9 +32,15 @@ lets future Rust tools drop in as new sub-packages.
   a cargo-native or `cargo xtask` equivalent. Output shape is
   close enough that a human reading the output still parses
   it the same way.
-- `./install` and `./install --uninstall` keep their public
-  signature. What they invoke underneath shifts to
-  `cargo xtask install` / `cargo xtask uninstall`.
+- The build crate is named **`transform`** (functional name —
+  what it does to source markdown), not `xtask` (tool-named).
+  A `.cargo/config.toml` alias maps `xtask` → `run -p transform
+  --release --` so users still type `cargo xtask <verb>`.
+- The `./install` shim is **deleted**. Cargo is a hard
+  requirement — the flake provides it via `rust-overlay`, and
+  any user without cargo on PATH is expected to run inside
+  `nix develop` themselves (or set up a project-local memory
+  / shell alias). No bootstrap layer in the repo.
 - The 20 existing unit tests (11 deploy + 9 schema/walk) port
   to `cargo test`. Every behavior the TS suite asserts has a
   Rust counterpart asserting the same outcome.
@@ -46,8 +56,8 @@ lets future Rust tools drop in as new sub-packages.
   member; `cargo build -p <name>` builds one. Same shape for
   `test`, `clippy`, `check`.
 - `dist/` is gitignored and holds binaries that survive the
-  build (`dist/agent-orch`). The xtask binary itself is *not*
-  copied to `dist/` — it's a build tool, only invoked via
+  build (`dist/agent-orch`). The `transform` crate's binary is
+  *not* copied to `dist/` — it's a build tool, only invoked via
   `cargo xtask`.
 - `Cargo.lock` is committed at the workspace root (binary-
   workspace policy; matches agent-orch sister branch's same
@@ -63,7 +73,7 @@ substitutions noted:
 - **Unit tests** — `cargo test --workspace` replaces
   `deno task test:unit`. Ported tests live as
   `#[cfg(test)] mod tests` blocks in
-  `xtask/src/{deploy,schema,sources}.rs`. Success criterion:
+  `transform/src/{deploy,schema,sources}.rs`. Success criterion:
   every behavior asserted by the 20 TS tests has a Rust
   counterpart that asserts the same outcome (status enum
   variant, symlink target, error case). Load-bearing.
@@ -93,14 +103,13 @@ clean for the next iteration if needed.
 
 ```
 mAId/
-├── Cargo.toml              workspace root: members = ["xtask"]
-├── .cargo/config.toml      [alias] xtask = "run -p xtask --release --"
+├── Cargo.toml              workspace root: members = ["transform"]
+├── .cargo/config.toml      [alias] xtask = "run -p transform --release --"
 ├── flake.nix               rust-only via rust-overlay
 ├── rust-toolchain.toml     stable + clippy + rustfmt
 ├── .gitignore              + target/, + dist/
-├── install                 3-line passthrough → cargo xtask install
 ├── README.md               Develop section rewritten for cargo verbs
-├── xtask/
+├── transform/              ← the build crate (validate + symlink-deploy + orchestration)
 │   ├── Cargo.toml          deps: clap, anyhow, duct, shell-words; dev: tempfile
 │   └── src/
 │       ├── main.rs         CLI dispatch (clap)
@@ -118,6 +127,10 @@ mAId/
 ├── specs/                  unchanged
 └── dist/                   gitignored — built binaries land here
 ```
+
+Note: the `./install` shim is deleted, not migrated. Users on
+machines without cargo on PATH must enter the dev shell first
+(`nix develop`). The flake declares cargo as a hard dependency.
 
 ### `cargo xtask` verb surface
 
@@ -137,11 +150,11 @@ Native cargo handles the rest — `cargo build`, `cargo test`,
 
 ### Orchestration: duct + shell-words
 
-`xtask/src/sh.rs` exposes a tiny `sh!(...)` macro that parses
-a shell-style string at runtime via `shell_words::split` and
-wraps the result in `duct::cmd`. Used wherever xtask shells
-out to another program (`cargo build`, `cp`,
-`tests/functional/run`).
+`transform/src/sh.rs` exposes a tiny `sh!(...)` macro that
+parses a shell-style string at runtime via
+`shell_words::split` and wraps the result in `duct::cmd`.
+Used wherever the build crate shells out to another program
+(`cargo build`, `cp`, `tests/functional/run`).
 
 The symlink state machine in `deploy.rs` does **not** use
 `sh!` — it uses plain `std::fs` so the outcome can be a
@@ -184,21 +197,21 @@ buildInputs = [ rustToolchain pkgs.pkg-config ];
 `rust-overlay` provides the toolchain. `pkg-config` covers
 crates that need it (none today, kept as cheap insurance).
 
-### `./install` shape
+### `./install` removed
 
-Three-line passthrough, same as today, with the inner verb
-shifted from `deno task` to `cargo xtask`:
+The deno version was a 3-line passthrough into
+`deno task setup`. The Rust port has no equivalent —
+`./install` is **deleted**, and users invoke
+`cargo xtask install` directly. The toolchain-fallback
+that `./install` once carried (try cargo, fall back to
+`nix develop --command cargo`) is now the user's
+responsibility: `nix develop` first if cargo isn't on PATH,
+or set up a project-local memory / shell function. The
+flake declares cargo as a hard requirement; the README's
+Develop section documents the entry point.
 
-```bash
-if command -v cargo >/dev/null 2>&1; then
-    exec cargo xtask "$verb"
-elif command -v nix >/dev/null 2>&1; then
-    exec nix develop --command cargo xtask "$verb"
-else
-    echo "ERROR: need cargo (or nix, for the repo-local flake)." >&2
-    exit 1
-fi
-```
+This removes one file, one mental model, and one place
+where verb-mapping can go stale.
 
 ### Merge-order independence
 
@@ -206,12 +219,12 @@ This branch and `feat/agent-orch-fix` (which adds
 `sources/agent-orch/` as a Rust crate) are developed in
 parallel. Neither blocks the other; whichever merges first
 wins and the other rebases. To keep that possible, **this
-branch's `Cargo.toml` lists only `xtask` as a workspace
+branch's `Cargo.toml` lists only `transform` as a workspace
 member** — it does not assume `sources/agent-orch/` exists.
 
 Three concrete rules that make the parallelism work:
 
-1. **Workspace members list = `["xtask"]` at merge time.**
+1. **Workspace members list = `["transform"]` at merge time.**
    Adding a new member is the *second* branch's responsibility,
    in its rebase. This holds for any future Rust crate landing
    in `sources/`, not just agent-orch.
@@ -257,10 +270,21 @@ branches touch all three. No source code conflict is expected.
   workspace members. `cargo xtask install` builds every
   present member's release binary into `dist/`.
 - **Workspace members list stays minimal at merge time.**
-  `members = ["xtask"]` only. Other Rust crates join via
+  `members = ["transform"]` only. Other Rust crates join via
   their own merging branch's rebase, not this one. Keeps
   this branch merge-order-independent vs. any other in-flight
   feature that adds a Rust crate.
+
+- **Crate named `transform`, not `xtask`.** Functional name
+  (what it does to source markdown) over tool-named
+  convention. `cargo xtask` survives as a `.cargo/config.toml`
+  alias mapping `xtask` → `run -p transform --release --` so
+  the public verb shape is unchanged.
+
+- **No `./install` shim.** Cargo is a hard requirement; the
+  flake provides it; users without cargo on PATH enter
+  `nix develop` themselves. One fewer file, one fewer
+  abstraction layer to keep in sync.
 
 ## Implementation Plan
 
@@ -271,19 +295,20 @@ steps are tightly coupled (a half-ported state machine isn't
 reviewable on its own).
 
 1. **Workspace scaffold.** Create root `Cargo.toml` with
-   `[workspace]` and `members = ["xtask"]` (agent-orch
-   joins later — see Open Questions). Create
-   `.cargo/config.toml` with the xtask alias. Create
-   `rust-toolchain.toml`. Update `flake.nix` (drop deno, add
-   rust-overlay). Update `.gitignore` (+ `target/`, +
-   `dist/`). Verify: `cargo check --workspace` against an
-   empty xtask. **Risk:** rust-overlay flake input drift —
-   pin to the version agent-orch's flake uses.
+   `[workspace]` and `members = ["transform"]`. Create
+   `.cargo/config.toml` with the alias `xtask = "run -p
+   transform --release --"`. Create `rust-toolchain.toml`.
+   Update `flake.nix` (drop deno, add rust-overlay). Update
+   `.gitignore` (+ `target/`, + `dist/`). Verify: `cargo check
+   --workspace` against an empty crate. **Risk:** rust-overlay
+   flake input drift — pin to the version agent-orch's flake
+   uses.
 
-2. **Create xtask crate skeleton.** `xtask/Cargo.toml` with
-   `clap`, `anyhow`, `duct`, `shell-words`. `xtask/src/main.rs`
-   with clap dispatch over the eight verbs, each stubbed with
-   `todo!()`. Verify: `cargo xtask --help` lists all verbs.
+2. **Create `transform` crate skeleton.** `transform/Cargo.toml`
+   with `clap`, `anyhow`, `duct`, `shell-words`.
+   `transform/src/main.rs` with clap dispatch over the eight
+   verbs, each stubbed with `todo!()`. Verify: `cargo xtask
+   --help` lists all verbs.
 
 3. **Port `registry.rs`.** Static `&[Entry]` array matching
    today's six entries. No tests yet (data only).
@@ -291,7 +316,7 @@ reviewable on its own).
 4. **Port `schema.rs` (simplified) + tests.** Four checks
    only. Keep file:line error tracking. Tests assert: header
    start, header end, name present, description present.
-   Verify: `cargo test -p xtask schema` passes.
+   Verify: `cargo test -p transform schema` passes.
 
 5. **Port `sources.rs` + tests.** Walker over
    `sources/{skills,agents,commands}/`. Sorted by (kind,
@@ -323,9 +348,10 @@ reviewable on its own).
 9. **Add `test-smoke` and `test-functional` verbs.** `sh!()`
    wraps the existing `tests/functional/run` script.
 
-10. **Rewrite `./install`.** Three-line passthrough: pick
-    `cargo` if on PATH, else `nix develop --command cargo`.
-    Drop the deno fallback path.
+10. **Delete `./install`.** Remove the file. README's Develop
+    section names `cargo xtask install` as the entry point
+    and notes the cargo prerequisite (and `nix develop` as
+    the bootstrap for users without cargo on PATH).
 
 11. **Delete deno surface.** Remove `maid/`, `deno.json`,
     `deno.lock`. Remove deno-only fields from `flake.nix`
@@ -333,12 +359,14 @@ reviewable on its own).
 
 12. **Update `specs/project.md`.** Rewrite Tech Stack,
     Testing, Deployment sections to reflect the new dev
-    loop. Update Layout. Land in the same dev-loop slice as
-    the code change so `project.md` and the code never
-    disagree at HEAD.
+    loop. Update Layout. Drop the `./install` references.
+    Land in the same dev-loop slice as the code change so
+    `project.md` and the code never disagree at HEAD.
 
 13. **Update `README.md`.** Develop section rewritten for
-    cargo verbs.
+    cargo verbs. Install section rewritten — `cargo xtask
+    install` is the entry point; cargo via the flake is the
+    prerequisite.
 
 14. **Quality + Test + Code Review Gate.** Run the full
     suite. Push.
@@ -369,6 +397,14 @@ None blocking. Resolved during planning:
 
 ## Session Log
 
+- 2026-06-10 · planning-review revision (PR #20). Two
+  reviewer comments resolved: (1) build crate renamed from
+  `xtask` to `transform` (functional naming, mirrors
+  agent-orch's pattern); cargo alias preserves
+  `cargo xtask <verb>` as the public shape. (2) `./install`
+  shim deleted entirely; cargo is a hard prerequisite
+  documented in the flake and README.
+
 - 2026-06-10 · feature spec drafted after a long evaluation
   thread that walked through three shapes (cargo-only / cargo
   + Just / cargo + xtask), then re-evaluated whether
@@ -376,9 +412,34 @@ None blocking. Resolved during planning:
   the registry but not the state machine), then picked the
   orchestration library (xshell stale, dax wrong direction,
   duct + shell-words actively maintained). Final shape is
-  cargo workspace + xtask + duct + shell-words.
+  cargo workspace + transform crate + duct + shell-words.
 
 ## Decision Log
+
+- **Crate named `transform`, not `xtask`.** Review feedback:
+  agent-orch is named for what it does; this crate should
+  be too. The convention name `xtask` is preserved as a
+  cargo alias (`.cargo/config.toml` maps `cargo xtask` to
+  the transform crate), so the public verb shape is
+  unchanged. The package gains a functional name that's
+  honest about what it does — validate skill markdown and
+  transform it into per-tool symlink layouts. Rejected:
+  keeping `xtask` as the package name (reviewer's
+  observation about functional naming was correct);
+  `agent-resource-transforms` (accurate but verbose);
+  `compiler` (close, but the crate also runs symlink
+  state-machine ops at runtime, not just compile-time
+  transforms).
+
+- **No `./install` shim.** Review feedback: a 3-line
+  passthrough adds no value. The toolchain-fallback the file
+  used to carry (try cargo, fall back to `nix develop`) is
+  now the user's responsibility — cargo is a hard
+  requirement, the flake provides it, and users without
+  cargo on PATH enter `nix develop` themselves. Rejected:
+  keeping the file as a "toolchain bootstrap" (real but
+  thin value; user prefers explicit dependency over
+  bootstrapping shim).
 
 - **Parallel branches, merge-order-independent.** This branch
   and `feat/agent-orch-fix` develop in parallel. Workspace
