@@ -8,9 +8,9 @@
 Tool-agnostic source of truth for my agentic resources — skills,
 agents, commands, MCPs — compiled into whatever AI tool I'm
 using (Claude Code, Kiro, future tools). The repo is the
-checked-in source; `maid deploy` creates the `$HOME`-facing
-symlinks that each tool reads from. One canonical set of
-artefacts, many consumer surfaces.
+checked-in source; `cargo xtask deploy` creates the
+`$HOME`-facing symlinks that each tool reads from. One
+canonical set of artefacts, many consumer surfaces.
 
 ## Architecture
 
@@ -21,15 +21,21 @@ artefacts, many consumer surfaces.
 Three moving parts:
 
 - **Sources** — everything under `sources/`. Skills, agents,
-  commands, and the tool-specific entrypoint files
-  (`CLAUDE.md`, `KIRO.md`). These are the authored artefacts.
-- **Registry** — `maid/registry.ts`. A static list mapping
-  `$HOME`-facing paths to source paths. The authoritative
-  manifest for what gets deployed where.
-- **CLI (`maid`)** — Deno TypeScript entrypoint. Reads the
-  registry, creates/reconciles/removes symlinks between `$HOME`
-  and the checkout. Ships with a schema validator that runs
-  before any write.
+  commands, the tool-specific entrypoint files (`CLAUDE.md`,
+  `KIRO.md`), and any Rust workspace members that ship as
+  binaries (e.g. `agent-orch`). Content and code coexist;
+  `transform` discovers Rust members at install-time by
+  walking `sources/<name>/Cargo.toml`.
+- **Registry** — `transform/src/registry.rs`. A static list
+  mapping `$HOME`-facing paths to source paths. The
+  authoritative manifest for what gets deployed where.
+- **Build crate (`transform`)** — Rust binary that owns
+  validate / deploy / undeploy / status / install /
+  uninstall / test orchestration. Reads the registry,
+  creates/reconciles/removes symlinks between `$HOME` and
+  the checkout, runs the simplified frontmatter validator
+  before any write, and shells out to `cargo build` for
+  Rust workspace members during install.
 
 Tool adaptation lives in the registry: adding a new coding-agent
 tool = adding its expected `$HOME` paths as registry entries,
@@ -41,21 +47,23 @@ registry translates them into each tool's expected layout.
 <!-- Languages, runtimes, frameworks, key libraries. Versions
      only where version matters. -->
 
-- **Runtime:** Deno (TypeScript) for the `maid` CLI.
-- **Isolation:** `flake.nix` + `.envrc` load `deno` via direnv;
-  `./install` re-execs through `nix develop --command` as a
-  fallback on machines without direnv.
+- **Runtime:** Rust (cargo workspace). The `transform` crate
+  owns build automation; future Rust crates (e.g.
+  `sources/agent-orch/`) are workspace members.
+- **Isolation:** `flake.nix` + `.envrc` load the rust
+  toolchain via direnv (rust-overlay). Cargo is a hard
+  prerequisite — no `./install` shim. Users on machines
+  without cargo on `$PATH` enter `nix develop` themselves.
 - **Entrypoints:**
-  - **Dev loop:** `deno task <verb>` — `fmt`, `lint`, `check`,
-    `test`, `validate`, `deploy`, `undeploy`, `status`,
-    `setup`, `teardown`. There is no installed binary on
-    `$PATH`; `maid` is invoked through `deno run` /
-    `deno task` from the checkout.
-  - **Cold-start (env-side bootstrap):** `./install`
-    (3-line pass-through into `deno task setup`);
-    `./install --uninstall` → `deno task teardown`. The
-    user's env-workplace driver invokes `./install` after
-    cloning this repo.
+  - **Dev loop:** native cargo verbs — `cargo fmt`,
+    `cargo clippy --workspace --all-targets -- -D warnings`,
+    `cargo check --workspace`, `cargo test --workspace`.
+    Custom verbs go through `cargo xtask <verb>` (alias in
+    `.cargo/config.toml`): `validate`, `deploy`, `undeploy`,
+    `status`, `install`, `uninstall`, `test-smoke`,
+    `test-functional`. There is no installed binary on
+    `$PATH`; `transform` is invoked through `cargo xtask`
+    from the checkout.
 
 ## Layout
 
@@ -64,27 +72,33 @@ registry translates them into each tool's expected layout.
 
 ```
 mAId/
-├── install                 3-line pass-through → deno task setup/teardown
-├── flake.nix / .envrc      repo-local tooling isolation (direnv)
-├── deno.json               task surface + fmt/lint/imports config
-├── maid/                   Deno CLI
-│   ├── main.ts
-│   ├── registry.ts         ← authoritative deployment manifest
-│   ├── deploy.ts           ← deploy + undeploy logic
-│   ├── sources.ts
-│   └── schema.ts
-├── sources/                everything the registry points at
+├── Cargo.toml              workspace root: members = ["transform"]
+├── Cargo.lock              committed (binary-workspace policy)
+├── .cargo/config.toml      [alias] xtask = run -p transform --release --
+├── rust-toolchain.toml     stable + clippy + rustfmt
+├── flake.nix / .envrc      repo-local rust toolchain (direnv + rust-overlay)
+├── transform/              the build crate
+│   ├── Cargo.toml          deps: clap, anyhow, duct, shell-words; dev: tempfile
+│   └── src/
+│       ├── main.rs         clap dispatch
+│       ├── sh.rs           sh!() helper over duct + shell-words
+│       ├── registry.rs     ← authoritative deployment manifest
+│       ├── deploy.rs       ← deploy + undeploy state machines
+│       ├── sources.rs      walk sources/{skills,agents,commands}/
+│       └── schema.rs       simplified frontmatter validator
+├── sources/                everything the registry points at, plus Rust members
 │   ├── skills/<name>/SKILL.md
 │   ├── agents/<name>.md
 │   ├── commands/<name>.md
 │   ├── claude/CLAUDE.md    (→ ~/.claude/CLAUDE.md)
-│   └── kiro/KIRO.md        (→ ~/.kiro/steering/KIRO.md)
+│   ├── kiro/KIRO.md        (→ ~/.kiro/steering/KIRO.md)
+│   └── <crate>/            Rust workspace member (built into dist/<crate>)
 ├── tests/
-│   ├── schema_test.ts
-│   ├── deploy_test.ts
 │   └── functional/
 │       ├── run                 ← harness (see Testing)
 │       └── skills/<name>.smoke ← fixtures: prompt + expect_substr or expected_narrative
+├── dist/                   gitignored — built binaries land here
+├── target/                 gitignored — cargo's build dir
 └── specs/
     ├── project.md          this file
     ├── feature/            in-flight + completed feature records
@@ -97,23 +111,25 @@ mAId/
      manual. Which commands run which suite. Which are
      load-bearing vs. nice-to-have. -->
 
-Four-layer test surface; each layer is a `deno task` so the
-§8 Test Gate can pick the right one for the situation.
+Three-layer test surface; the §8 Test Gate picks the right
+one for the situation.
 
-- **`deno task test:unit`** (alias: `deno task test`) — 22
-  tests covering schema parsing and deploy/undeploy
-  invariants against a fake `$HOME`. ~100ms. Load-bearing.
+- **`cargo test --workspace`** — Rust unit tests covering
+  the simplified frontmatter validator, the sources walker,
+  and the deploy/undeploy state machines against a fake
+  `$HOME` via `tempfile`. Fast (sub-second). Load-bearing.
   This is the §8 Test Gate default. Catches malformed
   frontmatter and broken deploy logic before any push.
-- **`deno task test:smoke`** — structural smoke, no tools
-  required (`./tests/functional/run --no-tools`). Asserts
-  the managed symlinks actually resolve in real `$HOME`
-  after a deploy and each skill is reachable through them.
-  Cheap, no API credits, no PATH dependencies. Run after
-  `deno task deploy` to confirm the symlinks landed.
-- **`deno task test:functional`** — tool-driven smoke
-  (`./tests/functional/run`). Drives `claude --print` and
-  `kiro-cli chat --no-interactive` with the `.smoke`
+- **`cargo xtask test-smoke`** — structural smoke, no tools
+  required (shells `tests/functional/run --no-tools`).
+  Asserts the managed symlinks actually resolve in real
+  `$HOME` after a deploy and each skill is reachable through
+  them. Cheap, no API credits, no extra PATH dependencies.
+  Run after `cargo xtask deploy` to confirm the symlinks
+  landed.
+- **`cargo xtask test-functional`** — tool-driven smoke
+  (shells `tests/functional/run`). Drives `claude --print`
+  and `kiro-cli chat --no-interactive` with the `.smoke`
   fixtures under `tests/functional/skills/`. Two fixture
   styles share the harness: substring fixtures
   (`expect_substr:`) for cheap load-checks, and judge
@@ -123,19 +139,16 @@ Four-layer test surface; each layer is a `deno task` so the
   requires both `claude` and `kiro-cli` on PATH. Use for
   revision passes that touch SKILL.md prose where you need
   evidence the cut preserved behavior.
-- **`deno task test:all`** — chains unit → smoke →
-  functional. Use before merging a SKILL.md or harness
-  change.
 
-The §8 Test Gate uses `test:unit` by default. SKILL.md prose
-revisions add `test:functional` (judge mode) as their A/B
-evidence. The §9 close-out can run `test:smoke` after a
-deploy to confirm symlinks resolved.
+The §8 Test Gate uses `cargo test --workspace` by default.
+SKILL.md prose revisions add `test-functional` (judge mode)
+as their A/B evidence. The §9 close-out can run
+`test-smoke` after a deploy to confirm symlinks resolved.
 
 ### Functional tests are user-driven
 
 Agentic runs (an AI assistant working through this project)
-**must** stop at `test:smoke`. The judge-mode functional
+**must** stop at `test-smoke`. The judge-mode functional
 suite costs API credits and takes minutes; whether to spend
 that budget on a given change is a human call. The agent
 prepares the fixture, names the exact command, and hands
@@ -143,15 +156,16 @@ off — it does not run it.
 
 Commands the user runs by hand:
 
-- All functional fixtures: `deno task test:functional`
+- All functional fixtures: `cargo xtask test-functional`
 - A single fixture: `./tests/functional/run <name>` (e.g.
   `./tests/functional/run notes-git-commit`).
 
 The fixture file's basename (without `.smoke`) is the
 `<name>`.
 
-Quality gate: `deno task fmt` + `deno task lint` + `deno task
-check`. Run after any implementation slice.
+Quality gate: `cargo fmt --all --check` + `cargo clippy
+--workspace --all-targets -- -D warnings` + `cargo check
+--workspace`. Run after any implementation slice.
 
 ## Deployment
 
@@ -159,10 +173,12 @@ check`. Run after any implementation slice.
      container, whatever applies. If the project isn't deployed
      in a traditional sense, describe how it's consumed. -->
 
-Not a service — consumed locally. `deno task deploy` reads the
-registry and creates the `$HOME`-facing symlinks; `deno task
-undeploy` reverses them. `deno task status` reports current
-managed-symlink state.
+Not a service — consumed locally. `cargo xtask deploy` reads
+the registry and creates the `$HOME`-facing symlinks;
+`cargo xtask undeploy` reverses them. `cargo xtask status`
+reports current managed-symlink state. `cargo xtask install`
+runs deploy and additionally builds any Rust workspace members
+under `sources/<name>/` into `dist/<name>/`.
 
 ### Hard constraints
 
@@ -174,10 +190,10 @@ managed-symlink state.
 - **Registry is the single source of truth** for deployment.
   Adding a new managed path = a registry change + CR, never an
   ad-hoc edit.
-- **No global state mutation** on install. Deno comes from
-  the repo-local flake; `maid` is invoked through `deno
-  task <verb>` from the checkout — no shim under
-  `~/.local/bin`, no `nix profile install` anywhere in the
+- **No global state mutation** on install. The rust toolchain
+  comes from the repo-local flake; `transform` is invoked
+  through `cargo xtask <verb>` from the checkout — no shim
+  under `~/.local/bin`, no `cargo install` anywhere in the
   install path.
 - **No changes to the user's env-workplace** from this
   repo. mAId stays a pure-content workspace; bootstrap
