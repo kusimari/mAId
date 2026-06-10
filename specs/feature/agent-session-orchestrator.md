@@ -79,17 +79,17 @@ this section is from the perspective of someone reading
 ### CLI surface
 
 ```
-agent-orch setup [--key X]    # opt in to agent tracking
-agent-orch teardown           # opt out, no leftovers
+agent-orch setup [--key X] [--session NAME]   # opt in to agent tracking
+agent-orch teardown                           # opt out, no leftovers
 agent-orch wrap <kind> [--cwd <dir>] -- <agent-cmd> [args...]
-agent-orch                    # open the dashboard
+agent-orch [--session NAME]                   # open the dashboard
 ```
 
 Three user-facing verbs plus a bare invocation. Anything
 else in `--help` is internal plumbing the user shouldn't
 need to know about.
 
-### `agent-orch setup [--key X]`
+### `agent-orch setup [--key X] [--session NAME]`
 
 Opts in to agent tracking on the user's machine.
 
@@ -102,6 +102,11 @@ Opts in to agent tracking on the user's machine.
   to the dashboard". So if the user's tmux prefix is
   `Ctrl-b` and they ran `setup --key O`, then `Ctrl-b O`
   from any pane on any session jumps to the dashboard.
+- With `--session NAME`, the dashboard is hosted in a
+  tmux session named `NAME` instead of the default
+  `agent-orch`. Useful when the user already has a
+  session named `agent-orch`, or wants more than one
+  dashboard scoped to different agent fleets.
 - Idempotent. Re-running `setup` after a binary upgrade or
   a moved install path silently refreshes; it doesn't
   duplicate anything. Re-running `setup --key Y` after a
@@ -161,7 +166,9 @@ Behavior:
   `wrap` in the same pane crashed without cleaning up
   (the agent process exited but the pane stayed alive),
   the next `wrap` notices the dead registration and
-  proceeds without complaint.
+  proceeds without complaint. (Stale rows also disappear
+  from the dashboard automatically — see _Runtime
+  experience → Liveness expectations_.)
 - **Becomes the agent process.** The user's prompt
   `wrap claude -- claude` runs as if they had typed
   `claude` directly, except the resulting agent is
@@ -170,7 +177,7 @@ Behavior:
   agent quits on `Ctrl-C` or `Ctrl-D` exactly the way it
   always has.
 
-### Bare `agent-orch`
+### Bare `agent-orch [--session NAME]`
 
 Opens the dashboard from wherever the user is.
 
@@ -178,7 +185,7 @@ Opens the dashboard from wherever the user is.
   dashboard's tmux session if it doesn't exist, then
   switches the user's tmux client to it. (If the user
   isn't attached to any tmux client, prints a hint and
-  asks them to `tmux attach -t agent-orch`.)
+  asks them to `tmux attach -t <session-name>`.)
 - **From inside tmux, anywhere except the dashboard
   session**: same — switches the client to the dashboard.
 - **From inside the dashboard session**: this is how the
@@ -189,6 +196,11 @@ Opens the dashboard from wherever the user is.
   set up the keybind, or the keybind was lost on tmux
   server restart, typing `agent-orch` in any shell pane
   gets them to the dashboard.
+- `--session NAME` opens the dashboard with the named
+  session. Defaults to `agent-orch`. If the user ran
+  `setup --session NAME` to install a keybind for a
+  custom name, they'd typically use bare `agent-orch
+  --session NAME` from outside tmux to match.
 
 ### Hidden plumbing verbs
 
@@ -212,28 +224,32 @@ what" obvious without focusing each row in turn.
 Every wrapped agent is in exactly one of four states. The
 state shows as a colored icon at the start of the row.
 
-| State   | Icon | Color  | Meaning                                                                     |
-| ------- | ---- | ------ | --------------------------------------------------------------------------- |
-| waiting | `💬` | yellow | Agent is asking the user a question (permission prompt, clarification).    |
-| working | `▶`  | green  | Agent is actively running a tool — file edit, shell command, etc.          |
-| done    | `✓`  | dim    | Agent finished its turn and is sitting at the prompt.                      |
-| idle    | `·`  | gray   | Agent has been quiet for a while (default: more than a minute since done). |
+| State   | Icon | Color  | Meaning                                                                                |
+| ------- | ---- | ------ | -------------------------------------------------------------------------------------- |
+| waiting | `💬` | yellow | Agent is blocked on the user — permission prompt or clarification. The user must act. |
+| done    | `✓`  | green  | Agent finished its turn. Output is sitting there, worth reading.                       |
+| idle    | `·`  | yellow | Agent has been sitting `done` long enough to look forgotten. Probably needs attention. |
+| working | `▶`  | dim    | Agent is actively running a tool. Self-managing — nothing for the user to do.          |
 
-These are categories the user cares about — *should I look at
-this agent right now?* The icons exist so the answer is
-visible across N rows at a glance.
+These are categories the user cares about — *do I need to
+think about this agent right now?* The icons exist so the
+answer is visible across N rows at a glance.
 
 ### Sort order
 
-Top of the dashboard down to the bottom:
+Sort by "does this agent need the user's attention?" Top of
+the dashboard down to the bottom:
 
-1. **waiting** rows — these are blocking the user, so they
-   go first. Most-recently-asked first.
-2. **working** rows — actively in motion; the user might
-   want to peek. Most-recently-active first.
-3. **done** rows — just finished a turn, output worth
+1. **waiting** rows — blocked on the user. Most-recently-
+   asked first.
+2. **done** rows — just finished a turn, output worth
    scanning. Most-recently-finished first.
-4. **idle** rows — long quiet, nothing happening.
+3. **idle** rows — sitting `done` past the idle threshold;
+   either give it a task or close it. Most-recently-
+   transitioned-to-idle first.
+4. **working** rows — actively making progress, doesn't
+   need the user. These sit at the bottom so the user's
+   eye lands on the things demanding action first.
 
 Within each bucket, more recent activity sorts above older.
 
@@ -245,22 +261,22 @@ pane. Rows are visually separated by a blank line so the
 eye can scan them.
 
 ```
-💬 proj-c:0.1     claude  proj-c        45s
+💬 proj-c:0.1     claude  …/repos/proj-c           45s
   Allow Bash command "rm -rf node_modules"?
   [y/n/always allow]
 
-▶  proj-b:code.0  claude  proj-b        12s
-  $ cargo build --release
-     Compiling agent-orch v0.1.0
-     Finished `release` profile [optimized] in 12.3s
-
-✓  proj-a:0.0     claude  proj-a        2m
+✓  proj-a:0.0     claude  proj-a                   2m
   > Done. The failing test in tests/state.rs:42 was caused
     by a stale fixture; updated and re-ran the suite.
 
-·  proj-c:0.0     kiro    proj-c        1h
+·  proj-c:0.0     kiro    …/repos/proj-c           1h
   Ready. Type a message…
   > █
+
+▶  proj-b:code.0  claude  …/work/proj-b            12s
+  $ cargo build --release
+     Compiling agent-orch v0.1.0
+     Finished `release` profile [optimized] in 12.3s
 ```
 
 Header columns, left to right:
@@ -270,9 +286,14 @@ Header columns, left to right:
   — what the user would type into `tmux send-keys -t ...`.
   Stable text the user can copy.
 - **Agent kind** — `claude`, `kiro`, etc.
-- **Working directory** — last segment of the path, since
-  the full path adds noise without value most of the
-  time.
+- **Working directory** — fixed-width column (~24 chars).
+  When the full path fits, shown verbatim. When it
+  doesn't, truncated from the front with a leading `…/`
+  so the trailing path segments — usually the
+  distinguishing ones — stay visible. Examples:
+  `proj-b` (fits as-is), `…/projects/agent-orch-fix`
+  (long path, truncated). Fixed width keeps every row's
+  columns aligned so the eye scans cleanly down.
 - **Elapsed time** — how long since the last activity
   (`5s`, `2m`, `1h`, `3d`). Live signal that the agent is
   making progress (or stuck).
@@ -320,12 +341,17 @@ What the user reasonably expects to "just happen" without
 re-opening the dashboard:
 
 - **A new wrap** appears as a new row within ~1 second.
-- **Closing a wrapped pane** (the agent quits, or the user
-  runs `tmux kill-pane`) makes its row disappear within
-  ~1 second.
-- **An agent transitioning from working to done** flips
-  the icon within ~1 second of the agent's status
-  changing.
+- **A wrapped pane closing** (the agent quits, the user
+  runs `tmux kill-pane`, the agent crashes, the tmux
+  server restarts and forgets the pane) makes its row
+  disappear within ~1 second. The dashboard never lists
+  rows that point at panes the user can't actually jump
+  to — pressing `enter` on a row always switches the user
+  to a live pane, or the row was already gone before the
+  user got to it.
+- **An agent transitioning** between lifecycle states
+  flips the row's icon within ~1 second of the
+  transition.
 - **A permission prompt** — the agent asking the user
   something — flips the row to `waiting` and floats it to
   the top of the dashboard within ~1 second.
@@ -337,6 +363,14 @@ re-opening the dashboard:
   back lands the user on the same row they were on, with
   the query they had typed still active.
 
+The "no stale rows" guarantee is load-bearing. The user
+must never see a row, press `enter`, and have nothing
+happen because the underlying pane went away — that breaks
+the dashboard's promise. Three independent cleanup paths
+(see _Design → Cleanup paths_) ensure stale rows drop
+quickly regardless of how the pane went away (clean exit,
+crash, kill, server restart).
+
 ### Observability outside the dashboard
 
 - **`agent-orch render`** dumps the dashboard's current
@@ -346,9 +380,11 @@ re-opening the dashboard:
 - **The keybind installed by `setup --key X`** is
   surface-able via `tmux list-keys -T prefix` for users
   curious about what's bound where.
-- The dashboard is hosted in a normal tmux session named
-  `agent-orch`. `tmux attach -t agent-orch` works. `tmux
-  ls` shows it.
+- The dashboard is hosted in a normal tmux session
+  (default name `agent-orch`, configurable via
+  `--session`). `tmux attach -t <session-name>` works.
+  `tmux ls` shows it alongside the user's other
+  sessions.
 
 ---
 
@@ -504,6 +540,23 @@ spinning up a real agent waiting for a real prompt. The
 **assertions** stay on observable behavior: what the user
 sees in the dashboard, what `agent-orch render` prints to
 stdout, what tmux's keybind listing reports.
+
+**Why bash for functional + integration, not a Rust
+test binary.** Considered both. Bash wins for v1: the
+tests are mostly `tmux send-keys`, `tmux ls`, `cat
+sessions.json | jq`, and `agent-orch render` polls.
+Bash speaks all of those natively; a Rust test binary
+would shell out for each one anyway, with a layer of
+indirection between "what to test" and "the assertion."
+The cases where Rust would shine — concurrent state,
+structured polling, type-safe parsing — aren't hot in
+the current scenarios. Bash also lets the user run a
+single script directly to debug a fixture by hand
+(`functional-test.sh F2b`), which a `cargo test
+--features functional` workflow forces into a
+recompile cycle. Re-evaluate if the functional script
+grows past ~500 lines or if cross-platform assertions
+become a load-bearing concern.
 
 ### Functional (`tests/agent-orch/functional-*.sh`) — user-driven
 
@@ -1126,7 +1179,7 @@ impl Session {
     fn display_state(&self, now: u64) -> DisplayState;     // decay applied
     fn format_header(&self, addr: &str, now: u64) -> String;
     fn activity(&self) -> u64;                             // sort tiebreaker
-    fn priority(&self, now: u64) -> u8;                    // 0=waiting..3=idle
+    fn priority(&self, now: u64) -> u8;                    // 0=waiting, 1=done, 2=idle, 3=working
 }
 
 fn format_elapsed(secs: u64) -> String;   // "5s", "2m", "1h", "3d"
@@ -1215,10 +1268,15 @@ internally.
 
 ### Sort and display
 
-- `priority(now)`: waiting (0) before working (1) before
-  done (2) before idle (3). A waiting record always
-  outranks a working one even if its `state_ts` is
-  older.
+- `priority(now)`: waiting (0) before done (1) before
+  idle (2) before working (3). Sort by attention-needed,
+  not by busy-ness. A waiting record always outranks any
+  other state regardless of timestamp; a done record
+  outranks an idle one (more recent attention-worthy
+  output); idle outranks working (working agents are
+  self-managing). Decay applies — a `done` record past
+  the idle threshold is treated as `idle` for priority
+  computation.
 - `format_elapsed(secs)` covers all four buckets:
   `<60s` → `Ns`, `<60m` → `Nm`, `<24h` → `Nh`, `≥24h`
   → `Nd`.
@@ -1349,9 +1407,13 @@ get hit when reading top-to-bottom.
   model couldn't surface the most important case,
   permission prompts blocking the user. Switched
   to working / waiting / done, with idle as a
-  render-time decay. Sort by priority so prompts
-  float to the top. Same pattern workmux ships;
-  same reason it works.
+  render-time decay. Sort by attention-needed
+  (waiting → done → idle → working) so things the
+  user must act on float to the top and self-
+  managing working agents sink. Same four states
+  workmux ships, same reason they work; sort
+  order tuned to "do I need to think about this
+  agent?" rather than "is this agent active?".
 
 - **`idle` as render-time decay, not stored.**
   Storing four states would require a background
@@ -1557,7 +1619,10 @@ state we want."
   agents. Move to working / waiting / done / idle
   (stored as Working/Waiting/Done in JSON; idle is
   a render-time decay), with priority sort
-  waiting > working > done > idle.
+  waiting > done > idle > working — sort by
+  attention-needed, so the things blocking the user
+  are at the top and self-managing working agents
+  sit at the bottom.
 - **Picker-row redesign (this revision's main
   payload).** The current row is `<glyph> <kind>
   <cwd>` with all live signal in the side preview
@@ -1588,6 +1653,8 @@ state we want."
     ANSI.
   - Default `peek --lines` rises (10 → 25).
   - `setup` HOOK_EVENTS list adds `Notification`.
+  - `setup` and bare invocation accept
+    `--session NAME` (default `agent-orch`).
 - **Stale-shell PATH risk has only been
   documented, not detected at runtime.** `agent-
   orch doctor` (follow-up) would catch this.
@@ -1671,3 +1738,40 @@ tests that want to assert on individual fields
 without parsing the multi-line render shape. Same
 sort and decay as the human path; just a
 different serializer.
+
+### Follow-up — configurable snippet height
+
+Surface height of the inline pane snippet (today
+fixed at 3 lines) as runtime-tunable. Two shapes
+under consideration:
+
+- A picker keybind (`+` / `-`) that ratchets the
+  snippet up or down live, persisting in memory
+  for the session. Best for the "I have many
+  agents and want to see less per row" case.
+- A config-file value or `--snippet-lines N` flag
+  on the bare invocation, sticky across sessions.
+
+Likely both eventually. Defer to v2 — v1 ships
+with the fixed 3-line height to land the broader
+shape first.
+
+### Follow-up — event-driven side-preview refresh
+
+Today the side preview window refreshes once per
+second on a heartbeat. That works but is wasteful
+when nothing's changing in the focused pane.
+Two leads, neither cheap:
+
+- Pipe wrapped pane output through `tmux pipe-pane`
+  to a per-pane file, watch the file with
+  filesystem events. Cost: one fd + on-disk
+  scratch per wrapped pane.
+- Cheap-poll using `tmux display-message
+  '#{history_size}'` per refresh tick and skip
+  the actual capture-pane call when the value
+  hasn't changed.
+
+The 1Hz heartbeat is fine for v1. Pick this up if
+heartbeat-driven re-renders show up in profiling
+or if users complain about CPU usage.
