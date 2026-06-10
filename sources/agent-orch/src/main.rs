@@ -64,12 +64,23 @@ const HOOK_EVENTS: &[&str] = &[
     EVT_STOP,
 ];
 
-/// Name of the tmux session that hosts the orchestrator picker.
+/// Default name of the tmux session that hosts the dashboard.
 /// Matches the binary name so a fresh user can find it via
-/// `tmux ls`. Anywhere we write `switch-client -t agent-orch`
-/// in tmux state (the keybind, the new-session bootstrap, the
-/// teardown self-discovery probe) flows from this constant.
-const ORCHESTRATOR_SESSION: &str = "agent-orch";
+/// `tmux ls`. The user can override via `--session <NAME>`
+/// on `setup` and bare invocation; this is the value used
+/// when neither names a session.
+const DEFAULT_SESSION_NAME: &str = "agent-orch";
+
+/// Marker baked into our prefix-table keybind's action so
+/// `teardown` can find and remove only our binding, regardless
+/// of which session name the user chose. The marker rides on a
+/// no-op `run-shell "true #..."` chained before
+/// `switch-client`, so tmux preserves it verbatim in
+/// `list-keys -T prefix` output. The `#` makes the shell
+/// command a comment from the OS's perspective — `true`
+/// returns immediately and the comment is purely a tag for
+/// our own grep.
+const KEYBIND_MARKER: &str = "x-agent-orch-managed";
 
 /// Marker field on hook entries we wrote to a Claude settings file
 /// via `setup`. `teardown` removes only entries carrying this tag,
@@ -765,12 +776,17 @@ fn unmerge_claude_hooks(settings: &mut serde_json::Value) {
 /// command paths in case the binary moved, but doesn't duplicate.
 ///
 /// `key`: optional tmux prefix-table suffix to bind for
-/// switching back to the orchestrator session (e.g. `Some("O")`
-/// → `<prefix> O` runs `switch-client -t agent-orch`). When
-/// `None`, no keybind is installed. When `Some`, any pre-existing
-/// switch-to-orchestrator binding (from a previous `setup` with
-/// a different key) is removed first so re-keying is clean.
-fn run_setup(path: &Path, self_path: &Path, key: Option<&str>) -> Result<()> {
+/// switching back to the dashboard session (e.g. `Some("O")`
+/// → `<prefix> O` switches to the dashboard). When `None`,
+/// no keybind is installed. When `Some`, any pre-existing
+/// switch-to-dashboard binding (from a previous `setup` with
+/// a different key or session name) is removed first so
+/// re-keying is clean.
+///
+/// `session_name`: name of the tmux session that hosts the
+/// dashboard. Default is [`DEFAULT_SESSION_NAME`]; user can
+/// override via `setup --session NAME`.
+fn run_setup(path: &Path, self_path: &Path, key: Option<&str>, session_name: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("mkdir -p {}", parent.display()))?;
     }
@@ -790,7 +806,7 @@ fn run_setup(path: &Path, self_path: &Path, key: Option<&str>) -> Result<()> {
         // Remove any prior binding (might be a different key from
         // an earlier setup) before installing the new one.
         uninstall_tmux_keybind();
-        install_tmux_keybind(suffix);
+        install_tmux_keybind(suffix, session_name);
     }
     Ok(())
 }
@@ -838,12 +854,22 @@ fn tmux_cmd(args: &[&str]) -> std::process::Command {
     cmd
 }
 
-/// Best-effort: bind `<prefix> <suffix>` to
-/// `switch-client -t agent-orch` on the running tmux server.
-/// Prefix-bound (default `C-b`) rather than root-bound so inner
-/// TUIs (claude/kiro) never see the keystroke and can't race
-/// with tmux for it — same idiom as every other tmux command
-/// (`C-b c`, `C-b "`, `C-b d`).
+/// Best-effort: bind `<prefix> <suffix>` to switch the tmux
+/// client to the dashboard session on the running tmux
+/// server. Prefix-bound (default `C-b`) rather than root-bound
+/// so inner TUIs (claude/kiro) never see the keystroke and
+/// can't race with tmux for it — same idiom as every other
+/// tmux command (`C-b c`, `C-b "`, `C-b d`).
+///
+/// The action is a chain — `run-shell "true #<marker>" ;
+/// switch-client -t <session>`. The `run-shell` is a no-op
+/// (POSIX `true` exits 0) but tmux preserves the entire
+/// action string verbatim in `list-keys -T prefix` output.
+/// `teardown` greps for the marker so it can identify our
+/// binding regardless of which session name the user chose
+/// at install time. This means `teardown` doesn't need a
+/// `--key` flag, doesn't need to remember the chosen name,
+/// and doesn't need a state file.
 ///
 /// Live-only — survives until the server exits. If tmux isn't
 /// running (no server, no $TMUX, not on PATH), silently no-op;
@@ -852,23 +878,17 @@ fn tmux_cmd(args: &[&str]) -> std::process::Command {
 /// equivalent line into `~/.tmux.conf` via home-manager /
 /// chezmoi / yadm / ansible-pull / your dotfiles setup — see
 /// the spec's Decision Log).
-fn install_tmux_keybind(suffix: &str) {
-    let _ = tmux_cmd(&[
-        "bind-key",
-        "-T",
-        "prefix",
-        suffix,
-        "switch-client",
-        "-t",
-        ORCHESTRATOR_SESSION,
-    ])
-    .status();
+fn install_tmux_keybind(suffix: &str, session_name: &str) {
+    let action = format!("run-shell \"true #{KEYBIND_MARKER}\" ; switch-client -t {session_name}");
+    let _ = tmux_cmd(&["bind-key", "-T", "prefix", suffix, &action]).status();
 }
 
 /// Self-discovering reverse: scan the prefix table for any
-/// binding whose action is `switch-client -t agent-orch` and
-/// unbind it. Lets the user re-key without remembering the old
-/// suffix and lets `teardown` work without a `--key` flag.
+/// binding whose action carries our marker and unbind it.
+/// Lets the user re-key without remembering the old suffix
+/// and lets `teardown` work without a `--key` or `--session`
+/// flag. Matches by marker so it works regardless of which
+/// session name the install used.
 fn uninstall_tmux_keybind() {
     let out = tmux_cmd(&["list-keys", "-T", "prefix"])
         .stderr(std::process::Stdio::null())
@@ -879,13 +899,12 @@ fn uninstall_tmux_keybind() {
         return;
     }
     // Each line looks like:
-    //   bind-key    -T prefix O       switch-client -t agent-orch
+    //   bind-key -T prefix O run-shell "true #x-agent-orch-managed" \; switch-client -t <name>
     // Capture the suffix (the column after `-T prefix`) on lines
-    // ending in our action string.
+    // carrying our marker.
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let target_action = format!("switch-client -t {}", ORCHESTRATOR_SESSION);
     for line in stdout.lines() {
-        if !line.contains(&target_action) {
+        if !line.contains(KEYBIND_MARKER) {
             continue;
         }
         let Some(after) = line.split("-T prefix").nth(1) else {
@@ -1172,27 +1191,38 @@ impl<'a> Loop<'a> {
         Ok(())
     }
 
-    /// Ensure the orchestrator tmux session exists, switch the
-    /// client to it. The picker loop body runs inside that
-    /// session via a bare `agent-orch` invocation — bare
-    /// detects whether it's already inside the orchestrator
-    /// session and, if so, runs `body` instead of recursing.
-    pub fn run(&self, self_path: &Path) -> Result<()> {
+    /// Ensure the dashboard's tmux session exists, switch the
+    /// client to it. The picker body runs inside that session
+    /// via a bare `agent-orch` invocation — bare detects
+    /// whether it's already inside the dashboard session and,
+    /// if so, runs `body` instead of recursing. The session
+    /// name is passed in so the bare invocation runs that
+    /// passes the same name to body's child via the
+    /// `bare command` wired by `new-session`.
+    pub fn run(&self, self_path: &Path, session_name: &str) -> Result<()> {
         let has = std::process::Command::new("tmux")
-            .args(["has-session", "-t", ORCHESTRATOR_SESSION])
+            .args(["has-session", "-t", session_name])
             .status()
             .context("tmux has-session")?
             .success();
         if !has {
-            let cmd = self_path.display().to_string();
+            // Spawn the new session running our binary with
+            // the same `--session NAME`, so the body inside
+            // the new tmux session knows which name to
+            // self-identify against.
+            let cmd = format!(
+                "{} --session {}",
+                self_path.display(),
+                shell_quote(session_name)
+            );
             let status = std::process::Command::new("tmux")
-                .args(["new-session", "-d", "-s", ORCHESTRATOR_SESSION, &cmd])
+                .args(["new-session", "-d", "-s", session_name, &cmd])
                 .status()
                 .context("tmux new-session")?;
             anyhow::ensure!(status.success(), "tmux new-session failed");
         }
         let status = std::process::Command::new("tmux")
-            .args(["switch-client", "-t", ORCHESTRATOR_SESSION])
+            .args(["switch-client", "-t", session_name])
             .status()
             .context("tmux switch-client")?;
         anyhow::ensure!(status.success(), "tmux switch-client failed");
@@ -1571,24 +1601,34 @@ fn push_action(sock: &Path, action: &str) -> Result<()> {
 struct Cli {
     #[command(subcommand)]
     cmd: Option<Cmd>,
+    /// Tmux session name that hosts the dashboard. Defaults to
+    /// `agent-orch`. Useful when the user already has a session
+    /// named `agent-orch`, or wants more than one dashboard
+    /// scoped to different agent fleets. Honoured by bare
+    /// invocation; setup also accepts it as a subcommand flag
+    /// to bake the chosen name into the prefix keybind.
+    #[arg(long, global = true)]
+    session: Option<String>,
 }
 
 #[derive(Subcommand)]
 enum Cmd {
     /// Install agent-orch hooks into ~/.claude/settings.json (idempotent).
-    /// With `--key X`, also bind `<tmux-prefix> X` to `switch-client -t
-    /// orchestrator` on the running tmux server. Key is whatever you
-    /// want to type after your tmux prefix (`O`, `a`, `F1`, etc.).
+    /// With `--key X`, also bind `<tmux-prefix> X` to switch the
+    /// tmux client to the dashboard session on the running tmux
+    /// server. Key is whatever you want to type after your tmux
+    /// prefix (`O`, `a`, `F1`, etc.).
     Setup {
-        /// Tmux prefix-table key suffix to bind for "switch back to
-        /// orchestrator" (e.g. `O` → press your tmux prefix then `O`).
-        /// Omit to install hooks only, no keybind.
+        /// Tmux prefix-table key suffix to bind for "switch back
+        /// to the dashboard" (e.g. `O` → press your tmux prefix
+        /// then `O`). Omit to install hooks only, no keybind.
         #[arg(long)]
         key: Option<String>,
     },
     /// Remove agent-orch hooks from ~/.claude/settings.json.
-    /// Self-discovers and removes any prefix binding whose action is
-    /// `switch-client -t agent-orch` — no `--key` argument needed.
+    /// Self-discovers and removes any prefix binding the install
+    /// added — works regardless of which key suffix or session
+    /// name was used at install time, so no flags needed.
     Teardown,
     /// Wrap a coding agent: register, inject hooks, execvp.
     Wrap {
@@ -1624,25 +1664,29 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let store = Store::from_env()?;
     let self_path = std::env::current_exe().context("current_exe")?;
+    let session_name = cli.session.as_deref().unwrap_or(DEFAULT_SESSION_NAME);
 
     match cli.cmd {
         // Bare invocation. Self-detects:
-        //  - inside the `orchestrator` tmux session → run the
+        //  - inside the dashboard tmux session → run the
         //    event-driven picker `body` (this is what tmux
         //    spawned when the session was created);
-        //  - anywhere else → ensure the orchestrator session
+        //  - anywhere else → ensure the dashboard session
         //    exists and switch-client to it.
         None => {
-            if inside_orchestrator() {
+            if inside_dashboard(session_name) {
                 Loop::new(&store).body(&self_path)
             } else {
-                Loop::new(&store).run(&self_path)
+                Loop::new(&store).run(&self_path, session_name)
             }
         }
 
-        Some(Cmd::Setup { key }) => {
-            run_setup(&user_claude_settings_path()?, &self_path, key.as_deref())
-        }
+        Some(Cmd::Setup { key }) => run_setup(
+            &user_claude_settings_path()?,
+            &self_path,
+            key.as_deref(),
+            session_name,
+        ),
         Some(Cmd::Teardown) => run_teardown(&user_claude_settings_path()?),
 
         Some(Cmd::Wrap {
@@ -1702,15 +1746,16 @@ fn main() -> Result<()> {
     }
 }
 
-/// True iff the current process is running inside the
-/// `orchestrator` tmux session. Used by bare `agent-orch` to
+/// True iff the current process is running inside the named
+/// dashboard tmux session. Used by bare `agent-orch` to
 /// decide between `run` (bootstrap from outside) and `body`
 /// (the picker tmux spawned from `run`). `$TMUX` set + tmux's
-/// `display-message #{session_name}` returning `orchestrator`
-/// is the load-bearing check; either alone misclassifies (a
-/// user inside any tmux session running bare `agent-orch` would
-/// otherwise spawn a body in their own session).
-fn inside_orchestrator() -> bool {
+/// `display-message #{session_name}` returning the named
+/// session is the load-bearing check; either alone
+/// misclassifies (a user inside any tmux session running
+/// bare `agent-orch` would otherwise spawn a body in their
+/// own session).
+fn inside_dashboard(session_name: &str) -> bool {
     if std::env::var_os("TMUX").is_none() {
         return false;
     }
@@ -1718,11 +1763,30 @@ fn inside_orchestrator() -> bool {
         .args(["display-message", "-p", "#{session_name}"])
         .output();
     match out {
-        Ok(o) if o.status.success() => {
-            String::from_utf8_lossy(&o.stdout).trim() == ORCHESTRATOR_SESSION
-        }
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim() == session_name,
         _ => false,
     }
+}
+
+/// Quote a string for use as a single shell-word inside an
+/// argv that tmux passes to `/bin/sh -c "..."`. Conservative:
+/// wrap in single quotes and escape any embedded `'`. Used
+/// when we have to embed a session name in the
+/// `tmux new-session` command string (bare `agent-orch` needs
+/// to know the name when it runs as the session's startup
+/// command).
+fn shell_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        if c == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2121,7 +2185,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("settings.json");
         let self_path = PathBuf::from("/test/agent-orch");
-        run_setup(&path, &self_path, None).unwrap();
+        run_setup(&path, &self_path, None, DEFAULT_SESSION_NAME).unwrap();
 
         let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         for ev in HOOK_EVENTS {
@@ -2157,7 +2221,7 @@ mod tests {
         )
         .unwrap();
         let self_path = PathBuf::from("/test/agent-orch");
-        run_setup(&path, &self_path, None).unwrap();
+        run_setup(&path, &self_path, None, DEFAULT_SESSION_NAME).unwrap();
 
         let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         // Sibling fields untouched.
@@ -2181,8 +2245,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("settings.json");
         let self_path = PathBuf::from("/test/agent-orch");
-        run_setup(&path, &self_path, None).unwrap();
-        run_setup(&path, &self_path, None).unwrap();
+        run_setup(&path, &self_path, None, DEFAULT_SESSION_NAME).unwrap();
+        run_setup(&path, &self_path, None, DEFAULT_SESSION_NAME).unwrap();
 
         let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         for ev in HOOK_EVENTS {
@@ -2202,8 +2266,20 @@ mod tests {
         // command, doesn't add a second.
         let dir = tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        run_setup(&path, &PathBuf::from("/old/agent-orch"), None).unwrap();
-        run_setup(&path, &PathBuf::from("/new/agent-orch"), None).unwrap();
+        run_setup(
+            &path,
+            &PathBuf::from("/old/agent-orch"),
+            None,
+            DEFAULT_SESSION_NAME,
+        )
+        .unwrap();
+        run_setup(
+            &path,
+            &PathBuf::from("/new/agent-orch"),
+            None,
+            DEFAULT_SESSION_NAME,
+        )
+        .unwrap();
 
         let v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         let arr = v["hooks"]["Stop"].as_array().unwrap();
@@ -2216,7 +2292,13 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("settings.json");
         fs::write(&path, b"[]").unwrap();
-        let err = run_setup(&path, &PathBuf::from("/x/agent-orch"), None).unwrap_err();
+        let err = run_setup(
+            &path,
+            &PathBuf::from("/x/agent-orch"),
+            None,
+            DEFAULT_SESSION_NAME,
+        )
+        .unwrap_err();
         assert!(format!("{err:#}").contains("must be a JSON object"));
     }
 
@@ -2225,7 +2307,13 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("settings.json");
         fs::write(&path, br#"{"hooks":{"Stop":"oops"}}"#).unwrap();
-        let err = run_setup(&path, &PathBuf::from("/x/agent-orch"), None).unwrap_err();
+        let err = run_setup(
+            &path,
+            &PathBuf::from("/x/agent-orch"),
+            None,
+            DEFAULT_SESSION_NAME,
+        )
+        .unwrap_err();
         assert!(format!("{err:#}").contains("must be an array"));
     }
 
@@ -2266,7 +2354,13 @@ mod tests {
     fn teardown_removes_file_when_only_our_content_remains() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        run_setup(&path, &PathBuf::from("/x/agent-orch"), None).unwrap();
+        run_setup(
+            &path,
+            &PathBuf::from("/x/agent-orch"),
+            None,
+            DEFAULT_SESSION_NAME,
+        )
+        .unwrap();
         assert!(path.exists());
         run_teardown(&path).unwrap();
         assert!(!path.exists(), "file should be removed when result is {{}}");
@@ -2302,7 +2396,13 @@ mod tests {
         let path = dir.path().join("settings.json");
         let original = br#"{"permissions":["read"],"hooks":{"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"my-hook"}]}]}}"#;
         fs::write(&path, original).unwrap();
-        run_setup(&path, &PathBuf::from("/x/agent-orch"), None).unwrap();
+        run_setup(
+            &path,
+            &PathBuf::from("/x/agent-orch"),
+            None,
+            DEFAULT_SESSION_NAME,
+        )
+        .unwrap();
         run_teardown(&path).unwrap();
 
         // Re-read and re-parse to compare structurally (formatting may differ).

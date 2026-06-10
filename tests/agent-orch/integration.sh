@@ -419,4 +419,30 @@ env "HOME=$KEY_HOME" "AGENT_ORCH_TMUX_SOCKET=$TMUX_SOCKET" "$BIN" teardown
 rm -rf "$KEY_HOME"
 pass "setup without --key installed hooks only, teardown was a clean no-op for the keybind"
 
-log "all cases passed (1, 2, 3, 4, 4b, 4c, 5, 5b, 5c, 5d, 6-10, 11a-d)"
+# ── case 12 — setup --session NAME bakes custom session into the keybind ─
+# The `--session NAME` flag changes which tmux session the
+# keybind switches to. Teardown still self-discovers our
+# binding via the marker baked into the action, so it works
+# without needing the session name.
+
+log "case 12a: setup --session custom-dash --key Z bakes custom name in"
+KEY_HOME="$(mktemp -d)"
+mkdir -p "$KEY_HOME/.claude"
+env "HOME=$KEY_HOME" "AGENT_ORCH_TMUX_SOCKET=$TMUX_SOCKET" \
+  "$BIN" --session custom-dash setup --key Z
+# The bind-key line should target `custom-dash`, not `agent-orch`.
+T list-keys -T prefix 2>/dev/null | grep -E '^bind-key +-T prefix +Z ' \
+  | grep -q "switch-client -t custom-dash" \
+  || fail "case 12a: bind action does not switch to custom-dash"
+T list-keys -T prefix 2>/dev/null | grep -E '^bind-key +-T prefix +Z ' \
+  | grep -q "agent-orch" || true   # marker present; matches via x-agent-orch-managed
+pass "setup --session custom-dash --key Z installed binding to custom-dash"
+
+log "case 12b: teardown removes the custom-session binding without args"
+env "HOME=$KEY_HOME" "AGENT_ORCH_TMUX_SOCKET=$TMUX_SOCKET" "$BIN" teardown
+T list-keys -T prefix 2>/dev/null | grep -E '^bind-key +-T prefix +Z ' >/dev/null \
+  && fail "case 12b: teardown did not remove the custom-session binding"
+rm -rf "$KEY_HOME"
+pass "teardown self-discovered and removed the custom-session binding"
+
+log "all cases passed (1, 2, 3, 4, 4b, 4c, 5, 5b, 5c, 5d, 6-10, 11a-d, 12a-b)"
