@@ -36,20 +36,31 @@ const HOOK_MARKER: &str = ".tmux-hook-installed";
 const EVT_USER_PROMPT_SUBMIT: &str = "UserPromptSubmit";
 const EVT_PRE_TOOL_USE: &str = "PreToolUse";
 const EVT_POST_TOOL_USE: &str = "PostToolUse";
+const EVT_NOTIFICATION: &str = "Notification";
 const EVT_STOP: &str = "Stop";
 
-/// All Claude hook events `setup` installs, in display order. Adding
-/// an event means adding it here and to `apply_event`. The state
-/// machine is intentionally narrow (running ↔ idle) and the picker
-/// derives its truth from a tmux-pane preview, not from the row
-/// content — so we install only the events needed to flip running
-/// vs idle. `teardown` is tag-scoped, so legacy entries from earlier
-/// installs (e.g. `Notification`, `PostToolUseFailure`) get cleaned
-/// up on the next teardown without needing a migration shim.
+/// Seconds a `Done` record can sit before the picker renders it
+/// as `Idle`. Pure render-time decay — never written back to
+/// disk, so a forgotten session in a tmux pane doesn't need a
+/// background process to age its state file.
+const IDLE_THRESHOLD_SECS: u64 = 60;
+
+/// All Claude hook events `setup` installs. Each fires its own
+/// `agent-orch hook <event>` invocation; `apply_event` decides
+/// which mapped to a state transition.
+///
+/// `Notification` is load-bearing for the four-state machine —
+/// without it the picker can't surface "agent waiting on the
+/// user" as a distinct state, so it would never sort to the
+/// top of the dashboard. `teardown` is tag-scoped, so legacy
+/// entries from earlier installs (without `Notification`) get
+/// cleaned up on the next teardown without needing a migration
+/// shim.
 const HOOK_EVENTS: &[&str] = &[
     EVT_USER_PROMPT_SUBMIT,
     EVT_PRE_TOOL_USE,
     EVT_POST_TOOL_USE,
+    EVT_NOTIFICATION,
     EVT_STOP,
 ];
 
@@ -78,18 +89,41 @@ fn now_secs() -> u64 {
 // ─────────────────────────────────────────────────────────────────────────────
 // §1 · Session
 
-/// Lifecycle state per session. Two-state machine: a tool is
-/// in flight (`Running`) or it isn't (`Idle`). Everything else
-/// the user might want to know about a session — what claude
-/// is asking, what error it printed, whether it's between
-/// turns or stuck — is read directly from the agent's tmux
-/// pane via `tmux capture-pane`, surfaced in the picker's
-/// preview window. Pane content is the source of truth; the
-/// glyph is just an at-a-glance index.
+/// Lifecycle state stored in `sessions.json`. Three discrete
+/// states cover what the hook reporter can decide about an
+/// agent at the moment of an event:
+///
+/// - `Working` — agent is in motion (a tool is running, or
+///   a prompt was just submitted).
+/// - `Waiting` — agent is blocked on the user (permission
+///   prompt or notification).
+/// - `Done` — agent finished its turn. May decay to the
+///   user-visible `Idle` after `IDLE_THRESHOLD_SECS`,
+///   purely at render time.
+///
+/// `Idle` deliberately is *not* in this enum — keeping the
+/// stored-state shape three-variant means a forgotten session
+/// doesn't need a background process to flip its state file
+/// every minute. The render layer computes `Idle` from
+/// `Done + state_ts` against the current time; see
+/// [`Session::display_state`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum State {
-    Running,
+    Working,
+    Waiting,
+    Done,
+}
+
+/// User-visible state in the dashboard. A function of the
+/// stored [`State`] plus elapsed time. `Done` records past
+/// the idle threshold render as `Idle`; everything else
+/// passes through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayState {
+    Working,
+    Waiting,
+    Done,
     Idle,
 }
 
@@ -111,36 +145,85 @@ pub struct Session {
 }
 
 impl Session {
-    /// Apply one hook event. Always bumps `last_event` /
-    /// `last_event_ts`; flips state to `Running` on `PreToolUse`,
-    /// to `Idle` on every other event. Hooks must never block
-    /// the agent — this body's only failure mode is a silent
-    /// no-op for unrecognised event names. Payload is unused
-    /// today (we don't need prompt / tool_name / tool_input
-    /// fields any more — the picker reads pane content
-    /// directly), but we keep the `&serde_json::Value`
-    /// parameter so a future override on a kind whose payload
-    /// matters can deserialise without changing the signature.
+    /// Apply one hook event to this session. Always bumps
+    /// `last_event` / `last_event_ts` so the elapsed-time
+    /// column reflects the most recent activity, even for
+    /// events that don't trigger a state change.
+    ///
+    /// Mapping (see spec → "How the lifecycle states are
+    /// derived"):
+    ///
+    /// - `UserPromptSubmit` → `Working` (transitional —
+    ///   the user just handed the agent a task; if no
+    ///   `PreToolUse` follows, the next `Stop` flips to
+    ///   `Done`).
+    /// - `PreToolUse`       → `Working`
+    /// - `PostToolUse`      → `Working` (more tools may
+    ///   follow in the same turn — only `Stop` ends the
+    ///   turn).
+    /// - `Notification`     → `Waiting` (highest priority
+    ///   in the dashboard sort — agent is blocked on the
+    ///   user).
+    /// - `Stop`             → `Done`.
+    ///
+    /// Unknown events bump `last_event_ts` only — silent
+    /// no-op for state. Hooks must never block the agent's
+    /// turn, so this body has no fallible paths.
+    ///
+    /// Payload is unused today but kept in the signature so
+    /// a future kind whose state machine cares about
+    /// `tool_name` / `tool_input` can deserialise without
+    /// changing the trait method.
     fn apply_event(&mut self, event: &str, _payload: &serde_json::Value, now: u64) {
         self.last_event = event.into();
         self.last_event_ts = now;
-        self.state_ts = now;
-        self.state = if event == EVT_PRE_TOOL_USE {
-            State::Running
-        } else {
-            State::Idle
-        };
+        match event {
+            EVT_USER_PROMPT_SUBMIT | EVT_PRE_TOOL_USE | EVT_POST_TOOL_USE => {
+                self.state = State::Working;
+                self.state_ts = now;
+            }
+            EVT_NOTIFICATION => {
+                self.state = State::Waiting;
+                self.state_ts = now;
+            }
+            EVT_STOP => {
+                self.state = State::Done;
+                self.state_ts = now;
+            }
+            // Unknown event: only the activity timestamp moves.
+            // Lets sort track "recently driven by something" even
+            // for events we don't model yet (e.g. a future
+            // PostToolUseFailure variant we haven't wired up).
+            _ => {}
+        }
     }
 
-    /// Picker row: `<glyph> <kind> <cwd>`. Compact by design —
-    /// the pane preview window carries everything else. Caller
-    /// doesn't pass `now` because the row content no longer has
-    /// any time-sensitive component.
-    fn format_row(&self) -> String {
-        let glyph = match self.state {
-            State::Running => "▶",
-            State::Idle => "·",
-        };
+    /// Resolve the user-visible state at render time. Stored
+    /// `Done` records age into `Idle` once they've sat past
+    /// [`IDLE_THRESHOLD_SECS`] since their last state change.
+    /// Pure function — same input ⇒ same output.
+    fn display_state(&self, now: u64) -> DisplayState {
+        match self.state {
+            State::Working => DisplayState::Working,
+            State::Waiting => DisplayState::Waiting,
+            State::Done => {
+                if now.saturating_sub(self.state_ts) > IDLE_THRESHOLD_SECS {
+                    DisplayState::Idle
+                } else {
+                    DisplayState::Done
+                }
+            }
+        }
+    }
+
+    /// Single-line picker row. **Slice 1 placeholder shape** —
+    /// Slice 2 of the fix-branch replaces this with a multi-
+    /// line item carrying the tmux address, elapsed time, and
+    /// pane snippet. Kept here so existing call sites compile
+    /// while the four-state machine lands. Format:
+    /// `<glyph> <kind> <cwd-tail>`.
+    fn format_row(&self, now: u64) -> String {
+        let glyph = state_glyph(self.display_state(now));
         format!("{} {} {}", glyph, self.kind, cwd_tail(&self.cwd))
     }
 
@@ -149,13 +232,33 @@ impl Session {
         self.state_ts.max(self.last_event_ts).max(self.started)
     }
 
-    /// Sort precedence: running first, then idle. Within each
-    /// group, most-recently-active first.
-    fn state_group(&self) -> u8 {
-        match self.state {
-            State::Running => 0,
-            State::Idle => 1,
+    /// Sort priority. Top of the dashboard down to the
+    /// bottom: waiting (0) → done (1) → idle (2) → working
+    /// (3). The dashboard is a triage queue; sort by "does
+    /// this agent need the user's attention?" not "is this
+    /// agent active?". Working agents are self-managing
+    /// and sink to the bottom; idle agents are forgotten
+    /// assets that beat working because they need a
+    /// decision (give a task or close the pane).
+    fn priority(&self, now: u64) -> u8 {
+        match self.display_state(now) {
+            DisplayState::Waiting => 0,
+            DisplayState::Done => 1,
+            DisplayState::Idle => 2,
+            DisplayState::Working => 3,
         }
+    }
+}
+
+/// Glyph for a [`DisplayState`]. Centralised so the picker
+/// row, the unit tests, and any future status-bar exporter
+/// agree on what each state looks like.
+fn state_glyph(state: DisplayState) -> &'static str {
+    match state {
+        DisplayState::Waiting => "💬",
+        DisplayState::Done => "✓",
+        DisplayState::Idle => "·",
+        DisplayState::Working => "▶",
     }
 }
 
@@ -180,13 +283,17 @@ fn cwd_tail(cwd: &str) -> String {
     }
 }
 
-/// Sort: running first, then idle; within each group most-
-/// recently-active first.
-fn sort_sessions(sessions: &mut [Session]) {
+/// Sort by `Session::priority(now)` (waiting, then done,
+/// then idle, then working), with ties broken by
+/// most-recently-active first. The decay layer means a
+/// `Done` record's effective sort position depends on `now`;
+/// pass `now` so a single render pass uses one consistent
+/// timestamp for every comparison.
+fn sort_sessions(sessions: &mut [Session], now: u64) {
     sessions.sort_by(|a, b| {
-        let group = a.state_group().cmp(&b.state_group());
-        if group.is_ne() {
-            return group;
+        let prio = a.priority(now).cmp(&b.priority(now));
+        if prio.is_ne() {
+            return prio;
         }
         b.activity().cmp(&a.activity())
     });
@@ -849,7 +956,13 @@ pub fn wrap(w: &dyn Wrapper, ctx: &WrapCtx, side_effects: bool) -> Result<Prepar
             kind: w.kind().into(),
             cwd: ctx.cwd.to_string_lossy().into_owned(),
             started: now,
-            state: State::Idle,
+            // Initial state: `Done`. No events have fired
+            // yet, so the agent isn't actively working;
+            // putting it in `Done` lets the picker's
+            // priority sort treat it the same as a finished
+            // turn (worth glancing at, not blocking).
+            // Decays to `Idle` after the threshold passes.
+            state: State::Done,
             state_ts: now,
             last_event: String::new(),
             last_event_ts: 0,
@@ -892,16 +1005,18 @@ impl<'a> Loop<'a> {
         Loop { store }
     }
 
-    /// Read sessions, filter live pids, sort, format rows.
-    /// Returns `(pane_id, formatted_row)` pairs. Row content is
-    /// time-independent (`<glyph> <kind> <cwd>`); the live
-    /// information lives in the picker's preview window.
+    /// Read sessions, filter live pids, sort by priority, format rows.
+    /// Returns `(pane_id, formatted_row)` pairs. The single
+    /// `now` snapshot is passed through the sort and format
+    /// calls so `Done` records' decay-to-`Idle` boundary is
+    /// consistent across all rows in one render pass.
     pub fn render(&self) -> Result<Vec<(String, String)>> {
+        let now = now_secs();
         let mut sessions = live_only(self.store.read()?);
-        sort_sessions(&mut sessions);
+        sort_sessions(&mut sessions, now);
         Ok(sessions
             .into_iter()
-            .map(|s| (s.pane_id.clone(), s.format_row()))
+            .map(|s| (s.pane_id.clone(), s.format_row(now)))
             .collect())
     }
 
@@ -1379,7 +1494,10 @@ mod tests {
             kind: kind.into(),
             cwd: cwd.into(),
             started,
-            state: State::Idle,
+            // Default fresh-wrap state — the picker sorts these
+            // into the middle bucket (Done) until they decay to
+            // Idle or get driven into Working/Waiting.
+            state: State::Done,
             state_ts: started,
             last_event: String::new(),
             last_event_ts: 0,
@@ -1421,75 +1539,155 @@ mod tests {
         }
     }
 
-    // 3 · Session — apply_event + format_row + sort ──────────────
+    // 3 · Session — apply_event + display_state + sort ──────────
 
     #[test]
-    fn session_apply_event_pre_tool_use_marks_running() {
+    fn apply_event_pre_tool_use_marks_working() {
         let mut s = mk("%1", "claude", "/repo", 1000);
-        assert_eq!(s.state, State::Idle);
+        assert_eq!(s.state, State::Done); // default fresh-wrap state
         s.apply_event(EVT_PRE_TOOL_USE, &empty_payload(), 1200);
-        assert_eq!(s.state, State::Running);
+        assert_eq!(s.state, State::Working);
         assert_eq!(s.last_event, "PreToolUse");
         assert_eq!(s.last_event_ts, 1200);
         assert_eq!(s.state_ts, 1200);
     }
 
     #[test]
-    fn session_apply_event_post_tool_use_returns_to_idle() {
+    fn apply_event_post_tool_use_keeps_working() {
+        // PostToolUse keeps Working — more tools may follow in
+        // the same turn. Only Stop ends the turn.
         let mut s = mk("%1", "claude", "/repo", 1000);
         s.apply_event(EVT_PRE_TOOL_USE, &empty_payload(), 1200);
-        assert_eq!(s.state, State::Running);
+        assert_eq!(s.state, State::Working);
         s.apply_event(EVT_POST_TOOL_USE, &empty_payload(), 1250);
-        assert_eq!(s.state, State::Idle);
+        assert_eq!(s.state, State::Working);
     }
 
     #[test]
-    fn session_apply_event_user_prompt_submit_keeps_idle() {
-        // UserPromptSubmit alone doesn't flip running. Only PreToolUse
-        // does. (Claude can submit a prompt and answer entirely from
-        // context with no tool calls.)
+    fn apply_event_user_prompt_submit_marks_working() {
+        // The user just handed Claude a task — agent is in
+        // motion until something tells us otherwise.
         let mut s = mk("%1", "claude", "/repo", 1000);
+        s.state = State::Done;
         s.apply_event(EVT_USER_PROMPT_SUBMIT, &empty_payload(), 1100);
-        assert_eq!(s.state, State::Idle);
+        assert_eq!(s.state, State::Working);
         assert_eq!(s.last_event, "UserPromptSubmit");
     }
 
     #[test]
-    fn session_apply_event_stop_marks_idle() {
+    fn apply_event_notification_marks_waiting() {
+        // The load-bearing case for the four-state machine —
+        // permission prompts have to flip to Waiting, which is
+        // what gets sorted to the top of the dashboard.
         let mut s = mk("%1", "claude", "/repo", 1000);
-        s.apply_event(EVT_PRE_TOOL_USE, &empty_payload(), 1100);
-        s.apply_event(EVT_STOP, &empty_payload(), 1300);
-        assert_eq!(s.state, State::Idle);
+        s.apply_event(EVT_NOTIFICATION, &empty_payload(), 1500);
+        assert_eq!(s.state, State::Waiting);
+        assert_eq!(s.last_event, "Notification");
     }
 
     #[test]
-    fn session_apply_event_unknown_event_keeps_idle_but_bumps_event_ts() {
-        // Unknown events still update last_event/last_event_ts (so
-        // sort sees the activity), but don't flip to Running.
+    fn apply_event_stop_marks_done() {
         let mut s = mk("%1", "claude", "/repo", 1000);
+        s.apply_event(EVT_PRE_TOOL_USE, &empty_payload(), 1100);
+        s.apply_event(EVT_STOP, &empty_payload(), 1300);
+        assert_eq!(s.state, State::Done);
+    }
+
+    #[test]
+    fn apply_event_unknown_event_bumps_event_ts_only() {
+        // Unknown events still update last_event/last_event_ts (so
+        // sort sees the activity), but don't change state.
+        let mut s = mk("%1", "claude", "/repo", 1000);
+        let prior_state = s.state.clone();
+        let prior_state_ts = s.state_ts;
         s.apply_event("SomethingWeDontKnow", &empty_payload(), 9999);
-        assert_eq!(s.state, State::Idle);
+        assert_eq!(s.state, prior_state);
+        assert_eq!(s.state_ts, prior_state_ts);
         assert_eq!(s.last_event, "SomethingWeDontKnow");
         assert_eq!(s.last_event_ts, 9999);
     }
 
     #[test]
-    fn session_format_row_running_shows_running_glyph() {
-        let mut s = mk("%1", "claude", "/home/me/repo/foo", 1000);
-        s.state = State::Running;
-        let row = s.format_row();
-        assert!(row.starts_with("▶ "), "row: {row}");
-        assert!(row.contains("claude"));
-        assert!(row.contains("repo/foo"));
+    fn display_state_decays_done_to_idle_after_threshold() {
+        // The user-visible Idle state is render-time decay over
+        // a stored Done. Past the threshold, display flips to
+        // Idle without touching the stored state.
+        let mut s = mk("%1", "claude", "/repo", 1000);
+        s.state = State::Done;
+        s.state_ts = 1000;
+
+        // Inside the threshold: still Done.
+        assert_eq!(
+            s.display_state(1000 + IDLE_THRESHOLD_SECS),
+            DisplayState::Done
+        );
+        // Past the threshold: flips to Idle.
+        assert_eq!(
+            s.display_state(1000 + IDLE_THRESHOLD_SECS + 1),
+            DisplayState::Idle
+        );
     }
 
     #[test]
-    fn session_format_row_idle_shows_idle_glyph() {
-        let s = mk("%1", "kiro", "/repo", 1);
-        let row = s.format_row();
-        assert!(row.starts_with("· "), "row: {row}");
-        assert!(row.contains("kiro"));
-        assert!(row.contains("repo"));
+    fn display_state_does_not_decay_working_or_waiting() {
+        // Only Done decays. Working and Waiting are explicit
+        // signals; no time-based reinterpretation.
+        let mut s = mk("%1", "claude", "/repo", 1000);
+        s.state = State::Working;
+        s.state_ts = 1000;
+        assert_eq!(s.display_state(99_999_999), DisplayState::Working);
+
+        s.state = State::Waiting;
+        assert_eq!(s.display_state(99_999_999), DisplayState::Waiting);
+    }
+
+    #[test]
+    fn priority_order_is_waiting_done_idle_working() {
+        // Sort by attention-needed: waiting > done > idle > working.
+        // Working sinks to the bottom because actively-progressing
+        // agents are most self-managing; idle beats working because
+        // a forgotten agent needs a decision.
+        let now = 100_000;
+        let mut s = mk("%1", "claude", "/repo", 0);
+
+        s.state = State::Waiting;
+        s.state_ts = now;
+        assert_eq!(s.priority(now), 0);
+
+        s.state = State::Done;
+        s.state_ts = now;
+        assert_eq!(s.priority(now), 1);
+
+        // Same Done record, but aged past the idle threshold:
+        // priority becomes 2 (idle bucket) without changing storage.
+        s.state_ts = now - IDLE_THRESHOLD_SECS - 1;
+        assert_eq!(s.priority(now), 2);
+
+        s.state = State::Working;
+        s.state_ts = now;
+        assert_eq!(s.priority(now), 3);
+    }
+
+    #[test]
+    fn format_row_emits_state_glyph_kind_and_cwd_tail() {
+        // Slice 1 keeps the placeholder single-line shape;
+        // Slice 2 will replace this with a multi-line item.
+        let mut s = mk("%1", "claude", "/home/me/repo/foo", 1000);
+        s.state = State::Working;
+        let row = s.format_row(1000);
+        assert!(row.starts_with("▶ "), "row: {row}");
+        assert!(row.contains("claude"));
+        assert!(row.contains("repo/foo"));
+
+        s.state = State::Waiting;
+        assert!(s.format_row(1000).starts_with("💬 "));
+
+        s.state = State::Done;
+        assert!(s.format_row(1000).starts_with("✓ "));
+
+        // Done aged past the threshold renders as Idle.
+        s.state_ts = 0;
+        assert!(s.format_row(IDLE_THRESHOLD_SECS + 100).starts_with("· "));
     }
 
     #[test]
@@ -1501,27 +1699,45 @@ mod tests {
     }
 
     #[test]
-    fn sort_sessions_running_first_idle_next_recent_first_within_group() {
+    fn sort_sessions_priority_first_recency_within_bucket() {
         let now = 1_000_000;
+
+        // a — Done (recent), bucket 1
         let mut a = mk("%a", "claude", "/x", 100);
-        a.state = State::Idle;
-        a.state_ts = 200;
-        a.last_event_ts = 200;
+        a.state = State::Done;
+        a.state_ts = now - 10;
+        a.last_event_ts = now - 10;
+
+        // b — Working (most recent), bucket 3
         let mut b = mk("%b", "claude", "/y", 100);
-        b.state = State::Running;
-        b.state_ts = 150;
-        b.last_event_ts = now - 5; // running, but older than c
+        b.state = State::Working;
+        b.state_ts = now;
+        b.last_event_ts = now;
+
+        // c — Waiting, bucket 0 (top)
         let mut c = mk("%c", "claude", "/z", 100);
-        c.state = State::Running;
-        c.state_ts = 300;
-        c.last_event_ts = now;
-        let d = mk("%d", "kiro", "/w", 100); // idle, oldest
-        let _ = now;
-        let mut v = vec![a, b, c, d];
-        sort_sessions(&mut v);
+        c.state = State::Waiting;
+        c.state_ts = now - 5;
+        c.last_event_ts = now - 5;
+
+        // d — Done aged past threshold → Idle, bucket 2
+        let mut d = mk("%d", "kiro", "/w", 100);
+        d.state = State::Done;
+        d.state_ts = now - IDLE_THRESHOLD_SECS - 100;
+        d.last_event_ts = now - IDLE_THRESHOLD_SECS - 100;
+
+        // e — Working but older than b, still bucket 3 (after d).
+        let mut e = mk("%e", "claude", "/v", 100);
+        e.state = State::Working;
+        e.state_ts = now - 50;
+        e.last_event_ts = now - 50;
+
+        let mut v = vec![a, b, c, d, e];
+        sort_sessions(&mut v, now);
         assert_eq!(
             v.iter().map(|s| s.pane_id.as_str()).collect::<Vec<_>>(),
-            vec!["%c", "%b", "%a", "%d"]
+            vec!["%c", "%a", "%d", "%b", "%e"],
+            "expected waiting > done > idle > working, recency within"
         );
     }
 
@@ -1904,7 +2120,8 @@ mod tests {
         assert_eq!(v[0].pane_id, "%42");
         assert_eq!(v[0].kind, "claude");
         assert_eq!(v[0].pid, std::process::id() as i32);
-        assert_eq!(v[0].state, State::Idle);
+        // Fresh wrap with no events fired yet sits in Done.
+        assert_eq!(v[0].state, State::Done);
         assert!(!v[0].created_kiro_config);
     }
 
@@ -2059,19 +2276,19 @@ mod tests {
             )
             .unwrap();
         let v = store.read().unwrap();
-        assert_eq!(v[0].state, State::Running);
+        assert_eq!(v[0].state, State::Working);
         assert_eq!(v[0].last_event_ts, 1234);
     }
 
     #[test]
-    fn hook_stop_marks_idle() {
+    fn hook_stop_marks_done() {
         let (dir, store) = fixtures();
         let cwd = dir.path().to_path_buf();
         let argv = vec!["stub".to_string()];
         let self_path = PathBuf::from("/test/agent-orch");
         let ctx = ctx(&store, "%1", &cwd, &argv, &self_path);
         wrap(&Claude, &ctx, false).unwrap();
-        // Drive into Running first so we can observe the flip back.
+        // Drive into Working first so we can observe the flip back.
         Claude
             .hook(
                 &store,
@@ -2081,12 +2298,38 @@ mod tests {
                 50,
             )
             .unwrap();
-        assert_eq!(store.read().unwrap()[0].state, State::Running);
+        assert_eq!(store.read().unwrap()[0].state, State::Working);
 
         Claude
             .hook(&store, "%1", EVT_STOP, &mut Cursor::new(b"{}".to_vec()), 99)
             .unwrap();
-        assert_eq!(store.read().unwrap()[0].state, State::Idle);
+        assert_eq!(store.read().unwrap()[0].state, State::Done);
+    }
+
+    #[test]
+    fn hook_notification_marks_waiting() {
+        // The load-bearing case for the four-state machine —
+        // permission prompts must surface via the hook reporter
+        // as Waiting so they sort to the top of the dashboard.
+        let (dir, store) = fixtures();
+        let cwd = dir.path().to_path_buf();
+        let argv = vec!["stub".to_string()];
+        let self_path = PathBuf::from("/test/agent-orch");
+        let ctx = ctx(&store, "%1", &cwd, &argv, &self_path);
+        wrap(&Claude, &ctx, false).unwrap();
+
+        Claude
+            .hook(
+                &store,
+                "%1",
+                EVT_NOTIFICATION,
+                &mut Cursor::new(b"{}".to_vec()),
+                250,
+            )
+            .unwrap();
+        let s = &store.read().unwrap()[0];
+        assert_eq!(s.state, State::Waiting);
+        assert_eq!(s.last_event, "Notification");
     }
 
     #[test]
@@ -2124,7 +2367,7 @@ mod tests {
             42,
         )
         .unwrap();
-        assert_eq!(store.read().unwrap()[0].state, State::Running);
+        assert_eq!(store.read().unwrap()[0].state, State::Working);
     }
 
     // 9 · unregister + Loop ──────────────────────────────────────
@@ -2157,12 +2400,12 @@ mod tests {
         store
             .mutate(|v| {
                 let mut alive = mk("%alive", "claude", "/x", 1);
-                alive.state = State::Running;
+                alive.state = State::Working;
                 alive.state_ts = 100;
                 alive.last_event_ts = now_secs();
                 let mut dead = mk("%dead", "claude", "/y", 2);
                 dead.pid = 1; // overwhelmingly likely dead/inaccessible
-                dead.state = State::Running;
+                dead.state = State::Working;
                 v.push(alive);
                 v.push(dead);
                 Ok(())
@@ -2186,7 +2429,7 @@ mod tests {
         store
             .mutate(|v| {
                 let mut s = mk("%alive", "claude", "/repo/foo", 1);
-                s.state = State::Running;
+                s.state = State::Working;
                 s.last_event_ts = now_secs();
                 v.push(s);
                 Ok(())

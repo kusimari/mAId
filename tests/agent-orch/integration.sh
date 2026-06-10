@@ -122,41 +122,54 @@ wait_for_sessions 1
 [[ "$(field 0 kind)" == "claude" ]] || fail "case 1: kind != claude"
 pass "wrap claude registers session"
 
-# ── case 2 — hook subcommand drives the two-state machine ──────────
+# ── case 2 — hook subcommand drives the four-state machine ─────────
 #
-# The state machine is intentionally narrow: PreToolUse → running,
-# everything else → idle. The picker's preview window (driven by
-# `agent-orch peek`) carries the nuance — what claude is asking,
-# what it's printing — so the row itself doesn't need a fan of
-# "thinking / waiting / stalled" cases.
+# Stored states: working / waiting / done. (Idle is render-time
+# decay over a stale Done — see case 4c.) Mapping:
+#   - UserPromptSubmit → working (transitional)
+#   - PreToolUse       → working
+#   - PostToolUse      → working (more tools may follow)
+#   - Notification     → waiting
+#   - Stop             → done
 
-log "case 2: hook UserPromptSubmit keeps state idle (only PreToolUse flips to running)"
+log "case 2: hook UserPromptSubmit marks state working"
 echo '{"prompt":"fix the failing test"}' \
   | env "XDG_STATE_HOME=$STATE_PARENT" "AGENT_ORCH_PANE=$PANE_ID" \
     "$BIN" hook UserPromptSubmit
-[[ "$(field 0 state)" == "idle" ]] || fail "case 2: state != idle ($(field 0 state))"
+[[ "$(field 0 state)" == "working" ]] || fail "case 2: state != working ($(field 0 state))"
 [[ "$(field 0 last_event)" == "UserPromptSubmit" ]] || fail "case 2: last_event mismatch"
-pass "UserPromptSubmit recorded but state stayed idle"
+pass "UserPromptSubmit flipped to working"
 
-log "case 3: hook PreToolUse flips state to running"
+log "case 3: hook PreToolUse keeps state working"
 echo '{"tool_name":"Bash","tool_input":{"command":"cargo test"}}' \
   | env "XDG_STATE_HOME=$STATE_PARENT" "AGENT_ORCH_PANE=$PANE_ID" \
     "$BIN" hook PreToolUse
-[[ "$(field 0 state)" == "running" ]] || fail "case 3: state != running ($(field 0 state))"
-pass "PreToolUse flipped to running"
+[[ "$(field 0 state)" == "working" ]] || fail "case 3: state != working ($(field 0 state))"
+pass "PreToolUse stayed working"
 
-log "case 4: hook PostToolUse returns state to idle"
+log "case 4: hook PostToolUse keeps state working (more tools may follow)"
 echo '{"tool_name":"Bash"}' \
   | env "XDG_STATE_HOME=$STATE_PARENT" "AGENT_ORCH_PANE=$PANE_ID" \
     "$BIN" hook PostToolUse
-[[ "$(field 0 state)" == "idle" ]] || fail "case 4: state != idle ($(field 0 state))"
-pass "PostToolUse returned to idle"
+[[ "$(field 0 state)" == "working" ]] || fail "case 4: state != working ($(field 0 state))"
+pass "PostToolUse stayed working"
 
-log "case 4b: hook Stop also leaves state idle"
+log "case 4b: hook Stop flips state to done"
 echo '{}' | env "XDG_STATE_HOME=$STATE_PARENT" "AGENT_ORCH_PANE=$PANE_ID" \
     "$BIN" hook Stop
-[[ "$(field 0 state)" == "idle" ]] || fail "case 4b: state != idle"
-pass "Stop kept state idle"
+[[ "$(field 0 state)" == "done" ]] || fail "case 4b: state != done ($(field 0 state))"
+pass "Stop flipped to done"
+
+log "case 4c: hook Notification flips state to waiting (highest priority — sorts to top)"
+echo '{"message":"Allow Bash command?"}' \
+  | env "XDG_STATE_HOME=$STATE_PARENT" "AGENT_ORCH_PANE=$PANE_ID" \
+    "$BIN" hook Notification
+[[ "$(field 0 state)" == "waiting" ]] || fail "case 4c: state != waiting ($(field 0 state))"
+pass "Notification flipped to waiting"
+
+# Reset to done for case 5's render assertions to be deterministic.
+echo '{}' | env "XDG_STATE_HOME=$STATE_PARENT" "AGENT_ORCH_PANE=$PANE_ID" \
+    "$BIN" hook Stop
 
 # ── case 5 — render emits the live row (drives the loop body) ─────
 # `render` is the hidden subcommand the event-driven loop body
@@ -172,7 +185,8 @@ trace "$RENDER_OUT"
 [[ "$(printf '%s\n' "$RENDER_OUT" | wc -l)" -eq 1 ]] || fail "case 5: expected 1 row"
 [[ "$RENDER_OUT" == "$PANE_ID"$'\t'* ]] || fail "case 5: pane id not in column 1"
 [[ "$RENDER_OUT" == *"claude"* ]] || fail "case 5: render missing kind"
-[[ "$RENDER_OUT" == *"·"* ]] || fail "case 5: render missing idle glyph"
+# Case 4 left the row in `done` state; the corresponding glyph is `✓`.
+[[ "$RENDER_OUT" == *"✓"* ]] || fail "case 5: render missing done glyph (expected ✓)"
 pass "render emits tab-separated <pane>\\t<glyph kind cwd> rows"
 
 # ── case 5b — peek shells out to tmux capture-pane ─────────────────
@@ -276,6 +290,11 @@ n_ups="$(jq '.hooks.UserPromptSubmit | length' < "$SETUP_FILE")"
 [[ "$n_ups" -eq 2 ]] || fail "case 10: expected 2 UserPromptSubmit entries after setup, got $n_ups"
 n_stop="$(jq '.hooks.Stop | length' < "$SETUP_FILE")"
 [[ "$n_stop" -eq 1 ]] || fail "case 10: expected 1 Stop entry after setup, got $n_stop"
+# Notification is load-bearing for the four-state machine — must be installed.
+n_notif="$(jq '.hooks.Notification | length' < "$SETUP_FILE")"
+[[ "$n_notif" -eq 1 ]] || fail "case 10: expected 1 Notification entry after setup, got $n_notif"
+notif_tagged="$(jq '.hooks.Notification[0]."x-agent-orch-managed"' < "$SETUP_FILE")"
+[[ "$notif_tagged" == "true" ]] || fail "case 10: Notification entry not tagged"
 tagged="$(jq '.hooks.UserPromptSubmit[1]."x-agent-orch-managed"' < "$SETUP_FILE")"
 [[ "$tagged" == "true" ]] || fail "case 10: x-agent-orch-managed tag missing"
 
@@ -361,4 +380,4 @@ env "HOME=$KEY_HOME" "AGENT_ORCH_TMUX_SOCKET=$TMUX_SOCKET" "$BIN" teardown
 rm -rf "$KEY_HOME"
 pass "setup without --key installed hooks only, teardown was a clean no-op for the keybind"
 
-log "all cases passed (1, 2, 3, 4, 4b, 5, 5b, 5c, 6-10, 11a-d)"
+log "all cases passed (1, 2, 3, 4, 4b, 4c, 5, 5b, 5c, 6-10, 11a-d)"
