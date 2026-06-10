@@ -122,36 +122,49 @@ wait_for_sessions 1
 [[ "$(field 0 kind)" == "claude" ]] || fail "case 1: kind != claude"
 pass "wrap claude registers session"
 
-# ── case 2 — hook subcommand updates state ─────────────────────────
+# ── case 2 — hook subcommand drives the two-state machine ──────────
+#
+# The state machine is intentionally narrow: PreToolUse → running,
+# everything else → idle. The picker's preview window (driven by
+# `agent-orch peek`) carries the nuance — what claude is asking,
+# what it's printing — so the row itself doesn't need a fan of
+# "thinking / waiting / stalled" cases.
 
-log "case 2: hook UserPromptSubmit flips state to thinking"
+log "case 2: hook UserPromptSubmit keeps state idle (only PreToolUse flips to running)"
 echo '{"prompt":"fix the failing test"}' \
   | env "XDG_STATE_HOME=$STATE_PARENT" "AGENT_ORCH_PANE=$PANE_ID" \
     "$BIN" hook UserPromptSubmit
-[[ "$(field 0 state)" == "thinking" ]] || fail "case 2: state != thinking ($(field 0 state))"
-[[ "$(field 0 last_prompt)" == "fix the failing test" ]] || fail "case 2: last_prompt mismatch"
-pass "hook UserPromptSubmit marked thinking and stored prompt"
+[[ "$(field 0 state)" == "idle" ]] || fail "case 2: state != idle ($(field 0 state))"
+[[ "$(field 0 last_event)" == "UserPromptSubmit" ]] || fail "case 2: last_event mismatch"
+pass "UserPromptSubmit recorded but state stayed idle"
 
-log "case 3: hook PreToolUse switches to active and stores tool"
+log "case 3: hook PreToolUse flips state to running"
 echo '{"tool_name":"Bash","tool_input":{"command":"cargo test"}}' \
   | env "XDG_STATE_HOME=$STATE_PARENT" "AGENT_ORCH_PANE=$PANE_ID" \
     "$BIN" hook PreToolUse
-[[ "$(field 0 state)" == "active" ]] || fail "case 3: state != active ($(field 0 state))"
-[[ "$(field 0 last_tool_name)" == "Bash" ]] || fail "case 3: last_tool_name != Bash"
-[[ "$(field 0 last_tool_preview)" == "cargo test" ]] || fail "case 3: last_tool_preview != cargo test"
-pass "hook PreToolUse marked active and stored tool name + preview"
+[[ "$(field 0 state)" == "running" ]] || fail "case 3: state != running ($(field 0 state))"
+pass "PreToolUse flipped to running"
 
-log "case 4: hook Stop flips state to idle"
+log "case 4: hook PostToolUse returns state to idle"
+echo '{"tool_name":"Bash"}' \
+  | env "XDG_STATE_HOME=$STATE_PARENT" "AGENT_ORCH_PANE=$PANE_ID" \
+    "$BIN" hook PostToolUse
+[[ "$(field 0 state)" == "idle" ]] || fail "case 4: state != idle ($(field 0 state))"
+pass "PostToolUse returned to idle"
+
+log "case 4b: hook Stop also leaves state idle"
 echo '{}' | env "XDG_STATE_HOME=$STATE_PARENT" "AGENT_ORCH_PANE=$PANE_ID" \
     "$BIN" hook Stop
-[[ "$(field 0 state)" == "idle" ]] || fail "case 4: state != idle ($(field 0 state))"
-pass "hook Stop marked idle"
+[[ "$(field 0 state)" == "idle" ]] || fail "case 4b: state != idle"
+pass "Stop kept state idle"
 
 # ── case 5 — render emits the live row (drives the loop body) ─────
 # `render` is the hidden subcommand the event-driven loop body
 # wires into fzf's `reload(...)` action. Each row is
 # `<pane_id>\t<formatted-row>`; pane id sits in column 1 so fzf's
 # `--id-nth=1 --with-nth=2..` can track and hide it respectively.
+# Row format is `<glyph> <kind> <cwd-tail>` — terse by design;
+# the preview window carries the live signal.
 
 log "case 5: render emits a tab-separated row per registered pane"
 RENDER_OUT="$(env "XDG_STATE_HOME=$STATE_PARENT" "$BIN" render)"
@@ -159,14 +172,30 @@ trace "$RENDER_OUT"
 [[ "$(printf '%s\n' "$RENDER_OUT" | wc -l)" -eq 1 ]] || fail "case 5: expected 1 row"
 [[ "$RENDER_OUT" == "$PANE_ID"$'\t'* ]] || fail "case 5: pane id not in column 1"
 [[ "$RENDER_OUT" == *"claude"* ]] || fail "case 5: render missing kind"
-# After Stop fired in case 4, the row is in `idle` state — content is
-# "done in <duration> · <N> tools · <ago>" not the prompt. Assert on
-# the idle-row markers instead. (The earlier active-state assertion
-# was tied to the legacy 3-state schema; the active-row format is
-# covered by unit tests.)
-[[ "$RENDER_OUT" == *"done in"* ]] || fail "case 5: render missing 'done in'"
-[[ "$RENDER_OUT" == *"tools"*  ]] || fail "case 5: render missing 'tools' marker"
-pass "render emits tab-separated rows in picker-sort order"
+[[ "$RENDER_OUT" == *"·"* ]] || fail "case 5: render missing idle glyph"
+pass "render emits tab-separated <pane>\\t<glyph kind cwd> rows"
+
+# ── case 5b — peek shells out to tmux capture-pane ─────────────────
+# The agent-orch peek subcommand wraps `tmux capture-pane`. We
+# drive it inside a real tmux session (the integration script's
+# private server) and assert the output matches what's currently
+# visible in the pane.
+
+log "case 5b: peek dumps the last N lines of a pane"
+# Send a known marker into the pane, wait for it to land.
+T send-keys -t "$PANE_ID" 'echo MARKER_PEEK_42' Enter
+sleep 0.5
+PEEK_OUT="$(env "XDG_STATE_HOME=$STATE_PARENT" "AGENT_ORCH_TMUX_SOCKET=$TMUX_SOCKET" \
+  "$BIN" peek "$PANE_ID" --lines 50)"
+trace "$PEEK_OUT"
+[[ "$PEEK_OUT" == *"MARKER_PEEK_42"* ]] || fail "case 5b: peek output didn't contain the marker"
+pass "peek captured pane content via tmux capture-pane"
+
+log "case 5c: peek on an unknown pane returns empty without erroring"
+PEEK_NONE="$(env "XDG_STATE_HOME=$STATE_PARENT" "AGENT_ORCH_TMUX_SOCKET=$TMUX_SOCKET" \
+  "$BIN" peek '%no-such-pane' 2>&1)" || fail "case 5c: peek on unknown pane should exit 0"
+[[ -z "$PEEK_NONE" ]] || fail "case 5c: expected empty, got: $PEEK_NONE"
+pass "peek on unknown pane gracefully empty"
 
 # ── case 6 — unregister removes the record ─────────────────────────
 
@@ -332,4 +361,4 @@ env "HOME=$KEY_HOME" "AGENT_ORCH_TMUX_SOCKET=$TMUX_SOCKET" "$BIN" teardown
 rm -rf "$KEY_HOME"
 pass "setup without --key installed hooks only, teardown was a clean no-op for the keybind"
 
-log "all cases passed (1-10 + 11a/b/c/d)"
+log "all cases passed (1, 2, 3, 4, 4b, 5, 5b, 5c, 6-10, 11a-d)"

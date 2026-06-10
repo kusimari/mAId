@@ -11,7 +11,8 @@
 //!                     unregister), and a default `hook` method body
 //!                     shared across kinds. Claude hooks live
 //!                     user-globally via `setup` / `teardown`.
-//!   §4 · `Loop`     — picker (`render`, `render_to`, `run`, `body`).
+//!   §4 · `Loop`     — picker (`render`, `render_to`, `peek`,
+//!                     `run`, `body`).
 //!
 //! The CLI dispatch (`main`) wires these together. Tests at the
 //! bottom drive each typeclass directly with a tempdir `Store`;
@@ -35,27 +36,22 @@ const HOOK_MARKER: &str = ".tmux-hook-installed";
 const EVT_USER_PROMPT_SUBMIT: &str = "UserPromptSubmit";
 const EVT_PRE_TOOL_USE: &str = "PreToolUse";
 const EVT_POST_TOOL_USE: &str = "PostToolUse";
-const EVT_POST_TOOL_USE_FAILURE: &str = "PostToolUseFailure";
-const EVT_NOTIFICATION: &str = "Notification";
 const EVT_STOP: &str = "Stop";
 
 /// All Claude hook events `setup` installs, in display order. Adding
-/// an event means adding it here and to `apply_event`.
+/// an event means adding it here and to `apply_event`. The state
+/// machine is intentionally narrow (running ↔ idle) and the picker
+/// derives its truth from a tmux-pane preview, not from the row
+/// content — so we install only the events needed to flip running
+/// vs idle. `teardown` is tag-scoped, so legacy entries from earlier
+/// installs (e.g. `Notification`, `PostToolUseFailure`) get cleaned
+/// up on the next teardown without needing a migration shim.
 const HOOK_EVENTS: &[&str] = &[
     EVT_USER_PROMPT_SUBMIT,
     EVT_PRE_TOOL_USE,
     EVT_POST_TOOL_USE,
-    EVT_POST_TOOL_USE_FAILURE,
-    EVT_NOTIFICATION,
     EVT_STOP,
 ];
-
-/// After this many seconds with no hook event, an `Active` session
-/// is downgraded to `Stalled` at render time. Catches the case where
-/// the hook reporter died, the agent crashed mid-tool, or a tool is
-/// running for genuinely longer than expected. Render-only — never
-/// written to the registry, so once an event arrives the row recovers.
-const STALL_AFTER_SECS: u64 = 90;
 
 /// Name of the tmux session that hosts the orchestrator picker.
 /// Matches the binary name so a fresh user can find it via
@@ -82,24 +78,19 @@ fn now_secs() -> u64 {
 // ─────────────────────────────────────────────────────────────────────────────
 // §1 · Session
 
-/// Lifecycle state per session, derived from hook events and
-/// downgraded at render time when activity goes silent. The
-/// distinction that matters most: `Active` (a tool is in flight),
-/// `Thinking` (the agent is deciding what to do — LLM round-trip
-/// or between tools), `Waiting` (Claude raised a notification —
-/// permission prompt, idle timer, etc.; the user needs to look),
-/// `Idle` (Stop fired — last turn complete), `Cold` (registered
-/// but no hooks ever fired), `Stalled` (was Active but no event
-/// in `STALL_AFTER_SECS` — render-only, recovers on next event).
+/// Lifecycle state per session. Two-state machine: a tool is
+/// in flight (`Running`) or it isn't (`Idle`). Everything else
+/// the user might want to know about a session — what claude
+/// is asking, what error it printed, whether it's between
+/// turns or stuck — is read directly from the agent's tmux
+/// pane via `tmux capture-pane`, surfaced in the picker's
+/// preview window. Pane content is the source of truth; the
+/// glyph is just an at-a-glance index.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum State {
-    Cold,
-    Thinking,
-    Active,
-    Waiting,
+    Running,
     Idle,
-    Stalled,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -112,180 +103,45 @@ pub struct Session {
     pub state: State,
     pub state_ts: u64,
     #[serde(default)]
-    pub last_prompt: String,
-    #[serde(default)]
     pub last_event: String,
     #[serde(default)]
     pub last_event_ts: u64,
-    /// Timestamp `UserPromptSubmit` fired for the current turn. 0
-    /// outside an active turn. Used to derive elapsed time and the
-    /// completed-turn duration when `Stop` lands.
-    #[serde(default)]
-    pub prompt_started_at: u64,
-    /// Timestamp `PreToolUse` fired for the current tool. 0 between
-    /// tools. Used to render `0:04` next to a running tool.
-    #[serde(default)]
-    pub tool_started_at: u64,
-    /// `Bash` / `Edit` / etc. — the bare tool name from the most
-    /// recent Pre/PostToolUse payload.
-    #[serde(default)]
-    pub last_tool_name: String,
-    /// Short preview of the tool's input, e.g. `cargo test` for a
-    /// Bash call or `tests/foo.rs` for an Edit. Truncated.
-    #[serde(default)]
-    pub last_tool_preview: String,
-    /// Tool-call count since the last `UserPromptSubmit`. Resets to
-    /// 0 on the next prompt submit; final value is shown on Idle
-    /// rows as "done in 2m31s · 6 tools".
-    #[serde(default)]
-    pub tools_this_turn: u32,
-    /// Wall-clock duration of the most recently completed turn
-    /// (Stop_ts - prompt_started_at). 0 if no turn has completed.
-    #[serde(default)]
-    pub last_turn_duration: u64,
     #[serde(default)]
     pub created_kiro_config: bool,
 }
 
 impl Session {
-    /// Apply one hook event. Bumps `last_event` / `last_event_ts`
-    /// unconditionally; per-event state transitions below. Hooks
-    /// must never block the agent — this body's only failure mode
-    /// is silent default of unknown event names.
-    fn apply_event(&mut self, event: &str, payload: &serde_json::Value, now: u64) {
+    /// Apply one hook event. Always bumps `last_event` /
+    /// `last_event_ts`; flips state to `Running` on `PreToolUse`,
+    /// to `Idle` on every other event. Hooks must never block
+    /// the agent — this body's only failure mode is a silent
+    /// no-op for unrecognised event names. Payload is unused
+    /// today (we don't need prompt / tool_name / tool_input
+    /// fields any more — the picker reads pane content
+    /// directly), but we keep the `&serde_json::Value`
+    /// parameter so a future override on a kind whose payload
+    /// matters can deserialise without changing the signature.
+    fn apply_event(&mut self, event: &str, _payload: &serde_json::Value, now: u64) {
         self.last_event = event.into();
         self.last_event_ts = now;
-        match event {
-            EVT_USER_PROMPT_SUBMIT => {
-                self.state = State::Thinking;
-                self.state_ts = now;
-                self.prompt_started_at = now;
-                self.tool_started_at = 0;
-                self.tools_this_turn = 0;
-                self.last_tool_name.clear();
-                self.last_tool_preview.clear();
-                if let Some(p) = payload.get("prompt").and_then(|v| v.as_str()) {
-                    // 80 scalar values, not graphemes — preview-only,
-                    // splitting a flag emoji's components is fine.
-                    self.last_prompt = p.chars().take(80).collect();
-                }
-            }
-            EVT_PRE_TOOL_USE => {
-                self.state = State::Active;
-                self.state_ts = now;
-                self.tool_started_at = now;
-                if let Some(name) = payload.get("tool_name").and_then(|v| v.as_str()) {
-                    self.last_tool_name = name.into();
-                }
-                self.last_tool_preview =
-                    tool_input_preview(&self.last_tool_name, payload.get("tool_input"));
-            }
-            EVT_POST_TOOL_USE | EVT_POST_TOOL_USE_FAILURE => {
-                self.state = State::Thinking;
-                self.state_ts = now;
-                self.tool_started_at = 0;
-                self.tools_this_turn = self.tools_this_turn.saturating_add(1);
-                if let Some(name) = payload.get("tool_name").and_then(|v| v.as_str()) {
-                    self.last_tool_name = name.into();
-                }
-            }
-            EVT_NOTIFICATION => {
-                // Claude raised a user-visible notification —
-                // commonly a permission prompt or an idle timer.
-                // The agent is not making progress until the user
-                // intervenes. Sticky until the next event clears it.
-                self.state = State::Waiting;
-                self.state_ts = now;
-                self.tool_started_at = 0;
-            }
-            EVT_STOP => {
-                self.state = State::Idle;
-                self.state_ts = now;
-                self.tool_started_at = 0;
-                if self.prompt_started_at > 0 {
-                    self.last_turn_duration = now.saturating_sub(self.prompt_started_at);
-                }
-            }
-            _ => {} // unknown event: only the bumps above
-        }
-    }
-
-    /// Render-time decoration: an `Active` session whose last event
-    /// was more than `STALL_AFTER_SECS` ago is shown as `Stalled`.
-    /// Never written to the registry — recovers as soon as the next
-    /// hook event fires. Caller passes `now` so tests can be
-    /// deterministic.
-    fn effective_state(&self, now: u64) -> State {
-        if matches!(self.state, State::Active)
-            && now.saturating_sub(self.last_event_ts) > STALL_AFTER_SECS
-        {
-            State::Stalled
+        self.state_ts = now;
+        self.state = if event == EVT_PRE_TOOL_USE {
+            State::Running
         } else {
-            self.state.clone()
-        }
+            State::Idle
+        };
     }
 
-    /// Picker row content. Shape varies by state:
-    ///   Active    `▶ <kind> <cwd> · <Tool(preview)> · 0:04`
-    ///   Thinking  `◉ <kind> <cwd> · "<prompt>" · thinking · 1:02`
-    ///   Waiting   `⚠ <kind> <cwd> · waiting (permission?) · 0:23`
-    ///   Idle      `· <kind> <cwd> · done in 2m31s · 6 tools · 7m ago`
-    ///   Cold      `· <kind> <cwd> · —`
-    ///   Stalled   `⊘ <kind> <cwd> · stalled at <Tool(preview)> · 2m04s`
-    /// Caller passes `now` so the elapsed/ago figures are
-    /// rendered consistently across all rows in one snapshot.
-    fn format_row(&self, now: u64) -> String {
-        let st = self.effective_state(now);
-        let glyph = state_glyph(&st);
-        let head = format!("{} {} {}", glyph, self.kind, cwd_tail(&self.cwd));
-        match st {
-            State::Active => {
-                let tool = self.tool_label();
-                let elapsed = duration_short(now.saturating_sub(self.tool_started_at));
-                format!("{head} · {tool} · {elapsed}")
-            }
-            State::Thinking => {
-                let prompt = self.prompt_or_dash();
-                let elapsed = duration_short(now.saturating_sub(self.prompt_started_at));
-                format!("{head} · {prompt} · thinking · {elapsed}")
-            }
-            State::Waiting => {
-                let elapsed = duration_short(now.saturating_sub(self.last_event_ts));
-                format!("{head} · waiting · {elapsed}")
-            }
-            State::Idle => {
-                let dur = duration_short(self.last_turn_duration);
-                let ago = ago(now.saturating_sub(self.last_event_ts));
-                format!(
-                    "{head} · done in {dur} · {} tools · {ago}",
-                    self.tools_this_turn
-                )
-            }
-            State::Stalled => {
-                let tool = self.tool_label();
-                let since = duration_short(now.saturating_sub(self.last_event_ts));
-                format!("{head} · stalled at {tool} · {since} silent")
-            }
-            State::Cold => format!("{head} · —"),
-        }
-    }
-
-    fn tool_label(&self) -> String {
-        if self.last_tool_name.is_empty() {
-            "—".into()
-        } else if self.last_tool_preview.is_empty() {
-            self.last_tool_name.clone()
-        } else {
-            format!("{}({})", self.last_tool_name, self.last_tool_preview)
-        }
-    }
-
-    fn prompt_or_dash(&self) -> &str {
-        if self.last_prompt.is_empty() {
-            "—"
-        } else {
-            self.last_prompt.as_str()
-        }
+    /// Picker row: `<glyph> <kind> <cwd>`. Compact by design —
+    /// the pane preview window carries everything else. Caller
+    /// doesn't pass `now` because the row content no longer has
+    /// any time-sensitive component.
+    fn format_row(&self) -> String {
+        let glyph = match self.state {
+            State::Running => "▶",
+            State::Idle => "·",
+        };
+        format!("{} {} {}", glyph, self.kind, cwd_tail(&self.cwd))
     }
 
     /// "Active at" — max(state_ts, last_event_ts, started). Used by sort.
@@ -293,91 +149,13 @@ impl Session {
         self.state_ts.max(self.last_event_ts).max(self.started)
     }
 
-    /// Sort precedence: doing-something > waiting > idle > cold.
-    /// Stalled sorts with idle so a stuck row doesn't squat at the
-    /// top forever.
-    fn state_group(&self, now: u64) -> u8 {
-        match self.effective_state(now) {
-            State::Active => 0,
-            State::Thinking => 1,
-            State::Waiting => 2,
-            State::Idle => 3,
-            State::Stalled => 4,
-            State::Cold => 5,
+    /// Sort precedence: running first, then idle. Within each
+    /// group, most-recently-active first.
+    fn state_group(&self) -> u8 {
+        match self.state {
+            State::Running => 0,
+            State::Idle => 1,
         }
-    }
-}
-
-/// Glyph prefix per state. Plain ASCII/Unicode without ANSI; fzf
-/// renders the row on its own line so we don't need color escapes
-/// for the picker's pre-built theme to look reasonable. Color
-/// support lives in a follow-up if the user wants it.
-fn state_glyph(state: &State) -> &'static str {
-    match state {
-        State::Active => "▶",
-        State::Thinking => "◉",
-        State::Waiting => "⚠",
-        State::Idle => "·",
-        State::Stalled => "⊘",
-        State::Cold => "·",
-    }
-}
-
-/// Short duration for in-progress timers: `0:04`, `1:23`, `2m04s`,
-/// `1h17m`. Threshold flips at 100s and at 1h to keep the column
-/// width under 6 chars.
-fn duration_short(secs: u64) -> String {
-    if secs < 100 {
-        let m = secs / 60;
-        let s = secs % 60;
-        format!("{}:{:02}", m, s)
-    } else if secs < 3600 {
-        let m = secs / 60;
-        let s = secs % 60;
-        format!("{}m{:02}s", m, s)
-    } else {
-        let h = secs / 3600;
-        let m = (secs % 3600) / 60;
-        format!("{}h{:02}m", h, m)
-    }
-}
-
-/// Human "<n> ago" for stale events. `now`-relative. Rounds toward
-/// the nearest unit: `just now` for <5s, `4s ago`, `7m ago`,
-/// `2h ago`, `3d ago`.
-fn ago(secs: u64) -> String {
-    if secs < 5 {
-        return "just now".into();
-    }
-    if secs < 60 {
-        return format!("{}s ago", secs);
-    }
-    if secs < 3600 {
-        return format!("{}m ago", secs / 60);
-    }
-    if secs < 86400 {
-        return format!("{}h ago", secs / 3600);
-    }
-    format!("{}d ago", secs / 86400)
-}
-
-/// Short preview of a tool's input. Returns "" when we don't
-/// know how to summarize this tool. Per-tool whitelist — keeps
-/// the row predictable; an unknown tool prints just its name.
-fn tool_input_preview(tool: &str, input: Option<&serde_json::Value>) -> String {
-    let Some(v) = input else { return String::new() };
-    let pick = |key: &str| -> Option<String> {
-        v.get(key)
-            .and_then(|x| x.as_str())
-            .map(|s| s.chars().take(40).collect::<String>())
-    };
-    match tool {
-        "Bash" => pick("command").unwrap_or_default(),
-        "Edit" | "Write" | "Read" | "NotebookEdit" => pick("file_path").unwrap_or_default(),
-        "Grep" | "Glob" => pick("pattern").unwrap_or_default(),
-        "Agent" | "Task" => pick("description").unwrap_or_default(),
-        "WebFetch" | "WebSearch" => pick("url").or_else(|| pick("query")).unwrap_or_default(),
-        _ => String::new(),
     }
 }
 
@@ -402,11 +180,11 @@ fn cwd_tail(cwd: &str) -> String {
     }
 }
 
-/// Sort: active > thinking > waiting > idle > stalled > cold;
-/// within group, most-recently-active first.
-fn sort_sessions(sessions: &mut [Session], now: u64) {
+/// Sort: running first, then idle; within each group most-
+/// recently-active first.
+fn sort_sessions(sessions: &mut [Session]) {
     sessions.sort_by(|a, b| {
-        let group = a.state_group(now).cmp(&b.state_group(now));
+        let group = a.state_group().cmp(&b.state_group());
         if group.is_ne() {
             return group;
         }
@@ -1071,17 +849,10 @@ pub fn wrap(w: &dyn Wrapper, ctx: &WrapCtx, side_effects: bool) -> Result<Prepar
             kind: w.kind().into(),
             cwd: ctx.cwd.to_string_lossy().into_owned(),
             started: now,
-            state: State::Cold,
+            state: State::Idle,
             state_ts: now,
-            last_prompt: String::new(),
             last_event: String::new(),
             last_event_ts: 0,
-            prompt_started_at: 0,
-            tool_started_at: 0,
-            last_tool_name: String::new(),
-            last_tool_preview: String::new(),
-            tools_this_turn: 0,
-            last_turn_duration: 0,
             created_kiro_config: prepared.created_kiro_config,
         });
         Ok(prepared)
@@ -1122,17 +893,15 @@ impl<'a> Loop<'a> {
     }
 
     /// Read sessions, filter live pids, sort, format rows.
-    /// Returns `(pane_id, formatted_row)` pairs. `now` is captured
-    /// once so all rows in one snapshot share the same time
-    /// reference (otherwise a "5s ago" / "0:04" reading drifts
-    /// across rows in a slow render).
+    /// Returns `(pane_id, formatted_row)` pairs. Row content is
+    /// time-independent (`<glyph> <kind> <cwd>`); the live
+    /// information lives in the picker's preview window.
     pub fn render(&self) -> Result<Vec<(String, String)>> {
-        let now = now_secs();
         let mut sessions = live_only(self.store.read()?);
-        sort_sessions(&mut sessions, now);
+        sort_sessions(&mut sessions);
         Ok(sessions
             .into_iter()
-            .map(|s| (s.pane_id.clone(), s.format_row(now)))
+            .map(|s| (s.pane_id.clone(), s.format_row()))
             .collect())
     }
 
@@ -1174,22 +943,69 @@ impl<'a> Loop<'a> {
         Ok(())
     }
 
+    /// Capture the last `lines` of pane `pane_id` via
+    /// `tmux capture-pane` and write the raw output to `out`.
+    /// Used by fzf's `--preview` action — the preview window
+    /// shows the agent's actual screen content, which is the
+    /// load-bearing UX signal (state machine is just a glyph).
+    /// Routes through `tmux_cmd` so `$AGENT_ORCH_TMUX_SOCKET`
+    /// (set by the integration script) targets the test server.
+    pub fn peek(&self, pane_id: &str, lines: u32, out: &mut dyn Write) -> Result<()> {
+        let start = format!("-{}", lines);
+        let output = tmux_cmd(&[
+            "capture-pane",
+            "-p",
+            "-t",
+            pane_id,
+            "-E",
+            "-1",
+            "-S",
+            &start,
+        ])
+        .stdout(std::process::Stdio::piped())
+        .output()
+        .context("tmux capture-pane")?;
+        // Pane went away (closed, server restart) → empty output,
+        // not an error. fzf still gets a clean (empty) preview.
+        if output.status.success() {
+            out.write_all(&output.stdout)?;
+        }
+        Ok(())
+    }
+
     /// Event-driven picker loop body. Runs inside the
     /// orchestrator session.
     ///
-    /// `fzf --listen` opens a Unix socket for control commands.
-    /// `--with-nth=2..` shows every column except the pane id;
-    /// `--track --id-nth=1` sticks the highlight to the same
-    /// pane id across reloads (so a state change to the focused
-    /// row doesn't lose the highlight). `enter:execute-silent
-    /// (tmux switch-client -t {1})` is non-terminal — fzf stays
-    /// alive across selections. We push a `reload(self render)`
-    /// command to the listen socket whenever sessions.json
-    /// changes; debounced 100ms by `notify-debouncer-mini`.
+    /// fzf is configured with:
+    /// - `--listen=<sock>` — accept control commands over a UDS.
+    /// - `--with-nth=2..` — show every column except the pane id.
+    /// - `--track --id-nth=1` — keep the cursor on the same pane
+    ///   id across reloads.
+    /// - `--preview '<self> peek {1}'` — show the focused agent's
+    ///   tmux pane content in a side window. This is the truth
+    ///   signal: glyph at-a-glance, preview for everything else.
+    /// - `enter:execute-silent(tmux switch-client -t {1})+clear-query`
+    ///   — non-terminal binding. fzf stays alive across selections.
+    ///
+    /// Two background threads drive updates over the listen
+    /// socket:
+    /// - **Watcher** — `notify-debouncer-mini` on the store dir
+    ///   posts `reload(<self> render)` only when sessions.json
+    ///   actually changes. The list refresh is needed because
+    ///   rows can appear / disappear / change state.
+    /// - **Heartbeat** — every 1 second, posts `refresh-preview`.
+    ///   This re-runs the preview command for the focused row but
+    ///   does **not** touch the list — the cursor stays put, the
+    ///   query stays put, the prompt stays bright. `reload(...)`
+    ///   blocks fzf's input briefly while it re-runs the source;
+    ///   doing that at 1 Hz produced continuous flicker. Splitting
+    ///   the two actions kills the flicker without losing the
+    ///   live-preview feel.
     pub fn body(&self, self_path: &Path) -> Result<()> {
         let sock_path = pick_listen_socket();
         let sock = sock_path.to_string_lossy().to_string();
         let render_cmd = format!("{} render", self_path.display());
+        let preview_cmd = format!("{} peek {{1}}", self_path.display());
         let bind = "enter:execute-silent(tmux switch-client -t {1})+clear-query";
 
         let mut child = std::process::Command::new("fzf")
@@ -1198,6 +1014,9 @@ impl<'a> Loop<'a> {
                 "--with-nth=2..",
                 "--track",
                 "--id-nth=1",
+                "--preview",
+                &preview_cmd,
+                "--preview-window=right:50%",
                 "--bind",
                 bind,
             ])
@@ -1216,10 +1035,12 @@ impl<'a> Loop<'a> {
         }
         drop(child.stdin.take());
 
-        // Watcher → main thread channel. Watcher errors are
-        // surfaced once on stderr, then we keep going (fzf
-        // selections still work without auto-reload).
-        let (tx, rx) = mpsc::channel::<()>();
+        // Single mpsc channel carries `Tick` enums. The watcher
+        // sends `Tick::Reload` on real registry change; the
+        // heartbeat sends `Tick::RefreshPreview` once a second.
+        // Main thread routes each to the corresponding fzf action.
+        let (tx, rx) = mpsc::channel::<Tick>();
+
         let watch_dir = self.store.dir().to_path_buf();
         let watcher_tx = tx.clone();
         thread::spawn(move || {
@@ -1228,36 +1049,45 @@ impl<'a> Loop<'a> {
             }
         });
 
-        // Heartbeat thread: emit a tick once a second so the
-        // picker re-renders even when no hook event has fired.
-        // This keeps elapsed-time columns moving (`0:04` → `0:05`)
-        // and lets `effective_state` demote a silent Active row to
-        // Stalled live, without waiting on the next hook write.
         let heartbeat_tx = tx;
         thread::spawn(move || {
-            while heartbeat_tx.send(()).is_ok() {
+            while heartbeat_tx.send(Tick::RefreshPreview).is_ok() {
                 thread::sleep(Duration::from_secs(1));
             }
         });
 
         loop {
-            // Block up to 200ms on a watcher tick. If one
-            // arrives, push reload to fzf. Either way, poll the
-            // child between iterations so we can exit when fzf
-            // does (Esc / Ctrl-C / kill).
             match rx.recv_timeout(Duration::from_millis(200)) {
-                Ok(()) => {
-                    // Drain any backlog so we coalesce bursts
-                    // into one reload.
-                    while rx.try_recv().is_ok() {}
-                    if let Err(e) = push_reload(&sock_path, &render_cmd) {
-                        eprintln!("agent-orch reload: {e:#}");
+                Ok(tick) => {
+                    let mut want_reload = matches!(tick, Tick::Reload);
+                    let mut want_refresh = matches!(tick, Tick::RefreshPreview);
+                    // Drain any backlog so a burst of identical
+                    // ticks coalesces into one outgoing action.
+                    while let Ok(more) = rx.try_recv() {
+                        match more {
+                            Tick::Reload => want_reload = true,
+                            Tick::RefreshPreview => want_refresh = true,
+                        }
+                    }
+                    if want_reload {
+                        if let Err(e) = push_action(&sock_path, &format!("reload({render_cmd})")) {
+                            eprintln!("agent-orch reload: {e:#}");
+                        }
+                        // After a reload, the focused row may have
+                        // shifted; refresh the preview too so it
+                        // tracks the new selection.
+                        want_refresh = true;
+                    }
+                    if want_refresh {
+                        if let Err(e) = push_action(&sock_path, "refresh-preview") {
+                            eprintln!("agent-orch refresh-preview: {e:#}");
+                        }
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    // Watcher died; loop continues without
-                    // auto-reload. fzf selections still work.
+                    // Watcher AND heartbeat both gone — fzf
+                    // selections still work, just no live updates.
                 }
             }
             if let Some(_status) = child.try_wait().context("fzf try_wait")? {
@@ -1267,6 +1097,16 @@ impl<'a> Loop<'a> {
         let _ = fs::remove_file(&sock_path);
         Ok(())
     }
+}
+
+/// Tick reasons the picker main loop receives. Drives whether
+/// we send fzf a `reload(...)` (rebuild the list) or a
+/// `refresh-preview` (rerun preview only — no flicker).
+enum Tick {
+    /// Real registry change observed by the notify watcher.
+    Reload,
+    /// 1 Hz heartbeat from the preview-refresh thread.
+    RefreshPreview,
 }
 
 /// Pick a path for fzf's listen socket. Prefer
@@ -1283,10 +1123,10 @@ fn pick_listen_socket() -> PathBuf {
 }
 
 /// Watch the store dir for sessions.json changes; emit one
-/// `()` per debounced batch. Debounce window is 100ms — short
-/// enough that the picker feels live, long enough to coalesce
-/// the tmp+rename pair an atomic write produces.
-fn run_watcher(dir: &Path, tx: mpsc::Sender<()>) -> Result<()> {
+/// `Tick::Reload` per debounced batch. Debounce window is 100ms
+/// — short enough that the picker feels live, long enough to
+/// coalesce the tmp+rename pair an atomic write produces.
+fn run_watcher(dir: &Path, tx: mpsc::Sender<Tick>) -> Result<()> {
     use notify::RecursiveMode;
     use notify_debouncer_mini::new_debouncer;
 
@@ -1312,7 +1152,7 @@ fn run_watcher(dir: &Path, tx: mpsc::Sender<()>) -> Result<()> {
                 .map(|n| n == target)
                 .unwrap_or(false)
         });
-        if interesting && tx.send(()).is_err() {
+        if interesting && tx.send(Tick::Reload).is_err() {
             // main loop dropped the receiver — fzf exited
             break;
         }
@@ -1320,11 +1160,11 @@ fn run_watcher(dir: &Path, tx: mpsc::Sender<()>) -> Result<()> {
     Ok(())
 }
 
-/// Push `reload(<cmd>)` to fzf's listen socket. fzf speaks
-/// HTTP/1.1 over the UDS — the request body is the action
-/// string, no special framing beyond Content-Length.
-fn push_reload(sock: &Path, render_cmd: &str) -> Result<()> {
-    let body = format!("reload({render_cmd})");
+/// Push an action string to fzf's listen socket. fzf speaks
+/// HTTP/1.1 over the UDS; the request body is the action,
+/// no special framing beyond Content-Length. Used for both
+/// `reload(...)` and `refresh-preview`.
+fn push_action(sock: &Path, action: &str) -> Result<()> {
     let mut stream =
         UnixStream::connect(sock).with_context(|| format!("connect {}", sock.display()))?;
     stream
@@ -1335,12 +1175,12 @@ fn push_reload(sock: &Path, render_cmd: &str) -> Result<()> {
         .ok();
     let request = format!(
         "POST / HTTP/1.1\r\nHost: fzf\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
+        action.len(),
+        action
     );
     stream
         .write_all(request.as_bytes())
-        .context("write reload")?;
+        .context("write fzf action")?;
     // Drain the response so fzf doesn't see a half-closed
     // socket. We don't parse it — any 2xx/4xx is acceptable;
     // a connection error already surfaces above.
@@ -1399,6 +1239,15 @@ enum Cmd {
     /// the loop body's fzf reload action.
     #[command(hide = true)]
     Render,
+    /// Print the last N lines of pane <pane-id> via
+    /// `tmux capture-pane`. Used by the loop body's
+    /// fzf --preview action.
+    #[command(hide = true)]
+    Peek {
+        pane_id: String,
+        #[arg(long, default_value_t = 10)]
+        lines: u32,
+    },
 }
 
 fn main() -> Result<()> {
@@ -1475,6 +1324,11 @@ fn main() -> Result<()> {
             let mut stdout = std::io::stdout();
             Loop::new(&store).render_to(&mut stdout)
         }
+
+        Some(Cmd::Peek { pane_id, lines }) => {
+            let mut stdout = std::io::stdout();
+            Loop::new(&store).peek(&pane_id, lines, &mut stdout)
+        }
     }
 }
 
@@ -1525,32 +1379,18 @@ mod tests {
             kind: kind.into(),
             cwd: cwd.into(),
             started,
-            state: State::Cold,
+            state: State::Idle,
             state_ts: started,
-            last_prompt: String::new(),
             last_event: String::new(),
             last_event_ts: 0,
-            prompt_started_at: 0,
-            tool_started_at: 0,
-            last_tool_name: String::new(),
-            last_tool_preview: String::new(),
-            tools_this_turn: 0,
-            last_turn_duration: 0,
             created_kiro_config: false,
         }
     }
 
-    /// Helper: build the JSON payload an apply_event call expects.
-    fn payload(prompt: Option<&str>, tool: Option<&str>) -> serde_json::Value {
-        use serde_json::json;
-        let mut obj = serde_json::Map::new();
-        if let Some(p) = prompt {
-            obj.insert("prompt".into(), json!(p));
-        }
-        if let Some(t) = tool {
-            obj.insert("tool_name".into(), json!(t));
-        }
-        json!(obj)
+    /// Empty payload — apply_event ignores the fields today, but
+    /// the signature still takes a `&serde_json::Value`.
+    fn empty_payload() -> serde_json::Value {
+        serde_json::json!({})
     }
 
     // 2 · Store + WrapCtx fixtures ───────────────────────────────
@@ -1584,153 +1424,72 @@ mod tests {
     // 3 · Session — apply_event + format_row + sort ──────────────
 
     #[test]
-    fn session_apply_event_walks_thinking_active_thinking_idle() {
+    fn session_apply_event_pre_tool_use_marks_running() {
         let mut s = mk("%1", "claude", "/repo", 1000);
-
-        // Submit prompt → Thinking, prompt_started_at recorded.
-        s.apply_event(EVT_USER_PROMPT_SUBMIT, &payload(Some("hello"), None), 1100);
-        assert_eq!(s.state, State::Thinking);
-        assert_eq!(s.last_prompt, "hello");
-        assert_eq!(s.prompt_started_at, 1100);
-        assert_eq!(s.tools_this_turn, 0);
-
-        // Tool starts → Active, tool_started_at recorded.
-        s.apply_event(EVT_PRE_TOOL_USE, &payload(None, Some("Bash")), 1200);
-        assert_eq!(s.state, State::Active);
-        assert_eq!(s.tool_started_at, 1200);
-        assert_eq!(s.last_tool_name, "Bash");
-
-        // Tool ends → back to Thinking, count bumped.
-        s.apply_event(EVT_POST_TOOL_USE, &payload(None, Some("Bash")), 1250);
-        assert_eq!(s.state, State::Thinking);
-        assert_eq!(s.tool_started_at, 0);
-        assert_eq!(s.tools_this_turn, 1);
-
-        // Stop → Idle, last_turn_duration recorded.
-        s.apply_event(EVT_STOP, &payload(None, None), 1300);
         assert_eq!(s.state, State::Idle);
-        assert_eq!(s.last_turn_duration, 200); // 1300 - 1100
+        s.apply_event(EVT_PRE_TOOL_USE, &empty_payload(), 1200);
+        assert_eq!(s.state, State::Running);
+        assert_eq!(s.last_event, "PreToolUse");
+        assert_eq!(s.last_event_ts, 1200);
+        assert_eq!(s.state_ts, 1200);
     }
 
     #[test]
-    fn session_apply_event_notification_sets_waiting() {
-        let mut s = mk("%1", "claude", "/repo", 1);
-        s.apply_event(EVT_USER_PROMPT_SUBMIT, &payload(Some("ok"), None), 100);
-        s.apply_event(EVT_NOTIFICATION, &payload(None, None), 200);
-        assert_eq!(s.state, State::Waiting);
-    }
-
-    #[test]
-    fn session_apply_event_post_tool_failure_counts_and_thinks() {
-        // PostToolUseFailure should be treated like PostToolUse:
-        // count it as a completed tool call and return to Thinking.
-        let mut s = mk("%1", "claude", "/repo", 1);
-        s.apply_event(EVT_USER_PROMPT_SUBMIT, &payload(Some("x"), None), 100);
-        s.apply_event(EVT_PRE_TOOL_USE, &payload(None, Some("Bash")), 110);
-        s.apply_event(EVT_POST_TOOL_USE_FAILURE, &payload(None, Some("Bash")), 120);
-        assert_eq!(s.state, State::Thinking);
-        assert_eq!(s.tools_this_turn, 1);
-    }
-
-    #[test]
-    fn session_apply_event_truncates_long_prompt() {
-        let mut s = mk("%1", "claude", "/repo", 1);
-        s.apply_event(
-            EVT_USER_PROMPT_SUBMIT,
-            &payload(Some(&"x".repeat(200)), None),
-            2,
-        );
-        assert_eq!(s.last_prompt.chars().count(), 80);
-    }
-
-    #[test]
-    fn session_format_row_active_shows_tool_and_elapsed() {
-        let mut s = mk("%1", "claude", "/home/me/repo/foo", 1000);
-        s.state = State::Active;
-        s.tool_started_at = 1100;
-        s.last_event_ts = 1100; // recent — not stalled
-        s.last_tool_name = "Bash".into();
-        s.last_tool_preview = "cargo test".into();
-        let row = s.format_row(1104);
-        assert!(row.contains('▶'), "row: {row}");
-        assert!(row.contains("repo/foo"));
-        assert!(row.contains("Bash(cargo test)"));
-        assert!(row.contains("0:04"));
-    }
-
-    #[test]
-    fn session_format_row_thinking_shows_prompt_and_thinking() {
+    fn session_apply_event_post_tool_use_returns_to_idle() {
         let mut s = mk("%1", "claude", "/repo", 1000);
-        s.state = State::Thinking;
-        s.last_prompt = "fix tests".into();
-        s.prompt_started_at = 1100;
-        let row = s.format_row(1162);
-        assert!(row.contains('◉'), "row: {row}");
-        assert!(row.contains("fix tests"));
-        assert!(row.contains("thinking"));
-        assert!(row.contains("1:02"));
+        s.apply_event(EVT_PRE_TOOL_USE, &empty_payload(), 1200);
+        assert_eq!(s.state, State::Running);
+        s.apply_event(EVT_POST_TOOL_USE, &empty_payload(), 1250);
+        assert_eq!(s.state, State::Idle);
     }
 
     #[test]
-    fn session_format_row_waiting_shows_glyph_and_age() {
-        let mut s = mk("%1", "claude", "/repo", 1);
-        s.state = State::Waiting;
-        s.last_event_ts = 100;
-        let row = s.format_row(123);
-        assert!(row.contains('⚠'), "row: {row}");
-        assert!(row.contains("waiting"));
+    fn session_apply_event_user_prompt_submit_keeps_idle() {
+        // UserPromptSubmit alone doesn't flip running. Only PreToolUse
+        // does. (Claude can submit a prompt and answer entirely from
+        // context with no tool calls.)
+        let mut s = mk("%1", "claude", "/repo", 1000);
+        s.apply_event(EVT_USER_PROMPT_SUBMIT, &empty_payload(), 1100);
+        assert_eq!(s.state, State::Idle);
+        assert_eq!(s.last_event, "UserPromptSubmit");
     }
 
     #[test]
-    fn session_format_row_idle_shows_done_in_and_tools_and_ago() {
-        let mut s = mk("%1", "claude", "/repo", 1);
-        s.state = State::Idle;
-        s.last_event_ts = 1000; // Stop fired here
-        s.last_turn_duration = 151; // 2m31s
-        s.tools_this_turn = 6;
-        let row = s.format_row(1420); // 7m later
+    fn session_apply_event_stop_marks_idle() {
+        let mut s = mk("%1", "claude", "/repo", 1000);
+        s.apply_event(EVT_PRE_TOOL_USE, &empty_payload(), 1100);
+        s.apply_event(EVT_STOP, &empty_payload(), 1300);
+        assert_eq!(s.state, State::Idle);
+    }
+
+    #[test]
+    fn session_apply_event_unknown_event_keeps_idle_but_bumps_event_ts() {
+        // Unknown events still update last_event/last_event_ts (so
+        // sort sees the activity), but don't flip to Running.
+        let mut s = mk("%1", "claude", "/repo", 1000);
+        s.apply_event("SomethingWeDontKnow", &empty_payload(), 9999);
+        assert_eq!(s.state, State::Idle);
+        assert_eq!(s.last_event, "SomethingWeDontKnow");
+        assert_eq!(s.last_event_ts, 9999);
+    }
+
+    #[test]
+    fn session_format_row_running_shows_running_glyph() {
+        let mut s = mk("%1", "claude", "/home/me/repo/foo", 1000);
+        s.state = State::Running;
+        let row = s.format_row();
+        assert!(row.starts_with("▶ "), "row: {row}");
+        assert!(row.contains("claude"));
+        assert!(row.contains("repo/foo"));
+    }
+
+    #[test]
+    fn session_format_row_idle_shows_idle_glyph() {
+        let s = mk("%1", "kiro", "/repo", 1);
+        let row = s.format_row();
         assert!(row.starts_with("· "), "row: {row}");
-        assert!(row.contains("done in 2m31s"));
-        assert!(row.contains("6 tools"));
-        assert!(row.contains("7m ago"));
-    }
-
-    #[test]
-    fn session_format_row_cold_shows_em_dash() {
-        let s = mk("%1", "claude", "/repo", 1);
-        assert!(s.format_row(2).contains("·"));
-        assert!(s.format_row(2).contains("—"));
-    }
-
-    #[test]
-    fn session_effective_state_demotes_active_to_stalled_after_silence() {
-        let mut s = mk("%1", "claude", "/repo", 1);
-        s.state = State::Active;
-        s.last_event_ts = 100;
-        // Within window: stays Active.
-        assert_eq!(s.effective_state(100 + STALL_AFTER_SECS), State::Active);
-        // Past window: demoted.
-        assert_eq!(
-            s.effective_state(100 + STALL_AFTER_SECS + 1),
-            State::Stalled
-        );
-    }
-
-    #[test]
-    fn session_state_group_orders_doing_first_idle_last() {
-        let mut s = mk("%1", "claude", "/x", 0);
-        let now = 1_000_000;
-        s.state = State::Active;
-        s.last_event_ts = now;
-        assert_eq!(s.state_group(now), 0);
-        s.state = State::Thinking;
-        assert_eq!(s.state_group(now), 1);
-        s.state = State::Waiting;
-        assert_eq!(s.state_group(now), 2);
-        s.state = State::Idle;
-        assert_eq!(s.state_group(now), 3);
-        s.state = State::Cold;
-        assert_eq!(s.state_group(now), 5);
+        assert!(row.contains("kiro"));
+        assert!(row.contains("repo"));
     }
 
     #[test]
@@ -1742,59 +1501,24 @@ mod tests {
     }
 
     #[test]
-    fn duration_short_formats_across_thresholds() {
-        assert_eq!(duration_short(0), "0:00");
-        assert_eq!(duration_short(4), "0:04");
-        assert_eq!(duration_short(99), "1:39");
-        assert_eq!(duration_short(151), "2m31s");
-        assert_eq!(duration_short(3600), "1h00m");
-        assert_eq!(duration_short(4577), "1h16m");
-    }
-
-    #[test]
-    fn ago_formats_across_thresholds() {
-        assert_eq!(ago(0), "just now");
-        assert_eq!(ago(3), "just now");
-        assert_eq!(ago(7), "7s ago");
-        assert_eq!(ago(120), "2m ago");
-        assert_eq!(ago(7200), "2h ago");
-    }
-
-    #[test]
-    fn tool_input_preview_picks_per_tool_field() {
-        use serde_json::json;
-        assert_eq!(
-            tool_input_preview("Bash", Some(&json!({"command": "cargo test"}))),
-            "cargo test"
-        );
-        assert_eq!(
-            tool_input_preview("Edit", Some(&json!({"file_path": "/x/y.rs"}))),
-            "/x/y.rs"
-        );
-        assert_eq!(
-            tool_input_preview("UnknownTool", Some(&json!({"command": "x"}))),
-            ""
-        );
-    }
-
-    #[test]
-    fn sort_sessions_active_first_thinking_next_idle_last_recent_first() {
+    fn sort_sessions_running_first_idle_next_recent_first_within_group() {
         let now = 1_000_000;
         let mut a = mk("%a", "claude", "/x", 100);
         a.state = State::Idle;
         a.state_ts = 200;
         a.last_event_ts = 200;
         let mut b = mk("%b", "claude", "/y", 100);
-        b.state = State::Active;
+        b.state = State::Running;
         b.state_ts = 150;
-        b.last_event_ts = now - 5; // recent so not stalled, but older than c
+        b.last_event_ts = now - 5; // running, but older than c
         let mut c = mk("%c", "claude", "/z", 100);
-        c.state = State::Active;
+        c.state = State::Running;
         c.state_ts = 300;
-        c.last_event_ts = now; // most recent activity
-        let d = mk("%d", "kiro", "/w", 100); // Cold
+        c.last_event_ts = now;
+        let d = mk("%d", "kiro", "/w", 100); // idle, oldest
+        let _ = now;
         let mut v = vec![a, b, c, d];
-        sort_sessions(&mut v, now);
+        sort_sessions(&mut v);
         assert_eq!(
             v.iter().map(|s| s.pane_id.as_str()).collect::<Vec<_>>(),
             vec!["%c", "%b", "%a", "%d"]
@@ -2180,7 +1904,7 @@ mod tests {
         assert_eq!(v[0].pane_id, "%42");
         assert_eq!(v[0].kind, "claude");
         assert_eq!(v[0].pid, std::process::id() as i32);
-        assert_eq!(v[0].state, State::Cold);
+        assert_eq!(v[0].state, State::Idle);
         assert!(!v[0].created_kiro_config);
     }
 
@@ -2317,7 +2041,7 @@ mod tests {
     // 8 · Wrapper — hook (default trait method) ──────────────────
 
     #[test]
-    fn hook_user_prompt_submit_marks_running_and_stores_prompt() {
+    fn hook_pre_tool_use_marks_running() {
         let (dir, store) = fixtures();
         let cwd = dir.path().to_path_buf();
         let argv = vec!["stub".to_string()];
@@ -2325,19 +2049,18 @@ mod tests {
         let ctx = ctx(&store, "%9", &cwd, &argv, &self_path);
         wrap(&Claude, &ctx, false).unwrap();
 
-        let payload = br#"{"prompt":"fix the test"}"#.to_vec();
         Claude
             .hook(
                 &store,
                 "%9",
-                EVT_USER_PROMPT_SUBMIT,
-                &mut Cursor::new(payload),
+                EVT_PRE_TOOL_USE,
+                &mut Cursor::new(b"{}".to_vec()),
                 1234,
             )
             .unwrap();
         let v = store.read().unwrap();
-        assert_eq!(v[0].state, State::Thinking);
-        assert_eq!(v[0].last_prompt, "fix the test");
+        assert_eq!(v[0].state, State::Running);
+        assert_eq!(v[0].last_event_ts, 1234);
     }
 
     #[test]
@@ -2348,6 +2071,17 @@ mod tests {
         let self_path = PathBuf::from("/test/agent-orch");
         let ctx = ctx(&store, "%1", &cwd, &argv, &self_path);
         wrap(&Claude, &ctx, false).unwrap();
+        // Drive into Running first so we can observe the flip back.
+        Claude
+            .hook(
+                &store,
+                "%1",
+                EVT_PRE_TOOL_USE,
+                &mut Cursor::new(b"{}".to_vec()),
+                50,
+            )
+            .unwrap();
+        assert_eq!(store.read().unwrap()[0].state, State::Running);
 
         Claude
             .hook(&store, "%1", EVT_STOP, &mut Cursor::new(b"{}".to_vec()), 99)
@@ -2385,13 +2119,12 @@ mod tests {
         Kiro.hook(
             &store,
             "%7",
-            EVT_USER_PROMPT_SUBMIT,
-            &mut Cursor::new(br#"{"prompt":"hi"}"#.to_vec()),
+            EVT_PRE_TOOL_USE,
+            &mut Cursor::new(b"{}".to_vec()),
             42,
         )
         .unwrap();
-        assert_eq!(store.read().unwrap()[0].state, State::Thinking);
-        assert_eq!(store.read().unwrap()[0].last_prompt, "hi");
+        assert_eq!(store.read().unwrap()[0].state, State::Running);
     }
 
     // 9 · unregister + Loop ──────────────────────────────────────
@@ -2424,12 +2157,12 @@ mod tests {
         store
             .mutate(|v| {
                 let mut alive = mk("%alive", "claude", "/x", 1);
-                alive.state = State::Active;
+                alive.state = State::Running;
                 alive.state_ts = 100;
                 alive.last_event_ts = now_secs();
                 let mut dead = mk("%dead", "claude", "/y", 2);
                 dead.pid = 1; // overwhelmingly likely dead/inaccessible
-                dead.state = State::Active;
+                dead.state = State::Running;
                 v.push(alive);
                 v.push(dead);
                 Ok(())
@@ -2453,9 +2186,7 @@ mod tests {
         store
             .mutate(|v| {
                 let mut s = mk("%alive", "claude", "/repo/foo", 1);
-                s.state = State::Thinking;
-                s.last_prompt = "do a thing".into();
-                s.prompt_started_at = 100;
+                s.state = State::Running;
                 s.last_event_ts = now_secs();
                 v.push(s);
                 Ok(())
@@ -2470,8 +2201,26 @@ mod tests {
         let mut parts = lines[0].splitn(2, '\t');
         assert_eq!(parts.next().unwrap(), "%alive");
         let row = parts.next().unwrap();
+        assert!(row.contains("▶"));
         assert!(row.contains("claude"));
         assert!(row.contains("repo/foo"));
-        assert!(row.contains("do a thing"));
+    }
+
+    #[test]
+    fn loop_peek_emits_empty_for_unknown_pane() {
+        // peek shells out to `tmux capture-pane`. With a bogus pane
+        // id, tmux exits non-zero; peek's contract is "graceful empty
+        // output, no error". (The real-pane path is exercised by the
+        // integration script.)
+        let (_dir, store) = fixtures();
+        let mut buf = Vec::new();
+        Loop::new(&store)
+            .peek("%not-a-real-pane", 5, &mut buf)
+            .unwrap();
+        assert!(
+            buf.is_empty(),
+            "expected empty output, got {} bytes",
+            buf.len()
+        );
     }
 }
