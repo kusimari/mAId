@@ -112,7 +112,18 @@ Part of initiative: [[<name>]]
 
 ## Implementation Plan
 
-<ordered task list with risk notes>
+<!-- Markdown task-list shape. One slice per item. Tick
+     `- [ ]` to `- [x]` in the same commit that completes
+     the slice. Mid-slice work stays unchecked. The §8.1
+     reconcile sweep greps for unchecked boxes at closure. -->
+
+- [ ] <slice 1>
+- [ ] <slice 2>
+- [ ] <slice 3>
+
+<!-- Risk notes: bullet list under the checklist. -->
+
+- *Risk note:* <consideration>
 
 ## Session Log
 

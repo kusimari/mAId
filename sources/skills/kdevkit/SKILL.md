@@ -1,7 +1,7 @@
 ---
 name: kdevkit
 description: Spec-driven development workflow — four tiers (project / initiative / feature / backlog), locate spec tree, load context, start a session, run it through planning → dev loop → closure with phase-gating cues, ship via Conventional Commits and Quality/Test/Code-Review/Push/Review gates. Three-phase feature branch on a single PR/CR; main stays single-commit-per-feature via squash. Multi-stream initiatives carry the persistent "you're in stream 2 of 3" context across feature branches. Multi-file skill (always-on SKILL.md + deferred setup.md and interviews.md loaded on demand). Public-repo hygiene. Auto-detects specs/, docs/specs/, or .kdevkit/.
-version: 3.2.0
+version: 3.3.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, initiative, public-repo]
 ---
 
@@ -279,8 +279,13 @@ These fire during phase execution to influence boundaries
 
 ### Keep the feature file current
 
-Update `Session Log` / `Decision Log` after each unit of work;
-don't batch.
+Update `Session Log` / `Decision Log` after each unit of
+work; don't batch. When the Implementation Plan uses
+checkbox shape (`- [ ]`), tick the corresponding box to
+`- [x]` in the same commit that completes the slice — the
+ticked spec is part of the dev commit, not a closure-time
+sweep. §8.1 reconcile is the safety net for slices ticked
+late or missed; the live discipline lives here.
 
 ### Initiative-stream auto-link
 
@@ -296,6 +301,15 @@ spec-already-drafted rule), or `<feature>` is being started
 fresh.
 
 ### Four short interviews
+
+**Ground first.** Before opening interview 1, read
+`project.md`, scan related feature specs in
+`$SPEC_ROOT/feature/`, and survey the corners of the
+codebase the feature touches. The interview is calibrated
+to what's there now, not the user's recollection. Findings
+worth keeping land in the Session Log as work progresses;
+the grounding step does not introduce a new artefact (no
+`research.md`).
 
 When entering a feature with no spec on disk (start mode), run
 four short interviews in fixed order — Requirements → Test
@@ -604,15 +618,46 @@ must be asked even when the answer is "none" — *asking is the
 artifact*.
 
 **1 · Reconcile in-flight markers.** Sweep
-`$SPEC_ROOT/feature/<feature>.md` for unchecked Implementation
-Plan items, open Decision Log entries, unresolved questions.
-Resolve in place or move out (backlog or follow-up feature).
-The merged spec is "done in place" — do not move directories.
-Stage edits.
+`$SPEC_ROOT/feature/<feature>.md`. Implementation Plan items
+in checkbox shape: literal grep for `- [ ]` markers; tick to
+`- [x]` if quietly done, or move out (backlog or follow-up
+feature). Implementation Plan items in older prose-numbered
+shape: read each and resolve. Then sweep open Decision Log
+entries and unresolved questions the same way. The merged
+spec is "done in place" — do not move directories. Stage
+edits.
 
-**2 · Soft `project.md` verify.** Offer to update `project.md`
-with what changed. Decline is fine; not a hard block. Stage
-accepted edits.
+**2 · `project.md` verify (per touched section).** For each
+`project.md` section the feature touched — Mission,
+Architecture, Tech Stack, Layout, Testing, Deployment, Hard
+constraints, Agent Development — ask one targeted question:
+_"Did this feature change what's documented under
+\<section\>?"_. Asking is mandatory; declining the edit
+is fine. Stage any accepted edits.
+
+Decide which sections were touched from the diff:
+
+- **Tech Stack** — a dependency added/removed, or a runtime
+  version moved.
+- **Layout** — a top-level directory or file gained/lost,
+  per project.md's tree.
+- **Testing** — a test command added/removed, or a layer's
+  semantics changed.
+- **Deployment** — the deploy/install path or registry
+  changed.
+- **Architecture** — a documented moving part gained or
+  lost a responsibility.
+- **Mission** — meaningful shift in what the project is
+  for. Rare.
+- **Hard constraints** — a new invariant, or an old one
+  weakened.
+- **Agent Development** — a `kdevkit` (or other skill)
+  block key changed, or a new skill-scoped preference
+  landed.
+
+Untouched sections aren't asked about. The asking is the
+artifact; the user can answer "no, project.md is fine"
+for every touched section and closure proceeds.
 
 **3 · Backlog cleanup (interactive).** List
 `$SPEC_ROOT/backlog/`; ask: _"Which backlog items did this
@@ -779,6 +824,35 @@ In public-repo mode, any hit fails loud, surfaces lines, aborts.
 
 No commented-out code, debug prints, temp files, secrets, or
 credentials in commits.
+
+### Spec-discipline anti-patterns
+
+These are the failure modes that survive the Quality / Test
+/ Code Review gates because the gates check the diff, not
+the diff's relationship to the plan. Fire proactively
+during dev, not reactively at review.
+
+- **No scope creep mid-dev.** The Implementation Plan items
+  in the feature spec are the contract. If new work
+  surfaces during dev, either add it to the Plan and
+  confirm with the user, or move it to
+  `$SPEC_ROOT/backlog/`. Don't silently expand the diff.
+- **No unrelated refactor bundling.** One feature = one
+  focused diff. Drive-by cleanups in unrelated files
+  belong in their own feature or a `chore(<scope>):`
+  follow-up — not bundled into the feature's commits.
+- **No premature closure.** The closure cue (`"close it"`
+  / `"ship it"` / `"merge it"` / `"feature done"`) is a
+  hard gate. Quality + Test + Code Review passing is
+  necessary but not sufficient; the explicit cue is
+  required even when everything looks done.
+- **No silent plan amendments.** Changes to the
+  Implementation Plan after the Planning Review Gate
+  opens warrant a one-liner in the Decision Log
+  (rationale + what shifted). Reviewers see the
+  original plan in the Planning Review commit; the
+  closing diff should be reconcilable to that plan plus
+  the Decision Log entries.
 
 ### Skill-file placement
 
