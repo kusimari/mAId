@@ -15,15 +15,33 @@ success criteria are declared before the design converges —
 the dev loop (SKILL.md §7) then has a verifiable target, not
 a sketch to validate after the fact.
 
-1. **Requirements.** Problem? Who interacts? Acceptance
-   criterion?
-2. **Test strategy.** Per `project.md`'s Testing section: which
-   layers fire for this change, what are the success criteria,
-   what's load-bearing vs. nice-to-have? Map onto existing test
-   commands; don't invent new layers.
-3. **Design.** Technical approach, components, interactions,
-   trade-offs.
+1. **Requirements (the experience layer).** How does the
+   user experience the capability — what do they touch, what
+   do they observe? For a CLI, flags and output. For an app,
+   screens and visible state. For a skill change, the cues
+   the agent recognises and the artefacts it produces. For a
+   service, request shape and response. Library names,
+   internal file paths, function/schema names, and protocol
+   verbs go in Design — not here. (See SKILL.md §6's
+   Requirements smell test.)
+2. **Test strategy.** Per `project.md`'s Testing section:
+   which layers fire for this change, what are the success
+   criteria, what's load-bearing vs. nice-to-have? Map onto
+   existing test commands; don't invent new layers. The
+   V-model pairing — functional/integration cases verify
+   Requirements in user-observable terms; unit tests verify
+   Design primitives — is the default; situation overrides
+   when it doesn't fit.
+3. **Design.** Lead with rationale — why this shape, what
+   was considered and rejected. Then the technical approach:
+   components, interactions, trade-offs. A reader shouldn't
+   reach the end of Design before learning why it's shaped
+   the way it is.
 4. **Implementation plan.** Ordered tasks + risk notes.
+
+The interviews are scaffolding — the actual spec layout
+adapts to what the feature needs. The skill's strictness
+lives in the gates (§6 / §7 / §8), not in heading shape.
 
 After the four interviews, write the feature spec from the
 template below, then return to SKILL.md §6's Plan-commit rule
@@ -41,7 +59,11 @@ template below, then return to SKILL.md §6's Plan-commit rule
 
 ## Feature Brief
 
-<one paragraph — what this feature is and why it is being built>
+<!-- The capability layer — what can the user now do that
+     they couldn't before? Don't describe the experience or
+     the design here; those have their own sections. -->
+
+<one paragraph — the new capability>
 
 <!-- Optional, populated by SKILL.md §6 auto-link when this
      feature is a stream of an active initiative:
@@ -50,15 +72,43 @@ Part of initiative: [[<name>]]
 
 ## Requirements
 
-<bullet list>
+<!-- The experience layer — what the user touches and
+     observes. CLI: flags and output. App: screens and
+     visible state. Skill change: the cues the agent
+     recognises and the artefacts it produces. Service:
+     request shape and response.
+
+     Smell test (SKILL.md §6): library names, internal
+     file paths, function/schema names, and protocol verbs
+     belong in Design, not here.
+
+     Split into ### Launch experience (one-shot) and
+     ### Runtime experience (ongoing) when both apply;
+     keep it a single block otherwise. -->
+
+<bullet list — what the user observes>
 
 ## Test Strategy
 
-<success criteria mapped onto project.md test layers>
+<!-- Success criteria mapped onto project.md test layers.
+     V-model default: functional/integration tests verify
+     Requirements in user-observable terms; unit tests
+     verify Design primitives. Group cases under H3
+     subheadings (### Functional / Integration, ### Unit
+     Tests, ### Smoke, etc.) when the spec has enough test
+     surface to warrant it; keep it flat otherwise. -->
+
+<success criteria, mapped onto project.md test layers>
 
 ## Design
 
-<technical approach, components, interactions>
+<!-- The "how" layer — schemas, plumbing, libraries,
+     project conventions. Lead with rationale: why this
+     shape, what was considered and rejected. The reader
+     shouldn't reach the end of Design before learning why
+     it's shaped the way it is. -->
+
+<rationale first; then technical approach, components, interactions>
 
 ## Implementation Plan
 
