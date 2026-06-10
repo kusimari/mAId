@@ -2,7 +2,13 @@
 
 ## Git Setup
 
-- Branch: `feat/agent-session-orchestrator`
+- Branch: `feat/agent-session-orchestrator` — the design and
+  initial implementation. **Not yet merge-ready** (see
+  Implementation Plan → Open issues).
+- Follow-up branch: `feat/agent-orch-fix` (off the same base)
+  — picks up the loop-UI polish, real-tmux verification, and
+  the spec ↔ code reconciliation. Worktree at
+  `/local/home/gorantls/tool-workplace/ai-workspace/mAId-agent-orch-fix`.
 - Base: `main`
 
 ## Feature Brief
@@ -893,11 +899,14 @@ codebase top-to-bottom.
 
 ## Implementation Plan
 
-v1 lands the bones (binary, hooks, picker shell). The
-loop-UI redesign (two-state + pane preview) and the
-stale-shell PATH risk are the next slice.
+v1 is **incomplete — needs more work before merge.** The bones
+are in place (single binary, hooks, picker, keybind, two-state
++ preview), but real use surfaced friction the spec hadn't
+anticipated. Open work continues on a follow-up branch
+(`feat/agent-orch-fix`) checked out alongside the main feature
+branch.
 
-### Shipped — v1 bones
+### Status — what's landed
 
 - Single binary, three user-facing verbs + bare invocation.
 - Claude hook reporter wired through user-global `setup` /
@@ -906,38 +915,50 @@ stale-shell PATH risk are the next slice.
 - Kiro observation-only (registers + lifecycle cleanup; state
   stays idle without hook reporting).
 - Event-driven persistent picker via fzf `--listen` +
-  `notify-debouncer-mini`.
+  `notify-debouncer-mini`. Two-state lifecycle (Running/Idle)
+  + tmux pane preview window.
 - User-specified prefix-table keybind via `setup --key X` +
   self-discovering teardown.
 - Three test layers: unit tests, integration cases on a
   private tmux server, functional scripts driving the user's
-  live server.
+  live server. All gates green (44 unit, 17 integration).
 
-### Slice — loop UI redesign
+### Open issues — to address before we call v1 done
 
-Replace the multi-state lifecycle with the two-state +
-pane-preview shape described in Requirements. Concretely:
+The shipped slice passes all programmed gates, but using it
+end-to-end on the user's real workflow exposed gaps. None of
+these are blockers for the design, but together they mean v1
+isn't yet "the state we want."
 
-- Trim `Session` to the lean shape: drop
-  `last_prompt` / `last_tool_name` / `last_tool_preview` /
-  `prompt_started_at` / `tool_started_at` / `tools_this_turn` /
-  `last_turn_duration` / `effective_state` / `Stalled`. State
-  enum becomes `Running | Idle`.
-- `apply_event`: `PreToolUse` → running; everything else →
-  idle. No payload parsing; just bump `last_event_ts`.
-- `format_row` returns `<glyph> <kind> <cwd>` only.
-- New hidden `peek <pane-id> [--lines N]` subcommand wrapping
-  `tmux capture-pane`. Default N = 10.
-- `Loop::body` invokes fzf with `--preview='<self> peek {1}'
-  --preview-window=right:50%`. Watcher thread continues to
-  send `reload(...)` on sessions.json change; heartbeat
-  thread switches from `reload` to `refresh-preview` at 1 Hz.
-- Drop the `setup` install of `Notification` and
-  `PostToolUseFailure` hooks (no longer drive distinct
-  states; the preview surfaces those situations directly).
-- Update unit + integration tests to the new shape.
-- Add functional test scenario: `agent-orch peek <pane>`
-  output matches captured pane content.
+- **Picker UX still has friction in real use.** Programmed
+  flicker is gone (heartbeat → `refresh-preview`), but the
+  end-to-end loop with real claude/kiro-cli panes hasn't been
+  walked through enough to call the experience right. We may
+  need: ANSI-aware preview rendering (raw capture-pane output
+  has ANSI escapes that fzf's preview window doesn't always
+  display cleanly), preview-pane sizing tuned to terminal
+  width, glyph color (running ▶ in green, idle · dim).
+- **Stale-shell PATH risk has only been documented, not
+  detected at runtime.** The Design Rationale calls out the
+  toolbox-shim vs `~/.local/bin/<agent>` ordering issue, and
+  the user landed an env-side fix (removed
+  `~/.post-nix-rc.d/maid.sh`), but the binary itself doesn't
+  surface the mismatch. `agent-orch doctor` (follow-up) would
+  catch this; until that exists, the next user to hit
+  resurrect-restored panes has no signal.
+- **Functional fixture has not been driven through a full
+  user-loop yet.** `functional-setup.sh` + `functional-test.sh`
+  + `functional-teardown.sh` exist and run clean, but the
+  asserted scenarios don't cover the cases that actually
+  surfaced friction (preview content, M-o round-trip latency,
+  dead-pid filter under real pane death, two-claudes-in-one-
+  window picker rows updating independently).
+- **Spec ↔ code drift on Kiro hook integration.** Spec says
+  Kiro is observation-only in v1. Code still writes a
+  Claude-shape JSON to `<cwd>/.kiro/agents/agent-orch.json`,
+  which Kiro logs as "invalid agent config" on every prompt.
+  Either drop the write entirely (spec-true), or wire the
+  right Kiro shape (close the deferred slice).
 
 ### Follow-up — Kiro state tracking
 
