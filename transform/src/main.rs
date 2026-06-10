@@ -3,7 +3,7 @@
 //!
 //! Invoked via `cargo xtask <verb>` (alias in `.cargo/config.toml`).
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -11,6 +11,9 @@ use std::process::ExitCode;
 mod deploy;
 mod registry;
 mod schema;
+#[allow(dead_code)] // sh!() is reserved for verbs that need shell-style
+// string parsing; today's call sites use duct::cmd
+// directly to avoid re-parsing paths.
 mod sh;
 mod sources;
 
@@ -58,7 +61,15 @@ enum Cmd {
     /// Build any sources/<name>/ Rust crates into dist/, then deploy.
     Install,
     /// Inverse of install — undeploy.
-    Uninstall,
+    Uninstall {
+        /// Plan without making changes.
+        #[arg(long)]
+        dry_run: bool,
+        /// Remove whatever is at the managed path, including foreign
+        /// symlinks and non-symlinks.
+        #[arg(long)]
+        force: bool,
+    },
     /// Run tests/functional/run --no-tools (structural smoke).
     TestSmoke,
     /// Run tests/functional/run (tool-driven functional smoke).
@@ -84,7 +95,7 @@ fn run(cli: Cli) -> Result<u8> {
         Cmd::Undeploy { dry_run, force } => cmd_undeploy(dry_run, force),
         Cmd::Status => cmd_status(),
         Cmd::Install => cmd_install(),
-        Cmd::Uninstall => cmd_undeploy(false, false),
+        Cmd::Uninstall { dry_run, force } => cmd_undeploy(dry_run, force),
         Cmd::TestSmoke => cmd_test(true),
         Cmd::TestFunctional => cmd_test(false),
     }
@@ -101,9 +112,18 @@ fn repo_root() -> Result<PathBuf> {
 }
 
 fn home_dir() -> Result<PathBuf> {
-    Ok(PathBuf::from(
-        std::env::var("HOME").context("HOME is not set")?,
-    ))
+    let raw = std::env::var("HOME").context("HOME is not set")?;
+    if raw.is_empty() {
+        return Err(anyhow!("HOME is empty"));
+    }
+    let home = PathBuf::from(raw);
+    if !home.is_absolute() {
+        return Err(anyhow!(
+            "HOME must be an absolute path (got {})",
+            home.display()
+        ));
+    }
+    Ok(home)
 }
 
 fn cmd_validate() -> Result<u8> {
@@ -207,16 +227,32 @@ fn cmd_install() -> Result<u8> {
     std::fs::create_dir_all(root.join("dist"))?;
     for name in &members {
         eprintln!("building {name}...");
-        crate::sh!(&format!("cargo build -p {name} --release"))?
+        // duct::cmd with typed args — safe against names containing
+        // whitespace, quotes, or shell metacharacters. shell-words is
+        // reserved for cases where the command really is a literal
+        // shell-style string.
+        duct::cmd("cargo", ["build", "-p", name, "--release"])
             .dir(&root)
-            .run()?;
+            .run()
+            .with_context(|| {
+                format!(
+                    "cargo build -p {name} --release failed. \
+                     If `{name}` is a sources/ Rust crate, add it to \
+                     the workspace `members` list in Cargo.toml."
+                )
+            })?;
         let from = root.join("target/release").join(name);
         let to = root.join("dist").join(name);
-        if from.exists() {
-            std::fs::copy(&from, &to)
-                .with_context(|| format!("copy {} → {}", from.display(), to.display()))?;
-            println!("installed {}", to.display());
+        if !from.exists() {
+            return Err(anyhow!(
+                "build of `{name}` succeeded but produced no binary at {}. \
+                 The crate must declare `[[bin]] name = \"{name}\"`.",
+                from.display()
+            ));
         }
+        std::fs::copy(&from, &to)
+            .with_context(|| format!("copy {} → {}", from.display(), to.display()))?;
+        println!("installed {}", to.display());
     }
     Ok(0)
 }
@@ -224,12 +260,15 @@ fn cmd_install() -> Result<u8> {
 fn cmd_test(no_tools: bool) -> Result<u8> {
     let root = repo_root()?;
     let runner = root.join("tests/functional/run");
-    let cmd = if no_tools {
-        format!("{} --no-tools", runner.display())
+    // duct::cmd with typed args — runner path may contain whitespace
+    // (any directory name above the checkout) and must not be re-parsed
+    // through shell-words.
+    let expr = if no_tools {
+        duct::cmd(&runner, ["--no-tools"])
     } else {
-        runner.display().to_string()
+        duct::cmd(&runner, std::iter::empty::<&str>())
     };
-    let status = crate::sh!(&cmd)?.dir(&root).unchecked().run()?;
+    let status = expr.dir(&root).unchecked().run()?;
     Ok(if status.status.success() { 0 } else { 1 })
 }
 

@@ -57,15 +57,18 @@ pub fn validate(file_path: &str, content: &str) -> Result<(), SchemaError> {
     };
 
     // Check 3 + 4: name and description present and non-empty.
+    // Unquote balanced "..." or '...' wrappers before the empty
+    // check — `name: ""` and `description: ''` count as missing,
+    // matching the TS port's schema.unquote() pre-step.
     let mut have_name = false;
     let mut have_desc = false;
     for line in &lines[1..end] {
         if let Some(rest) = line.strip_prefix("name:") {
-            if !rest.trim().is_empty() {
+            if !unquote(rest.trim()).is_empty() {
                 have_name = true;
             }
         } else if let Some(rest) = line.strip_prefix("description:") {
-            if !rest.trim().is_empty() {
+            if !unquote(rest.trim()).is_empty() {
                 have_desc = true;
             }
         }
@@ -86,6 +89,21 @@ pub fn validate(file_path: &str, content: &str) -> Result<(), SchemaError> {
     }
 
     Ok(())
+}
+
+/// Strip a single layer of balanced `"..."` or `'...'` wrapping
+/// quotes from `s`. Mirrors TS schema.unquote(): only paired quotes
+/// at both ends, otherwise return as-is.
+fn unquote(s: &str) -> &str {
+    if s.len() >= 2 {
+        let bytes = s.as_bytes();
+        let first = bytes[0];
+        let last = bytes[s.len() - 1];
+        if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
+            return &s[1..s.len() - 1];
+        }
+    }
+    s
 }
 
 #[cfg(test)]
@@ -140,6 +158,27 @@ mod tests {
     fn empty_description_is_missing() {
         let e = validate("foo.md", "---\nname: foo\ndescription:\n---\n").unwrap_err();
         assert!(e.message.contains("description"));
+    }
+
+    #[test]
+    fn quoted_empty_name_is_missing() {
+        let e = validate("foo.md", "---\nname: \"\"\ndescription: bar\n---\n").unwrap_err();
+        assert!(e.message.contains("name"));
+    }
+
+    #[test]
+    fn quoted_empty_description_is_missing() {
+        let e = validate("foo.md", "---\nname: foo\ndescription: ''\n---\n").unwrap_err();
+        assert!(e.message.contains("description"));
+    }
+
+    #[test]
+    fn quoted_non_empty_values_accepted() {
+        assert!(validate(
+            "foo.md",
+            "---\nname: \"foo\"\ndescription: 'bar baz'\n---\n"
+        )
+        .is_ok());
     }
 
     #[test]
