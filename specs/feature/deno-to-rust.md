@@ -397,6 +397,40 @@ None blocking. Resolved during planning:
 
 ## Session Log
 
+- 2026-06-10 · dev loop complete. 14 implementation steps
+  landed in one feat commit (`feat(deno-to-rust): cargo
+  workspace + transform crate`). Quality + Test gates green:
+  cargo fmt --all --check; cargo clippy --workspace
+  --all-targets -- -D warnings; cargo test --workspace (32
+  tests). End-to-end install/uninstall against a fake $HOME
+  round-trips cleanly.
+
+- 2026-06-10 · Code Review Gate run (host-native /code-review,
+  high effort). 15 findings surfaced. Fixed in this slice:
+  (a) deleted orphan tests/deploy_test.ts and
+  tests/schema_test.ts (Step 11 had missed them);
+  (b) cmd_install and cmd_test bypass sh!() in favor of
+  duct::cmd with typed args, so checkout paths or member
+  names containing whitespace/quotes don't mis-tokenize;
+  (c) schema validator unquotes balanced `"…"` / `'…'`
+  before the empty check (3 new tests for `name: ""` /
+  `description: ''` regressions);
+  (d) Cmd::Uninstall now declares --dry-run / --force flags
+  and forwards them to undeploy (was hard-wired to false);
+  (e) home_dir() rejects empty or non-absolute HOME;
+  (f) cmd_install error messages name the workspace-member
+  fix when `cargo build -p` fails, and the build verb errors
+  if the expected binary isn't produced.
+
+  Captured for review (not fixed in this slice): style notes
+  on `failures.min(1)` clamp idiom; SourceRecord::path being
+  allow(dead_code) without a backlog entry for the future
+  verbs that would read it; cmd_status fixed-width 28-char
+  padding; deploy/undeploy short-circuiting on first IO
+  error; UndeployStatus::Removed { was } unused by callers;
+  parent-dir guard treating dangling-symlink-as-existing.
+  None block merge; revisit if they bite.
+
 - 2026-06-10 · planning-review revision (PR #20). Two
   reviewer comments resolved: (1) build crate renamed from
   `xtask` to `transform` (functional naming, mirrors
