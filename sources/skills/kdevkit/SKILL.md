@@ -1,7 +1,7 @@
 ---
 name: kdevkit
 description: Spec-driven development workflow — four tiers (project / initiative / feature / backlog), locate spec tree, load context, start a session, run it through planning → dev loop → closure with phase-gating cues, ship via Conventional Commits and Quality/Test/Code-Review/Push/Review gates. Three-phase feature branch on a single PR/CR; main stays single-commit-per-feature via squash. Multi-stream initiatives carry the persistent "you're in stream 2 of 3" context across feature branches. Multi-file skill (always-on SKILL.md + deferred setup.md and interviews.md loaded on demand). Public-repo hygiene. Auto-detects specs/, docs/specs/, or .kdevkit/.
-version: 3.1.0
+version: 3.2.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, initiative, public-repo]
 ---
 
@@ -309,6 +309,56 @@ existing project context already answers.
 prompt shape and the feature file template body. After the
 four interviews, write the feature spec, then return here for
 the Plan-commit rule.
+
+### Requirements smell test (always-on)
+
+The spec's three top sections pair with the project's test
+layers in V-model fashion:
+
+- **Feature Brief** = the *capability* (what the user can
+  now do).
+- **Requirements** = the *experience* (what the user
+  touches and observes) — verified by **functional /
+  integration tests**.
+- **Design** = *how it's built* (schemas, plumbing,
+  libraries, project conventions) — verified by **unit
+  tests**.
+
+Functional/integration tests are pinned to Requirements so
+they assert in user-observable terms; unit tests are pinned
+to Design so they assert design primitives. That pairing is
+the *why* behind the smell test below — a Requirements
+bullet that names internals can't be verified by a test
+phrased in user-observable terms, so it's in the wrong
+section.
+
+Before writing each Requirements bullet, check it against
+the smell test; move violators to Design.
+
+A Requirements bullet belongs in Design if it names any of:
+
+- A library / framework name, or any third-party tool the
+  user doesn't invoke directly.
+- A file path / config key / data shape the user doesn't
+  see in the surface they interact with.
+- A function / class / trait / type / schema name from the
+  implementation.
+- An internal subcommand, hook event name, or protocol verb
+  that's not part of the user-facing surface.
+
+The discipline generalises across feature types — a CLI
+feature (experience = flags and output), an app feature
+(experience = screens and visible state), a skill change
+(experience = the cues the agent recognises and the
+artefacts it produces), a service endpoint (experience =
+request shape and response).
+
+The discipline is guidance, not rigid form. `interviews.md`'s
+template and prompts are best-practice scaffolding; the
+spec's exact section layout adapts to the feature. The
+strictness lives in the **gates** — Planning Review (§6),
+Agent-dev Review (§7, loops freely with Code Review), and
+Closure Review (§8) — not in the heading shape.
 
 ### Initiative-stream auto-link
 
