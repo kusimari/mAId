@@ -1,5 +1,74 @@
 # Feature: kaimux
 
+<!-- Read this Session handoff block FIRST. Everything below
+     it is design history brought forward from the abandoned
+     feat/agent-orch-fix branch. Don't re-read 1800 lines on
+     session entry — the handoff names where to start. -->
+
+## Session handoff (next session — read this first)
+
+You are continuing the kaimux dev/review loop. The branch
+`feat/kaimux` is open as PR #24, awaiting the user's review.
+
+### State on entry
+- `feat/kaimux` branched from main (post-merge of
+  `feat/resources-and-kaimux`, commit `e6b8273`).
+- The agent-orch source tree is reapplied here as
+  `kaimux/`, with `agent-orch` → `kaimux` rename applied
+  throughout (88 src refs + tests + this spec).
+- Workspace member registered. `just ci` green
+  (fmt + clippy + workspace test, 54 kaimux tests
+  passing). `just kaimux-build` produces a 1.6 MB
+  stripped binary at `dist/kaimux`.
+- PR #24 body names provenance + what's-landed vs.
+  in-flight.
+
+### What the user expects you to do next
+1. **Wait for PR #24 review.** The user opened the
+   review themselves; respond to comments via the kdevkit
+   §7 comment-prefix convention (`[agent]:`).
+2. **After PR #24 merges to main**, continue the
+   in-flight kaimux design work — the items in this spec
+   under `## Implementation Plan` → `### Open issues`
+   (picker-row redesign with inline pane extract,
+   end-to-end test hardening with real tmux, spec ↔ code
+   reconciliation).
+3. **Operate per kdevkit §6/§7/§8.** Each in-flight
+   item is its own dev-loop iteration: implement →
+   Quality + Test gates → Code Review Gate → Push →
+   Agent-dev Review Gate. Closure when the user gives
+   the cue.
+
+### What you should NOT do on session entry
+- Don't re-do the rename or restructure — already done.
+- Don't squash-merge the agent-orch branch — already
+  abandoned; the manual reapply landed instead.
+- Don't propose rewriting the spec from scratch — the
+  design history below is the dev memory; preserve it.
+
+### Files to read before any code change
+1. This file's Git Setup, Feature Brief,
+   `## Implementation Plan` → `### Open issues` (search
+   for "Open issues" or read the bottom).
+2. `kaimux/src/main.rs` — single-file, organized as four
+   typeclasses (Session / Store / Wrapper / Loop). The
+   typeclass-redesign commits in agent-orch-fix's history
+   established this shape.
+3. `Cargo.toml` (workspace), `Justfile` (kaimux verbs).
+4. `specs/project.md` Architecture section for the
+   surrounding mAId shape.
+
+### Backlog item to be aware of
+`specs/backlog/kdevkit-functional-style-and-idiomatic-libs.md`
+captures a kdevkit promotion candidate that emerged from
+the `feat/resources-and-kaimux` review: design + dev should
+use functional style + idiomatic libraries from the start.
+Apply this lens when implementing the in-flight kaimux
+items — reach for `Iterator::partition` / `serde-as-schema`
+/ `try_for_each` rather than hand-rolling.
+
+---
+
 ## Git Setup
 
 - Branch: `feat/kaimux` — landing the agent-orch design as
