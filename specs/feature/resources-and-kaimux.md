@@ -355,6 +355,50 @@ None blocking. Resolved during planning:
 
 ## Session Log
 
+- 2026-06-11 · review feedback (#23): "ignoring what is current
+  in resources, does it need so much complexity. we build only
+  for what we have." Restructured the verb model to three
+  concepts (per the user): prep (folded into install), install
+  + functional test (split as `install` and `verify`),
+  uninstall + status. Code change:
+  - Collapsed `registry.rs` + `schema.rs` + `content.rs` +
+    `deploy.rs` into a single `main.rs` (~600 LOC,
+    organized top-to-bottom: registry → content checks →
+    compare core → CLI dispatch → tests).
+  - Dropped `EntryKind` enum; registry is now a
+    `&[(&str, &str)]` tuple slice.
+  - Dropped `SchemaError` struct in favor of `Result<(), String>`.
+  - Walker no longer looks for `agents/` and `commands/`
+    subdirs (phantom slots — gone, not "kept ready").
+  - `install`/`uninstall`/`status` share a `plan_one` core
+    that returns a `Comparison` enum
+    (`Match` / `WrongTarget` / `Missing` /
+    `BlockedByRealFile` / `BlockedByRealDir` /
+    `SourceMissing`); each verb is a thin `match` over it.
+  - Justfile verb rename:
+    `validate` → folded into install's first step;
+    `deploy` → `install`;
+    `undeploy` → `uninstall`;
+    `test-functional` → `verify`;
+    `test-fixture <name>` → `verify-one <name>`;
+    `test-smoke` → gone (folded into the cargo test
+    `structural_install_to_real_directory_layout` integration
+    test against tempfile-fake-HOME).
+  - `resources/tests/run` shrunk to fixture-driving only —
+    dropped the `--no-tools` flag and `structural_smokes()`
+    function; structural correctness lives in cargo tests now.
+  - project.md Architecture section rewritten as three layers:
+    content / tooling / verbs.
+
+  Tests: 29 (was 35); the count drop is consolidation (one
+  set of install/uninstall tests instead of separate
+  deploy/undeploy + structural + agents.md test families).
+  Coverage equal or better — the integration test
+  `structural_install_to_real_directory_layout` exercises the
+  end-to-end layout that the bash structural smoke covered.
+  `just ci` green; install/status/uninstall round-trip clean
+  against fake $HOME; 6 registry entries deploy/round-trip.
+
 - 2026-06-11 · code review → fixes. Fresh-context review at
   high effort returned 15 findings. Acted on:
   (1) walker now validates `resources/content/agents.md` is

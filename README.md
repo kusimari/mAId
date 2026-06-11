@@ -7,14 +7,17 @@ Copilot, Zed, Windsurf, future tools).
 
 The repo has two halves:
 
-- **`resources/`** — markdown content the AI tools load,
-  plus the build crate that operates on it.
-- **`kaimux/`** — a sibling workspace member for the
-  kaimux app (placeholder; lands with code in its own
-  feature).
+- **`resources/`** — three layers in one directory:
+  the markdown content (`resources/content/`) the AI tools
+  load; the Rust + bash tooling (`resources/build-tool/`,
+  `resources/tests/run`) that installs and tests it; and
+  the Justfile verbs (`install`, `uninstall`, `status`,
+  `verify`) that drive the tooling.
+- **`kaimux/`** — sibling workspace member for the kaimux
+  app (placeholder; lands with code in its own feature).
 
-Installing mAId creates symlinks from `$HOME` into this
-tree so edits are live for the next AI session.
+`just install` creates symlinks from `$HOME` into the
+content tree so edits are live for the next AI session.
 
 ## Develop
 
@@ -29,45 +32,63 @@ Without direnv: `nix develop` once per shell (or prefix
 `nix develop --command` to each command). Cargo + just are
 hard prerequisites; there's no bootstrap shim.
 
-Common verbs:
-
-```
-just test          # workspace unit tests
-just fmt-check     # rustfmt
-just lint          # clippy --workspace -D warnings
-just check         # cargo check --workspace
-just ci            # full quality + test gate
-```
-
 The development methodology (spec-driven, phase-gated) is
 encoded in the
 [`kdevkit` skill](./resources/content/skills/kdevkit/SKILL.md).
 Project context: [`specs/project.md`](./specs/project.md).
 Feature specs: [`specs/feature/`](./specs/feature/).
 
+## Verbs
+
+Two groups, separated by what they touch:
+
+**AI verbs** — operate on `$HOME` or the AI tools:
+
+```
+just install      # validate content + create $HOME-facing symlinks
+just uninstall    # remove install-managed symlinks
+just status       # report current symlink state
+just verify       # drive `claude --print` against installed content (costs API credits, gated)
+just verify-one <name>   # single fixture
+```
+
+**Build-tool hygiene** — operate on the Rust crate that
+implements the AI verbs; never touch `$HOME` or the AI
+tools:
+
+```
+just test         # workspace unit tests (sub-second; tempfile-fake-HOME)
+just fmt          # rustfmt
+just fmt-check    # rustfmt --check
+just lint         # clippy --workspace --all-targets -- -D warnings
+just check        # cargo check --workspace
+just ci           # the full hygiene gate
+```
+
 ## Install
 
 ```
-just deploy             # validate + create $HOME-facing symlinks
-just status             # report current symlink state
-just undeploy           # remove deploy-managed symlinks
+just install
 ```
 
-What `just deploy` does:
+What it does:
 
-1. `just validate` walks `resources/content/` and runs the
-   simplified frontmatter validator.
-2. `just deploy` symlinks every entry in
-   [`resources/build-tool/src/registry.rs`](./resources/build-tool/src/registry.rs)
-   — today the merged AGENTS.md preamble (deployed as
+1. Validates `resources/content/` — the AGENTS.md preamble
+   is present + non-empty; each `skills/<name>/SKILL.md`
+   has the required frontmatter.
+2. Creates `$HOME`-facing symlinks per the registry at the
+   top of
+   [`resources/build-tool/src/main.rs`](./resources/build-tool/src/main.rs).
+   Today: the merged AGENTS.md preamble (deployed as
    `~/.claude/CLAUDE.md`, `~/.claude/AGENTS.md`,
    `~/.kiro/steering/KIRO.md`, and
    `~/.kiro/steering/AGENTS.md` for cross-tool support)
    plus the skills tree (`~/.claude/skills` and
    `~/.kiro/steering/skills`).
 
-Undeploy is idempotent. Hand-written files at a managed
-destination are preserved unless you pass `--force`.
+`just uninstall` is idempotent. Hand-written files at a
+managed destination are preserved unless you pass
+`--force`.
 
 mAId follows the cross-tool **AGENTS.md** standard
 (Linux Foundation Agentic AI Foundation; native support
@@ -78,10 +99,11 @@ default-read location.
 
 ## Where to look next
 
-- Everything that gets deployed:
+- Everything that gets installed:
   [`resources/content/`](./resources/content/).
-- How deployment is decided:
-  [`resources/build-tool/src/registry.rs`](./resources/build-tool/src/registry.rs).
+- How installation is decided: the `REGISTRY` constant at
+  the top of
+  [`resources/build-tool/src/main.rs`](./resources/build-tool/src/main.rs).
 - Reference shape for a new skill:
   [`resources/content/skills/kdevkit/SKILL.md`](./resources/content/skills/kdevkit/SKILL.md)
   (live siblings:

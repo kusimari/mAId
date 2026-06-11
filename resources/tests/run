@@ -1,64 +1,47 @@
 #!/usr/bin/env bash
-# mAId/resources/tests/run — functional smoke tests.
+# mAId/resources/tests/run — drives the AI tools against installed
+# content. The Justfile invokes this as `just verify` (or
+# `just verify-one <name>`).
 #
-# Exercises AI artefacts (skills + AGENTS.md preamble) in the
-# real tools (Claude Code, Kiro) and asserts each one round-trips.
-#
-# Invoked via Justfile recipes — `just test-smoke` (no API calls,
-# structural only), `just test-functional` (full), or
-# `just test-fixture <name>` for a single fixture. Direct invocation
-# also works.
+# Pre-condition: `just install` has run, so $HOME has the managed
+# symlinks. Structural correctness of the install is covered by
+# `cargo test` against tempfile-fake-HOME — this script ONLY
+# exercises behavior in the real AI tools.
 #
 # Fixture shape — one file per artefact:
-#   resources/tests/skills/<name>.smoke     Generic format:
+#   resources/tests/skills/<name>.smoke    Generic format:
 #     prompt: <one-line prompt>
 #     expect_substr: <substring the response must contain>
-#     expected_narrative: <prose describing what a correct
-#                          answer should cover; triggers a
-#                          second judge call on the same tool>
+#     expected_narrative: <prose describing what a correct answer
+#                          should cover; triggers a second judge
+#                          call on the same tool>
 #     tools: claude,kiro       (optional; defaults to "claude")
 #
 #   Each fixture must declare prompt: plus at least one of
 #   expect_substr: or expected_narrative:. Both may be set
 #   (substring is checked first, then the judge).
 #
-# Cheap structural checks (symlink resolves, files exist) run
-# first. Real tool invocations follow — those can be slow.
 # Missing CLIs skip (don't fail) their respective assertions.
 #
 # Usage:
-#   resources/tests/run                 Run all smokes.
-#   resources/tests/run --no-tools      Skip the claude/kiro
-#                                       invocations; only
-#                                       structural checks.
+#   resources/tests/run                 Run every fixture.
+#   resources/tests/run <name>          Run only <name>'s fixture.
 #   resources/tests/run --stressed      Prepend the shared
-#                                       conversational-stream
-#                                       prefix to each fixture's
-#                                       prompt. Stresses whether
-#                                       the agent retains the
-#                                       skill contract under a
-#                                       long-session content load.
-#                                       Both modes evaluate the
-#                                       same expected_narrative.
-#   resources/tests/run <name>          Run only <name>'s smoke.
+#                                       conversational-stream prefix
+#                                       to each fixture's prompt to
+#                                       stress retention under load.
 #   resources/tests/run --help
 
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# -P so the path is the physical/realpath form. Home-dir auto-mounts
-# (e.g. /home/user → /local/home/user) would otherwise misalign with
-# `readlink -f` output from the assertion helpers.
-MAID_ROOT="$(cd -P "$HERE/../.." && pwd -P)"
 
 # ── args ────────────────────────────────────────────────────────────
 
-NO_TOOLS=0
 STRESSED=0
 SELECTOR=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --no-tools) NO_TOOLS=1; shift ;;
         --stressed) STRESSED=1; shift ;;
         --help|-h)
             awk '/^$/{exit} /^#/{sub(/^# ?/,""); print}' "${BASH_SOURCE[0]}"
@@ -69,13 +52,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Load the conversational-stream prefix once if --stressed.
-# The prefix is treated as literal text — it must not contain
-# unescaped `$`, backticks, or backslash sequences, since the
-# concatenation below keeps it inside double quotes. Today's
-# prefix is plain English; future authors editing
-# conversational-stream.txt should keep it that way or quote
-# any shell-active characters.
 STRESS_PREFIX=""
 if (( STRESSED )); then
     if [[ ! -r "$HERE/conversational-stream.txt" ]]; then
@@ -94,29 +70,9 @@ info() { printf '  %s\n' "$*"; }
 
 FAILURES=0
 
-# ── assertions ──────────────────────────────────────────────────────
+# ── tool plumbing ───────────────────────────────────────────────────
 
-# assert_symlink_resolves <path> <expected-absolute-target>
-assert_symlink_resolves() {
-    local path="$1" expected="$2"
-    if [[ ! -L "$path" ]]; then
-        fail "$path is not a symlink"
-        return
-    fi
-    local actual
-    actual="$(readlink -f "$path" 2>/dev/null || true)"
-    if [[ "$actual" != "$expected" ]]; then
-        fail "$path resolves to $actual (expected $expected)"
-        return
-    fi
-    pass "$path resolves"
-}
-
-# tool_invoke <tool> <prompt>   → echoes captured stdout/stderr.
-# Returns 0 on tool exit success, 1 on invocation failure (caller
-# distinguishes by checking the return code; the captured text is
-# still echoed so the caller can include it in the failure
-# message).
+# tool_invoke <tool> <prompt> → echoes captured stdout/stderr.
 tool_invoke() {
     local tool="$1" prompt="$2"
     case "$tool" in
@@ -126,7 +82,6 @@ tool_invoke() {
     esac
 }
 
-# tool_available <tool>   → 0 if on PATH, 1 otherwise.
 tool_available() {
     case "$1" in
         claude) command -v claude   >/dev/null 2>&1 ;;
@@ -135,7 +90,6 @@ tool_available() {
     esac
 }
 
-# build_judge_prompt <question> <answer> <expected-narrative>
 build_judge_prompt() {
     local question="$1" answer="$2" expected="$3"
     cat <<EOF
@@ -159,12 +113,6 @@ EOF
 
 # assert_response <tool> <prompt> <expect-substr-or-empty>
 #                 <expected-narrative-or-empty> <check-name>
-#
-# Runs the prompt through <tool>. If expect-substr is non-empty,
-# checks substring first. If expected-narrative is non-empty,
-# runs a second judge call on the same tool. Either check
-# missing → its phase is skipped. At least one must be set
-# (validated by the caller).
 assert_response() {
     local tool="$1" prompt="$2" expect_substr="$3"
     local expected_narrative="$4" name="$5"
@@ -199,10 +147,6 @@ assert_response() {
         fi
         # Strip ANSI escape codes and control bytes, then look for
         # the first PASS/FAIL token anywhere in the response.
-        # Different tools prefix lines differently (e.g. kiro emits
-        # `> PASS — ...`); anchoring to ^ is too strict. Some kiro
-        # outputs split a long verdict across multiple `> `-prefixed
-        # lines, so collapse newlines to spaces before grepping.
         judge_clean="$(printf '%s' "$judge_out" \
             | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\r//g' \
             | tr '\n' ' ')"
@@ -217,7 +161,7 @@ assert_response() {
                 info "answer head: $(head -c 200 <<<"$out")..."
                 ;;
             *)
-                local dump="/tmp/smoke-judge-${name//[^a-zA-Z0-9_-]/_}-${tool}.log"
+                local dump="/tmp/verify-judge-${name//[^a-zA-Z0-9_-]/_}-${tool}.log"
                 printf '%s\n' "$judge_clean" >"$dump"
                 fail "$name (judge): no PASS/FAIL token; full judge output → $dump"
                 info "judge head: $(head -c 200 <<<"$judge_clean")..."
@@ -226,96 +170,49 @@ assert_response() {
     fi
 }
 
-# ── structural smokes ──────────────────────────────────────────────
+# ── fixture loop ────────────────────────────────────────────────────
 
-structural_smokes() {
-    info "=== structural checks ==="
-    # Belt-and-suspenders: legacy CLAUDE.md/KIRO.md and AGENTS.md all
-    # symlink at the same merged source — resources/content/agents.md.
-    assert_symlink_resolves "$HOME/.claude/CLAUDE.md"        "$MAID_ROOT/resources/content/agents.md"
-    assert_symlink_resolves "$HOME/.claude/AGENTS.md"        "$MAID_ROOT/resources/content/agents.md"
-    assert_symlink_resolves "$HOME/.kiro/steering/KIRO.md"   "$MAID_ROOT/resources/content/agents.md"
-    assert_symlink_resolves "$HOME/.kiro/steering/AGENTS.md" "$MAID_ROOT/resources/content/agents.md"
-    # Directory symlinks: readlink -f resolves to the target dir.
-    assert_symlink_resolves "$HOME/.claude/skills"           "$MAID_ROOT/resources/content/skills"
-    assert_symlink_resolves "$HOME/.kiro/steering/skills"    "$MAID_ROOT/resources/content/skills"
+for fixture in "$HERE/skills"/*.smoke; do
+    [[ -e "$fixture" ]] || continue
+    name="$(basename "$fixture" .smoke)"
+    [[ -n "$SELECTOR" && "$SELECTOR" != "$name" ]] && continue
 
-    # Each skill's SKILL.md exists and is reachable through the symlink.
-    local skill
-    for skill in "$MAID_ROOT/resources/content/skills"/*/SKILL.md; do
-        [[ -e "$skill" ]] || continue
-        local name
-        name="$(basename "$(dirname "$skill")")"
-        [[ -n "$SELECTOR" && "$SELECTOR" != "$name" ]] && continue
-        local homepath="$HOME/.claude/skills/$name/SKILL.md"
-        if [[ -r "$homepath" ]]; then
-            pass "skill visible: $name"
-        else
-            fail "skill not reachable through ~/.claude/skills/$name"
-        fi
+    prompt="$(grep '^prompt:' "$fixture" | sed 's/^prompt:[[:space:]]*//')"
+    expect_substr="$(grep '^expect_substr:' "$fixture" | sed 's/^expect_substr:[[:space:]]*//' || true)"
+    expected_narrative="$(grep '^expected_narrative:' "$fixture" | sed 's/^expected_narrative:[[:space:]]*//' || true)"
+    tools="$(grep '^tools:' "$fixture" | sed 's/^tools:[[:space:]]*//')"
+    : "${tools:=claude}"
+
+    if [[ -z "$prompt" ]]; then
+        fail "fixture $fixture malformed (missing prompt:)"
+        continue
+    fi
+    if (( STRESSED )); then
+        prompt="$STRESS_PREFIX"$'\n'"$prompt"
+    fi
+    if [[ -z "$expect_substr" && -z "$expected_narrative" ]]; then
+        fail "fixture $fixture malformed (needs expect_substr: or expected_narrative:)"
+        continue
+    fi
+    IFS=',' read -ra _tool_list <<<"$tools"
+    for tool in "${_tool_list[@]}"; do
+        tool="${tool//[[:space:]]/}"
+        case "$tool" in
+            claude|kiro)
+                assert_response "$tool" "$prompt" "$expect_substr" \
+                    "$expected_narrative" "skill:$name via $tool"
+                ;;
+            "") ;;
+            *)  fail "fixture $fixture: unknown tool '$tool' in tools: field" ;;
+        esac
     done
-}
-
-# ── skill-level functional smokes ──────────────────────────────────
-
-skill_smokes() {
-    info "=== skill smokes ==="
-    local fixture name prompt expect_substr expected_narrative tools tool
-    for fixture in "$HERE/skills"/*.smoke; do
-        [[ -e "$fixture" ]] || continue
-        name="$(basename "$fixture" .smoke)"
-        [[ -n "$SELECTOR" && "$SELECTOR" != "$name" ]] && continue
-
-        prompt="$(grep '^prompt:' "$fixture" | sed 's/^prompt:[[:space:]]*//')"
-        expect_substr="$(grep '^expect_substr:' "$fixture" | sed 's/^expect_substr:[[:space:]]*//' || true)"
-        expected_narrative="$(grep '^expected_narrative:' "$fixture" | sed 's/^expected_narrative:[[:space:]]*//' || true)"
-        tools="$(grep '^tools:' "$fixture" | sed 's/^tools:[[:space:]]*//')"
-        : "${tools:=claude}"
-        if [[ -z "$prompt" ]]; then
-            fail "fixture $fixture malformed (missing prompt:)"
-            continue
-        fi
-        # In --stressed mode, prepend the shared conversational-stream
-        # prefix verbatim. The prefix ends with "Now the user says:"
-        # so the per-fixture prompt becomes the user's "current" turn
-        # at the end of a long session. Newline-join so the per-fixture
-        # prompt sits on its own line below "Now the user says:".
-        if (( STRESSED )); then
-            prompt="$STRESS_PREFIX"$'\n'"$prompt"
-        fi
-        if [[ -z "$expect_substr" && -z "$expected_narrative" ]]; then
-            fail "fixture $fixture malformed (needs expect_substr: or expected_narrative:)"
-            continue
-        fi
-        IFS=',' read -ra _tool_list <<<"$tools"
-        for tool in "${_tool_list[@]}"; do
-            tool="${tool//[[:space:]]/}"
-            case "$tool" in
-                claude|kiro)
-                    assert_response "$tool" "$prompt" "$expect_substr" \
-                        "$expected_narrative" "skill:$name via $tool"
-                    ;;
-                "") ;;
-                *)  fail "fixture $fixture: unknown tool '$tool' in tools: field" ;;
-            esac
-        done
-    done
-}
-
-# ── flow ────────────────────────────────────────────────────────────
-
-structural_smokes
-if (( NO_TOOLS )); then
-    skip "tool invocations disabled (--no-tools)"
-else
-    skill_smokes
-fi
+done
 
 echo
 if (( FAILURES == 0 )); then
-    echo "all smokes passed"
+    echo "all fixtures passed"
     exit 0
 else
-    echo "$FAILURES smoke(s) failed"
+    echo "$FAILURES fixture(s) failed"
     exit 1
 fi

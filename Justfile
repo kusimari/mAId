@@ -2,44 +2,39 @@ _default:
     @just --list --unsorted
 
 # ── resources ────────────────────────────────────────────────────
+# These verbs operate on $HOME — they read or write the symlinks
+# the AI tools consume. Validation of content runs inside `install`.
 
-# Validate frontmatter in resources/content/.
-validate:
-    cargo run -p build-tool --release --quiet -- validate
+# Validate content and create/refresh $HOME-facing symlinks.
+install:
+    cargo run -p build-tool --release --quiet -- install
 
-# Validate, then create/refresh $HOME-facing symlinks.
-deploy:
-    cargo run -p build-tool --release --quiet -- deploy
-
-# Remove deploy-managed symlinks.
-undeploy:
-    cargo run -p build-tool --release --quiet -- undeploy
+# Remove install-managed symlinks.
+uninstall:
+    cargo run -p build-tool --release --quiet -- uninstall
 
 # Report each managed symlink's state.
 status:
     cargo run -p build-tool --release --quiet -- status
 
-# ── tests ────────────────────────────────────────────────────────
-
-# Workspace unit tests (build-tool today; future members join).
-test:
-    cargo test --workspace
-
-# Structural smoke — symlinks resolve, skills reachable. No API credits.
-test-smoke:
-    resources/tests/run --no-tools
-
-# Tool-driven functional smoke — costs API credits, slow.
-# Confirmation prompt: this is for human use, not agentic runs.
+# Drive the AI tools (claude --print, kiro-cli) against the
+# installed content to confirm skills load correctly. Costs API
+# credits and takes minutes — gated behind a confirmation prompt.
 [confirm("This costs API credits and takes minutes. Continue? (y/N)")]
-test-functional:
+verify:
     resources/tests/run
 
-# Single fixture by name (e.g. `just test-fixture kdevkit`).
-test-fixture name:
+# Drive a single fixture (e.g. `just verify-one kdevkit`).
+verify-one name:
     resources/tests/run "{{ name }}"
 
-# ── quality ──────────────────────────────────────────────────────
+# ── build-tool hygiene ───────────────────────────────────────────
+# These verbs operate on the Rust crate that implements install /
+# uninstall / status. They never touch $HOME.
+
+# Workspace unit tests for build-tool (sub-second; tempfile-fake-HOME).
+test:
+    cargo test --workspace
 
 fmt:
     cargo fmt --all
@@ -53,5 +48,5 @@ lint:
 check:
     cargo check --workspace
 
-# Full quality + test gate.
+# Full build-tool quality + test gate.
 ci: fmt-check lint check test
