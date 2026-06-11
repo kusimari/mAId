@@ -239,9 +239,11 @@ mod tests {
     fn make_checkout() -> TempDir {
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("resources/content/skills")).unwrap();
+        // AGENTS.md preamble is plain markdown (no frontmatter), per
+        // the cross-tool standard. Match the real file's shape.
         fs::write(
             dir.path().join("resources/content/agents.md"),
-            "---\nname: x\ndescription: y\n---\nAgents preamble.\n",
+            "# Agents preamble\n\nbody.\n",
         )
         .unwrap();
         dir

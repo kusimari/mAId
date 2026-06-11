@@ -25,7 +25,6 @@
         devShells.default = pkgs.mkShell {
           buildInputs = [
             rustToolchain
-            pkgs.pkg-config
             pkgs.just
           ];
         };

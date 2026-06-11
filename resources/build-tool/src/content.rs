@@ -51,9 +51,45 @@ pub struct SourceRecord {
 /// Walk all kinds under `root_dir`. Returns sorted records on
 /// success. If any schema validation fails, returns the joined
 /// error messages — same behavior as the TS suite.
+///
+/// Also enforces that `<root_dir>/agents.md` exists and is
+/// non-empty if present. AGENTS.md is plain markdown (no
+/// frontmatter per the cross-tool standard), so we don't run the
+/// SKILL.md-shape validator on it; we just refuse to deploy a
+/// missing or empty preamble. If the file is absent, the registry
+/// entries pointing at it surface as `SkippedMissingSource` at
+/// deploy time anyway.
 pub fn walk(root_dir: &Path) -> Result<Vec<SourceRecord>, String> {
     let mut records = Vec::new();
     let mut errors: Vec<SchemaError> = Vec::new();
+
+    // AGENTS.md preamble — presence + non-empty check.
+    let preamble = root_dir.join("agents.md");
+    if preamble.exists() {
+        match fs::read_to_string(&preamble) {
+            Ok(content) if content.trim().is_empty() => {
+                errors.push(SchemaError {
+                    file_path: preamble.to_string_lossy().into(),
+                    line: 1,
+                    message: "AGENTS.md preamble is empty".into(),
+                });
+            }
+            Ok(_) => {
+                records.push(SourceRecord {
+                    kind: Kind::Skills, // bucket it somewhere; not used downstream
+                    name: "agents.md".into(),
+                    path: preamble,
+                });
+            }
+            Err(e) => {
+                errors.push(SchemaError {
+                    file_path: preamble.to_string_lossy().into(),
+                    line: 1,
+                    message: format!("cannot read AGENTS.md preamble: {e}"),
+                });
+            }
+        }
+    }
 
     for kind in ALL_KINDS {
         let kind_dir = root_dir.join(kind.as_str());
@@ -174,6 +210,31 @@ mod tests {
         let root = TempDir::new().unwrap();
         let r = walk(root.path()).unwrap();
         assert!(r.is_empty());
+    }
+
+    #[test]
+    fn agents_md_present_is_recorded() {
+        let root = TempDir::new().unwrap();
+        write(&root.path().join("agents.md"), "# preamble\n\nbody.\n");
+        let r = walk(root.path()).unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].name, "agents.md");
+    }
+
+    #[test]
+    fn agents_md_empty_is_rejected() {
+        let root = TempDir::new().unwrap();
+        write(&root.path().join("agents.md"), "");
+        let e = walk(root.path()).unwrap_err();
+        assert!(e.contains("AGENTS.md preamble is empty"));
+    }
+
+    #[test]
+    fn agents_md_whitespace_only_is_rejected() {
+        let root = TempDir::new().unwrap();
+        write(&root.path().join("agents.md"), "   \n\n  \n");
+        let e = walk(root.path()).unwrap_err();
+        assert!(e.contains("AGENTS.md preamble is empty"));
     }
 
     #[test]

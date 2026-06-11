@@ -355,6 +355,40 @@ None blocking. Resolved during planning:
 
 ## Session Log
 
+- 2026-06-11 · code review → fixes. Fresh-context review at
+  high effort returned 15 findings. Acted on:
+  (1) walker now validates `resources/content/agents.md` is
+      present and non-empty before allowing deploy — the
+      preamble was 4 of 6 registry entries silently;
+  (2) dropped unused `duct` dependency from build-tool;
+  (3) `pkg-config` removed from flake (no native deps);
+  (4) `sources/` reference in project.md hard-constraints
+      bullet → `resources/content/`;
+  (5) `tests/functional/` references in `resources/tests/run`
+      docstring → `resources/tests/`;
+  (6) `repo_root()` now sentinel-checks `Cargo.toml + resources/`
+      to surface workspace-root drift loudly;
+  (7) `sources.rs` module renamed → `content.rs` to match the
+      directory it walks;
+  (8) Justfile `test-fixture` parameter quoted; `test-functional`
+      gated by `[confirm]` so agentic runs can't burn API credits
+      by mistake;
+  (9) deploy test fixture's `agents.md` now matches real-world
+      shape (no frontmatter).
+  Tests: 35 unit (32 prior + 3 for AGENTS.md preamble checks).
+  Captured for later (not blocking): `failures.min(1)` clamp;
+  parent-dir lstat-before-create_dir_all; EntryKind dead annotation;
+  duplicate "validated N" line on deploy; IO-error swallowing in
+  walker.
+
+- 2026-06-11 · functional tests run (one-off override). Three
+  fixtures (kdevkit, notes, writing-style) deployed to a fake
+  `$HOME` and driven via `claude --print`. All three pass via
+  Claude Code with the merged tool-agnostic `agents.md` (option
+  (i)). Kiro side fails on env (CLI auth blocks in headless),
+  not content. Confirms option (i) ships — no fallback to (ii)
+  / (iii) needed.
+
 - 2026-06-11 · spec drafted in one pass per user
   instruction "don't wait on me for plan review." Cherry-
   picked the 3 deno-to-rust code commits (cbd5e9c, 465f6f2,

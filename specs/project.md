@@ -203,8 +203,9 @@ dist/`.
 - **Never write into `~/.claude/skills/`, `~/.kiro/steering/`,
   or any registry destination directly.** These paths are
   symlinks back into the checkout; a non-symlink file there
-  breaks deploy invariants. Edit the source under `sources/`
-  instead — the symlink exposes changes live.
+  breaks deploy invariants. Edit the source under
+  `resources/content/` instead — the symlink exposes changes
+  live.
 - **Registry is the single source of truth** for deployment.
   Adding a new managed path = a registry change + CR, never an
   ad-hoc edit.

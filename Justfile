@@ -30,12 +30,14 @@ test-smoke:
     resources/tests/run --no-tools
 
 # Tool-driven functional smoke — costs API credits, slow.
+# Confirmation prompt: this is for human use, not agentic runs.
+[confirm("This costs API credits and takes minutes. Continue? (y/N)")]
 test-functional:
     resources/tests/run
 
 # Single fixture by name (e.g. `just test-fixture kdevkit`).
 test-fixture name:
-    resources/tests/run {{ name }}
+    resources/tests/run "{{ name }}"
 
 # ── quality ──────────────────────────────────────────────────────
 

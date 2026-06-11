@@ -10,10 +10,10 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+mod content;
 mod deploy;
 mod registry;
 mod schema;
-mod sources;
 
 use deploy::{
     deploy as do_deploy, undeploy as do_undeploy, DeployOptions, DeployResult, DeployStatus,
@@ -81,7 +81,11 @@ fn run(cli: Cli) -> Result<u8> {
 
 fn repo_root() -> Result<PathBuf> {
     // CARGO_MANIFEST_DIR points at <checkout>/resources/build-tool/.
-    // Walk up two levels to reach the workspace root.
+    // Walk up two levels to reach the workspace root, then sanity-check
+    // that we landed at a recognizable workspace (Cargo.toml + resources/
+    // both present). Without the sentinel, a future re-nesting of the
+    // crate would silently produce a wrong root and deploy would point
+    // symlinks at a sibling directory.
     let manifest = std::env::var("CARGO_MANIFEST_DIR")
         .context("CARGO_MANIFEST_DIR not set — invoke via `cargo run -p build-tool ...`")?;
     let manifest_path = PathBuf::from(manifest);
@@ -90,8 +94,15 @@ fn repo_root() -> Result<PathBuf> {
         .context("expected resources/build-tool/ to have a parent (resources/)")?;
     let root = resources_dir
         .parent()
-        .context("expected resources/ to have a parent (workspace root)")?;
-    Ok(root.to_path_buf())
+        .context("expected resources/ to have a parent (workspace root)")?
+        .to_path_buf();
+    if !root.join("Cargo.toml").is_file() || !root.join("resources").is_dir() {
+        return Err(anyhow!(
+            "expected workspace root at {} (Cargo.toml + resources/ both required)",
+            root.display()
+        ));
+    }
+    Ok(root)
 }
 
 fn home_dir() -> Result<PathBuf> {
@@ -112,7 +123,7 @@ fn home_dir() -> Result<PathBuf> {
 fn cmd_validate() -> Result<u8> {
     let root = repo_root()?;
     let content_dir = root.join("resources").join("content");
-    match sources::walk(&content_dir) {
+    match content::walk(&content_dir) {
         Ok(records) => {
             println!("validated {} source file(s)", records.len());
             Ok(0)

@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
-# mAId/tests/functional/run — functional smoke tests.
+# mAId/resources/tests/run — functional smoke tests.
 #
-# Exercises AI artefacts (skills, agents, commands, MCPs) in the
+# Exercises AI artefacts (skills + AGENTS.md preamble) in the
 # real tools (Claude Code, Kiro) and asserts each one round-trips.
 #
+# Invoked via Justfile recipes — `just test-smoke` (no API calls,
+# structural only), `just test-functional` (full), or
+# `just test-fixture <name>` for a single fixture. Direct invocation
+# also works.
+#
 # Fixture shape — one file per artefact:
-#   tests/functional/skills/<name>.smoke     Generic format:
+#   resources/tests/skills/<name>.smoke     Generic format:
 #     prompt: <one-line prompt>
 #     expect_substr: <substring the response must contain>
 #     expected_narrative: <prose describing what a correct
@@ -22,21 +27,21 @@
 # Missing CLIs skip (don't fail) their respective assertions.
 #
 # Usage:
-#   tests/functional/run                 Run all smokes.
-#   tests/functional/run --no-tools      Skip the claude/kiro
-#                                        invocations; only
-#                                        structural checks.
-#   tests/functional/run --stressed      Prepend the shared
-#                                        conversational-stream
-#                                        prefix to each fixture's
-#                                        prompt. Stresses whether
-#                                        the agent retains the
-#                                        skill contract under a
-#                                        long-session content load.
-#                                        Both modes evaluate the
-#                                        same expected_narrative.
-#   tests/functional/run <name>          Run only <name>'s smoke.
-#   tests/functional/run --help
+#   resources/tests/run                 Run all smokes.
+#   resources/tests/run --no-tools      Skip the claude/kiro
+#                                       invocations; only
+#                                       structural checks.
+#   resources/tests/run --stressed      Prepend the shared
+#                                       conversational-stream
+#                                       prefix to each fixture's
+#                                       prompt. Stresses whether
+#                                       the agent retains the
+#                                       skill contract under a
+#                                       long-session content load.
+#                                       Both modes evaluate the
+#                                       same expected_narrative.
+#   resources/tests/run <name>          Run only <name>'s smoke.
+#   resources/tests/run --help
 
 set -euo pipefail
 
