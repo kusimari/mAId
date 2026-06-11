@@ -1,0 +1,218 @@
+#!/usr/bin/env bash
+# mAId/resources/tests/run — drives the AI tools against installed
+# content. The Justfile invokes this as `just verify` (or
+# `just verify-one <name>`).
+#
+# Pre-condition: `just install` has run, so $HOME has the managed
+# symlinks. Structural correctness of the install is covered by
+# `cargo test` against tempfile-fake-HOME — this script ONLY
+# exercises behavior in the real AI tools.
+#
+# Fixture shape — one file per artefact:
+#   resources/tests/skills/<name>.smoke    Generic format:
+#     prompt: <one-line prompt>
+#     expect_substr: <substring the response must contain>
+#     expected_narrative: <prose describing what a correct answer
+#                          should cover; triggers a second judge
+#                          call on the same tool>
+#     tools: claude,kiro       (optional; defaults to "claude")
+#
+#   Each fixture must declare prompt: plus at least one of
+#   expect_substr: or expected_narrative:. Both may be set
+#   (substring is checked first, then the judge).
+#
+# Missing CLIs skip (don't fail) their respective assertions.
+#
+# Usage:
+#   resources/tests/run                 Run every fixture.
+#   resources/tests/run <name>          Run only <name>'s fixture.
+#   resources/tests/run --stressed      Prepend the shared
+#                                       conversational-stream prefix
+#                                       to each fixture's prompt to
+#                                       stress retention under load.
+#   resources/tests/run --help
+
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ── args ────────────────────────────────────────────────────────────
+
+STRESSED=0
+SELECTOR=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --stressed) STRESSED=1; shift ;;
+        --help|-h)
+            awk '/^$/{exit} /^#/{sub(/^# ?/,""); print}' "${BASH_SOURCE[0]}"
+            exit 0
+            ;;
+        -*) echo "unknown flag: $1" >&2; exit 2 ;;
+        *)  SELECTOR="$1"; shift ;;
+    esac
+done
+
+STRESS_PREFIX=""
+if (( STRESSED )); then
+    if [[ ! -r "$HERE/conversational-stream.txt" ]]; then
+        echo "--stressed requires $HERE/conversational-stream.txt" >&2
+        exit 2
+    fi
+    STRESS_PREFIX="$(cat "$HERE/conversational-stream.txt")"
+fi
+
+# ── output ──────────────────────────────────────────────────────────
+
+pass() { printf '\033[32mPASS\033[0m %s\n' "$*"; }
+fail() { printf '\033[31mFAIL\033[0m %s\n' "$*" >&2; FAILURES=$((FAILURES+1)); }
+skip() { printf '\033[33mSKIP\033[0m %s\n' "$*"; }
+info() { printf '  %s\n' "$*"; }
+
+FAILURES=0
+
+# ── tool plumbing ───────────────────────────────────────────────────
+
+# tool_invoke <tool> <prompt> → echoes captured stdout/stderr.
+tool_invoke() {
+    local tool="$1" prompt="$2"
+    case "$tool" in
+        claude) claude --print --dangerously-skip-permissions "$prompt" 2>&1 ;;
+        kiro)   kiro-cli chat --no-interactive --trust-tools= "$prompt" 2>&1 ;;
+        *)      echo "tool_invoke: unknown tool '$tool'"; return 1 ;;
+    esac
+}
+
+tool_available() {
+    case "$1" in
+        claude) command -v claude   >/dev/null 2>&1 ;;
+        kiro)   command -v kiro-cli >/dev/null 2>&1 ;;
+        *)      return 1 ;;
+    esac
+}
+
+build_judge_prompt() {
+    local question="$1" answer="$2" expected="$3"
+    cat <<EOF
+You are evaluating whether an AI agent's answer is consistent with a skill's intended narrative.
+
+Question:
+$question
+
+Answer:
+$answer
+
+Expected narrative:
+$expected
+
+Reply with exactly one line in this format:
+PASS — <one short sentence describing what's right>
+or
+FAIL — <one short sentence describing what's missing or wrong>
+EOF
+}
+
+# assert_response <tool> <prompt> <expect-substr-or-empty>
+#                 <expected-narrative-or-empty> <check-name>
+assert_response() {
+    local tool="$1" prompt="$2" expect_substr="$3"
+    local expected_narrative="$4" name="$5"
+
+    if ! tool_available "$tool"; then
+        skip "$name ($tool not on PATH)"
+        return
+    fi
+
+    local out
+    if ! out="$(tool_invoke "$tool" "$prompt")"; then
+        fail "$name ($tool invocation failed): $out"
+        return
+    fi
+
+    if [[ -n "$expect_substr" ]]; then
+        if grep -qiF -- "$expect_substr" <<<"$out"; then
+            pass "$name (substr)"
+        else
+            fail "$name (substr): response missing '$expect_substr'"
+            info "response head: $(head -c 200 <<<"$out")..."
+            return
+        fi
+    fi
+
+    if [[ -n "$expected_narrative" ]]; then
+        local judge_prompt judge_out judge_clean verdict
+        judge_prompt="$(build_judge_prompt "$prompt" "$out" "$expected_narrative")"
+        if ! judge_out="$(tool_invoke "$tool" "$judge_prompt")"; then
+            fail "$name (judge invocation failed): $judge_out"
+            return
+        fi
+        # Strip ANSI escape codes and control bytes, then look for
+        # the first PASS/FAIL token anywhere in the response.
+        judge_clean="$(printf '%s' "$judge_out" \
+            | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\r//g' \
+            | tr '\n' ' ')"
+        verdict="$(grep -oE '(PASS|FAIL)[^|]+' <<<"$judge_clean" | head -n1 || true)"
+        case "$verdict" in
+            PASS*)
+                pass "$name (judge)"
+                info "${verdict#PASS — }"
+                ;;
+            FAIL*)
+                fail "$name (judge): ${verdict#FAIL — }"
+                info "answer head: $(head -c 200 <<<"$out")..."
+                ;;
+            *)
+                local dump="/tmp/verify-judge-${name//[^a-zA-Z0-9_-]/_}-${tool}.log"
+                printf '%s\n' "$judge_clean" >"$dump"
+                fail "$name (judge): no PASS/FAIL token; full judge output → $dump"
+                info "judge head: $(head -c 200 <<<"$judge_clean")..."
+                ;;
+        esac
+    fi
+}
+
+# ── fixture loop ────────────────────────────────────────────────────
+
+for fixture in "$HERE/skills"/*.smoke; do
+    [[ -e "$fixture" ]] || continue
+    name="$(basename "$fixture" .smoke)"
+    [[ -n "$SELECTOR" && "$SELECTOR" != "$name" ]] && continue
+
+    prompt="$(grep '^prompt:' "$fixture" | sed 's/^prompt:[[:space:]]*//')"
+    expect_substr="$(grep '^expect_substr:' "$fixture" | sed 's/^expect_substr:[[:space:]]*//' || true)"
+    expected_narrative="$(grep '^expected_narrative:' "$fixture" | sed 's/^expected_narrative:[[:space:]]*//' || true)"
+    tools="$(grep '^tools:' "$fixture" | sed 's/^tools:[[:space:]]*//')"
+    : "${tools:=claude}"
+
+    if [[ -z "$prompt" ]]; then
+        fail "fixture $fixture malformed (missing prompt:)"
+        continue
+    fi
+    if (( STRESSED )); then
+        prompt="$STRESS_PREFIX"$'\n'"$prompt"
+    fi
+    if [[ -z "$expect_substr" && -z "$expected_narrative" ]]; then
+        fail "fixture $fixture malformed (needs expect_substr: or expected_narrative:)"
+        continue
+    fi
+    IFS=',' read -ra _tool_list <<<"$tools"
+    for tool in "${_tool_list[@]}"; do
+        tool="${tool//[[:space:]]/}"
+        case "$tool" in
+            claude|kiro)
+                assert_response "$tool" "$prompt" "$expect_substr" \
+                    "$expected_narrative" "skill:$name via $tool"
+                ;;
+            "") ;;
+            *)  fail "fixture $fixture: unknown tool '$tool' in tools: field" ;;
+        esac
+    done
+done
+
+echo
+if (( FAILURES == 0 )); then
+    echo "all fixtures passed"
+    exit 0
+else
+    echo "$FAILURES fixture(s) failed"
+    exit 1
+fi

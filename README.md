@@ -1,64 +1,112 @@
 # mAId
 
-Tool-agnostic source of truth for agentic resources — skills,
-agents, commands, steering docs — compiled into whatever AI tool
-happens to be in use (Claude Code, Kiro, Gemini CLI, future
-tools).
+Tool-agnostic source of truth for agentic resources — skills
+and the AGENTS.md preamble — compiled into whatever AI tool
+happens to be in use (Claude Code, Kiro, Cursor, Codex,
+Copilot, Zed, Windsurf, future tools).
 
-The repo is the checked-in source. Installing mAId creates
-symlinks from `$HOME` into this tree, so edits to `sources/`
-are live for the next AI session. All work on mAId itself
-goes through `deno task <verb>` — there is no separate
-binary on `PATH`.
+The repo has two halves:
+
+- **`resources/`** — three layers in one directory:
+  the markdown content (`resources/content/`) the AI tools
+  load; the Rust + bash tooling (`resources/build-tool/`,
+  `resources/tests/run`) that installs and tests it; and
+  the Justfile verbs (`install`, `uninstall`, `status`,
+  `verify`) that drive the tooling.
+- **`kaimux/`** — sibling workspace member for the kaimux
+  app (placeholder; lands with code in its own feature).
+
+`just install` creates symlinks from `$HOME` into the
+content tree so edits are live for the next AI session.
 
 ## Develop
 
+The repo-local flake provides `cargo` and `just`:
+
 ```
-direnv allow              # loads deno via the repo-local flake
-deno task test            # full suite
-deno task fmt             # format
-deno task lint            # lint
-deno task check           # typecheck
+direnv allow              # loads the flake on shell entry
+just                      # lists every recipe
 ```
 
-Full task list lives in [`deno.json`](./deno.json). A bare
-`deno test` fails with permission errors by design — use
-`deno task test` or `deno test -A`.
+Without direnv: `nix develop` once per shell (or prefix
+`nix develop --command` to each command). Cargo + just are
+hard prerequisites; there's no bootstrap shim.
 
-The development methodology (spec-driven, phase-gated) is encoded
-in the [`kdevkit` skill](./sources/skills/kdevkit/SKILL.md).
-Project context lives in [`specs/project.md`](./specs/project.md);
-feature specs live in [`specs/feature/`](./specs/feature/);
-open future work sits in [`specs/backlog/`](./specs/backlog/).
+The development methodology (spec-driven, phase-gated) is
+encoded in the
+[`kdevkit` skill](./resources/content/skills/kdevkit/SKILL.md).
+Project context: [`specs/project.md`](./specs/project.md).
+Feature specs: [`specs/feature/`](./specs/feature/).
+
+## Verbs
+
+Two groups, separated by what they touch:
+
+**AI verbs** — operate on `$HOME` or the AI tools:
+
+```
+just install      # validate content + create $HOME-facing symlinks
+just uninstall    # remove install-managed symlinks
+just status       # report current symlink state
+just verify       # drive `claude --print` against installed content (costs API credits, gated)
+just verify-one <name>   # single fixture
+```
+
+**Build-tool hygiene** — operate on the Rust crate that
+implements the AI verbs; never touch `$HOME` or the AI
+tools:
+
+```
+just test         # workspace unit tests (sub-second; tempfile-fake-HOME)
+just fmt          # rustfmt
+just fmt-check    # rustfmt --check
+just lint         # clippy --workspace --all-targets -- -D warnings
+just check        # cargo check --workspace
+just ci           # the full hygiene gate
+```
 
 ## Install
 
 ```
-./install              # deno task setup:   validate + deploy
-./install --uninstall  # deno task teardown: undeploy
+just install
 ```
 
-What happens on install:
+What it does:
 
-1. Deno picks up from the repo-local flake (direnv active)
-   or via `nix develop --command` if nix is present.
-2. `deno task validate && deno task deploy` symlinks every
-   entry in [`maid/registry.ts`](./maid/registry.ts) — today
-   `~/.claude/CLAUDE.md`, `~/.claude/skills`,
-   `~/.claude/agents`, `~/.claude/commands`,
+1. Validates `resources/content/` — the AGENTS.md preamble
+   is present + non-empty; each `skills/<name>/SKILL.md`
+   has the required frontmatter.
+2. Creates `$HOME`-facing symlinks per the registry at the
+   top of
+   [`resources/build-tool/src/main.rs`](./resources/build-tool/src/main.rs).
+   Today: the merged AGENTS.md preamble (deployed as
+   `~/.claude/CLAUDE.md`, `~/.claude/AGENTS.md`,
    `~/.kiro/steering/KIRO.md`, and
-   `~/.kiro/steering/skills`, each pointing into
-   [`sources/`](./sources/).
+   `~/.kiro/steering/AGENTS.md` for cross-tool support)
+   plus the skills tree (`~/.claude/skills` and
+   `~/.kiro/steering/skills`).
 
-Uninstall is idempotent. Hand-written files at a managed
-destination are preserved unless you pass `--force`.
+`just uninstall` is idempotent. Hand-written files at a
+managed destination are preserved unless you pass
+`--force`.
+
+mAId follows the cross-tool **AGENTS.md** standard
+(Linux Foundation Agentic AI Foundation; native support
+across Codex, Copilot, Cursor, Kiro, Zed, Windsurf). The
+legacy `CLAUDE.md` and `KIRO.md` filenames symlink at the
+same source — drop them when Claude Code makes AGENTS.md a
+default-read location.
 
 ## Where to look next
 
-- Everything that gets deployed: [`sources/`](./sources/).
-- How deployment is decided: [`maid/registry.ts`](./maid/registry.ts).
+- Everything that gets installed:
+  [`resources/content/`](./resources/content/).
+- How installation is decided: the `REGISTRY` constant at
+  the top of
+  [`resources/build-tool/src/main.rs`](./resources/build-tool/src/main.rs).
 - Reference shape for a new skill:
-  [`sources/skills/kdevkit/SKILL.md`](./sources/skills/kdevkit/SKILL.md)
-  (live siblings: [`notes/`](./sources/skills/notes/SKILL.md),
-  [`writing-style/`](./sources/skills/writing-style/SKILL.md)).
-- Full dev-verb list: [`deno.json`](./deno.json) `tasks` block.
+  [`resources/content/skills/kdevkit/SKILL.md`](./resources/content/skills/kdevkit/SKILL.md)
+  (live siblings:
+  [`notes/`](./resources/content/skills/notes/SKILL.md),
+  [`writing-style/`](./resources/content/skills/writing-style/SKILL.md)).
+- Full verb list: `just --list`.
