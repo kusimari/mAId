@@ -11,10 +11,6 @@ use std::process::ExitCode;
 mod deploy;
 mod registry;
 mod schema;
-#[allow(dead_code)] // sh!() is reserved for verbs that need shell-style
-// string parsing; today's call sites use duct::cmd
-// directly to avoid re-parsing paths.
-mod sh;
 mod sources;
 
 use deploy::{
