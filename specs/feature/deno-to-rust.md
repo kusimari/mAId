@@ -110,10 +110,9 @@ mAId/
 ├── .gitignore              + target/, + dist/
 ├── README.md               Develop section rewritten for cargo verbs
 ├── transform/              ← the build crate (validate + symlink-deploy + orchestration)
-│   ├── Cargo.toml          deps: clap, anyhow, duct, shell-words; dev: tempfile
+│   ├── Cargo.toml          deps: clap, anyhow, duct; dev: tempfile
 │   └── src/
 │       ├── main.rs         CLI dispatch (clap)
-│       ├── sh.rs           ~10 LOC sh!() helper over duct + shell-words
 │       ├── deploy.rs       symlink state machine (port of deploy.ts)
 │       ├── registry.rs     static REGISTRY: &[Entry] (port of registry.ts)
 │       ├── schema.rs       simplified frontmatter validator
@@ -148,21 +147,27 @@ machines without cargo on PATH must enter the dev shell first
 Native cargo handles the rest — `cargo build`, `cargo test`,
 `cargo check`, `cargo fmt`, `cargo clippy`.
 
-### Orchestration: duct + shell-words
+### Orchestration: duct
 
-`transform/src/sh.rs` exposes a tiny `sh!(...)` macro that
-parses a shell-style string at runtime via
-`shell_words::split` and wraps the result in `duct::cmd`.
-Used wherever the build crate shells out to another program
-(`cargo build`, `cp`, `tests/functional/run`).
+The build crate shells out in two places — `cmd_install`
+calls `cargo build -p <name> --release` and copies the
+binary; `cmd_test` invokes `tests/functional/run`. Both use
+`duct::cmd` with typed args directly (no string parsing,
+no shell layer) so paths and member names with whitespace
+or quotes can't mis-tokenize.
 
 The symlink state machine in `deploy.rs` does **not** use
-`sh!` — it uses plain `std::fs` so the outcome can be a
-typed enum and the branches are exhaustive `match`.
+`duct` — it uses plain `std::fs` so the outcome can be a
+typed enum and the branches are exhaustive `match` over
+filesystem state.
 
-duct (1.x, last release Nov 2025) and shell-words (1.1.x,
-last release Dec 2025) are both actively maintained;
+duct (1.x, last release Nov 2025) is actively maintained;
 xshell was rejected because its last release was Oct 2023.
+A `shell-words`-backed `sh!()` helper was prototyped during
+the dev loop and removed at code review — every call site
+uses typed args, so the helper had no consumers. If a
+future verb genuinely needs to parse a shell-style literal
+(e.g. accept a user-supplied command), revisit then.
 
 ### Symlink state machine
 
@@ -260,9 +265,12 @@ branches touch all three. No source code conflict is expected.
 - **xtask, not Just.** Everything stays in cargo; no extra
   flake dep. Drove by the dev-verb count being small (~8
   verbs that aren't cargo-native — and 4 of those that *are*).
-- **duct + shell-words, not xshell.** xshell is stale; the
-  duct/shell-words pair released through Dec 2025. A ~10-LOC
-  `sh!()` helper restores xshell's string-literal ergonomics.
+- **duct (only), not xshell.** xshell is stale; duct shipped
+  Nov 2025. Both subprocess call sites use `duct::cmd` with
+  typed args directly. A `shell-words`-backed `sh!()` helper
+  was prototyped and removed at code review — the helper had
+  no consumers once `cmd_install` and `cmd_test` switched to
+  typed args.
 - **Validator simplified, not removed.** "kiro-cli still does
   not function" despite valid frontmatter — defense-in-depth
   wasn't real. Keep the cheap checks, drop the type-pedantry.
@@ -305,10 +313,9 @@ reviewable on its own).
    uses.
 
 2. **Create `transform` crate skeleton.** `transform/Cargo.toml`
-   with `clap`, `anyhow`, `duct`, `shell-words`.
-   `transform/src/main.rs` with clap dispatch over the eight
-   verbs, each stubbed with `todo!()`. Verify: `cargo xtask
-   --help` lists all verbs.
+   with `clap`, `anyhow`, `duct`. `transform/src/main.rs` with
+   clap dispatch over the eight verbs, each stubbed with
+   `todo!()`. Verify: `cargo xtask --help` lists all verbs.
 
 3. **Port `registry.rs`.** Static `&[Entry]` array matching
    today's six entries. No tests yet (data only).
@@ -339,14 +346,16 @@ reviewable on its own).
 8. **Add `install` and `uninstall` verbs.** `install` =
    `validate` then `deploy`, plus a member-discovery step:
    walk `sources/*/Cargo.toml`, and for each present member,
-   `sh!("cargo build -p <name> --release")` then copy
-   `target/release/<name>` to `dist/<name>`. With no Rust
-   members (the day this branch merges, before agent-orch
-   lands), the build/copy loop is empty and install only
-   does validate+deploy. `uninstall` = `undeploy`.
+   `duct::cmd("cargo", ["build", "-p", name, "--release"])`
+   then copy `target/release/<name>` to `dist/<name>`. With
+   no Rust members (the day this branch merges, before
+   agent-orch lands), the build/copy loop is empty and
+   install only does validate+deploy. `uninstall` =
+   `undeploy`.
 
-9. **Add `test-smoke` and `test-functional` verbs.** `sh!()`
-   wraps the existing `tests/functional/run` script.
+9. **Add `test-smoke` and `test-functional` verbs.**
+   `duct::cmd(&runner, [...])` invokes the existing
+   `tests/functional/run` script with typed args.
 
 10. **Delete `./install`.** Remove the file. README's Develop
     section names `cargo xtask install` as the entry point
@@ -397,6 +406,17 @@ None blocking. Resolved during planning:
 
 ## Session Log
 
+- 2026-06-11 · review feedback: dropped the dead `sh!()`
+  helper and its `shell-words` dependency. After the prior
+  code-review fix moved both call sites to `duct::cmd` with
+  typed args, the helper had no consumers and was
+  unjustifiable as "kept for future use." Removed
+  `transform/src/sh.rs` and the `shell-words` line from
+  `transform/Cargo.toml`. Updated Workspace shape,
+  Orchestration, Trade-offs, Implementation Plan, and
+  Decision Log to reflect what shipped: duct only, no shell
+  layer.
+
 - 2026-06-10 · dev loop complete. 14 implementation steps
   landed in one feat commit (`feat(deno-to-rust): cargo
   workspace + transform crate`). Quality + Test gates green:
@@ -446,7 +466,9 @@ None blocking. Resolved during planning:
   the registry but not the state machine), then picked the
   orchestration library (xshell stale, dax wrong direction,
   duct + shell-words actively maintained). Final shape is
-  cargo workspace + transform crate + duct + shell-words.
+  cargo workspace + transform crate + duct (shell-words and
+  the sh!() helper were dropped at code review — see the
+  2026-06-11 entry below).
 
 ## Decision Log
 
@@ -494,16 +516,22 @@ None blocking. Resolved during planning:
   binary" constraint), Just shims (extra flake dep without a
   proportional ergonomic win at 8 verbs).
 
-- **duct + shell-words helper, not xshell.** xshell hasn't
-  released since Oct 2023; the author moved to dax (a Deno
-  tool — wrong direction for a Rust-only stance). duct
-  shipped Nov 2025; shell-words shipped Dec 2025; both have
-  high download counts. A ~10-LOC `sh!()` helper restores
-  xshell's string-literal ergonomics on top of the active
-  pair. Rejected: xshell (stale), cmd_lib (token-tree syntax
-  doesn't match the readability target), plain
-  `std::process::Command` (verbose for the orchestration
-  layer, though still used inside the symlink state machine).
+- **duct (only), not xshell, not duct + shell-words.**
+  xshell hasn't released since Oct 2023; the author moved
+  to dax (a Deno tool — wrong direction for a Rust-only
+  stance). duct shipped Nov 2025. The original plan paired
+  duct with `shell-words` and a tiny `sh!()` helper to
+  restore xshell's string-literal ergonomics, but at code
+  review every call site (`cmd_install`, `cmd_test`) was
+  flipped to `duct::cmd` with typed args to dodge a real
+  shell-injection class against checkout paths or member
+  names containing whitespace. With no callers, the helper
+  and `shell-words` were removed. Add them back if a future
+  verb genuinely needs to parse a shell-style literal
+  (e.g. user-supplied commands). Rejected: xshell (stale),
+  cmd_lib (token-tree syntax doesn't match the readability
+  target), plain `std::process::Command` (verbose, but
+  still used inside the symlink state machine).
 
 - **Frontmatter validator simplified, not removed.** User
   feedback: defense-in-depth wasn't real ("kiro-cli still
@@ -515,7 +543,7 @@ None blocking. Resolved during planning:
   and even the cheap checks cost ~30 LOC).
 
 - **Plain `std::fs` for the symlink state machine, not duct.**
-  duct/shell-words is for orchestration — running other
-  programs. The state machine is `match` over filesystem
-  state, where exhaustive enums and structured errors are
-  the win Rust gives us. Mixing the two would be wrong.
+  duct is for orchestration — running other programs. The
+  state machine is `match` over filesystem state, where
+  exhaustive enums and structured errors are the win Rust
+  gives us. Mixing the two would be wrong.
