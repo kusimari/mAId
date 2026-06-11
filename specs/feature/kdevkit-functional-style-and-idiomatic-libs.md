@@ -478,10 +478,14 @@ new fixture. No Rust touched.
 - [ ] **Hand off functional smoke to user** — name the command
   (`just verify-one kdevkit-idiomatic-design-and-wiring`; full:
   `just verify`); do not run (user-driven, `[confirm]`-gated).
-- [ ] **Push + open Agent-dev Review Gate** — body: Why +
+- [x] **Push + open Agent-dev Review Gate** — body: Why +
   Approach (the two rules) + Reading order (SKILL.md §6/§7 for
   intent; interviews.md for contract; the fixture for
-  plumbing). Hand off to user for PR review.
+  plumbing). Hand off to user for PR review. (PR #25.)
+- [x] **Justfile `install *FLAGS` passthrough (amendment).**
+  Forward flags so `just install --force` reaches the
+  build-tool's already-implemented `--force`. Quality + Test
+  gates re-run green; folded into PR #25. See Decision Log.
 
 Risk notes:
 
@@ -578,3 +582,23 @@ Risk notes:
   behavior; honest minor bump (parallel to 3.1→3.2 for
   separate-what-from-how). Alternative rejected: stay at
   3.3.0 — would hide a contract change.
+- **Justfile `install *FLAGS` passthrough (authorized
+  amendment).** Rationale: while verifying the Test Gate's
+  `just install` step, the recipe's hardcoded no-argument shape
+  blocked `just install --force` (`just` parses `--force` as a
+  second recipe name; it has no cargo-style `-- ` separator —
+  confirmed empirically). The build-tool binary already
+  implements an `install --force` flag (clap arg, handled at
+  the `WrongTarget(current) if force` repoint path) — it was
+  simply unreachable through Just. Added `*FLAGS` to forward
+  it. User explicitly authorized folding this into the PR, so
+  it's a recorded plan amendment, not silent scope creep.
+  Scoped to `install` only (the stale-symlink case the user
+  hit); `uninstall`/`status` left untouched to keep the diff
+  minimal. No `project.md` change — every `just install`
+  reference there is a bare-verb mention that stays accurate
+  (the verb is unchanged; it now also accepts flags).
+  Alternative rejected: leave it and tell the user to call the
+  binary directly (`cargo run -p build-tool … -- install
+  --force`) — works, but leaves the documented verb surface
+  unable to do a documented operation.

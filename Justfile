@@ -6,8 +6,10 @@ _default:
 # the AI tools consume. Validation of content runs inside `install`.
 
 # Validate content and create/refresh $HOME-facing symlinks.
-install:
-    cargo run -p build-tool --release --quiet -- install
+# Pass flags through, e.g. `just install --force` to repoint
+# symlinks that currently point elsewhere.
+install *FLAGS:
+    cargo run -p build-tool --release --quiet -- install {{ FLAGS }}
 
 # Remove install-managed symlinks.
 uninstall:
