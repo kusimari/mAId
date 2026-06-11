@@ -28,11 +28,31 @@ verify:
 verify-one name:
     resources/tests/run "{{ name }}"
 
-# ── build-tool hygiene ───────────────────────────────────────────
-# These verbs operate on the Rust crate that implements install /
-# uninstall / status. They never touch $HOME.
+# ── kaimux ───────────────────────────────────────────────────────
+# tmux-pane orchestrator for coding-agent sessions. Builds in release
+# and lands a flat binary at dist/kaimux. No symlinking; users invoke
+# the binary directly (typically via the tmux keybinding kaimux setup
+# installs).
 
-# Workspace unit tests for build-tool (sub-second; tempfile-fake-HOME).
+# Build kaimux in release; copy to dist/kaimux.
+kaimux-build:
+    cargo build -p kaimux --release
+    mkdir -p dist
+    cp target/release/kaimux dist/kaimux
+
+# Kaimux unit tests (sub-second).
+kaimux-test:
+    cargo test -p kaimux
+
+# Kaimux end-to-end integration test (real tmux, requires tmux + jq).
+kaimux-integration: kaimux-build
+    kaimux/tests/integration.sh
+
+# ── workspace hygiene ────────────────────────────────────────────
+# These verbs operate on the Rust workspace itself. They never touch
+# $HOME or AI tools.
+
+# Workspace unit tests for every member.
 test:
     cargo test --workspace
 
@@ -48,5 +68,5 @@ lint:
 check:
     cargo check --workspace
 
-# Full build-tool quality + test gate.
+# Full workspace quality + test gate.
 ci: fmt-check lint check test

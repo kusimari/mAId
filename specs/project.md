@@ -42,10 +42,16 @@ Two halves at the top level:
      `just verify` (single-fixture: `just verify-one
      <name>`). These are how a human or another tool
      consumes the tooling.
-- **`kaimux/`** — future home for the kaimux app (was
-  agent-orch). Sibling workspace member; built and tested
-  via native cargo. Empty placeholder at this branch's
-  merge; lands with code in its own feature.
+- **`kaimux/`** — tmux-pane orchestrator for coding-agent
+  sessions. Single-binary Rust crate (workspace member).
+  Wraps `claude` / `kiro-cli` calls so each running agent
+  registers itself as a tracked tmux pane; a top-level
+  dashboard pane shows the inventory, status, and a
+  one-key jump to any of them. State lives in
+  `$XDG_STATE_HOME/kaimux/sessions.json`. No symlinking;
+  built by `just kaimux-build` to `dist/kaimux` and
+  invoked directly (typically via a tmux keybind that
+  `kaimux setup` installs into the user's tmux config).
 
 Both halves are members of one cargo workspace at the
 root, so `cargo build --workspace` covers everything.
@@ -120,7 +126,10 @@ mAId/
 │   └── tests/              bash fixture-runner (drives `claude --print` against installed content)
 │       ├── run             entrypoint (`just verify` calls this)
 │       └── skills/<name>.smoke   fixtures: prompt + expect_substr or expected_narrative
-├── kaimux/                 (future) sibling workspace member for the kaimux app
+├── kaimux/                 tmux-pane orchestrator for coding-agent sessions
+│   ├── Cargo.toml          deps: clap, anyhow, fd-lock, nix, notify, serde, serde_json
+│   ├── src/main.rs         single-file, typeclass-shaped (Session/Store/Wrapper/Loop)
+│   └── tests/              bash integration tests against real tmux
 ├── dist/                   gitignored — built binaries land here
 ├── target/                 gitignored — cargo's build dir
 └── specs/
