@@ -448,31 +448,31 @@ the skill). No Rust change.
 One slice — markdown content edits to two skill files plus one
 new fixture. No Rust touched.
 
-- [ ] **Edit SKILL.md §6** — add the "Reach for what exists
+- [x] **Edit SKILL.md §6** — add the "Reach for what exists
   (design-time, always-on)" subsection after the "Requirements
   smell test (always-on)" subsection; add the one-line
   ecosystem-survey clause to the "Ground first" prose.
-- [ ] **Edit SKILL.md §7** — add the "Write for intent
+- [x] **Edit SKILL.md §7** — add the "Write for intent
   (dev-time)" preamble before the Quality Gate subsection.
-- [ ] **Bump SKILL.md `version`** 3.3.0 → 3.4.0; review
+- [x] **Bump SKILL.md `version`** 3.3.0 → 3.4.0; review
   frontmatter `description` for accuracy (likely unchanged).
-- [ ] **Edit interviews.md** — add the "what well-known
+- [x] **Edit interviews.md** — add the "what well-known
   library/idiom already does this job" clause to the Design
   interview prompt (#3 of the four interviews).
-- [ ] **Add fixture
+- [x] **Add fixture
   `resources/tests/skills/kdevkit-idiomatic-design-and-wiring.smoke`**
   — judge mode per Test Strategy above; public-safe
   "validate frontmatter" example.
-- [ ] **Audit existing kdevkit smokes** — re-read
+- [x] **Audit existing kdevkit smokes** — re-read
   `kdevkit-codebase-grounding` and `kdevkit-dev-loop`
   `expected_narrative`s for contradiction with the additions;
   patch only on a literal conflict (expected: none).
-- [ ] **Quality Gate** — `just fmt-check && just lint &&
+- [x] **Quality Gate** — `just fmt-check && just lint &&
   just check` (no-ops for markdown but must stay green).
-- [ ] **Test Gate** — `just test` (build-tool unit suite +
+- [x] **Test Gate** — `just test` (build-tool unit suite +
   structural install test; all green). `just install` then
   `just status` to confirm kdevkit symlinks resolve.
-- [ ] **Code Review Gate** — host-native `/code-review` on the
+- [x] **Code Review Gate** — host-native `/code-review` on the
   green diff (project.md + diff; no feature spec), threshold
   70, hard-stop, retry-budget 2.
 - [ ] **Hand off functional smoke to user** — name the command
