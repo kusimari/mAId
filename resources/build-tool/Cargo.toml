@@ -1,11 +1,11 @@
 [package]
-name = "transform"
+name = "build-tool"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [[bin]]
-name = "transform"
+name = "build-tool"
 path = "src/main.rs"
 
 [dependencies]

@@ -1,72 +1,90 @@
 # mAId
 
-Tool-agnostic source of truth for agentic resources — skills,
-agents, commands, steering docs — compiled into whatever AI tool
-happens to be in use (Claude Code, Kiro, Gemini CLI, future
-tools).
+Tool-agnostic source of truth for agentic resources — skills
+and the AGENTS.md preamble — compiled into whatever AI tool
+happens to be in use (Claude Code, Kiro, Cursor, Codex,
+Copilot, Zed, Windsurf, future tools).
 
-The repo is the checked-in source. Installing mAId creates
-symlinks from `$HOME` into this tree, so edits to `sources/`
-are live for the next AI session. All work on mAId itself
-goes through `cargo xtask <verb>` (or native cargo verbs) —
-there is no separate binary on `PATH`.
+The repo has two halves:
+
+- **`resources/`** — markdown content the AI tools load,
+  plus the build crate that operates on it.
+- **`kaimux/`** — a sibling workspace member for the
+  kaimux app (placeholder; lands with code in its own
+  feature).
+
+Installing mAId creates symlinks from `$HOME` into this
+tree so edits are live for the next AI session.
 
 ## Develop
 
+The repo-local flake provides `cargo` and `just`:
+
 ```
-direnv allow                              # loads rust toolchain via the repo-local flake
-cargo test --workspace                    # full unit suite
-cargo fmt --all                           # format
-cargo clippy --workspace --all-targets    # lint
-cargo check --workspace                   # typecheck
+direnv allow              # loads the flake on shell entry
+just                      # lists every recipe
 ```
 
-Without direnv, prefix every command with `nix develop
---command` (e.g. `nix develop --command cargo test
---workspace`). Cargo is a hard prerequisite — there is no
-bootstrap shim.
+Without direnv: `nix develop` once per shell (or prefix
+`nix develop --command` to each command). Cargo + just are
+hard prerequisites; there's no bootstrap shim.
 
-The development methodology (spec-driven, phase-gated) is encoded
-in the [`kdevkit` skill](./sources/skills/kdevkit/SKILL.md).
-Project context lives in [`specs/project.md`](./specs/project.md);
-feature specs live in [`specs/feature/`](./specs/feature/);
-open future work sits in [`specs/backlog/`](./specs/backlog/).
+Common verbs:
+
+```
+just test          # workspace unit tests
+just fmt-check     # rustfmt
+just lint          # clippy --workspace -D warnings
+just check         # cargo check --workspace
+just ci            # full quality + test gate
+```
+
+The development methodology (spec-driven, phase-gated) is
+encoded in the
+[`kdevkit` skill](./resources/content/skills/kdevkit/SKILL.md).
+Project context: [`specs/project.md`](./specs/project.md).
+Feature specs: [`specs/feature/`](./specs/feature/).
 
 ## Install
 
 ```
-cargo xtask install     # validate + deploy + build any sources/<name>/ Rust crates
-cargo xtask uninstall   # undeploy
+just deploy             # validate + create $HOME-facing symlinks
+just status             # report current symlink state
+just undeploy           # remove deploy-managed symlinks
 ```
 
-What happens on install:
+What `just deploy` does:
 
-1. The rust toolchain picks up from the repo-local flake
-   (direnv active) or via `nix develop --command` if nix is
-   present and direnv isn't.
-2. `cargo xtask validate` walks `sources/` and runs the
+1. `just validate` walks `resources/content/` and runs the
    simplified frontmatter validator.
-3. `cargo xtask deploy` symlinks every entry in
-   [`transform/src/registry.rs`](./transform/src/registry.rs) —
-   today `~/.claude/CLAUDE.md`, `~/.claude/skills`,
-   `~/.claude/agents`, `~/.claude/commands`,
-   `~/.kiro/steering/KIRO.md`, and `~/.kiro/steering/skills`,
-   each pointing into [`sources/`](./sources/).
-4. Any Rust workspace members under `sources/<name>/` are
-   built in release mode and copied to `dist/<name>` (e.g.
-   `sources/agent-orch/` → `dist/agent-orch`).
+2. `just deploy` symlinks every entry in
+   [`resources/build-tool/src/registry.rs`](./resources/build-tool/src/registry.rs)
+   — today the merged AGENTS.md preamble (deployed as
+   `~/.claude/CLAUDE.md`, `~/.claude/AGENTS.md`,
+   `~/.kiro/steering/KIRO.md`, and
+   `~/.kiro/steering/AGENTS.md` for cross-tool support)
+   plus the skills tree (`~/.claude/skills` and
+   `~/.kiro/steering/skills`).
 
-Uninstall is idempotent. Hand-written files at a managed
+Undeploy is idempotent. Hand-written files at a managed
 destination are preserved unless you pass `--force`.
+
+mAId follows the cross-tool **AGENTS.md** standard
+(Linux Foundation Agentic AI Foundation; native support
+across Codex, Copilot, Cursor, Kiro, Zed, Windsurf). The
+legacy `CLAUDE.md` and `KIRO.md` filenames symlink at the
+same source — drop them when Claude Code makes AGENTS.md a
+default-read location.
 
 ## Where to look next
 
-- Everything that gets deployed: [`sources/`](./sources/).
+- Everything that gets deployed:
+  [`resources/content/`](./resources/content/).
 - How deployment is decided:
-  [`transform/src/registry.rs`](./transform/src/registry.rs).
+  [`resources/build-tool/src/registry.rs`](./resources/build-tool/src/registry.rs).
 - Reference shape for a new skill:
-  [`sources/skills/kdevkit/SKILL.md`](./sources/skills/kdevkit/SKILL.md)
-  (live siblings: [`notes/`](./sources/skills/notes/SKILL.md),
-  [`writing-style/`](./sources/skills/writing-style/SKILL.md)).
-- Full verb list: `cargo xtask --help` or
-  [`transform/src/main.rs`](./transform/src/main.rs).
+  [`resources/content/skills/kdevkit/SKILL.md`](./resources/content/skills/kdevkit/SKILL.md)
+  (live siblings:
+  [`notes/`](./resources/content/skills/notes/SKILL.md),
+  [`writing-style/`](./resources/content/skills/writing-style/SKILL.md)).
+- Full verb list: `just --list`.

@@ -225,17 +225,19 @@ assert_response() {
 
 structural_smokes() {
     info "=== structural checks ==="
-    assert_symlink_resolves "$HOME/.claude/CLAUDE.md" "$MAID_ROOT/sources/claude/CLAUDE.md"
+    # Belt-and-suspenders: legacy CLAUDE.md/KIRO.md and AGENTS.md all
+    # symlink at the same merged source — resources/content/agents.md.
+    assert_symlink_resolves "$HOME/.claude/CLAUDE.md"        "$MAID_ROOT/resources/content/agents.md"
+    assert_symlink_resolves "$HOME/.claude/AGENTS.md"        "$MAID_ROOT/resources/content/agents.md"
+    assert_symlink_resolves "$HOME/.kiro/steering/KIRO.md"   "$MAID_ROOT/resources/content/agents.md"
+    assert_symlink_resolves "$HOME/.kiro/steering/AGENTS.md" "$MAID_ROOT/resources/content/agents.md"
     # Directory symlinks: readlink -f resolves to the target dir.
-    assert_symlink_resolves "$HOME/.claude/skills" "$MAID_ROOT/sources/skills"
-    assert_symlink_resolves "$HOME/.claude/agents" "$MAID_ROOT/sources/agents"
-    assert_symlink_resolves "$HOME/.claude/commands" "$MAID_ROOT/sources/commands"
-    assert_symlink_resolves "$HOME/.kiro/steering/KIRO.md" "$MAID_ROOT/sources/kiro/KIRO.md"
-    assert_symlink_resolves "$HOME/.kiro/steering/skills" "$MAID_ROOT/sources/skills"
+    assert_symlink_resolves "$HOME/.claude/skills"           "$MAID_ROOT/resources/content/skills"
+    assert_symlink_resolves "$HOME/.kiro/steering/skills"    "$MAID_ROOT/resources/content/skills"
 
     # Each skill's SKILL.md exists and is reachable through the symlink.
     local skill
-    for skill in "$MAID_ROOT/sources/skills"/*/SKILL.md; do
+    for skill in "$MAID_ROOT/resources/content/skills"/*/SKILL.md; do
         [[ -e "$skill" ]] || continue
         local name
         name="$(basename "$(dirname "$skill")")"

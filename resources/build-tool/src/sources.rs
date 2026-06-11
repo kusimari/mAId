@@ -1,7 +1,9 @@
-//! Walk `mAId/sources/<kind>/` and return validated records.
+//! Walk `mAId/resources/content/<kind>/` and return validated records.
 //!
-//! - skills: `<root>/skills/<name>/SKILL.md`
-//! - agents/commands: `<root>/<kind>/<name>.md`
+//! Today the only kind with content is `skills` (`<root>/skills/<name>/SKILL.md`).
+//! `agents/` and `commands/` slots remain in the walker for future content;
+//! the registry doesn't deploy them today (they were phantom slots dropped
+//! in feat/resources-and-kaimux). If they reappear, the walker is ready.
 //!
 //! Returns records sorted deterministically by (kind, name).
 //! Collects all schema errors rather than failing on the first.

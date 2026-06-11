@@ -238,19 +238,10 @@ mod tests {
 
     fn make_checkout() -> TempDir {
         let dir = TempDir::new().unwrap();
-        fs::create_dir_all(dir.path().join("sources/skills")).unwrap();
-        fs::create_dir_all(dir.path().join("sources/agents")).unwrap();
-        fs::create_dir_all(dir.path().join("sources/commands")).unwrap();
-        fs::create_dir_all(dir.path().join("sources/claude")).unwrap();
-        fs::create_dir_all(dir.path().join("sources/kiro")).unwrap();
+        fs::create_dir_all(dir.path().join("resources/content/skills")).unwrap();
         fs::write(
-            dir.path().join("sources/claude/CLAUDE.md"),
-            "---\nname: x\ndescription: y\n---\nTop.\n",
-        )
-        .unwrap();
-        fs::write(
-            dir.path().join("sources/kiro/KIRO.md"),
-            "---\nname: x\ndescription: y\n---\nKiro.\n",
+            dir.path().join("resources/content/agents.md"),
+            "---\nname: x\ndescription: y\n---\nAgents preamble.\n",
         )
         .unwrap();
         dir

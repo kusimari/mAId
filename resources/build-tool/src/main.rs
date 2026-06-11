@@ -1,11 +1,13 @@
-//! transform — mAId's build crate. Validates source markdown and
+//! build-tool — mAId's build crate. Validates source markdown and
 //! manages the $HOME-facing symlinks that each AI tool reads from.
 //!
-//! Invoked via `cargo xtask <verb>` (alias in `.cargo/config.toml`).
+//! Invoked via the project's Justfile: `just deploy`, `just status`,
+//! `just undeploy`, `just validate`. Each recipe expands to
+//! `cargo run -p build-tool --release --quiet -- <verb>`.
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 mod deploy;
@@ -21,8 +23,8 @@ use registry::REGISTRY;
 
 #[derive(Parser)]
 #[command(
-    name = "transform",
-    about = "mAId build crate — validate, deploy, install."
+    name = "build-tool",
+    about = "mAId build crate — validate, deploy, undeploy, status."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -31,7 +33,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Walk sources/ and validate frontmatter.
+    /// Walk resources/content/ and validate frontmatter.
     Validate,
     /// Validate, then create/refresh $HOME-facing symlinks.
     Deploy {
@@ -54,22 +56,6 @@ enum Cmd {
     },
     /// Report each managed symlink's state.
     Status,
-    /// Build any sources/<name>/ Rust crates into dist/, then deploy.
-    Install,
-    /// Inverse of install — undeploy.
-    Uninstall {
-        /// Plan without making changes.
-        #[arg(long)]
-        dry_run: bool,
-        /// Remove whatever is at the managed path, including foreign
-        /// symlinks and non-symlinks.
-        #[arg(long)]
-        force: bool,
-    },
-    /// Run tests/functional/run --no-tools (structural smoke).
-    TestSmoke,
-    /// Run tests/functional/run (tool-driven functional smoke).
-    TestFunctional,
 }
 
 fn main() -> ExitCode {
@@ -77,7 +63,7 @@ fn main() -> ExitCode {
     let rc = match run(cli) {
         Ok(rc) => rc,
         Err(e) => {
-            eprintln!("transform: {e:#}");
+            eprintln!("build-tool: {e:#}");
             1
         }
     };
@@ -90,21 +76,22 @@ fn run(cli: Cli) -> Result<u8> {
         Cmd::Deploy { dry_run, force } => cmd_deploy(dry_run, force),
         Cmd::Undeploy { dry_run, force } => cmd_undeploy(dry_run, force),
         Cmd::Status => cmd_status(),
-        Cmd::Install => cmd_install(),
-        Cmd::Uninstall { dry_run, force } => cmd_undeploy(dry_run, force),
-        Cmd::TestSmoke => cmd_test(true),
-        Cmd::TestFunctional => cmd_test(false),
     }
 }
 
 fn repo_root() -> Result<PathBuf> {
-    // CARGO_MANIFEST_DIR points at <checkout>/transform/. Walk up one.
+    // CARGO_MANIFEST_DIR points at <checkout>/resources/build-tool/.
+    // Walk up two levels to reach the workspace root.
     let manifest = std::env::var("CARGO_MANIFEST_DIR")
-        .context("CARGO_MANIFEST_DIR not set — invoke via `cargo xtask <verb>`")?;
-    Ok(PathBuf::from(manifest)
+        .context("CARGO_MANIFEST_DIR not set — invoke via `cargo run -p build-tool ...`")?;
+    let manifest_path = PathBuf::from(manifest);
+    let resources_dir = manifest_path
         .parent()
-        .context("expected transform/ to have a parent")?
-        .to_path_buf())
+        .context("expected resources/build-tool/ to have a parent (resources/)")?;
+    let root = resources_dir
+        .parent()
+        .context("expected resources/ to have a parent (workspace root)")?;
+    Ok(root.to_path_buf())
 }
 
 fn home_dir() -> Result<PathBuf> {
@@ -124,8 +111,8 @@ fn home_dir() -> Result<PathBuf> {
 
 fn cmd_validate() -> Result<u8> {
     let root = repo_root()?;
-    let sources_dir = root.join("sources");
-    match sources::walk(&sources_dir) {
+    let content_dir = root.join("resources").join("content");
+    match sources::walk(&content_dir) {
         Ok(records) => {
             println!("validated {} source file(s)", records.len());
             Ok(0)
@@ -205,87 +192,6 @@ fn cmd_status() -> Result<u8> {
     Ok(0)
 }
 
-/// Discover Rust workspace members under `sources/<name>/Cargo.toml`,
-/// build each in release, copy `target/release/<name>` to `dist/<name>`.
-fn cmd_install() -> Result<u8> {
-    // Validate + deploy first; if either fails, surface and stop.
-    let drc = cmd_deploy(false, false)?;
-    if drc != 0 {
-        return Ok(drc);
-    }
-
-    let root = repo_root()?;
-    let members = discover_members(&root.join("sources"))?;
-    if members.is_empty() {
-        return Ok(0);
-    }
-
-    std::fs::create_dir_all(root.join("dist"))?;
-    for name in &members {
-        eprintln!("building {name}...");
-        // duct::cmd with typed args — safe against names containing
-        // whitespace, quotes, or shell metacharacters. shell-words is
-        // reserved for cases where the command really is a literal
-        // shell-style string.
-        duct::cmd("cargo", ["build", "-p", name, "--release"])
-            .dir(&root)
-            .run()
-            .with_context(|| {
-                format!(
-                    "cargo build -p {name} --release failed. \
-                     If `{name}` is a sources/ Rust crate, add it to \
-                     the workspace `members` list in Cargo.toml."
-                )
-            })?;
-        let from = root.join("target/release").join(name);
-        let to = root.join("dist").join(name);
-        if !from.exists() {
-            return Err(anyhow!(
-                "build of `{name}` succeeded but produced no binary at {}. \
-                 The crate must declare `[[bin]] name = \"{name}\"`.",
-                from.display()
-            ));
-        }
-        std::fs::copy(&from, &to)
-            .with_context(|| format!("copy {} → {}", from.display(), to.display()))?;
-        println!("installed {}", to.display());
-    }
-    Ok(0)
-}
-
-fn cmd_test(no_tools: bool) -> Result<u8> {
-    let root = repo_root()?;
-    let runner = root.join("tests/functional/run");
-    // duct::cmd with typed args — runner path may contain whitespace
-    // (any directory name above the checkout) and must not be re-parsed
-    // through shell-words.
-    let expr = if no_tools {
-        duct::cmd(&runner, ["--no-tools"])
-    } else {
-        duct::cmd(&runner, std::iter::empty::<&str>())
-    };
-    let status = expr.dir(&root).unchecked().run()?;
-    Ok(if status.status.success() { 0 } else { 1 })
-}
-
-fn discover_members(sources_dir: &Path) -> Result<Vec<String>> {
-    let mut out = Vec::new();
-    if !sources_dir.exists() {
-        return Ok(out);
-    }
-    for entry in std::fs::read_dir(sources_dir)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_dir() {
-            continue;
-        }
-        if entry.path().join("Cargo.toml").exists() {
-            out.push(entry.file_name().to_string_lossy().to_string());
-        }
-    }
-    out.sort();
-    Ok(out)
-}
-
 fn print_deploy(r: &DeployResult, dry_run: bool, failures: &mut u8) {
     let tag = if dry_run { "(dry-run) " } else { "" };
     let target = r.target.display();
@@ -331,7 +237,7 @@ fn print_undeploy(r: &UndeployResult, dry_run: bool, failures: &mut u8) {
         }
         UndeployStatus::SkippedNonSymlink { existing } => {
             eprintln!(
-                "{tag}skip          {target} (existing {}; not managed by maid; use --force to remove)",
+                "{tag}skip          {target} (existing {}; not managed; use --force to remove)",
                 kind_str(*existing)
             );
             *failures = failures.saturating_add(1);

@@ -1,5 +1,5 @@
 {
-  description = "mAId — repo-local rust toolchain for the transform crate (and future workspace members)";
+  description = "mAId — repo-local rust toolchain + just for the build-tool crate (and future workspace members)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -26,6 +26,7 @@
           buildInputs = [
             rustToolchain
             pkgs.pkg-config
+            pkgs.just
           ];
         };
       }
