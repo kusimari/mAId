@@ -355,6 +355,55 @@ None blocking. Resolved during planning:
 
 ## Session Log
 
+- 2026-06-11 · review feedback (#23, second pass): user
+  reflection on `check_skill_frontmatter` extended to all
+  functions — "use a functional style which is simple and
+  uses a library which does the job. it's what a user
+  would logically think needs to be done for each function
+  ... not how they would given the drudgery of coding."
+  Reflected on each function in `main.rs`:
+  - **`check_skill_frontmatter`**: hand-rolled 4-check
+    parser → `gray_matter` (envelope) + `serde` (schema as
+    in-function struct) + fluent `.and_then` chain. 8-line
+    body. Real YAML semantics — quoted values handle
+    themselves; the `unquote` helper and its 3 tests are
+    deleted.
+  - **`check_content`**: nested `match` + mutable error
+    vec → flat iterator chain over known skill dirs +
+    `Iterator::partition` to split passes from fails. Now
+    collects ALL problems instead of stopping at first.
+    Returns `Result<usize, Vec<String>>` so the caller
+    (`cmd_install`) can join the errors for display.
+  - **`cmd_install` / `cmd_uninstall`**: explicit for-loop
+    + `failures: u8` saturating-add → `iter().map().collect()
+    .into_iter().filter().count()` pipeline. Per-entry
+    logic extracted to `install_one` / `uninstall_one`
+    helpers returning `io::Result<bool>` (true = soft-skip
+    failure for exit-code accounting).
+  - **`cmd_status`**: `Iterator::try_for_each` instead of
+    explicit for-loop with `?`.
+  - **`home_dir`**: 3-stage validation (read env, check
+    empty, check absolute) → one fluent `.then_some`
+    expression with combined predicate.
+  - **Defended**: `plan_one` (typed match over filesystem
+    state is the right tool); `repo_root` (already
+    top-to-bottom one-line-per-step); clap dispatch
+    (canonical).
+
+  New deps: `gray_matter = "0.3"` + `serde = { version =
+  "1", features = ["derive"] }`. Replaces ~50 LOC of
+  hand-rolled parsing.
+
+  Tests: 34 (was 29). Added 5 cases that gray_matter
+  enables: quoted values, missing-fence, unterminated,
+  empty-value, multi-error collection across content
+  kinds. `unquote` tests dropped.
+
+  Captured the broader principle in
+  `specs/backlog/kdevkit-functional-style-and-idiomatic-libs.md`
+  for promotion into the kdevkit skill once the pattern
+  has triggered three times.
+
 - 2026-06-11 · review feedback (#23): "ignoring what is current
   in resources, does it need so much complexity. we build only
   for what we have." Restructured the verb model to three

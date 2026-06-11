@@ -43,130 +43,90 @@ const REGISTRY: &[Entry] = &[
 // 2. Content checks.
 //
 // Two shapes the AI tools care about:
-//   - resources/content/agents.md     — plain markdown preamble
-//                                        (cross-tool AGENTS.md
-//                                        standard, no frontmatter).
-//                                        Check: present + non-empty.
+//   - resources/content/agents.md       plain markdown preamble (no
+//                                        frontmatter — cross-tool
+//                                        AGENTS.md standard). Check:
+//                                        present + non-empty.
 //   - resources/content/skills/<name>/SKILL.md
-//                                      — frontmatter required:
-//                                        name + description.
+//                                       YAML frontmatter required:
+//                                        name + description, both
+//                                        non-empty.
 // ─────────────────────────────────────────────────────────────────
 
-/// Walk content under `content_dir`, collecting all problems.
-/// Returns the number of files validated, or the joined error
-/// messages. The intentional empty case (zero content) is fine —
-/// `install` simply has nothing to check.
-fn check_content(content_dir: &Path) -> Result<usize, String> {
-    let mut errors: Vec<String> = Vec::new();
-    let mut count = 0usize;
+/// Validate `resources/content/`, returning the count of validated
+/// files or the joined error list. Caller decides whether to print or
+/// abort.
+fn check_content(content_dir: &Path) -> Result<usize, Vec<String>> {
+    let agents_md = content_dir.join("agents.md");
+    let agents_result: Option<Result<(), String>> =
+        agents_md.exists().then(|| check_agents_md(&agents_md));
 
-    // AGENTS.md preamble — presence + non-empty.
-    let preamble = content_dir.join("agents.md");
-    if preamble.exists() {
-        match fs::read_to_string(&preamble) {
-            Ok(c) if c.trim().is_empty() => {
-                errors.push(format!(
-                    "{}: AGENTS.md preamble is empty",
-                    preamble.display()
-                ));
-            }
-            Ok(_) => count += 1,
-            Err(e) => {
-                errors.push(format!("{}: cannot read: {e}", preamble.display()));
-            }
-        }
-    }
+    let skill_results: Vec<Result<(), String>> = fs::read_dir(content_dir.join("skills"))
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().join("SKILL.md"))
+        .filter(|p| p.exists())
+        .map(|p| check_one_skill(&p))
+        .collect();
 
-    // Skills — each subdirectory's SKILL.md must validate.
-    let skills_dir = content_dir.join("skills");
-    if let Ok(entries) = fs::read_dir(&skills_dir) {
-        for entry in entries.flatten() {
-            let Ok(ft) = entry.file_type() else { continue };
-            if !ft.is_dir() {
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') {
-                continue;
-            }
-            let skill_md = entry.path().join("SKILL.md");
-            if !skill_md.exists() {
-                continue;
-            }
-            match fs::read_to_string(&skill_md) {
-                Ok(content) => match check_skill_frontmatter(&content) {
-                    Ok(()) => count += 1,
-                    Err(msg) => errors.push(format!("{}: {msg}", skill_md.display())),
-                },
-                Err(e) => errors.push(format!("{}: cannot read: {e}", skill_md.display())),
-            }
-        }
-    }
+    let (oks, errs): (Vec<_>, Vec<_>) = agents_result
+        .into_iter()
+        .chain(skill_results)
+        .partition(Result::is_ok);
 
-    if !errors.is_empty() {
-        return Err(format!("Content validation failed:\n{}", errors.join("\n")));
+    if errs.is_empty() {
+        Ok(oks.len())
+    } else {
+        Err(errs.into_iter().map(Result::unwrap_err).collect())
     }
-    Ok(count)
 }
 
-/// Validate SKILL.md-style frontmatter. Four checks:
-///   1. File begins with `---\n` (or `---\r\n`).
-///   2. A closing `---` line exists.
-///   3. `name:` is present and (after balanced unquoting) non-empty.
-///   4. `description:` is present and (after balanced unquoting) non-empty.
+fn check_agents_md(path: &Path) -> Result<(), String> {
+    fs::read_to_string(path)
+        .map_err(|e| format!("{}: cannot read: {e}", path.display()))
+        .and_then(|body| {
+            (!body.trim().is_empty())
+                .then_some(())
+                .ok_or_else(|| format!("{}: AGENTS.md preamble is empty", path.display()))
+        })
+}
+
+fn check_one_skill(path: &Path) -> Result<(), String> {
+    fs::read_to_string(path)
+        .map_err(|e| format!("{}: cannot read: {e}", path.display()))
+        .and_then(|body| {
+            check_skill_frontmatter(&body).map_err(|e| format!("{}: {e}", path.display()))
+        })
+}
+
+/// Validate a SKILL.md's YAML frontmatter: `---` fence + `name` and
+/// `description` fields, both non-empty. Implementation defers to
+/// gray_matter (envelope) + serde (schema) — the schema is the
+/// in-function struct.
 fn check_skill_frontmatter(content: &str) -> Result<(), String> {
-    if !content.starts_with("---\n") && !content.starts_with("---\r\n") {
-        return Err("missing YAML frontmatter (file must start with '---')".into());
+    #[derive(serde::Deserialize)]
+    struct SkillFrontmatter {
+        name: String,
+        description: String,
     }
 
-    let lines: Vec<&str> = content.split('\n').collect();
-    let Some(end) = lines
-        .iter()
-        .enumerate()
-        .skip(1)
-        .find(|(_, l)| **l == "---" || **l == "---\r")
-        .map(|(i, _)| i)
-    else {
-        return Err("unterminated YAML frontmatter (no closing '---')".into());
-    };
-
-    let mut have_name = false;
-    let mut have_desc = false;
-    for line in &lines[1..end] {
-        if let Some(rest) = line.strip_prefix("name:") {
-            if !unquote(rest.trim()).is_empty() {
-                have_name = true;
-            }
-        } else if let Some(rest) = line.strip_prefix("description:") {
-            if !unquote(rest.trim()).is_empty() {
-                have_desc = true;
-            }
-        }
-    }
-    if !have_name {
-        return Err("missing required field: name".into());
-    }
-    if !have_desc {
-        return Err("missing required field: description".into());
-    }
-    Ok(())
-}
-
-/// Strip a single layer of balanced `"..."` or `'...'` from `s`.
-fn unquote(s: &str) -> &str {
-    if s.len() >= 2 {
-        let b = s.as_bytes();
-        if (b[0] == b'"' && b[s.len() - 1] == b'"') || (b[0] == b'\'' && b[s.len() - 1] == b'\'') {
-            return &s[1..s.len() - 1];
-        }
-    }
-    s
+    gray_matter::Matter::<gray_matter::engine::YAML>::new()
+        .parse::<SkillFrontmatter>(content)
+        .map_err(|e| e.to_string())?
+        .data
+        .ok_or_else(|| "missing or unterminated YAML frontmatter".to_string())
+        .and_then(|fm| {
+            (!fm.name.trim().is_empty() && !fm.description.trim().is_empty())
+                .then_some(())
+                .ok_or_else(|| "name and description must be non-empty".into())
+        })
 }
 
 // ─────────────────────────────────────────────────────────────────
 // 3. Compare — the shared core for install / uninstall / status.
 //
-// Each verb walks REGISTRY and asks `compare()` what it sees at the
+// Each verb walks REGISTRY and asks `plan_one()` what it sees at the
 // home path. The verb decides the action.
 // ─────────────────────────────────────────────────────────────────
 
@@ -257,7 +217,7 @@ enum Cmd {
         #[arg(long)]
         force: bool,
     },
-    /// Remove deploy-managed symlinks.
+    /// Remove install-managed symlinks.
     Uninstall {
         /// Plan without making changes.
         #[arg(long)]
@@ -293,118 +253,33 @@ fn run(cli: Cli) -> Result<u8> {
 }
 
 fn cmd_install(home: &Path, checkout: &Path, dry_run: bool, force: bool) -> Result<u8> {
-    // Validate content first; refuse to install a broken tree.
-    let count =
-        check_content(&checkout.join("resources").join("content")).map_err(|msg| anyhow!(msg))?;
+    let count = check_content(&checkout.join("resources").join("content"))
+        .map_err(|errs| anyhow!("Content validation failed:\n{}", errs.join("\n")))?;
     eprintln!("validated {count} content file(s)");
 
-    let mut failures = 0u8;
-    for entry in REGISTRY {
-        let plan = plan_one(*entry, home, checkout)?;
-        let tag = if dry_run { "(dry-run) " } else { "" };
-        let target = plan.home.display();
-        match plan.cmp {
-            Comparison::Match => println!("{tag}ok        {target}"),
-            Comparison::Missing => {
-                if !dry_run {
-                    ensure_parent(&plan.home)?;
-                    std::os::unix::fs::symlink(&plan.source, &plan.home)?;
-                }
-                println!("{tag}created   {target}");
-            }
-            Comparison::WrongTarget(current) if force => {
-                if !dry_run {
-                    fs::remove_file(&plan.home)?;
-                    std::os::unix::fs::symlink(&plan.source, &plan.home)?;
-                }
-                println!("{tag}replaced  {target} (was {})", current.display());
-            }
-            Comparison::WrongTarget(current) => {
-                eprintln!(
-                    "{tag}skip      {target} (points elsewhere: {}; use --force to replace)",
-                    current.display()
-                );
-                failures = failures.saturating_add(1);
-            }
-            Comparison::BlockedByRealFile => {
-                eprintln!("{tag}skip      {target} (existing file; not overwriting)");
-                failures = failures.saturating_add(1);
-            }
-            Comparison::BlockedByRealDir => {
-                eprintln!("{tag}skip      {target} (existing dir; not overwriting)");
-                failures = failures.saturating_add(1);
-            }
-            Comparison::SourceMissing => {
-                println!("{tag}skip      {target} (source missing)");
-            }
-        }
-    }
+    let failures: usize = REGISTRY
+        .iter()
+        .map(|e| install_one(*e, home, checkout, dry_run, force))
+        .collect::<io::Result<Vec<bool>>>()?
+        .into_iter()
+        .filter(|&fail| fail)
+        .count();
     Ok(if failures > 0 { 1 } else { 0 })
 }
 
 fn cmd_uninstall(home: &Path, checkout: &Path, dry_run: bool, force: bool) -> Result<u8> {
-    let mut failures = 0u8;
-    for entry in REGISTRY {
-        let plan = plan_one(*entry, home, checkout)?;
-        let tag = if dry_run { "(dry-run) " } else { "" };
-        let target = plan.home.display();
-        match plan.cmp {
-            Comparison::Match => {
-                if !dry_run {
-                    fs::remove_file(&plan.home)?;
-                }
-                println!("{tag}removed       {target}");
-            }
-            Comparison::Missing | Comparison::SourceMissing => {
-                println!("{tag}not-installed {target}");
-            }
-            Comparison::WrongTarget(current) if force => {
-                if !dry_run {
-                    fs::remove_file(&plan.home)?;
-                }
-                println!(
-                    "{tag}force-removed {target} (was symlink -> {})",
-                    current.display()
-                );
-            }
-            Comparison::WrongTarget(current) => {
-                eprintln!(
-                    "{tag}skip          {target} (foreign symlink -> {}; use --force to remove)",
-                    current.display()
-                );
-                failures = failures.saturating_add(1);
-            }
-            Comparison::BlockedByRealFile if force => {
-                if !dry_run {
-                    fs::remove_file(&plan.home)?;
-                }
-                println!("{tag}force-removed {target} (was file)");
-            }
-            Comparison::BlockedByRealDir if force => {
-                if !dry_run {
-                    fs::remove_dir_all(&plan.home)?;
-                }
-                println!("{tag}force-removed {target} (was dir)");
-            }
-            Comparison::BlockedByRealFile => {
-                eprintln!(
-                    "{tag}skip          {target} (existing file; not managed; use --force to remove)"
-                );
-                failures = failures.saturating_add(1);
-            }
-            Comparison::BlockedByRealDir => {
-                eprintln!(
-                    "{tag}skip          {target} (existing dir; not managed; use --force to remove)"
-                );
-                failures = failures.saturating_add(1);
-            }
-        }
-    }
+    let failures: usize = REGISTRY
+        .iter()
+        .map(|e| uninstall_one(*e, home, checkout, dry_run, force))
+        .collect::<io::Result<Vec<bool>>>()?
+        .into_iter()
+        .filter(|&fail| fail)
+        .count();
     Ok(if failures > 0 { 1 } else { 0 })
 }
 
 fn cmd_status(home: &Path, checkout: &Path) -> Result<u8> {
-    for entry in REGISTRY {
+    REGISTRY.iter().try_for_each(|entry| -> io::Result<()> {
         let plan = plan_one(*entry, home, checkout)?;
         let state = match plan.cmp {
             Comparison::Match => format!("ok -> {}", plan.source.display()),
@@ -419,8 +294,133 @@ fn cmd_status(home: &Path, checkout: &Path) -> Result<u8> {
             Comparison::BlockedByRealDir => "non-symlink (dir)".into(),
         };
         println!("{:<28} {}", entry.0, state);
-    }
+        Ok(())
+    })?;
     Ok(0)
+}
+
+/// Apply install logic to a single registry entry. Returns `Ok(true)` if
+/// the entry was a soft skip (counts as a failure for exit code), `Ok(false)`
+/// otherwise. Real I/O errors propagate as `Err`.
+fn install_one(
+    entry: Entry,
+    home: &Path,
+    checkout: &Path,
+    dry_run: bool,
+    force: bool,
+) -> io::Result<bool> {
+    let plan = plan_one(entry, home, checkout)?;
+    let tag = if dry_run { "(dry-run) " } else { "" };
+    let target = plan.home.display();
+    match plan.cmp {
+        Comparison::Match => {
+            println!("{tag}ok        {target}");
+            Ok(false)
+        }
+        Comparison::Missing => {
+            if !dry_run {
+                ensure_parent(&plan.home)?;
+                std::os::unix::fs::symlink(&plan.source, &plan.home)?;
+            }
+            println!("{tag}created   {target}");
+            Ok(false)
+        }
+        Comparison::WrongTarget(current) if force => {
+            if !dry_run {
+                fs::remove_file(&plan.home)?;
+                std::os::unix::fs::symlink(&plan.source, &plan.home)?;
+            }
+            println!("{tag}replaced  {target} (was {})", current.display());
+            Ok(false)
+        }
+        Comparison::WrongTarget(current) => {
+            eprintln!(
+                "{tag}skip      {target} (points elsewhere: {}; use --force to replace)",
+                current.display()
+            );
+            Ok(true)
+        }
+        Comparison::BlockedByRealFile => {
+            eprintln!("{tag}skip      {target} (existing file; not overwriting)");
+            Ok(true)
+        }
+        Comparison::BlockedByRealDir => {
+            eprintln!("{tag}skip      {target} (existing dir; not overwriting)");
+            Ok(true)
+        }
+        Comparison::SourceMissing => {
+            println!("{tag}skip      {target} (source missing)");
+            Ok(false)
+        }
+    }
+}
+
+fn uninstall_one(
+    entry: Entry,
+    home: &Path,
+    checkout: &Path,
+    dry_run: bool,
+    force: bool,
+) -> io::Result<bool> {
+    let plan = plan_one(entry, home, checkout)?;
+    let tag = if dry_run { "(dry-run) " } else { "" };
+    let target = plan.home.display();
+    match plan.cmp {
+        Comparison::Match => {
+            if !dry_run {
+                fs::remove_file(&plan.home)?;
+            }
+            println!("{tag}removed       {target}");
+            Ok(false)
+        }
+        Comparison::Missing | Comparison::SourceMissing => {
+            println!("{tag}not-installed {target}");
+            Ok(false)
+        }
+        Comparison::WrongTarget(current) if force => {
+            if !dry_run {
+                fs::remove_file(&plan.home)?;
+            }
+            println!(
+                "{tag}force-removed {target} (was symlink -> {})",
+                current.display()
+            );
+            Ok(false)
+        }
+        Comparison::WrongTarget(current) => {
+            eprintln!(
+                "{tag}skip          {target} (foreign symlink -> {}; use --force to remove)",
+                current.display()
+            );
+            Ok(true)
+        }
+        Comparison::BlockedByRealFile if force => {
+            if !dry_run {
+                fs::remove_file(&plan.home)?;
+            }
+            println!("{tag}force-removed {target} (was file)");
+            Ok(false)
+        }
+        Comparison::BlockedByRealDir if force => {
+            if !dry_run {
+                fs::remove_dir_all(&plan.home)?;
+            }
+            println!("{tag}force-removed {target} (was dir)");
+            Ok(false)
+        }
+        Comparison::BlockedByRealFile => {
+            eprintln!(
+                "{tag}skip          {target} (existing file; not managed; use --force to remove)"
+            );
+            Ok(true)
+        }
+        Comparison::BlockedByRealDir => {
+            eprintln!(
+                "{tag}skip          {target} (existing dir; not managed; use --force to remove)"
+            );
+            Ok(true)
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -450,17 +450,10 @@ fn repo_root() -> Result<PathBuf> {
 
 fn home_dir() -> Result<PathBuf> {
     let raw = std::env::var("HOME").context("HOME is not set")?;
-    if raw.is_empty() {
-        return Err(anyhow!("HOME is empty"));
-    }
-    let home = PathBuf::from(raw);
-    if !home.is_absolute() {
-        return Err(anyhow!(
-            "HOME must be an absolute path (got {})",
-            home.display()
-        ));
-    }
-    Ok(home)
+    let home = PathBuf::from(&raw);
+    (!raw.is_empty() && home.is_absolute())
+        .then_some(home)
+        .ok_or_else(|| anyhow!("HOME must be a non-empty absolute path (got {raw:?})"))
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -472,8 +465,6 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    // ── content checks ──────────────────────────────────────────
-
     fn write(p: &Path, s: &str) {
         if let Some(parent) = p.parent() {
             fs::create_dir_all(parent).unwrap();
@@ -481,35 +472,29 @@ mod tests {
         fs::write(p, s).unwrap();
     }
 
+    // ── content checks ──────────────────────────────────────────
+
     #[test]
     fn check_content_empty_root_ok() {
         let dir = TempDir::new().unwrap();
-        let n = check_content(dir.path()).unwrap();
-        assert_eq!(n, 0);
+        assert_eq!(check_content(dir.path()).unwrap(), 0);
     }
 
     #[test]
     fn check_content_agents_md_present_ok() {
         let dir = TempDir::new().unwrap();
         write(&dir.path().join("agents.md"), "# preamble\n\nbody.\n");
-        let n = check_content(dir.path()).unwrap();
-        assert_eq!(n, 1);
+        assert_eq!(check_content(dir.path()).unwrap(), 1);
     }
 
     #[test]
     fn check_content_agents_md_empty_rejected() {
         let dir = TempDir::new().unwrap();
-        write(&dir.path().join("agents.md"), "");
-        let e = check_content(dir.path()).unwrap_err();
-        assert!(e.contains("AGENTS.md preamble is empty"));
-    }
-
-    #[test]
-    fn check_content_agents_md_whitespace_only_rejected() {
-        let dir = TempDir::new().unwrap();
         write(&dir.path().join("agents.md"), "  \n\n  \n");
-        let e = check_content(dir.path()).unwrap_err();
-        assert!(e.contains("AGENTS.md preamble is empty"));
+        let errs = check_content(dir.path()).unwrap_err();
+        assert!(errs
+            .iter()
+            .any(|e| e.contains("AGENTS.md preamble is empty")));
     }
 
     #[test]
@@ -519,8 +504,7 @@ mod tests {
             &dir.path().join("skills/foo/SKILL.md"),
             "---\nname: foo\ndescription: bar\n---\nbody.\n",
         );
-        let n = check_content(dir.path()).unwrap();
-        assert_eq!(n, 1);
+        assert_eq!(check_content(dir.path()).unwrap(), 1);
     }
 
     #[test]
@@ -530,19 +514,22 @@ mod tests {
             &dir.path().join("skills/foo/SKILL.md"),
             "---\nname: foo\n---\n",
         );
-        let e = check_content(dir.path()).unwrap_err();
-        assert!(e.contains("description"));
+        let errs = check_content(dir.path()).unwrap_err();
+        assert!(errs.iter().any(|e| e.contains("description")));
     }
 
     #[test]
-    fn check_content_skill_quoted_empty_rejected() {
+    fn check_content_collects_multiple_errors() {
+        // Both agents.md (empty) AND a SKILL.md (missing description)
+        // — caller sees ALL problems, not just the first.
         let dir = TempDir::new().unwrap();
+        write(&dir.path().join("agents.md"), "");
         write(
             &dir.path().join("skills/foo/SKILL.md"),
-            "---\nname: \"\"\ndescription: bar\n---\n",
+            "---\nname: foo\n---\n",
         );
-        let e = check_content(dir.path()).unwrap_err();
-        assert!(e.contains("name"));
+        let errs = check_content(dir.path()).unwrap_err();
+        assert_eq!(errs.len(), 2);
     }
 
     #[test]
@@ -555,34 +542,67 @@ mod tests {
             "---\nname: multi\ndescription: a multi-file skill\n---\nbody.\n",
         );
         write(&skill_dir.join("setup.md"), "# Plain markdown.\n");
-        let n = check_content(dir.path()).unwrap();
-        assert_eq!(n, 1);
+        assert_eq!(check_content(dir.path()).unwrap(), 1);
+    }
+
+    // ── frontmatter (gray_matter + serde) ───────────────────────
+
+    #[test]
+    fn frontmatter_minimal_ok() {
+        assert!(check_skill_frontmatter("---\nname: foo\ndescription: bar\n---\nbody.\n").is_ok());
     }
 
     #[test]
-    fn check_content_dotfile_dirs_skipped() {
-        let dir = TempDir::new().unwrap();
-        write(
-            &dir.path().join("skills/.hidden/SKILL.md"),
-            "---\nname: hidden\ndescription: x\n---\n",
-        );
-        let n = check_content(dir.path()).unwrap();
-        assert_eq!(n, 0);
-    }
-
-    #[test]
-    fn check_skill_frontmatter_crlf_ok() {
+    fn frontmatter_with_extra_fields_ok() {
+        // Real YAML: extra fields are ignored by serde when not in the struct.
         assert!(check_skill_frontmatter(
-            "---\r\nname: foo\r\ndescription: bar\r\n---\r\nbody.\r\n"
+            "---\nname: foo\ndescription: bar\nversion: 1.0.0\ntags: [a, b]\n---\nbody.\n"
         )
         .is_ok());
+    }
+
+    #[test]
+    fn frontmatter_quoted_values_ok() {
+        // Real YAML handles quoting natively — no hand-rolled unquote.
+        assert!(
+            check_skill_frontmatter("---\nname: \"foo\"\ndescription: 'bar baz'\n---\n").is_ok()
+        );
+    }
+
+    #[test]
+    fn frontmatter_missing_fence_rejected() {
+        let e = check_skill_frontmatter("name: foo\ndescription: bar\n").unwrap_err();
+        assert!(e.contains("frontmatter"));
+    }
+
+    #[test]
+    fn frontmatter_unterminated_rejected() {
+        let e = check_skill_frontmatter("---\nname: foo\ndescription: bar\n").unwrap_err();
+        assert!(e.contains("frontmatter"));
+    }
+
+    #[test]
+    fn frontmatter_missing_name_rejected() {
+        let e = check_skill_frontmatter("---\ndescription: bar\n---\n").unwrap_err();
+        assert!(e.contains("name"));
+    }
+
+    #[test]
+    fn frontmatter_missing_description_rejected() {
+        let e = check_skill_frontmatter("---\nname: foo\n---\n").unwrap_err();
+        assert!(e.contains("description"));
+    }
+
+    #[test]
+    fn frontmatter_empty_value_rejected() {
+        let e = check_skill_frontmatter("---\nname: \"\"\ndescription: bar\n---\n").unwrap_err();
+        assert!(e.contains("non-empty"));
     }
 
     // ── plan_one (compare core) ─────────────────────────────────
 
     fn make_checkout() -> TempDir {
         let dir = TempDir::new().unwrap();
-        // Mirror the real layout — resources/content/{agents.md, skills/}.
         fs::create_dir_all(dir.path().join("resources/content/skills")).unwrap();
         write(
             &dir.path().join("resources/content/agents.md"),
@@ -641,8 +661,7 @@ mod tests {
         let rc = cmd_install(home.path(), checkout.path(), false, false).unwrap();
         assert_eq!(rc, 0);
         for entry in REGISTRY {
-            let target = home.path().join(entry.0);
-            let cur = fs::read_link(&target).unwrap();
+            let cur = fs::read_link(home.path().join(entry.0)).unwrap();
             assert_eq!(cur, checkout.path().join(entry.1));
         }
     }
@@ -660,10 +679,8 @@ mod tests {
     fn install_dry_run_makes_no_changes() {
         let checkout = make_checkout();
         let home = TempDir::new().unwrap();
-        let rc = cmd_install(home.path(), checkout.path(), true, false).unwrap();
-        assert_eq!(rc, 0);
-        let target = home.path().join(REGISTRY[0].0);
-        assert!(!path_exists(&target));
+        cmd_install(home.path(), checkout.path(), true, false).unwrap();
+        assert!(!path_exists(&home.path().join(REGISTRY[0].0)));
     }
 
     #[test]
@@ -677,7 +694,6 @@ mod tests {
 
         let rc = cmd_install(home.path(), checkout.path(), false, false).unwrap();
         assert_eq!(rc, 1);
-        // Foreign symlink preserved.
         let cur = fs::read_link(&target).unwrap();
         assert_eq!(cur, PathBuf::from("/nowhere"));
     }
@@ -708,8 +724,7 @@ mod tests {
 
         let rc = cmd_install(home.path(), checkout.path(), false, false).unwrap();
         assert_eq!(rc, 1);
-        let still = fs::read_to_string(&target).unwrap();
-        assert_eq!(still, "user content");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "user content");
     }
 
     // ── uninstall ───────────────────────────────────────────────
@@ -718,8 +733,10 @@ mod tests {
     fn uninstall_clean_home_is_noop() {
         let checkout = make_checkout();
         let home = TempDir::new().unwrap();
-        let rc = cmd_uninstall(home.path(), checkout.path(), false, false).unwrap();
-        assert_eq!(rc, 0);
+        assert_eq!(
+            cmd_uninstall(home.path(), checkout.path(), false, false).unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -741,8 +758,10 @@ mod tests {
         let home = TempDir::new().unwrap();
         cmd_install(home.path(), checkout.path(), false, false).unwrap();
         cmd_uninstall(home.path(), checkout.path(), false, false).unwrap();
-        let rc = cmd_uninstall(home.path(), checkout.path(), false, false).unwrap();
-        assert_eq!(rc, 0);
+        assert_eq!(
+            cmd_uninstall(home.path(), checkout.path(), false, false).unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -756,7 +775,6 @@ mod tests {
 
         let rc = cmd_uninstall(home.path(), checkout.path(), false, false).unwrap();
         assert_eq!(rc, 1);
-        // Foreign symlink preserved.
         assert!(path_exists(&target));
     }
 
@@ -785,8 +803,7 @@ mod tests {
 
         let rc = cmd_uninstall(home.path(), checkout.path(), false, false).unwrap();
         assert_eq!(rc, 1);
-        let still = fs::read_to_string(&target).unwrap();
-        assert_eq!(still, "user content");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "user content");
     }
 
     #[test]
@@ -795,9 +812,7 @@ mod tests {
         let home = TempDir::new().unwrap();
         cmd_install(home.path(), checkout.path(), false, false).unwrap();
 
-        let rc = cmd_uninstall(home.path(), checkout.path(), true, false).unwrap();
-        assert_eq!(rc, 0);
-        // All symlinks still in place.
+        cmd_uninstall(home.path(), checkout.path(), true, false).unwrap();
         for entry in REGISTRY {
             assert!(path_exists(&home.path().join(entry.0)));
         }
@@ -810,19 +825,16 @@ mod tests {
         let checkout = make_checkout();
         let home = TempDir::new().unwrap();
         cmd_install(home.path(), checkout.path(), false, false).unwrap();
-        let rc = cmd_status(home.path(), checkout.path()).unwrap();
-        assert_eq!(rc, 0);
+        assert_eq!(cmd_status(home.path(), checkout.path()).unwrap(), 0);
     }
 
-    // ── structural integration test (replaces tests/run --no-tools) ──
+    // ── structural integration test ─────────────────────────────
 
     #[test]
     fn structural_install_to_real_directory_layout() {
-        // A full install→status→uninstall round-trip against a
-        // realistic on-disk layout. Replaces the old
-        // tests/functional/run --no-tools bash assertions.
+        // Full install→status→uninstall round-trip against a realistic
+        // on-disk layout with a real skill exposed through the symlink.
         let checkout = make_checkout();
-        // Add a real skill so the skills/ symlink has something to expose.
         write(
             &checkout
                 .path()
@@ -831,9 +843,10 @@ mod tests {
         );
         let home = TempDir::new().unwrap();
 
-        // install: every REGISTRY entry → Created.
-        let rc = cmd_install(home.path(), checkout.path(), false, false).unwrap();
-        assert_eq!(rc, 0);
+        assert_eq!(
+            cmd_install(home.path(), checkout.path(), false, false).unwrap(),
+            0
+        );
         for entry in REGISTRY {
             let target = home.path().join(entry.0);
             assert!(
@@ -842,18 +855,17 @@ mod tests {
                 entry.0
             );
         }
+        assert!(
+            home.path().join(".claude/skills/example/SKILL.md").exists(),
+            "skill not visible via deployed symlink"
+        );
 
-        // The example skill is reachable through the deployed symlink.
-        let exposed = home.path().join(".claude/skills/example/SKILL.md");
-        assert!(exposed.exists(), "skill not visible via deployed symlink");
+        assert_eq!(cmd_status(home.path(), checkout.path()).unwrap(), 0);
 
-        // status returns 0 on a clean install.
-        let rc = cmd_status(home.path(), checkout.path()).unwrap();
-        assert_eq!(rc, 0);
-
-        // uninstall: every entry → Removed.
-        let rc = cmd_uninstall(home.path(), checkout.path(), false, false).unwrap();
-        assert_eq!(rc, 0);
+        assert_eq!(
+            cmd_uninstall(home.path(), checkout.path(), false, false).unwrap(),
+            0
+        );
         for entry in REGISTRY {
             assert!(!path_exists(&home.path().join(entry.0)));
         }
