@@ -475,9 +475,10 @@ new fixture. No Rust touched.
 - [x] **Code Review Gate** — host-native `/code-review` on the
   green diff (project.md + diff; no feature spec), threshold
   70, hard-stop, retry-budget 2.
-- [ ] **Hand off functional smoke to user** — name the command
+- [x] **Hand off functional smoke to user** — named the command
   (`just verify-one kdevkit-idiomatic-design-and-wiring`; full:
-  `just verify`); do not run (user-driven, `[confirm]`-gated).
+  `just verify`); not run by agent (user-driven, `[confirm]`-gated).
+  User confirmed "all good" at closure.
 - [x] **Push + open Agent-dev Review Gate** — body: Why +
   Approach (the two rules) + Reading order (SKILL.md §6/§7 for
   intent; interviews.md for contract; the fixture for
