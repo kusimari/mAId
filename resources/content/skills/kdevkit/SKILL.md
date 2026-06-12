@@ -1,7 +1,7 @@
 ---
 name: kdevkit
 description: Spec-driven development workflow — four tiers (project / initiative / feature / backlog), locate spec tree, load context, start a session, run it through planning → dev loop → closure with phase-gating cues, ship via Conventional Commits and Quality/Test/Code-Review/Push/Review gates. Three-phase feature branch on a single PR/CR; main stays single-commit-per-feature via squash. Multi-stream initiatives carry the persistent "you're in stream 2 of 3" context across feature branches. Multi-file skill (always-on SKILL.md + deferred setup.md and interviews.md loaded on demand). Public-repo hygiene. Auto-detects specs/, docs/specs/, or .kdevkit/.
-version: 3.3.0
+version: 3.4.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, initiative, public-repo]
 ---
 
@@ -304,8 +304,10 @@ fresh.
 
 **Ground first.** Before opening interview 1, read
 `project.md`, scan related feature specs in
-`$SPEC_ROOT/feature/`, and survey the corners of the
-codebase the feature touches. The interview is calibrated
+`$SPEC_ROOT/feature/`, survey the corners of the
+codebase the feature touches, and survey what the language /
+ecosystem already offers for the problem (see "Reach for what
+exists" below). The interview is calibrated
 to what's there now, not the user's recollection. Findings
 worth keeping land in the Session Log as work progresses;
 the grounding step does not introduce a new artefact (no
@@ -374,6 +376,36 @@ strictness lives in the **gates** — Planning Review (§6),
 Agent-dev Review (§7, loops freely with Code Review), and
 Closure Review (§8) — not in the heading shape.
 
+### Reach for what exists (design-time, always-on)
+
+A design move, not a coding-style preference, and the mirror
+of the smell test above: the smell test keeps library names
+*out* of Requirements; this puts the *right* library *into*
+Design. Before deciding *how* a non-trivial piece of work is
+built, **survey what the language / ecosystem already offers
+and name the well-known library or idiom that already does
+the job** — "load YAML with the established parser into a
+typed struct," not a hand-rolled frontmatter parser; a known
+filesystem-walk crate, not a hand `read_dir` recursion.
+
+The justification is **inherited expertise** — a battle-tested
+dependency encodes vetted edge cases and community practice
+the agent would otherwise re-derive badly — **not** DRY.
+"Shorter code" is the wrong reason; "someone already solved
+this correctly" is the right one.
+
+Guard: **well-known *and* earns its weight.** Don't pull a
+new or heavy dependency for a trivial job a few honest lines
+or an already-present import handle; weigh the dependency
+against the hand-roll and say so when the hand-roll wins (a
+lightweight direct call can beat a heavyweight dep). The rule
+is language-agnostic — "the idiom *this* language / codebase
+speaks," never a fixed per-language library list.
+
+For load-bearing design choices, record the alternative
+weighed in the Decision Log ("considered X; chose Y
+because …"). Recommended, not mandatory for every helper.
+
 ### Initiative-stream auto-link
 
 When the feature being started is a stream of an active
@@ -425,6 +457,26 @@ Gates. Phase-specific body content: **Spec summary**
 
 Apply after any coherent unit of implementation work. The
 loop runs autonomously between gates — no per-step prompts.
+
+### Write for intent (dev-time, always-on)
+
+The dev-time mirror of §6's "Reach for what exists": that rule
+finds the library at design time; this wires the code at dev
+time. **Frame each function around what a caller would say it
+does**, then wire the logic in the shape the language and
+surrounding codebase already speak — defaulting to functional
+/ fluent (chains, iterator combinators, library calls) over
+hand-rolled mutable state machines **when that reads more
+clearly as the intent**. **Reach first for what's already in
+reach** — stdlib, an existing dependency, an already-imported
+helper — over re-deriving equivalent logic, and **match the
+surrounding code's conventions** rather than importing a
+foreign style.
+
+Legibility is the goal, **not dogma**: don't force a fluent
+chain where a plain loop or a typed pattern-match is the
+honest, clearer tool, and don't refactor working code between
+equivalent forms without a readability or correctness gain.
 
 ### Inputs · read commands from `project.md`
 
