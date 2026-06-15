@@ -10,6 +10,8 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+# Tmp-file + rename atomic writes — replaces a hand-rolled write_atomic.
+atomicwrites = "0.4"
 clap = { version = "4", features = ["derive"] }
 # fd-lock over fs2 — fs2 is unmaintained (RUSTSEC) and its lock_exclusive
 # trait method shadows std File's stabilized inherent method on Rust 1.89+,
