@@ -1,0 +1,18 @@
+# kaimux verbs build and test the tmux-pane orchestrator. Builds
+# in release and lands a flat binary at dist/kaimux. No symlinking;
+# users invoke the binary directly (typically via the tmux
+# keybinding `kaimux setup` installs).
+
+# Build kaimux in release; copy to dist/kaimux.
+build:
+    cargo build -p kaimux --release
+    mkdir -p dist
+    cp target/release/kaimux dist/kaimux
+
+# Kaimux unit tests (sub-second).
+test:
+    cargo test -p kaimux
+
+# Kaimux end-to-end integration test (real tmux, requires tmux + jq).
+integration: build
+    kaimux/tests/integration.sh

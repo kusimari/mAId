@@ -18,8 +18,8 @@ You are continuing the kaimux dev/review loop. The branch
   throughout (88 src refs + tests + this spec).
 - Workspace member registered. `just ci` green
   (fmt + clippy + workspace test, 54 kaimux tests
-  passing). `just kaimux-build` produces a 1.6 MB
-  stripped binary at `dist/kaimux`.
+  passing). `just kaimux::build` produces the binary at
+  `dist/kaimux`.
 - PR #24 body names provenance + what's-landed vs.
   in-flight.
 
@@ -97,7 +97,7 @@ shipped on this branch.
   - `kaimux/` workspace member (Cargo.toml, src/main.rs,
     tests/ — bash integration scripts).
   - Workspace member registered in root `Cargo.toml`.
-  - `just kaimux-build` recipe in `Justfile`.
+  - `kaimux::build` recipe in `kaimux/Justfile` (Just module).
   - `cargo test -p kaimux` passes (54 unit tests).
   - This spec, ported from agent-orch-fix.
 - **Still in flight** (continued in the next dev session):

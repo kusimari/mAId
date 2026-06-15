@@ -8,7 +8,7 @@
 Tool-agnostic source of truth for my agentic resources — skills
 and the AGENTS.md preamble — compiled into whatever AI tool I'm
 using (Claude Code, Kiro, future tools). The repo is the
-checked-in source; `just install` creates the `$HOME`-facing
+checked-in source; `just resources::install` creates the `$HOME`-facing
 symlinks that each tool reads from. One canonical set of
 artefacts, many consumer surfaces. Apps that ship binaries
 (today: future `kaimux/`, the agent-orch successor) live as
@@ -38,10 +38,11 @@ Two halves at the top level:
      bash where shelling out to other tools is the job
      (driving `claude --print` / `kiro-cli`).
   3. **Verbs** (Justfile recipes that use the tooling) —
-     `just install`, `just uninstall`, `just status`,
-     `just verify` (single-fixture: `just verify-one
-     <name>`). These are how a human or another tool
-     consumes the tooling.
+     `just resources::install`, `just resources::uninstall`,
+     `just resources::status`, `just resources::verify`
+     (single-fixture: `just resources::verify-one <name>`).
+     These are how a human or another tool consumes the
+     tooling.
 - **`kaimux/`** — tmux-pane orchestrator for coding-agent
   sessions. Single-binary Rust crate (workspace member).
   Wraps `claude` / `kiro-cli` calls so each running agent
@@ -49,7 +50,7 @@ Two halves at the top level:
   dashboard pane shows the inventory, status, and a
   one-key jump to any of them. State lives in
   `$XDG_STATE_HOME/kaimux/sessions.json`. No symlinking;
-  built by `just kaimux-build` to `dist/kaimux` and
+  built by `just kaimux::build` to `dist/kaimux` and
   invoked directly (typically via a tmux keybind that
   `kaimux setup` installs into the user's tmux config).
 
@@ -87,20 +88,26 @@ default-read location.
   toolchain + `just` via direnv (rust-overlay). Cargo and
   just are hard prerequisites — no `./install` shim. Users
   on machines without them enter `nix develop` themselves.
-- **Entrypoints:** Justfile recipes split into two groups:
-  - **AI verbs** (operate on `$HOME` or the AI tools):
-    `just install` (validates content, creates symlinks),
-    `just uninstall`, `just status`, `just verify` (drives
-    `claude --print` against installed content; costs API
-    credits, gated behind a confirmation prompt),
-    `just verify-one <name>` (single fixture).
-  - **Build-tool hygiene** (operate on the Rust crate
-    itself, never touch `$HOME` or pay API credits):
-    `just test`, `just fmt`, `just fmt-check`, `just lint`,
-    `just check`, `just ci` (full gate).
-  Each recipe is a one-liner over native cargo or the bash
-  fixture-runner — `just --list` shows everything. There
-  is no installed binary on `$PATH`; the build-tool is
+- **Entrypoints:** Justfile organised as a root file with
+  `mod` declarations per area, so verbs are namespaced by
+  what they touch:
+  - **`resources::*`** (operate on `$HOME` or the AI tools):
+    `just resources::install`, `just resources::uninstall`,
+    `just resources::status`, `just resources::verify`
+    (drives `claude --print` against installed content;
+    costs API credits, gated behind a confirmation prompt),
+    `just resources::verify-one <name>`.
+  - **`kaimux::*`** (operate on the kaimux crate):
+    `just kaimux::build` (release + copy to `dist/`),
+    `just kaimux::test`, `just kaimux::integration`.
+  - **Workspace hygiene** at the root (no namespace —
+    operates on every member): `just test`, `just fmt`,
+    `just fmt-check`, `just lint`, `just check`,
+    `just ci` (full gate).
+  Each recipe is a one-liner over native cargo or a bash
+  fixture-runner — `just --list` shows the root verbs,
+  `just --list <module>` drills into a module. There is
+  no installed binary on `$PATH`; the build-tool is
   invoked through `cargo run -p build-tool` from the
   checkout (wrapped by Just).
 
@@ -113,10 +120,11 @@ default-read location.
 mAId/
 ├── Cargo.toml              workspace root: members = ["resources/build-tool"]
 ├── Cargo.lock              committed (binary-workspace policy)
-├── Justfile                verb surface (install/uninstall/status/verify + cargo hygiene)
+├── Justfile                root verb surface (workspace hygiene + `mod resources` / `mod kaimux`)
 ├── rust-toolchain.toml     stable + clippy + rustfmt
 ├── flake.nix / .envrc      repo-local rust toolchain + just (direnv + rust-overlay)
 ├── resources/
+│   ├── Justfile            `resources::*` verb surface (install/uninstall/status/verify)
 │   ├── build-tool/         single-file Rust crate (install/uninstall/status)
 │   │   ├── Cargo.toml      deps: clap, anyhow; dev: tempfile
 │   │   └── src/main.rs     registry + content checks + symlink core + clap + tests
@@ -124,9 +132,10 @@ mAId/
 │   │   ├── agents.md       merged AGENTS.md preamble (→ CLAUDE.md, AGENTS.md, KIRO.md)
 │   │   └── skills/<name>/SKILL.md
 │   └── tests/              bash fixture-runner (drives `claude --print` against installed content)
-│       ├── run             entrypoint (`just verify` calls this)
+│       ├── run             entrypoint (`just resources::verify` calls this)
 │       └── skills/<name>.smoke   fixtures: prompt + expect_substr or expected_narrative
 ├── kaimux/                 tmux-pane orchestrator for coding-agent sessions
+│   ├── Justfile            `kaimux::*` verb surface (build/test/integration)
 │   ├── Cargo.toml          deps: clap, anyhow, fd-lock, nix, notify, serde, serde_json
 │   ├── src/main.rs         single-file, typeclass-shaped (Session/Store/Wrapper/Loop)
 │   └── tests/              bash integration tests against real tmux
@@ -146,16 +155,17 @@ mAId/
 
 Two test layers, each scoped to what they verify.
 
-**`just test` — build-tool unit tests.** Rust unit tests
+**`just test` — workspace unit tests.** Rust unit tests
 covering the content validator and the symlink state
-machine against a `tempfile`-fake `$HOME`. Fast
+machine against a `tempfile`-fake `$HOME`, plus the kaimux
+crate's 54 unit tests against a tempdir `Store`. Fast
 (sub-second). No real `$HOME` side effects, no API credits.
 Load-bearing — this is the §8 Test Gate default. Includes
 a structural integration test (`structural_install_to_real_directory_layout`)
 that runs a full install→status→uninstall round-trip in
 the fake $HOME, replacing the older bash structural smoke.
 
-**`just verify` — AI-tool functional tests.** Drives
+**`just resources::verify` — AI-tool functional tests.** Drives
 `claude --print` (and `kiro-cli` when available) with the
 `.smoke` fixtures under `resources/tests/skills/`. Two
 fixture styles share the harness: substring fixtures
@@ -163,29 +173,31 @@ fixture styles share the harness: substring fixtures
 (`expected_narrative:`) that run a second tool call to
 evaluate whether the primary answer covers the expected
 behavior. Slow (minutes), costs API credits, requires the
-managed symlinks already deployed (i.e., run `just install`
-first). Gated behind a confirmation prompt in the Justfile.
+managed symlinks already deployed (i.e., run
+`just resources::install` first). Gated behind a
+confirmation prompt in the Justfile.
 
 The §8 Test Gate uses `just test` by default. SKILL.md
-prose revisions add `just verify` (judge mode) as their
-A/B evidence. The §9 close-out can run `just status` after
-an install to confirm symlinks resolved.
+prose revisions add `just resources::verify` (judge mode)
+as their A/B evidence. The §9 close-out can run
+`just resources::status` after an install to confirm
+symlinks resolved.
 
 ### Functional tests are user-driven
 
 Agentic runs (an AI assistant working through this project)
-**must** stop at `just test`. `just verify` costs API
-credits and takes minutes; whether to spend that budget on
-a given change is a human call. The agent prepares the
+**must** stop at `just test`. `just resources::verify` costs
+API credits and takes minutes; whether to spend that budget
+on a given change is a human call. The agent prepares the
 fixture, names the exact command, and hands off — it does
 not run it. The Justfile's `[confirm]` gate on `verify`
 provides a second line of defense.
 
 Commands the user runs by hand:
 
-- All fixtures: `just verify`
-- A single fixture: `just verify-one <name>` (e.g.
-  `just verify-one notes-git-commit`).
+- All fixtures: `just resources::verify`
+- A single fixture: `just resources::verify-one <name>`
+  (e.g. `just resources::verify-one notes-git-commit`).
 
 The fixture file's basename (without `.smoke`) is the
 `<name>`.
@@ -200,14 +212,15 @@ slice.
      container, whatever applies. If the project isn't deployed
      in a traditional sense, describe how it's consumed. -->
 
-Not a service — consumed locally. `just install` validates
-content and creates the `$HOME`-facing symlinks;
-`just uninstall` reverses them. `just status` reports
-current managed-symlink state. `just verify` drives the
+Not a service — consumed locally.
+`just resources::install` validates content and creates the
+`$HOME`-facing symlinks; `just resources::uninstall`
+reverses them. `just resources::status` reports current
+managed-symlink state. `just resources::verify` drives the
 real AI tools against the installed content. App workspace
-members (the future `kaimux/`) build via native cargo:
-`cargo build -p kaimux --release && cp target/release/kaimux
-dist/`.
+members (`kaimux/`) build via `just kaimux::build` (a
+one-liner over `cargo build -p kaimux --release` + copy
+into `dist/`).
 
 ### Hard constraints
 
