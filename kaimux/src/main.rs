@@ -1,22 +1,8 @@
 //! kaimux — observation-only orchestrator over tmux + coding-agent panes.
 //!
-//! Script-style: one file. Four typeclasses, top-to-bottom.
-//!
-//!   §1 · `Session`  — registry record + per-record ops via `impl`.
-//!   §2 · `Store`    — owns the state-dir, hides flock; exposes
-//!                     `read()` (no lock) and `mutate(|v| ...)`.
-//!   §3 · `Wrapper`  — trait with `Claude` / `Kiro` / `Other` impls.
-//!                     `prepare` (per-kind config — Claude no-op,
-//!                     Kiro project-scoped), `cleanup` (per-kind
-//!                     unregister), and a default `hook` method body
-//!                     shared across kinds. Claude hooks live
-//!                     user-globally via `setup` / `teardown`.
-//!   §4 · `Loop`     — picker (`render`, `render_to`, `peek`,
-//!                     `run`, `body`).
-//!
-//! The CLI dispatch (`main`) wires these together. Tests at the
-//! bottom drive each typeclass directly with a tempdir `Store`;
-//! end-to-end coverage is `tests/kaimux/integration.sh`.
+//! One file, four sections top-to-bottom: §1 Session, §2 Store,
+//! §3 Wrapper (Claude / Kiro / Other), §4 Loop (picker).
+//! `main` dispatches the CLI. End-to-end: tests/kaimux/integration.sh.
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -39,23 +25,10 @@ const EVT_POST_TOOL_USE: &str = "PostToolUse";
 const EVT_NOTIFICATION: &str = "Notification";
 const EVT_STOP: &str = "Stop";
 
-/// Seconds a `Done` record can sit before the picker renders it
-/// as `Idle`. Pure render-time decay — never written back to
-/// disk, so a forgotten session in a tmux pane doesn't need a
-/// background process to age its state file.
+// Done record decays to Idle at render time after this — no on-disk update.
 const IDLE_THRESHOLD_SECS: u64 = 60;
 
-/// All Claude hook events `setup` installs. Each fires its own
-/// `kaimux hook <event>` invocation; `apply_event` decides
-/// which mapped to a state transition.
-///
-/// `Notification` is load-bearing for the four-state machine —
-/// without it the picker can't surface "agent waiting on the
-/// user" as a distinct state, so it would never sort to the
-/// top of the dashboard. `teardown` is tag-scoped, so legacy
-/// entries from earlier installs (without `Notification`) get
-/// cleaned up on the next teardown without needing a migration
-/// shim.
+// Notification is load-bearing — drives the Waiting state.
 const HOOK_EVENTS: &[&str] = &[
     EVT_USER_PROMPT_SUBMIT,
     EVT_PRE_TOOL_USE,
@@ -64,30 +37,15 @@ const HOOK_EVENTS: &[&str] = &[
     EVT_STOP,
 ];
 
-/// Default name of the tmux session that hosts the dashboard.
-/// Matches the binary name so a fresh user can find it via
-/// `tmux ls`. The user can override via `--session <NAME>`
-/// on `setup` and bare invocation; this is the value used
-/// when neither names a session.
+// Name used for the dashboard tmux session. Override with --session <name>.
 const DEFAULT_SESSION_NAME: &str = "kaimux";
 
-/// Marker baked into our prefix-table keybind's action so
-/// `teardown` can find and remove only our binding, regardless
-/// of which session name the user chose. The marker rides on a
-/// no-op `run-shell "true #..."` chained before
-/// `switch-client`, so tmux preserves it verbatim in
-/// `list-keys -T prefix` output. The `#` makes the shell
-/// command a comment from the OS's perspective — `true`
-/// returns immediately and the comment is purely a tag for
-/// our own grep.
+// Marker our prefix-table keybind carries so teardown can self-discover it
+// (rides as a `run-shell "true #<marker>"` before switch-client; the `#`
+// makes it a shell comment, tmux echoes it verbatim in list-keys output).
 const KEYBIND_MARKER: &str = "x-kaimux-managed";
 
-/// Marker field on hook entries we wrote to a Claude settings file
-/// via `setup`. `teardown` removes only entries carrying this tag,
-/// leaving user-authored entries verbatim. The `x-` prefix is the
-/// conventional "tool-private extension" signal in JSON config —
-/// makes accidental collision with user-authored decoration
-/// effectively zero.
+// Tag on hook entries we wrote — teardown removes only ours.
 const KAIMUX_TAG: &str = "x-kaimux-managed";
 
 fn now_secs() -> u64 {
@@ -100,36 +58,17 @@ fn now_secs() -> u64 {
 // ─────────────────────────────────────────────────────────────────────────────
 // §1 · Session
 
-/// Lifecycle state stored in `sessions.json`. Three discrete
-/// states cover what the hook reporter can decide about an
-/// agent at the moment of an event:
-///
-/// - `Working` — agent is in motion (a tool is running, or
-///   a prompt was just submitted).
-/// - `Waiting` — agent is blocked on the user (permission
-///   prompt or notification).
-/// - `Done` — agent finished its turn. May decay to the
-///   user-visible `Idle` after `IDLE_THRESHOLD_SECS`,
-///   purely at render time.
-///
-/// `Idle` deliberately is *not* in this enum — keeping the
-/// stored-state shape three-variant means a forgotten session
-/// doesn't need a background process to flip its state file
-/// every minute. The render layer computes `Idle` from
-/// `Done + state_ts` against the current time; see
-/// [`Session::display_state`].
+// Stored lifecycle. Idle is computed at render time so a
+// forgotten session doesn't need a background ager.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum State {
-    Working,
-    Waiting,
-    Done,
+    Working, // tool running or prompt just submitted
+    Waiting, // blocked on the user (permission / Notification)
+    Done,    // finished turn — decays to DisplayState::Idle past the threshold
 }
 
-/// User-visible state in the dashboard. A function of the
-/// stored [`State`] plus elapsed time. `Done` records past
-/// the idle threshold render as `Idle`; everything else
-/// passes through.
+// Render-time view of State (adds Idle).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisplayState {
     Working,
@@ -140,74 +79,28 @@ pub enum DisplayState {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Session {
-    /// Tmux pane id (e.g. `%17`) — the registry's primary key.
-    pub pane_id: String,
-    /// Wrapper pid (the kaimux process that called `wrap`); used
-    /// by `live_only` to drop entries whose process is gone.
-    pub pid: i32,
-    /// Agent kind (`claude`, `kiro`, or arbitrary string for
-    /// `Other`). Drives `wrapper_for` dispatch on cleanup.
-    pub kind: String,
-    /// Working directory at wrap time. Used by `Kiro::cleanup`
-    /// to refcount-clean the project-scoped config.
-    pub cwd: String,
-    /// Wall-clock seconds since epoch at wrap time. Used as the
-    /// elapsed-column floor when no events have fired yet.
-    pub started: u64,
-    /// Stored lifecycle (Working / Waiting / Done). The picker
-    /// computes a `DisplayState` (which adds `Idle`) from this
-    /// at render time.
+    pub pane_id: String, // tmux pane id (e.g. %17) — registry's primary key
+    pub pid: i32,        // wrapper pid; live_only drops entries whose pid is gone
+    pub kind: String,    // claude / kiro / Other(<name>) — drives wrapper_for dispatch
+    pub cwd: String,     // working dir at wrap time; used by Kiro refcount-cleanup
+    pub started: u64,    // unix secs at wrap; elapsed-column floor before any event
     pub state: State,
-    /// Wall-clock of the last `state` change; the decay-to-Idle
-    /// boundary measures from here.
-    pub state_ts: u64,
-    /// Name of the most recent hook event. Retained for debug
-    /// and future-proofing; defaults so older registries
-    /// without this field load cleanly without a migration.
+    pub state_ts: u64, // unix secs of last state change — decay-to-Idle measures from here
     #[serde(default)]
     pub last_event: String,
-    /// Wall-clock of the last hook event of any kind. Drives
-    /// the elapsed-time column (max with `started`).
     #[serde(default)]
-    pub last_event_ts: u64,
-    /// True iff this wrap call wrote `<cwd>/.kiro/agents/kaimux.json`.
-    /// `Kiro::cleanup` consults this + sibling sessions to decide
-    /// whether to remove the project-scoped config on unregister.
+    pub last_event_ts: u64, // unix secs of last hook of any kind — drives elapsed column
     #[serde(default)]
-    pub created_kiro_config: bool,
+    pub created_kiro_config: bool, // true iff this wrap wrote .kiro/agents/kaimux.json
 }
 
 impl Session {
-    /// Apply one hook event to this session. Always bumps
-    /// `last_event` / `last_event_ts` so the elapsed-time
-    /// column reflects the most recent activity, even for
-    /// events that don't trigger a state change.
-    ///
-    /// Mapping (see spec → "How the lifecycle states are
-    /// derived"):
-    ///
-    /// - `UserPromptSubmit` → `Working` (transitional —
-    ///   the user just handed the agent a task; if no
-    ///   `PreToolUse` follows, the next `Stop` flips to
-    ///   `Done`).
-    /// - `PreToolUse`       → `Working`
-    /// - `PostToolUse`      → `Working` (more tools may
-    ///   follow in the same turn — only `Stop` ends the
-    ///   turn).
-    /// - `Notification`     → `Waiting` (highest priority
-    ///   in the dashboard sort — agent is blocked on the
-    ///   user).
-    /// - `Stop`             → `Done`.
-    ///
-    /// Unknown events bump `last_event_ts` only — silent
-    /// no-op for state. Hooks must never block the agent's
-    /// turn, so this body has no fallible paths.
-    ///
-    /// Payload is unused today but kept in the signature so
-    /// a future kind whose state machine cares about
-    /// `tool_name` / `tool_input` can deserialise without
-    /// changing the trait method.
+    // payload is unused today; kept so a future kind whose state machine
+    // cares about tool_name/tool_input can deserialise without changing
+    // the trait method.
     fn apply_event(&mut self, event: &str, _payload: &serde_json::Value, now: u64) {
+        // Always bump last_event_ts so the elapsed column tracks any activity,
+        // even events that don't change state.
         self.last_event = event.into();
         self.last_event_ts = now;
         match event {
@@ -223,18 +116,10 @@ impl Session {
                 self.state = State::Done;
                 self.state_ts = now;
             }
-            // Unknown event: only the activity timestamp moves.
-            // Lets sort track "recently driven by something" even
-            // for events we don't model yet (e.g. a future
-            // PostToolUseFailure variant we haven't wired up).
-            _ => {}
+            _ => {} // unknown event: only the activity timestamp moves
         }
     }
 
-    /// Resolve the user-visible state at render time. Stored
-    /// `Done` records age into `Idle` once they've sat past
-    /// [`IDLE_THRESHOLD_SECS`] since their last state change.
-    /// Pure function — same input ⇒ same output.
     fn display_state(&self, now: u64) -> DisplayState {
         match self.state {
             State::Working => DisplayState::Working,
@@ -249,21 +134,9 @@ impl Session {
         }
     }
 
-    /// Picker header line — the visible top line of each
-    /// dashboard item. Tab-separated columns:
-    ///
-    /// `<icon> <addr>\t<kind>\t<cwd-fixed-width>\t<elapsed>`
-    ///
-    /// The `addr` argument is the human-readable tmux address
-    /// (`session:window.pane`) resolved by the caller, since
-    /// `Session` doesn't know about live tmux state and we
-    /// want the format function to stay pure (testable
-    /// without a tmux server).
-    ///
-    /// Tabs are deliberate as the column separator — fzf's
-    /// default field splitter is whitespace, but the cwd
-    /// column may contain `…` and the kind/elapsed columns
-    /// fit cleanly with tab alignment when viewed.
+    // `<icon> <addr>\t<kind>\t<cwd-fixed-width>\t<elapsed>`. Tab-separated
+    // because the cwd may contain `…`. addr is passed in (not derived) so this
+    // stays pure — testable without a tmux server.
     fn format_header(&self, addr: &str, now: u64) -> String {
         let glyph = state_glyph(self.display_state(now));
         let elapsed = format_elapsed(now.saturating_sub(self.last_event_ts.max(self.started)));
@@ -271,19 +144,13 @@ impl Session {
         format!("{} {}\t{}\t{}\t{}", glyph, addr, self.kind, cwd, elapsed)
     }
 
-    /// "Active at" — max(state_ts, last_event_ts, started). Used by sort.
     fn activity(&self) -> u64 {
         self.state_ts.max(self.last_event_ts).max(self.started)
     }
 
-    /// Sort priority. Top of the dashboard down to the
-    /// bottom: waiting (0) → done (1) → idle (2) → working
-    /// (3). The dashboard is a triage queue; sort by "does
-    /// this agent need the user's attention?" not "is this
-    /// agent active?". Working agents are self-managing
-    /// and sink to the bottom; idle agents are forgotten
-    /// assets that beat working because they need a
-    /// decision (give a task or close the pane).
+    // Triage order: surface what needs the user's attention. Working agents
+    // are self-managing and sink to the bottom; Idle beats Working because
+    // a forgotten session needs a decision (give a task or close the pane).
     fn priority(&self, now: u64) -> u8 {
         match self.display_state(now) {
             DisplayState::Waiting => 0,
@@ -294,9 +161,6 @@ impl Session {
     }
 }
 
-/// Glyph for a [`DisplayState`]. Centralised so the picker
-/// row, the unit tests, and any future status-bar exporter
-/// agree on what each state looks like.
 fn state_glyph(state: DisplayState) -> &'static str {
     match state {
         DisplayState::Waiting => "💬",
@@ -306,32 +170,13 @@ fn state_glyph(state: DisplayState) -> &'static str {
     }
 }
 
-/// Width (in chars) of the cwd column in the dashboard
-/// header. Rows that fit show the path verbatim; longer
-/// paths are truncated from the front with a `…/` marker
-/// so the trailing distinguishing segments stay visible.
-/// Tunable to match expected screen widths; 24 keeps three
-/// segments of typical depth visible while leaving room
-/// for the kind + elapsed columns on a 100-col terminal.
+// 24 fits 3 typical path segments while leaving room for kind + elapsed
+// on a 100-col terminal.
 const CWD_COLUMN_WIDTH: usize = 24;
 
-/// Render `cwd` into a fixed-width column. When the path
-/// fits, returns it verbatim padded to `width`. When it
-/// doesn't, truncates from the front with a leading `…/`
-/// marker so the trailing path segments — usually the
-/// distinguishing ones — stay visible.
-///
-/// Examples (width=14):
-///   "proj-b"                   → "proj-b        " (padded)
-///   "/home/me/work/proj-b"     → "…/work/proj-b "
-///   "/a/b/c/d/proj-b"          → "…/d/proj-b    "
-///
-/// Width is char-based, not byte-based. Multi-byte UTF-8
-/// segments (an unlikely path component for a tmux pane's
-/// cwd, but still possible) count as one column each — we
-/// don't account for double-wide CJK glyphs because the
-/// dependency cost (`unicode-width`) isn't justified for a
-/// dashboard column.
+// Truncate-from-front with `…/` so the distinguishing trailing segments
+// stay visible. Char-based (not byte): unicode-width / CJK not handled —
+// path components are nearly always ASCII for tmux panes.
 fn cwd_fixed_width(cwd: &str, width: usize) -> String {
     let chars: Vec<char> = cwd.chars().collect();
     if chars.len() <= width {
@@ -341,15 +186,10 @@ fn cwd_fixed_width(cwd: &str, width: usize) -> String {
         }
         return out;
     }
-    // Truncate from the front. Reserve 2 chars for the
-    // `…/` marker, take the trailing `width - 2` chars,
-    // align on a `/` boundary if there's one near the cut
-    // point so we don't slice through a path segment.
-    let keep = width.saturating_sub(2);
+    let keep = width.saturating_sub(2); // reserve 2 chars for the `…/` marker
     let start = chars.len() - keep;
-    // Look for a `/` in the kept slice's first few chars
-    // and shift the cut to align with it. Caps at 4 chars
-    // so we don't blow up the budget on deep flat paths.
+    // Snap the cut to the nearest `/` (within 4 chars) so we don't slice
+    // mid-segment. Caps at 4 to bound the budget on deep flat paths.
     let look_within = keep.min(4);
     let aligned_start = chars[start..start + look_within]
         .iter()
@@ -361,7 +201,6 @@ fn cwd_fixed_width(cwd: &str, width: usize) -> String {
     out.push('…');
     out.push('/');
     out.push_str(&tail);
-    // Pad to width if the alignment trim shortened the result.
     let cur_chars = out.chars().count();
     for _ in cur_chars..width {
         out.push(' ');
@@ -369,12 +208,7 @@ fn cwd_fixed_width(cwd: &str, width: usize) -> String {
     out
 }
 
-/// Render a duration in seconds as a compact human-friendly
-/// string used in the dashboard's elapsed-time column.
-/// `5s` / `2m` / `1h` / `3d`. Round down to the largest unit
-/// that fits in two characters; precision past that isn't
-/// useful for a dashboard glance. Boundaries are 60s / 1h / 1d
-/// in seconds.
+// Compact: 5s / 2m / 1h / 3d. Two chars max — dashboard glance.
 fn format_elapsed(secs: u64) -> String {
     if secs < 60 {
         format!("{secs}s")
@@ -387,12 +221,9 @@ fn format_elapsed(secs: u64) -> String {
     }
 }
 
-/// Sort by `Session::priority(now)` (waiting, then done,
-/// then idle, then working), with ties broken by
-/// most-recently-active first. The decay layer means a
-/// `Done` record's effective sort position depends on `now`;
-/// pass `now` so a single render pass uses one consistent
-/// timestamp for every comparison.
+// Pass `now` through so one render pass uses one timestamp — the decay
+// layer makes priority depend on it, and inconsistent values would let
+// rows reorder mid-comparison.
 fn sort_sessions(sessions: &mut [Session], now: u64) {
     sessions.sort_by(|a, b| {
         let prio = a.priority(now).cmp(&b.priority(now));
@@ -403,12 +234,8 @@ fn sort_sessions(sessions: &mut [Session], now: u64) {
     });
 }
 
-/// Drop entries whose pid is no longer alive (kernel signal-0
-/// probe — `kill(pid, 0)` returns Ok iff the pid exists and we
-/// could signal it, no actual signal sent). The pane-exited
-/// hook normally cleans up on close, but a server crash or a
-/// missed event leaves stale entries; this keeps the dashboard
-/// honest at render time without needing a sweeper.
+// `kill(pid, 0)` is a permission probe — exists iff signal-able, no signal
+// sent. Render-time honesty without a sweeper, in case pane-exited missed.
 fn live_only(sessions: Vec<Session>) -> Vec<Session> {
     use nix::sys::signal::kill;
     use nix::unistd::Pid;
@@ -431,10 +258,8 @@ pub struct Store {
 }
 
 impl Store {
-    /// Resolve `${XDG_STATE_HOME:-$HOME/.local/state}/kaimux`.
-    /// XDG honoured when set + non-empty; an empty value is treated
-    /// as unset (some shells leave the variable defined as `""` and
-    /// we don't want to anchor state at `/kaimux`).
+    // ${XDG_STATE_HOME:-$HOME/.local/state}/kaimux. Empty XDG ⇒ unset
+    // (some shells leave it set to "" — don't anchor state at /kaimux).
     pub fn from_env() -> Result<Self> {
         if let Ok(xdg) = std::env::var("XDG_STATE_HOME") {
             if !xdg.is_empty() {
@@ -449,7 +274,6 @@ impl Store {
         })
     }
 
-    /// Tests pass a tempdir.
     pub fn new(dir: PathBuf) -> Self {
         Store { dir }
     }
@@ -462,8 +286,7 @@ impl Store {
         self.dir.join(HOOK_MARKER)
     }
 
-    /// Eventually-consistent read. No lock. Empty / missing file →
-    /// `Vec::new()`. Malformed errors loud.
+    // No lock — eventually consistent. Empty/missing ⇒ empty Vec.
     pub fn read(&self) -> Result<Vec<Session>> {
         let path = self.dir.join(SESSIONS_FILE);
         if !path.exists() {
@@ -476,11 +299,9 @@ impl Store {
         serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))
     }
 
-    /// Read-modify-write under flock. The closure mutates `v` in
-    /// place and may return a value (e.g. a `Prepared` argv) that
-    /// the caller wants to use after the lock releases. Store
-    /// handles the lock + atomic write. Lock releases when the
-    /// file handle drops, so panics in `f` still release.
+    // Read-modify-write under flock. The closure can return a value
+    // (e.g. a Prepared argv) the caller wants to use after the lock
+    // releases. Lock releases on drop, so panics still release.
     pub fn mutate<F, T>(&self, f: F) -> Result<T>
     where
         F: FnOnce(&mut Vec<Session>) -> Result<T>,
@@ -501,10 +322,8 @@ impl Store {
         Ok(out)
     }
 
-    /// Atomic write: write to per-pid tmp, then rename. The tmp name
-    /// includes our pid so concurrent writers don't stomp each other's
-    /// tmp file. Callers always hold `mutate`'s lock for read-modify-
-    /// write atomicity. No fsync — state-dir scratch.
+    // Per-pid tmp + rename so concurrent writers don't stomp each
+    // other's tmp file. No fsync — state-dir is scratch.
     fn write_atomic(&self, sessions: &[Session]) -> Result<()> {
         fs::create_dir_all(&self.dir)
             .with_context(|| format!("mkdir -p {}", self.dir.display()))?;
@@ -521,9 +340,8 @@ impl Store {
 // ─────────────────────────────────────────────────────────────────────────────
 // §3 · Wrapper
 //
-// trait + three impls. Per-kind variation lives in the impl blocks;
-// the kind-agnostic bits (registration, tmux hook install, execvp)
-// live in the free `wrap()` function below the trait.
+// Per-kind variation in the impl blocks. Kind-agnostic bits (registration,
+// pane-exited hook install, execvp) live in the free `wrap()` below.
 
 pub struct WrapCtx<'a> {
     pub store: &'a Store,
@@ -535,37 +353,24 @@ pub struct WrapCtx<'a> {
 
 #[derive(Debug)]
 pub struct Prepared {
-    /// Binary to `execvp` — usually identical to `argv[0]`,
-    /// but split out so a wrapper can rewrite the program path
-    /// without touching the user-visible argv.
-    pub program: String,
-    /// Full argv to pass to `execvp`, argv[0] included.
+    pub program: String, // execvp target — split from argv[0] so wrappers can rewrite it
     pub argv: Vec<String>,
-    /// Whether `Kiro::prepare` had to write the project-scoped
-    /// config (vs. an existing one already there). Carries
-    /// through to the registry record so cleanup can refcount.
-    pub created_kiro_config: bool,
+    pub created_kiro_config: bool, // true ⇒ this wrap wrote .kiro/agents/kaimux.json
 }
 
 pub trait Wrapper {
     fn kind(&self) -> &str;
 
-    /// Synthesize/ensure per-kind hook config, return (program, argv)
-    /// for execvp + any flag the session record needs to carry.
+    // Ensure per-kind config; return execvp (program, argv) + any flag
+    // the session record needs.
     fn prepare(&self, ctx: &WrapCtx) -> Result<Prepared>;
 
-    /// Per-kind cleanup on unregister.
     fn cleanup(&self, store: &Store, removing: &Session, others: &[Session]) -> Result<()>;
 
-    /// Hook handling — default method body, identical for all kinds
-    /// today. A future kind whose stdin payload differs can override.
-    /// Always exits Ok — a failing hook reporter must not block the
-    /// agent's turn.
-    ///
-    /// Caller verifies pane ownership; the CLI dispatch (`Cmd::Hook`)
-    /// filters on `$KAIMUX_PANE` before reaching here. Direct
-    /// callers must do the same — this body acts on whatever
-    /// `pane_id` it was given.
+    // Default hook body — same across kinds today. A kind whose stdin
+    // payload differs can override. Must never error: a failed hook
+    // reporter would block the agent's turn. Caller filters on
+    // $KAIMUX_PANE before dispatching; this body trusts pane_id.
     fn hook(
         &self,
         store: &Store,
@@ -585,7 +390,7 @@ pub trait Wrapper {
             if let Some(s) = sessions.iter_mut().find(|s| s.pane_id == pane_id) {
                 s.apply_event(event, &payload, now);
             }
-            Ok(()) // stale fire after unregister: silent no-op.
+            Ok(()) // stale fire after unregister: silent no-op
         })
     }
 }
@@ -599,9 +404,7 @@ impl Wrapper for Claude {
         "claude"
     }
 
-    /// No-op. Claude hooks live user-globally via
-    /// `kaimux setup`, not per-launch. The wrapper just
-    /// passes argv through unchanged.
+    // Claude hooks live user-globally via `kaimux setup`, not per-launch.
     fn prepare(&self, ctx: &WrapCtx) -> Result<Prepared> {
         Ok(Prepared {
             program: ctx.agent_argv[0].clone(),
@@ -610,8 +413,6 @@ impl Wrapper for Claude {
         })
     }
 
-    /// No-op. The user-global hooks installed by `setup` outlive
-    /// any individual pane and are removed only by `teardown`.
     fn cleanup(&self, _store: &Store, _removing: &Session, _others: &[Session]) -> Result<()> {
         Ok(())
     }
@@ -642,11 +443,10 @@ impl Wrapper for Kiro {
         })
     }
 
-    /// Refcount-agnostic: if no other live `kind=kiro` session shares
-    /// `removing.cwd`, remove the project-scoped config. Closing the
-    /// creator first while reusers remain still keeps the file alive
-    /// (a sibling exists). Closing the last reuser removes it even if
-    /// its `created_kiro_config=false`.
+    // Refcount on cwd — keep the project-scoped config alive while any kiro
+    // session in this cwd is live. The created_kiro_config flag isn't
+    // consulted: closing the last reuser removes it even if a different
+    // session created it.
     fn cleanup(&self, _store: &Store, removing: &Session, others: &[Session]) -> Result<()> {
         let has_sibling = others
             .iter()
@@ -687,11 +487,8 @@ impl Wrapper for Other {
     }
 }
 
-/// Resolve a `kind` string to a wrapper. Unknown kinds get the
-/// `Other` fallback — registers + lifecycle-cleans up on
-/// pane-exit, but does no per-kind config (no hooks injection).
-/// Lets the user observe arbitrary CLIs in the dashboard
-/// before we know enough about a tool to write a real wrapper.
+// Unknown kinds register + lifecycle-clean on pane-exit, no per-kind config.
+// Lets the user observe arbitrary CLIs before we know enough to wrap them.
 fn wrapper_for(kind: &str) -> Box<dyn Wrapper> {
     match kind {
         "claude" => Box::new(Claude),
@@ -700,33 +497,11 @@ fn wrapper_for(kind: &str) -> Box<dyn Wrapper> {
     }
 }
 
-/// Add our four hook entries to a Claude-style settings JSON,
-/// each tagged with `"x-kaimux-managed": true` so `unmerge`
-/// can find and remove only ours.
-///
-/// Claude's hooks schema is nested: each event maps to an array of
-/// matcher-groups, where each matcher-group has a `matcher` string
-/// (tool-name selector; "" matches all) and a `hooks` array of
-/// command entries. Our commands fire unconditionally, so we use
-/// `matcher: ""`.
-///
-/// ```json
-/// "hooks": {
-///   "Stop": [
-///     { "matcher": "",
-///       "hooks": [{ "type": "command", "command": "<self> hook Stop" }],
-///       "x-kaimux-managed": true }
-///   ]
-/// }
-/// ```
-///
-/// **Idempotent.** If a tagged entry already exists for an event,
-/// the existing command is rewritten to match `self_path` (handles
-/// the binary-moved case). New events are appended; user-authored
-/// entries (without the tag) are preserved verbatim.
-///
-/// Errors loud on a non-object root or non-array event entries —
-/// silent-drop would leave the user with a hookless wrapper.
+// Idempotent merge of our four hook entries into Claude's settings shape:
+//   hooks.<event> = [ { matcher: "", hooks: [{type:"command",command}], x-kaimux-managed: true }, ... ]
+// Existing tagged entries get their command rewritten (binary moved case);
+// user-authored entries (no tag) preserved verbatim. Errors loud on shape
+// mismatches — silent-drop would leave the user with a hookless wrapper.
 fn merge_claude_hooks(settings: &mut serde_json::Value, self_path: &Path) -> Result<()> {
     use serde_json::{json, Value};
     let self_str = self_path.to_string_lossy();
@@ -744,25 +519,18 @@ fn merge_claude_hooks(settings: &mut serde_json::Value, self_path: &Path) -> Res
             anyhow::bail!("user claude settings.hooks.{} must be an array", ev);
         };
         let cmd = format!("{} hook {}", self_str, ev);
-        // Idempotence + path refresh: if our tagged entry is
-        // already there, rewrite its command (in case the binary
-        // moved). Otherwise append a fresh tagged entry.
         if let Some(existing) = list
             .iter_mut()
             .find(|e| e.get(KAIMUX_TAG).and_then(|v| v.as_bool()).unwrap_or(false))
         {
-            // Happy path: rewrite the command in slot 0 of the
-            // nested hooks array. `continue` exits the per-event
-            // loop so we don't fall through to the overwrite.
+            // Happy path: rewrite command in slot 0; continue skips the overwrite.
             if let Some(inner) = existing.get_mut("hooks").and_then(|h| h.as_array_mut()) {
                 if let Some(first) = inner.first_mut() {
                     first["command"] = json!(cmd);
                     continue;
                 }
             }
-            // Fall-through: tagged entry has unexpected shape
-            // (missing `hooks` array, empty array, wrong type).
-            // Overwrite it cleanly.
+            // Tagged entry with unexpected shape — overwrite cleanly.
             *existing = json!({
                 "matcher": "",
                 "hooks": [{ "type": "command", "command": cmd }],
@@ -779,11 +547,8 @@ fn merge_claude_hooks(settings: &mut serde_json::Value, self_path: &Path) -> Res
     Ok(())
 }
 
-/// Reverse of `merge_claude_hooks`: remove every tagged entry from
-/// the settings JSON. Prunes empty containers — if an event's array
-/// becomes empty, drop the key; if `hooks` becomes empty, drop the
-/// `hooks` key. Caller decides whether to delete the file when the
-/// result is `{}`.
+// Inverse of merge: drop tagged entries, prune empty containers. Caller
+// decides whether to delete the file when the result is `{}`.
 fn unmerge_claude_hooks(settings: &mut serde_json::Value) {
     let Some(root) = settings.as_object_mut() else {
         return;
@@ -806,23 +571,10 @@ fn unmerge_claude_hooks(settings: &mut serde_json::Value) {
     }
 }
 
-/// `kaimux setup` — install our four hook entries into the
-/// Claude settings file at `path` (typically
-/// `~/.claude/settings.json`). Creates the file (and parent dir)
-/// if absent. Idempotent: re-running rewrites our tagged entries'
-/// command paths in case the binary moved, but doesn't duplicate.
-///
-/// `key`: optional tmux prefix-table suffix to bind for
-/// switching back to the dashboard session (e.g. `Some("O")`
-/// → `<prefix> O` switches to the dashboard). When `None`,
-/// no keybind is installed. When `Some`, any pre-existing
-/// switch-to-dashboard binding (from a previous `setup` with
-/// a different key or session name) is removed first so
-/// re-keying is clean.
-///
-/// `session_name`: name of the tmux session that hosts the
-/// dashboard. Default is [`DEFAULT_SESSION_NAME`]; user can
-/// override via `setup --session NAME`.
+// `kaimux setup`. Idempotent: re-running rewrites our entries' command
+// paths (binary-moved case) without duplicating. With `key`, also binds
+// `<tmux-prefix> <key>` to switch to the dashboard; any prior dashboard
+// binding is removed first so re-keying is clean.
 fn run_setup(path: &Path, self_path: &Path, key: Option<&str>, session_name: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("mkdir -p {}", parent.display()))?;
@@ -840,20 +592,14 @@ fn run_setup(path: &Path, self_path: &Path, key: Option<&str>, session_name: &st
     merge_claude_hooks(&mut settings, self_path)?;
     write_json_atomic(path, &settings)?;
     if let Some(suffix) = key {
-        // Remove any prior binding (might be a different key from
-        // an earlier setup) before installing the new one.
-        uninstall_tmux_keybind();
+        uninstall_tmux_keybind(); // remove any prior binding before re-key
         install_tmux_keybind(suffix, session_name);
     }
     Ok(())
 }
 
-/// `kaimux teardown` — remove our tagged hook entries from
-/// the Claude settings file at `path`. Prunes empty containers;
-/// removes the file entirely if the result is `{}`. No-op if the
-/// file is absent. Always self-discovers and removes any prefix
-/// binding whose action is `switch-client -t kaimux` —
-/// no key argument needed.
+// `kaimux teardown`. Self-discovers the keybind via marker — no flags
+// needed, works regardless of the suffix or session name used at install.
 fn run_teardown(path: &Path) -> Result<()> {
     uninstall_tmux_keybind();
     if !path.exists() {
@@ -861,8 +607,7 @@ fn run_teardown(path: &Path) -> Result<()> {
     }
     let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
     if bytes.is_empty() {
-        // Empty file → nothing to do; leave it alone.
-        return Ok(());
+        return Ok(()); // empty file: leave it alone
     }
     let mut settings: serde_json::Value =
         serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
@@ -876,10 +621,8 @@ fn run_teardown(path: &Path) -> Result<()> {
     }
 }
 
-/// Run a tmux command, honoring `$KAIMUX_TMUX_SOCKET` as
-/// `-L <name>` (used by the integration script to target a
-/// private server) and suppressing stderr (best-effort: a
-/// "no server" message during first-run is normal).
+// $KAIMUX_TMUX_SOCKET → `-L <name>` (integration tests target a private
+// server). Stderr suppressed: "no server" is normal pre-first-run noise.
 fn tmux_cmd(args: &[&str]) -> std::process::Command {
     let mut cmd = std::process::Command::new("tmux");
     if let Ok(name) = std::env::var("KAIMUX_TMUX_SOCKET") {
@@ -891,41 +634,18 @@ fn tmux_cmd(args: &[&str]) -> std::process::Command {
     cmd
 }
 
-/// Best-effort: bind `<prefix> <suffix>` to switch the tmux
-/// client to the dashboard session on the running tmux
-/// server. Prefix-bound (default `C-b`) rather than root-bound
-/// so inner TUIs (claude/kiro) never see the keystroke and
-/// can't race with tmux for it — same idiom as every other
-/// tmux command (`C-b c`, `C-b "`, `C-b d`).
-///
-/// The action is a chain — `run-shell "true #<marker>" ;
-/// switch-client -t <session>`. The `run-shell` is a no-op
-/// (POSIX `true` exits 0) but tmux preserves the entire
-/// action string verbatim in `list-keys -T prefix` output.
-/// `teardown` greps for the marker so it can identify our
-/// binding regardless of which session name the user chose
-/// at install time. This means `teardown` doesn't need a
-/// `--key` flag, doesn't need to remember the chosen name,
-/// and doesn't need a state file.
-///
-/// Live-only — survives until the server exits. If tmux isn't
-/// running (no server, no $TMUX, not on PATH), silently no-op;
-/// the user can re-run `setup` after starting tmux. Persistence
-/// across server restarts is the user's job (bake the
-/// equivalent line into `~/.tmux.conf` via home-manager /
-/// chezmoi / yadm / ansible-pull / your dotfiles setup — see
-/// the spec's Decision Log).
+// Bind <prefix> <suffix> → switch-client. Prefix-bound (not root-bound)
+// so inner TUIs (claude/kiro) never see it. Action chain rides a no-op
+// `run-shell "true #<marker>"`; tmux preserves the marker verbatim in
+// list-keys output, which is how teardown self-discovers the binding
+// without a state file or a --key flag. Live-only — server restart
+// drops it; persistence across restarts is the user's job (bake the
+// equivalent line into ~/.tmux.conf).
 fn install_tmux_keybind(suffix: &str, session_name: &str) {
     let action = format!("run-shell \"true #{KEYBIND_MARKER}\" ; switch-client -t {session_name}");
     let _ = tmux_cmd(&["bind-key", "-T", "prefix", suffix, &action]).status();
 }
 
-/// Self-discovering reverse: scan the prefix table for any
-/// binding whose action carries our marker and unbind it.
-/// Lets the user re-key without remembering the old suffix
-/// and lets `teardown` work without a `--key` or `--session`
-/// flag. Matches by marker so it works regardless of which
-/// session name the install used.
 fn uninstall_tmux_keybind() {
     let out = tmux_cmd(&["list-keys", "-T", "prefix"])
         .stderr(std::process::Stdio::null())
@@ -935,10 +655,8 @@ fn uninstall_tmux_keybind() {
     if !out.status.success() {
         return;
     }
-    // Each line looks like:
+    // list-keys line shape:
     //   bind-key -T prefix O run-shell "true #x-kaimux-managed" \; switch-client -t <name>
-    // Capture the suffix (the column after `-T prefix`) on lines
-    // carrying our marker.
     let stdout = String::from_utf8_lossy(&out.stdout);
     for line in stdout.lines() {
         if !line.contains(KEYBIND_MARKER) {
@@ -954,8 +672,6 @@ fn uninstall_tmux_keybind() {
     }
 }
 
-/// Atomic write for arbitrary JSON files: per-pid tmp + rename.
-/// Used by setup/teardown writing the user's settings file.
 fn write_json_atomic(path: &Path, value: &serde_json::Value) -> Result<()> {
     let tmp = path.with_extension(format!("json.tmp.{}", std::process::id()));
     let bytes = serde_json::to_vec_pretty(value)?;
@@ -965,15 +681,12 @@ fn write_json_atomic(path: &Path, value: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
-/// Resolve `~/.claude/settings.json`. Used by `main`'s setup /
-/// teardown dispatch. Tests use injected paths.
 fn user_claude_settings_path() -> Result<PathBuf> {
     let home = std::env::var("HOME").context("$HOME unset")?;
     Ok(PathBuf::from(home).join(".claude/settings.json"))
 }
 
-/// Build a fresh Kiro agent config wiring our four hook commands.
-/// Same nested matcher+hooks schema as Claude.
+// Same nested schema as Claude's hooks.
 fn build_kiro_config(self_path: &Path) -> serde_json::Value {
     use serde_json::json;
     let s = self_path.to_string_lossy();
@@ -993,10 +706,8 @@ fn build_kiro_config(self_path: &Path) -> serde_json::Value {
     })
 }
 
-/// Install the global tmux `pane-exited` hook. Idempotent via a
-/// marker file. tmux `set-hook -g` is itself idempotent so the
-/// race between two wrappers passing `marker.exists() == false` is
-/// benign.
+// Idempotent via a marker file. tmux `set-hook -g` is itself idempotent
+// so the marker race between two wrappers is benign.
 fn install_pane_exited_hook(store: &Store, self_path: &Path) -> Result<()> {
     let marker = store.hook_marker();
     if marker.exists() {
@@ -1015,10 +726,9 @@ fn install_pane_exited_hook(store: &Store, self_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Set a per-pane tmux option (`-p`). We tag wrapped panes with
-/// `@kaimux-pane <id>` so a future `kaimux doctor` (or any other
-/// integration that walks tmux's view of panes) can identify our
-/// panes from tmux alone, without reading the registry file.
+// `tmux set-option -p` — tags wrapped panes with `@kaimux-pane <id>` so
+// future tmux-only walkers (e.g. a `kaimux doctor`) can find them
+// without reading the registry.
 fn tmux_set_pane_option(pane_id: &str, key: &str, value: &str) -> Result<()> {
     let status = std::process::Command::new("tmux")
         .args(["set-option", "-p", "-t", pane_id, key, value])
@@ -1028,7 +738,7 @@ fn tmux_set_pane_option(pane_id: &str, key: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
-/// `execvp` into the agent. Returns only on failure.
+// execvp — replaces our process with the agent. Returns only on failure.
 fn exec_agent(program: &str, argv: &[String]) -> Result<()> {
     use std::ffi::CString;
     let prog = CString::new(program).context("nul in agent program")?;
@@ -1042,14 +752,9 @@ fn exec_agent(program: &str, argv: &[String]) -> Result<()> {
     unreachable!("execvp returned Ok")
 }
 
-/// Top-level wrap: dispatch to the right `Wrapper`, mutate the store,
-/// then (when side effects are enabled) install the global tmux hook
-/// + tag the pane + execvp the agent.
-///
-/// `prepare` and the registry write share one critical section: the
-/// store mutation calls `w.prepare(ctx)` *inside* the lock. Closes the
-/// race where a concurrent `unregister` could remove a kiro config in
-/// the gap between `ensure` and `register`.
+// Wrapper-dispatch + register + (when side_effects) execvp. prepare runs
+// inside the store lock so a concurrent unregister can't remove a kiro
+// config between our ensure and register.
 pub fn wrap(w: &dyn Wrapper, ctx: &WrapCtx, side_effects: bool) -> Result<Prepared> {
     anyhow::ensure!(
         !ctx.agent_argv.is_empty(),
@@ -1058,12 +763,9 @@ pub fn wrap(w: &dyn Wrapper, ctx: &WrapCtx, side_effects: bool) -> Result<Prepar
 
     let now = now_secs();
     let prepared = ctx.store.mutate(|sessions| {
-        // If a record exists for this pane, two cases:
-        //  - the recorded pid is alive → genuine double-register, refuse loud.
-        //  - the recorded pid is dead → an earlier wrap exited but the pane
-        //    stayed alive (interactive shell, remain-on-exit, or the
-        //    pane-exited hook didn't fire — server restart, etc.). Run the
-        //    kind-specific cleanup for the stale record and replace it.
+        // Existing record on this pane: alive pid ⇒ genuine double-register
+        // (refuse loud); dead pid ⇒ orphaned by remain-on-exit / server
+        // restart / missed pane-exited (clean up the stale record and reuse).
         if let Some(idx) = sessions.iter().position(|s| s.pane_id == ctx.pane_id) {
             let alive =
                 nix::sys::signal::kill(nix::unistd::Pid::from_raw(sessions[idx].pid), None).is_ok();
@@ -1074,9 +776,8 @@ pub fn wrap(w: &dyn Wrapper, ctx: &WrapCtx, side_effects: bool) -> Result<Prepar
                 ctx.pane_id
             );
             let stale = sessions.remove(idx);
-            // Cleanup uses the *remaining* sessions as siblings — the kiro
-            // refcount logic stays correct because `stale` is no longer in
-            // the list.
+            // Remove first so cleanup's siblings list excludes the stale —
+            // kiro refcount stays correct.
             wrapper_for(&stale.kind).cleanup(ctx.store, &stale, sessions)?;
         }
         let prepared = w.prepare(ctx)?;
@@ -1086,12 +787,8 @@ pub fn wrap(w: &dyn Wrapper, ctx: &WrapCtx, side_effects: bool) -> Result<Prepar
             kind: w.kind().into(),
             cwd: ctx.cwd.to_string_lossy().into_owned(),
             started: now,
-            // Initial state: `Done`. No events have fired
-            // yet, so the agent isn't actively working;
-            // putting it in `Done` lets the picker's
-            // priority sort treat it the same as a finished
-            // turn (worth glancing at, not blocking).
-            // Decays to `Idle` after the threshold passes.
+            // Initial Done — no events yet; the priority sort treats it as
+            // a finished turn (glanceable, non-blocking). Decays to Idle.
             state: State::Done,
             state_ts: now,
             last_event: String::new(),
@@ -1111,8 +808,7 @@ pub fn wrap(w: &dyn Wrapper, ctx: &WrapCtx, side_effects: bool) -> Result<Prepar
     Ok(prepared)
 }
 
-/// `unregister`: remove the record, run per-kind cleanup via the
-/// matching `Wrapper` impl. Tmux `pane-exited` target.
+// Tmux `pane-exited` target.
 pub fn unregister(store: &Store, pane_id: &str) -> Result<()> {
     store.mutate(|sessions| {
         let Some(idx) = sessions.iter().position(|s| s.pane_id == pane_id) else {
@@ -1126,28 +822,13 @@ pub fn unregister(store: &Store, pane_id: &str) -> Result<()> {
 // ─────────────────────────────────────────────────────────────────────────────
 // §4 · Loop
 
-/// Number of pane lines included as the inline snippet beneath
-/// each dashboard row. Three lines balances at-a-glance density
-/// (the user can scan one row's recent context without focusing
-/// it) against vertical space used per row. A v2 follow-up
-/// (see spec → Implementation Plan) makes this runtime-tunable.
+// Fixed: a varying row height would reflow the whole fzf list on every
+// reload. v2 follow-up makes this runtime-tunable.
 const SNIPPET_LINES: usize = 3;
 
-/// One dashboard item — what `render` produces and what
-/// `render_to` serialises for fzf to read. Each item is a
-/// header line plus a fixed-height snippet of the agent's
-/// pane content. Fixed height matters for fzf's layout: a
-/// row whose snippet shrinks from 3 lines to 1 would
-/// reflow the whole list on every reload.
 pub struct Item {
-    /// Tmux pane id — written as the leading column of the fzf
-    /// row so the bound actions can reference it via `{1}`.
-    /// Hidden from display via fzf's `--with-nth=2..`.
-    pub pane_id: String,
-    /// Tab-separated header line (icon, addr, kind, cwd, elapsed).
-    pub header: String,
-    /// Fixed-height pane-content snippet (3 lines today). Fixed
-    /// height keeps fzf's row layout stable across reloads.
+    pub pane_id: String, // leading fzf column — bound actions reference it via {1}; hidden via --with-nth=2..
+    pub header: String,  // tab-separated: icon, addr, kind, cwd, elapsed
     pub snippet: [String; SNIPPET_LINES],
 }
 
@@ -1160,30 +841,12 @@ impl<'a> Loop<'a> {
         Loop { store }
     }
 
-    /// Read sessions, filter live pids, sort by priority,
-    /// and assemble one [`Item`] per row. Each item includes
-    /// the human-readable tmux address (resolved live from
-    /// the running tmux server) and a 3-line snippet of the
-    /// pane's current content.
-    ///
-    /// The single `now` snapshot is passed through the sort
-    /// and format calls so `Done` records' decay-to-`Idle`
-    /// boundary is consistent across all rows in one render
-    /// pass.
-    ///
-    /// Tmux failures fall back gracefully — unresolved address
-    /// becomes `?:?.<pane-id>`, missing snippet lines pad to
-    /// `SNIPPET_LINES` empty strings. The dashboard is best-
-    /// effort by design: a momentarily-stale row beats a
-    /// missing row.
     pub fn render(&self) -> Result<Vec<Item>> {
         self.render_with(&|p| resolve_pane_addr(p), &|p| capture_snippet(p))
     }
 
-    /// Inner render — accepts injected resolver + snippet
-    /// functions so unit tests can drive the pipeline
-    /// without a tmux server. The public [`render`] wires
-    /// in the live tmux helpers.
+    // Injected resolver + snippet so tests can drive the pipeline without a
+    // tmux server. Best-effort by design: stale row > missing row.
     pub fn render_with(
         &self,
         resolve_addr: &dyn Fn(&str) -> String,
@@ -1207,17 +870,9 @@ impl<'a> Loop<'a> {
             .collect())
     }
 
-    /// Serialise the dashboard items for fzf. Each item is
-    /// `<pane_id>\t<header>\n<line1>\n<line2>\n<line3>` and
-    /// items are separated by NUL (`\0`). fzf reads this via
-    /// `--read0` to render multi-line items; `--with-nth=2..`
-    /// hides the leading pane id from display while
-    /// `--id-nth=1` tracks selection by it across reloads.
-    ///
-    /// Snippets sanitise embedded NULs (defensive — a pane
-    /// emitting raw NUL bytes through capture-pane would
-    /// otherwise split the item early); replace with `?` so
-    /// the visible output stays printable.
+    // Item shape: `<pane_id>\t<header>\n<line1>\n<line2>\n<line3>`,
+    // items NUL-separated for fzf's `--read0`. Snippet NULs sanitised to
+    // `?` so a pane spitting raw NULs can't split the item early.
     pub fn render_to(&self, stdout: &mut dyn Write) -> Result<()> {
         let items = self.render()?;
         let last = items.len().saturating_sub(1);
@@ -1238,14 +893,9 @@ impl<'a> Loop<'a> {
         Ok(())
     }
 
-    /// Ensure the dashboard's tmux session exists, switch the
-    /// client to it. The picker body runs inside that session
-    /// via a bare `kaimux` invocation — bare detects
-    /// whether it's already inside the dashboard session and,
-    /// if so, runs `body` instead of recursing. The session
-    /// name is passed in so the bare invocation runs that
-    /// passes the same name to body's child via the
-    /// `bare command` wired by `new-session`.
+    // Ensure the dashboard tmux session exists; switch-client to it. The
+    // picker body runs inside that session as a bare `kaimux --session NAME`
+    // (bare detects "already inside the dashboard" and runs body, not run).
     pub fn run(&self, self_path: &Path, session_name: &str) -> Result<()> {
         let has = std::process::Command::new("tmux")
             .args(["has-session", "-t", session_name])
@@ -1253,10 +903,8 @@ impl<'a> Loop<'a> {
             .context("tmux has-session")?
             .success();
         if !has {
-            // Spawn the new session running our binary with
-            // the same `--session NAME`, so the body inside
-            // the new tmux session knows which name to
-            // self-identify against.
+            // Pass --session through to the bare child so it self-identifies
+            // against the same name (inside_dashboard reads it).
             let cmd = format!(
                 "{} --session {}",
                 self_path.display(),
@@ -1276,20 +924,9 @@ impl<'a> Loop<'a> {
         Ok(())
     }
 
-    /// Capture the last `lines` of pane `pane_id` via
-    /// `tmux capture-pane -p -e` and write the raw output to
-    /// `out`. The `-e` flag preserves ANSI escape sequences so
-    /// agent-coloured output (claude's banner, build error
-    /// markers, prompt cursors) renders the way the user
-    /// remembers it. fzf's `--ansi` flag interprets the
-    /// escapes in the preview window.
-    ///
-    /// Used by fzf's `--preview` action — the preview window
-    /// shows the agent's actual screen content, which is the
-    /// load-bearing UX signal (state icon is just a glyph).
-    /// Routes through `tmux_cmd` so `$KAIMUX_TMUX_SOCKET`
-    /// (set by the integration script) targets the test
-    /// server.
+    // fzf's --preview target. `-e` preserves ANSI so claude/kiro coloured
+    // output renders as-is (fzf's --ansi interprets it). Routes through
+    // tmux_cmd to honour $KAIMUX_TMUX_SOCKET in the integration tests.
     pub fn peek(&self, pane_id: &str, lines: u32, out: &mut dyn Write) -> Result<()> {
         let start = format!("-{}", lines);
         let output = tmux_cmd(&[
@@ -1306,59 +943,32 @@ impl<'a> Loop<'a> {
         .stdout(std::process::Stdio::piped())
         .output()
         .context("tmux capture-pane")?;
-        // Pane went away (closed, server restart) → empty output,
-        // not an error. fzf still gets a clean (empty) preview.
+        // Pane gone (closed, server restart) ⇒ empty preview, not an error.
         if output.status.success() {
             out.write_all(&output.stdout)?;
         }
         Ok(())
     }
 
-    /// Event-driven picker loop body. Runs inside the
-    /// orchestrator session.
-    ///
-    /// fzf is configured with:
-    /// - `--listen=<sock>` — accept control commands over a UDS.
-    /// - `--read0` — items are NUL-delimited so each can span
-    ///   multiple lines (header + 3-line pane snippet).
-    /// - `--gap=1` — render a blank visual line between items.
-    /// - `--highlight-line` — highlight every line of the
-    ///   focused item, not just the header line.
-    /// - `--ansi` — interpret colour escapes in row content
-    ///   (the icon column carries them, and the snippet may).
-    /// - `--with-nth=2..` — show every column except the pane id.
-    /// - `--track --id-nth=1` — keep the cursor on the same pane
-    ///   id across reloads.
-    /// - `--preview '<self> peek {1}'` — show the focused agent's
-    ///   tmux pane content (~25 lines, ANSI-coloured) in a side
-    ///   window. This is the deeper-context signal; the inline
-    ///   3-line snippet is the at-a-glance one.
-    /// - `--header='enter jump · p peek · x kill record · / filter · esc exit'`
-    ///   — cheatsheet line at the top of the dashboard.
-    ///
-    /// Bindings:
-    /// - `enter` — switch the tmux client to the focused
-    ///   pane. Non-terminal so fzf survives the jump.
-    /// - `p` — peek into the focused pane via a tmux popup.
-    ///   Returns to the dashboard on `q` / popup close.
-    /// - `x` — drop the focused row from the dashboard's
-    ///   record. Doesn't kill the agent process; the user
-    ///   does that with normal tmux verbs if they want to.
-    ///
-    /// Two background threads drive updates over the listen
-    /// socket:
-    /// - **Watcher** — `notify-debouncer-mini` on the store dir
-    ///   posts `reload(<self> render)` only when sessions.json
-    ///   actually changes. The list refresh is needed because
-    ///   rows can appear / disappear / change state.
-    /// - **Heartbeat** — every 1 second, posts `refresh-preview`.
-    ///   This re-runs the preview command for the focused row but
-    ///   does **not** touch the list — the cursor stays put, the
-    ///   query stays put, the prompt stays bright. `reload(...)`
-    ///   blocks fzf's input briefly while it re-runs the source;
-    ///   doing that at 1 Hz produced continuous flicker. Splitting
-    ///   the two actions kills the flicker without losing the
-    ///   live-preview feel.
+    // Event-driven picker. fzf runs once with --listen=<sock>; we drive it
+    // over UDS instead of respawning. Two background threads:
+    //   watcher   — on sessions.json change, post reload(<self> render)
+    //               (rebuild the list — rows added/removed/changed state)
+    //   heartbeat — once a second, post refresh-preview (rerun preview only)
+    // Split because reload() briefly blocks fzf input — doing it at 1 Hz
+    // flickered. refresh-preview leaves cursor/query/prompt untouched.
+    //
+    // fzf flags (the load-bearing ones):
+    //   --read0           items are NUL-delimited (multi-line: header + 3-line snippet)
+    //   --with-nth=2..    hide the pane-id column from display
+    //   --track --id-nth=1  keep cursor on the same pane id across reloads
+    //   --gap=1 --highlight-line --ansi  layout / colour
+    //   --preview '<self> peek {1}'  side window with full pane content
+    //
+    // Bindings:
+    //   enter  switch-client to {1} (non-terminal — fzf survives the jump)
+    //   p      tmux popup attached to {1}
+    //   x      `<self> unregister {1}` then reload — drops the row, leaves the agent alive
     pub fn body(&self, self_path: &Path) -> Result<()> {
         let sock_path = pick_listen_socket();
         let sock = sock_path.to_string_lossy().to_string();
@@ -1399,19 +1009,14 @@ impl<'a> Loop<'a> {
             .spawn()
             .context("spawn fzf (is it on PATH?)")?;
 
-        // Seed the initial item set on stdin, then close it so
-        // fzf treats the source as exhausted; subsequent updates
-        // arrive via reload commands on the listen socket.
+        // Seed the source on stdin then close it so fzf treats it as
+        // exhausted; updates after this arrive via reload(...) on the socket.
         {
             let stdin = child.stdin.as_mut().context("fzf stdin")?;
             self.render_to(stdin)?;
         }
         drop(child.stdin.take());
 
-        // Single mpsc channel carries `Tick` enums. The watcher
-        // sends `Tick::Reload` on real registry change; the
-        // heartbeat sends `Tick::RefreshPreview` once a second.
-        // Main thread routes each to the corresponding fzf action.
         let (tx, rx) = mpsc::channel::<Tick>();
 
         let watch_dir = self.store.dir().to_path_buf();
@@ -1429,17 +1034,14 @@ impl<'a> Loop<'a> {
             }
         });
 
-        // 200ms timeout balances responsiveness (we check fzf
-        // exit roughly five times per second) against wakeup
-        // overhead. A pure blocking `recv` would never notice
-        // the user closing fzf with no further ticks coming.
+        // 200ms timeout: poll fzf exit ~5×/s. Pure blocking recv would
+        // miss the user closing fzf with no ticks in flight.
         loop {
             match rx.recv_timeout(Duration::from_millis(200)) {
                 Ok(tick) => {
                     let mut want_reload = matches!(tick, Tick::Reload);
                     let mut want_refresh = matches!(tick, Tick::RefreshPreview);
-                    // Drain any backlog so a burst of identical
-                    // ticks coalesces into one outgoing action.
+                    // Coalesce backlog — a burst of identical ticks fires once.
                     while let Ok(more) = rx.try_recv() {
                         match more {
                             Tick::Reload => want_reload = true,
@@ -1450,10 +1052,7 @@ impl<'a> Loop<'a> {
                         if let Err(e) = push_action(&sock_path, &format!("reload({render_cmd})")) {
                             eprintln!("kaimux reload: {e:#}");
                         }
-                        // After a reload, the focused row may have
-                        // shifted; refresh the preview too so it
-                        // tracks the new selection.
-                        want_refresh = true;
+                        want_refresh = true; // reload may shift focus — refresh preview to track it
                     }
                     if want_refresh {
                         if let Err(e) = push_action(&sock_path, "refresh-preview") {
@@ -1463,8 +1062,7 @@ impl<'a> Loop<'a> {
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    // Watcher AND heartbeat both gone — fzf
-                    // selections still work, just no live updates.
+                    // Both threads gone — selections still work, no live updates.
                 }
             }
             if let Some(_status) = child.try_wait().context("fzf try_wait")? {
@@ -1476,11 +1074,8 @@ impl<'a> Loop<'a> {
     }
 }
 
-/// Resolve a tmux pane id (e.g. `%17`) into a human-readable
-/// `<session>:<window>.<pane>` address (e.g. `proj-b:code.0`).
-/// Falls back to `?:?.<pane-id>` on tmux failure — server
-/// gone, pane closed mid-render — so the dashboard row still
-/// appears with a recognisable identifier.
+// %17 → `proj-b:code.0`. Tmux failure ⇒ `?:?.<pane-id>` so the row still
+// renders with a recognisable identifier.
 fn resolve_pane_addr(pane_id: &str) -> String {
     let out = tmux_cmd(&["display-message", "-p", "-t", pane_id, "#S:#I.#P"])
         .stdout(std::process::Stdio::piped())
@@ -1498,16 +1093,8 @@ fn resolve_pane_addr(pane_id: &str) -> String {
     }
 }
 
-/// Capture the last [`SNIPPET_LINES`] of the pane's content
-/// for the inline-snippet column. Best-effort — failures
-/// (pane closed, server gone) yield empty padded lines so
-/// the row still renders.
-///
-/// We capture more lines than we need (the full visible
-/// window) and trim, because `capture-pane -S -3` can
-/// return 0 lines when the agent's output has scrolled the
-/// pane history past that range. Capturing a wider range
-/// + trimming hits the common case (recent output) cleanly.
+// `capture-pane -S -3` can return 0 lines if the agent's output scrolled
+// past — capture a wider window (-50) and trim to SNIPPET_LINES.
 fn capture_snippet(pane_id: &str) -> [String; SNIPPET_LINES] {
     let mut out = std::array::from_fn(|_| String::new());
     let cap = tmux_cmd(&[
@@ -1536,11 +1123,9 @@ fn capture_snippet(pane_id: &str) -> [String; SNIPPET_LINES] {
         lines.pop();
     }
     let take = lines.len().saturating_sub(SNIPPET_LINES);
+    // 2-space indent separates snippet lines from the next row's header.
+    // Empty lines stay un-padded — saves visual weight on scant panes.
     for (i, line) in lines.iter().skip(take).take(SNIPPET_LINES).enumerate() {
-        // Two-space indent so the eye separates snippet
-        // lines from the next row's header (no padding for
-        // empty lines — saves visual weight when the pane
-        // has scant content).
         out[i] = if line.trim().is_empty() {
             String::new()
         } else {
@@ -1550,20 +1135,13 @@ fn capture_snippet(pane_id: &str) -> [String; SNIPPET_LINES] {
     out
 }
 
-/// Tick reasons the picker main loop receives. Drives whether
-/// we send fzf a `reload(...)` (rebuild the list) or a
-/// `refresh-preview` (rerun preview only — no flicker).
 enum Tick {
-    /// Real registry change observed by the notify watcher.
-    Reload,
-    /// 1 Hz heartbeat from the preview-refresh thread.
-    RefreshPreview,
+    Reload,         // sessions.json actually changed
+    RefreshPreview, // 1 Hz heartbeat
 }
 
-/// Pick a path for fzf's listen socket. Prefer
-/// `${XDG_RUNTIME_DIR}` (typically tmpfs, per-user, cleaned at
-/// logout); fall back to `$TMPDIR` / `/tmp`. Per-pid filename so
-/// concurrent orchestrator sessions don't collide.
+// XDG_RUNTIME_DIR (tmpfs, per-user) → TMPDIR → /tmp. Per-pid filename so
+// concurrent dashboards don't collide.
 fn pick_listen_socket() -> PathBuf {
     let dir = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
@@ -1573,18 +1151,15 @@ fn pick_listen_socket() -> PathBuf {
     dir.join(format!("kaimux-fzf-{}.sock", std::process::id()))
 }
 
-/// Watch the store dir for sessions.json changes; emit one
-/// `Tick::Reload` per debounced batch. Debounce window is 100ms
-/// — short enough that the picker feels live, long enough to
-/// coalesce the tmp+rename pair an atomic write produces.
+// 100ms debounce: live-feeling, and coalesces the tmp+rename pair from
+// an atomic write into one event.
 fn run_watcher(dir: &Path, tx: mpsc::Sender<Tick>) -> Result<()> {
     use notify::RecursiveMode;
     use notify_debouncer_mini::new_debouncer;
 
     fs::create_dir_all(dir).with_context(|| format!("mkdir -p {}", dir.display()))?;
-    // Watch the directory (not the file) — the file may not
-    // exist yet on first run, and atomic rename swaps inodes
-    // anyway, which would invalidate a file-level watch.
+    // Watch the dir, not the file — the file may not exist on first run,
+    // and atomic rename swaps inodes (a file-watch would go stale).
     let (notify_tx, notify_rx) = mpsc::channel();
     let mut debouncer =
         new_debouncer(Duration::from_millis(100), notify_tx).context("notify debouncer")?;
@@ -1611,10 +1186,7 @@ fn run_watcher(dir: &Path, tx: mpsc::Sender<Tick>) -> Result<()> {
     Ok(())
 }
 
-/// Push an action string to fzf's listen socket. fzf speaks
-/// HTTP/1.1 over the UDS; the request body is the action,
-/// no special framing beyond Content-Length. Used for both
-/// `reload(...)` and `refresh-preview`.
+// fzf speaks HTTP/1.1 over its UDS; body is the raw action.
 fn push_action(sock: &Path, action: &str) -> Result<()> {
     let mut stream =
         UnixStream::connect(sock).with_context(|| format!("connect {}", sock.display()))?;
@@ -1632,9 +1204,8 @@ fn push_action(sock: &Path, action: &str) -> Result<()> {
     stream
         .write_all(request.as_bytes())
         .context("write fzf action")?;
-    // Drain the response so fzf doesn't see a half-closed
-    // socket. We don't parse it — any 2xx/4xx is acceptable;
-    // a connection error already surfaces above.
+    // Drain the response — fzf must not see a half-closed socket. Body
+    // unparsed; any 2xx/4xx is fine, connection errors surface above.
     let mut sink = Vec::new();
     let _ = stream.read_to_end(&mut sink);
     Ok(())
@@ -1650,17 +1221,11 @@ fn push_action(sock: &Path, action: &str) -> Result<()> {
     about = "Observation-only orchestrator over tmux + coding-agent panes."
 )]
 struct Cli {
-    /// Optional so bare `kaimux` (no subcommand) is a valid
-    /// invocation — the bare form is the dashboard entrypoint
-    /// (see `main`'s `None` arm).
+    // Optional: bare `kaimux` (no subcommand) is valid — the dashboard entrypoint.
     #[command(subcommand)]
     cmd: Option<Cmd>,
-    /// Tmux session name that hosts the dashboard. Defaults to
-    /// `kaimux`. Useful when the user already has a session
-    /// named `kaimux`, or wants more than one dashboard
-    /// scoped to different agent fleets. Honoured by bare
-    /// invocation; setup also accepts it as a subcommand flag
-    /// to bake the chosen name into the prefix keybind.
+    /// Tmux session name that hosts the dashboard. Override with --session NAME
+    /// to scope multiple dashboards or sidestep a colliding session.
     #[arg(long, global = true)]
     session: Option<String>,
 }
@@ -1668,21 +1233,13 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Install kaimux hooks into ~/.claude/settings.json (idempotent).
-    /// With `--key X`, also bind `<tmux-prefix> X` to switch the
-    /// tmux client to the dashboard session on the running tmux
-    /// server. Key is whatever you want to type after your tmux
-    /// prefix (`O`, `a`, `F1`, etc.).
+    /// With --key X, also bind <tmux-prefix> X to switch to the dashboard.
     Setup {
-        /// Tmux prefix-table key suffix to bind for "switch back
-        /// to the dashboard" (e.g. `O` → press your tmux prefix
-        /// then `O`). Omit to install hooks only, no keybind.
+        /// Prefix-table suffix (e.g. O → tmux-prefix then O).
         #[arg(long)]
         key: Option<String>,
     },
-    /// Remove kaimux hooks from ~/.claude/settings.json.
-    /// Self-discovers and removes any prefix binding the install
-    /// added — works regardless of which key suffix or session
-    /// name was used at install time, so no flags needed.
+    /// Remove kaimux hooks; self-discovers any keybind we installed.
     Teardown,
     /// Wrap a coding agent: register, inject hooks, execvp.
     Wrap {
@@ -1692,20 +1249,16 @@ enum Cmd {
         #[arg(last = true)]
         agent_argv: Vec<String>,
     },
-    /// Hook reporter; called by Claude/Kiro on each lifecycle event.
+    // Hook reporter — Claude/Kiro on each lifecycle event.
     #[command(hide = true)]
     Hook { event: String },
-    /// Remove a record (called by tmux pane-exited).
+    // Pane-exited target — tmux invokes us on close.
     #[command(hide = true)]
     Unregister { pane_id: String },
-    /// Print one tab-separated <pane_id>\t<row> per session,
-    /// in picker-sort order, dead pids filtered out. Used by
-    /// the loop body's fzf reload action.
+    // fzf reload source.
     #[command(hide = true)]
     Render,
-    /// Print the last N lines of pane <pane-id> via
-    /// `tmux capture-pane`. Used by the loop body's
-    /// fzf --preview action.
+    // fzf --preview source.
     #[command(hide = true)]
     Peek {
         pane_id: String,
@@ -1721,12 +1274,8 @@ fn main() -> Result<()> {
     let session_name = cli.session.as_deref().unwrap_or(DEFAULT_SESSION_NAME);
 
     match cli.cmd {
-        // Bare invocation. Self-detects:
-        //  - inside the dashboard tmux session → run the
-        //    event-driven picker `body` (this is what tmux
-        //    spawned when the session was created);
-        //  - anywhere else → ensure the dashboard session
-        //    exists and switch-client to it.
+        // Bare. Inside dashboard session ⇒ run picker body (we're the
+        // session's startup command). Anywhere else ⇒ create + switch to it.
         None => {
             if inside_dashboard(session_name) {
                 Loop::new(&store).body(&self_path)
@@ -1767,9 +1316,8 @@ fn main() -> Result<()> {
         }
 
         Some(Cmd::Hook { event }) => {
-            // Hooks must never block the agent's turn — fail-soft.
-            // The unlocked read can fail (corrupt registry); silently
-            // skip rather than surfacing the error to the agent.
+            // Hooks must never block the agent's turn — fail-soft. Corrupt
+            // registry: silently skip rather than surface the error.
             if let Some(pane) = std::env::var("KAIMUX_PANE").ok().filter(|s| !s.is_empty()) {
                 let kind = store
                     .read()
@@ -1797,15 +1345,9 @@ fn main() -> Result<()> {
     }
 }
 
-/// True iff the current process is running inside the named
-/// dashboard tmux session. Used by bare `kaimux` to
-/// decide between `run` (bootstrap from outside) and `body`
-/// (the picker tmux spawned from `run`). `$TMUX` set + tmux's
-/// `display-message #{session_name}` returning the named
-/// session is the load-bearing check; either alone
-/// misclassifies (a user inside any tmux session running
-/// bare `kaimux` would otherwise spawn a body in their
-/// own session).
+// `$TMUX` set AND tmux says we're in <session_name>. Either alone
+// misclassifies — a user running bare `kaimux` from inside any other
+// tmux session would otherwise spawn a body there.
 fn inside_dashboard(session_name: &str) -> bool {
     if std::env::var_os("TMUX").is_none() {
         return false;
@@ -1819,13 +1361,8 @@ fn inside_dashboard(session_name: &str) -> bool {
     }
 }
 
-/// Quote a string for use as a single shell-word inside an
-/// argv that tmux passes to `/bin/sh -c "..."`. Conservative:
-/// wrap in single quotes and escape any embedded `'`. Used
-/// when we have to embed a session name in the
-/// `tmux new-session` command string (bare `kaimux` needs
-/// to know the name when it runs as the session's startup
-/// command).
+// Single-quote with `'\''` escapes — safe for the command string tmux
+// passes to /bin/sh -c when we embed a session name in `new-session`.
 fn shell_quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('\'');
@@ -1841,13 +1378,9 @@ fn shell_quote(s: &str) -> String {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tests
-//
-// Each typeclass is exercised through its own surface: `Store` via
-// read/mutate, `Wrapper` via `wrap()` driving Claude/Kiro/Other,
-// hook via `Wrapper::hook(&store, ...)`, `Loop` via `render`.
-// End-to-end (real tmux, real argv preserved across execvp, real
-// pane-exited hook) is `tests/kaimux/integration.sh`.
+// Tests — each typeclass through its own surface (Store via read/mutate,
+// Wrapper via wrap(), hook via Wrapper::hook, Loop via render). E2E
+// (real tmux + execvp + pane-exited) is tests/kaimux/integration.sh.
 
 #[cfg(test)]
 mod tests {
@@ -1864,9 +1397,8 @@ mod tests {
             kind: kind.into(),
             cwd: cwd.into(),
             started,
-            // Default fresh-wrap state — the picker sorts these
-            // into the middle bucket (Done) until they decay to
-            // Idle or get driven into Working/Waiting.
+            // Default fresh-wrap state (matches `wrap`) — Done bucket until
+            // it decays to Idle or gets driven by an event.
             state: State::Done,
             state_ts: started,
             last_event: String::new(),
@@ -1875,13 +1407,9 @@ mod tests {
         }
     }
 
-    /// Empty payload — apply_event ignores the fields today, but
-    /// the signature still takes a `&serde_json::Value`.
     fn empty_payload() -> serde_json::Value {
         serde_json::json!({})
     }
-
-    // 2 · Store + WrapCtx fixtures ───────────────────────────────
 
     fn fixtures() -> (TempDir, Store) {
         let dir = tempdir().unwrap();
@@ -1889,10 +1417,6 @@ mod tests {
         (dir, store)
     }
 
-    /// Build a WrapCtx for a test. `store` and `cwd` are inside the
-    /// tempdir so any per-kind side effects (Kiro project config)
-    /// land where the test expects. `self_path` is a stable string
-    /// the test asserts on.
     fn ctx<'a>(
         store: &'a Store,
         pane_id: &'a str,
@@ -2612,10 +2136,8 @@ mod tests {
         assert!(format!("{err:#}").contains("already registered"));
     }
 
-    /// Spawn `true`, wait for it to exit, return its (now-reaped)
-    /// pid. signal-0 against a reaped pid returns ESRCH, so our
-    /// `kill(_, None).is_ok()` liveness probe reads it as dead —
-    /// exactly what we need to seed a stale record.
+    // A reaped pid: signal-0 returns ESRCH, so `wrap`'s liveness probe
+    // reads it as dead — what we need to seed a stale-record case.
     fn dead_pid() -> i32 {
         let mut child = std::process::Command::new("true").spawn().unwrap();
         let pid = child.id() as i32;
