@@ -140,17 +140,39 @@ pub enum DisplayState {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Session {
+    /// Tmux pane id (e.g. `%17`) — the registry's primary key.
     pub pane_id: String,
+    /// Wrapper pid (the kaimux process that called `wrap`); used
+    /// by `live_only` to drop entries whose process is gone.
     pub pid: i32,
+    /// Agent kind (`claude`, `kiro`, or arbitrary string for
+    /// `Other`). Drives `wrapper_for` dispatch on cleanup.
     pub kind: String,
+    /// Working directory at wrap time. Used by `Kiro::cleanup`
+    /// to refcount-clean the project-scoped config.
     pub cwd: String,
+    /// Wall-clock seconds since epoch at wrap time. Used as the
+    /// elapsed-column floor when no events have fired yet.
     pub started: u64,
+    /// Stored lifecycle (Working / Waiting / Done). The picker
+    /// computes a `DisplayState` (which adds `Idle`) from this
+    /// at render time.
     pub state: State,
+    /// Wall-clock of the last `state` change; the decay-to-Idle
+    /// boundary measures from here.
     pub state_ts: u64,
+    /// Name of the most recent hook event. Retained for debug
+    /// and future-proofing; defaults so older registries
+    /// without this field load cleanly without a migration.
     #[serde(default)]
     pub last_event: String,
+    /// Wall-clock of the last hook event of any kind. Drives
+    /// the elapsed-time column (max with `started`).
     #[serde(default)]
     pub last_event_ts: u64,
+    /// True iff this wrap call wrote `<cwd>/.kiro/agents/kaimux.json`.
+    /// `Kiro::cleanup` consults this + sibling sessions to decide
+    /// whether to remove the project-scoped config on unregister.
     #[serde(default)]
     pub created_kiro_config: bool,
 }
@@ -349,9 +371,10 @@ fn cwd_fixed_width(cwd: &str, width: usize) -> String {
 
 /// Render a duration in seconds as a compact human-friendly
 /// string used in the dashboard's elapsed-time column.
-/// `5s` / `2m` / `1h` / `3d`. We round down to the largest
-/// unit that fits in two characters; precision past that
-/// isn't useful for a dashboard glance.
+/// `5s` / `2m` / `1h` / `3d`. Round down to the largest unit
+/// that fits in two characters; precision past that isn't
+/// useful for a dashboard glance. Boundaries are 60s / 1h / 1d
+/// in seconds.
 fn format_elapsed(secs: u64) -> String {
     if secs < 60 {
         format!("{secs}s")
@@ -380,7 +403,12 @@ fn sort_sessions(sessions: &mut [Session], now: u64) {
     });
 }
 
-/// Drop entries whose pid is no longer alive (kernel signal-0 probe).
+/// Drop entries whose pid is no longer alive (kernel signal-0
+/// probe — `kill(pid, 0)` returns Ok iff the pid exists and we
+/// could signal it, no actual signal sent). The pane-exited
+/// hook normally cleans up on close, but a server crash or a
+/// missed event leaves stale entries; this keeps the dashboard
+/// honest at render time without needing a sweeper.
 fn live_only(sessions: Vec<Session>) -> Vec<Session> {
     use nix::sys::signal::kill;
     use nix::unistd::Pid;
@@ -404,6 +432,9 @@ pub struct Store {
 
 impl Store {
     /// Resolve `${XDG_STATE_HOME:-$HOME/.local/state}/kaimux`.
+    /// XDG honoured when set + non-empty; an empty value is treated
+    /// as unset (some shells leave the variable defined as `""` and
+    /// we don't want to anchor state at `/kaimux`).
     pub fn from_env() -> Result<Self> {
         if let Ok(xdg) = std::env::var("XDG_STATE_HOME") {
             if !xdg.is_empty() {
@@ -504,8 +535,15 @@ pub struct WrapCtx<'a> {
 
 #[derive(Debug)]
 pub struct Prepared {
+    /// Binary to `execvp` — usually identical to `argv[0]`,
+    /// but split out so a wrapper can rewrite the program path
+    /// without touching the user-visible argv.
     pub program: String,
+    /// Full argv to pass to `execvp`, argv[0] included.
     pub argv: Vec<String>,
+    /// Whether `Kiro::prepare` had to write the project-scoped
+    /// config (vs. an existing one already there). Carries
+    /// through to the registry record so cleanup can refcount.
     pub created_kiro_config: bool,
 }
 
@@ -649,6 +687,11 @@ impl Wrapper for Other {
     }
 }
 
+/// Resolve a `kind` string to a wrapper. Unknown kinds get the
+/// `Other` fallback — registers + lifecycle-cleans up on
+/// pane-exit, but does no per-kind config (no hooks injection).
+/// Lets the user observe arbitrary CLIs in the dashboard
+/// before we know enough about a tool to write a real wrapper.
 fn wrapper_for(kind: &str) -> Box<dyn Wrapper> {
     match kind {
         "claude" => Box::new(Claude),
@@ -763,7 +806,6 @@ fn unmerge_claude_hooks(settings: &mut serde_json::Value) {
     }
 }
 
-/// `kaimux setup` — install our four hook entries into the
 /// `kaimux setup` — install our four hook entries into the
 /// Claude settings file at `path` (typically
 /// `~/.claude/settings.json`). Creates the file (and parent dir)
@@ -973,6 +1015,10 @@ fn install_pane_exited_hook(store: &Store, self_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Set a per-pane tmux option (`-p`). We tag wrapped panes with
+/// `@kaimux-pane <id>` so a future `kaimux doctor` (or any other
+/// integration that walks tmux's view of panes) can identify our
+/// panes from tmux alone, without reading the registry file.
 fn tmux_set_pane_option(pane_id: &str, key: &str, value: &str) -> Result<()> {
     let status = std::process::Command::new("tmux")
         .args(["set-option", "-p", "-t", pane_id, key, value])
@@ -1094,8 +1140,14 @@ const SNIPPET_LINES: usize = 3;
 /// row whose snippet shrinks from 3 lines to 1 would
 /// reflow the whole list on every reload.
 pub struct Item {
+    /// Tmux pane id — written as the leading column of the fzf
+    /// row so the bound actions can reference it via `{1}`.
+    /// Hidden from display via fzf's `--with-nth=2..`.
     pub pane_id: String,
+    /// Tab-separated header line (icon, addr, kind, cwd, elapsed).
     pub header: String,
+    /// Fixed-height pane-content snippet (3 lines today). Fixed
+    /// height keeps fzf's row layout stable across reloads.
     pub snippet: [String; SNIPPET_LINES],
 }
 
@@ -1377,6 +1429,10 @@ impl<'a> Loop<'a> {
             }
         });
 
+        // 200ms timeout balances responsiveness (we check fzf
+        // exit roughly five times per second) against wakeup
+        // overhead. A pure blocking `recv` would never notice
+        // the user closing fzf with no further ticks coming.
         loop {
             match rx.recv_timeout(Duration::from_millis(200)) {
                 Ok(tick) => {
@@ -1594,6 +1650,9 @@ fn push_action(sock: &Path, action: &str) -> Result<()> {
     about = "Observation-only orchestrator over tmux + coding-agent panes."
 )]
 struct Cli {
+    /// Optional so bare `kaimux` (no subcommand) is a valid
+    /// invocation — the bare form is the dashboard entrypoint
+    /// (see `main`'s `None` arm).
     #[command(subcommand)]
     cmd: Option<Cmd>,
     /// Tmux session name that hosts the dashboard. Defaults to

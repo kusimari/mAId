@@ -9,6 +9,47 @@
 #   tests/kaimux/functional-test.sh F2      # run a single scenario
 #   tests/kaimux/functional-test.sh F2,F5   # comma-separated subset
 #
+# ── Scenario index ────────────────────────────────────────────────
+#
+#   F1   Fixture setup is honest          — tmux sessions exist,
+#                                            registry has 5 wrapped
+#                                            panes, render emits 5
+#                                            multi-line items.
+#   F2   Working → done lifecycle         — typing a prompt into a
+#                                            wrapped claude flips
+#                                            state through working
+#                                            → done with the right
+#                                            icons.
+#   F2b  Waiting state surfaces           — a Notification event
+#                                            flips state to waiting
+#                                            and sorts the row to
+#                                            the top of the dashboard.
+#   F3   Independent panes track separately — two claudes in the
+#                                            same proj-b window
+#                                            don't bleed state into
+#                                            each other.
+#   F4   Mixed-kind co-existence         — proj-c's kiro + claude
+#                                            both register, both
+#                                            appear, kind column
+#                                            is correct.
+#   F5   Pane close removes the row      — `tmux kill-pane` triggers
+#                                            the pane-exited hook
+#                                            and the row drops from
+#                                            both registry and render.
+#                                            (Destructive — runs late.)
+#   F6   Fresh wrap appears live         — wrapping a new agent in
+#                                            an unwrapped pane shows
+#                                            up in render within ~1s.
+#   F7   State and snippet are independent — pane content can change
+#                                            without flipping state,
+#                                            and vice versa; the two
+#                                            signals don't conflate.
+#   F8   Keybind round-trip + dead-pid filter — `setup --key X`
+#                                            installs a prefix
+#                                            binding; render filters
+#                                            entries whose pid has
+#                                            died.
+#
 # Refuses to run inside tmux (we send-keys into panes the user
 # might be looking at — too easy to clobber). Refuses without
 # the fixture (functional-setup.sh must have run first).
