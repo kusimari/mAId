@@ -1,10 +1,3 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = ["resources/build-tool", "kaimux"]
-
-# kaimux ships a real binary; thin LTO + strip cuts ~30% off the
-# release artifact at no observable runtime cost. build-tool runs
-# only via `cargo run -p` so its release size doesn't matter.
-[profile.release]
-lto = "thin"
-strip = true
