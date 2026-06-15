@@ -5,6 +5,7 @@
 //! `main` dispatches the CLI. End-to-end: tests/kaimux/integration.sh.
 
 use anyhow::{Context, Result};
+use atomicwrites::{AllowOverwrite, AtomicFile};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -68,13 +69,38 @@ pub enum State {
     Done,    // finished turn — decays to DisplayState::Idle past the threshold
 }
 
-// Render-time view of State (adds Idle).
+// Render-time view of State (adds Idle). Per-variant data — glyph + sort
+// priority — lives on the variant so adding a state means filling out one
+// match arm, not three.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisplayState {
     Working,
     Waiting,
     Done,
     Idle,
+}
+
+impl DisplayState {
+    fn glyph(self) -> &'static str {
+        match self {
+            Self::Waiting => "💬",
+            Self::Done => "✓",
+            Self::Idle => "·",
+            Self::Working => "▶",
+        }
+    }
+
+    // Triage sort: surface what needs attention. Working agents are
+    // self-managing and sink to the bottom; Idle beats Working because a
+    // forgotten session needs a decision.
+    fn priority(self) -> u8 {
+        match self {
+            Self::Waiting => 0,
+            Self::Done => 1,
+            Self::Idle => 2,
+            Self::Working => 3,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -138,7 +164,7 @@ impl Session {
     // because the cwd may contain `…`. addr is passed in (not derived) so this
     // stays pure — testable without a tmux server.
     fn format_header(&self, addr: &str, now: u64) -> String {
-        let glyph = state_glyph(self.display_state(now));
+        let glyph = self.display_state(now).glyph();
         let elapsed = format_elapsed(now.saturating_sub(self.last_event_ts.max(self.started)));
         let cwd = cwd_fixed_width(&self.cwd, CWD_COLUMN_WIDTH);
         format!("{} {}\t{}\t{}\t{}", glyph, addr, self.kind, cwd, elapsed)
@@ -146,27 +172,6 @@ impl Session {
 
     fn activity(&self) -> u64 {
         self.state_ts.max(self.last_event_ts).max(self.started)
-    }
-
-    // Triage order: surface what needs the user's attention. Working agents
-    // are self-managing and sink to the bottom; Idle beats Working because
-    // a forgotten session needs a decision (give a task or close the pane).
-    fn priority(&self, now: u64) -> u8 {
-        match self.display_state(now) {
-            DisplayState::Waiting => 0,
-            DisplayState::Done => 1,
-            DisplayState::Idle => 2,
-            DisplayState::Working => 3,
-        }
-    }
-}
-
-fn state_glyph(state: DisplayState) -> &'static str {
-    match state {
-        DisplayState::Waiting => "💬",
-        DisplayState::Done => "✓",
-        DisplayState::Idle => "·",
-        DisplayState::Working => "▶",
     }
 }
 
@@ -208,30 +213,27 @@ fn cwd_fixed_width(cwd: &str, width: usize) -> String {
     out
 }
 
-// Compact: 5s / 2m / 1h / 3d. Two chars max — dashboard glance.
+// Compact: 5s / 2m / 1h / 3d. Round down to the largest unit that fits.
+// humantime/Duration formatters give multi-unit output (`1h 5m 3s`); we
+// want one unit, so a tiny lookup table is simpler than either.
+const ELAPSED_UNITS: &[(u64, char)] = &[(86_400, 'd'), (3_600, 'h'), (60, 'm'), (1, 's')];
+
 fn format_elapsed(secs: u64) -> String {
-    if secs < 60 {
-        format!("{secs}s")
-    } else if secs < 3_600 {
-        format!("{}m", secs / 60)
-    } else if secs < 86_400 {
-        format!("{}h", secs / 3_600)
-    } else {
-        format!("{}d", secs / 86_400)
-    }
+    let (n, unit) = ELAPSED_UNITS
+        .iter()
+        .find(|(n, _)| secs >= *n)
+        .copied()
+        .unwrap_or((1, 's'));
+    format!("{}{unit}", secs / n)
 }
 
 // Pass `now` through so one render pass uses one timestamp — the decay
 // layer makes priority depend on it, and inconsistent values would let
 // rows reorder mid-comparison.
 fn sort_sessions(sessions: &mut [Session], now: u64) {
-    sessions.sort_by(|a, b| {
-        let prio = a.priority(now).cmp(&b.priority(now));
-        if prio.is_ne() {
-            return prio;
-        }
-        b.activity().cmp(&a.activity())
-    });
+    // (priority, -activity) — lower priority first, more-recent activity
+    // wins ties.
+    sessions.sort_by_key(|s| (s.display_state(now).priority(), u64::MAX - s.activity()));
 }
 
 // `kill(pid, 0)` is a permission probe — exists iff signal-able, no signal
@@ -299,9 +301,9 @@ impl Store {
         serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))
     }
 
-    // Read-modify-write under flock. The closure can return a value
-    // (e.g. a Prepared argv) the caller wants to use after the lock
-    // releases. Lock releases on drop, so panics still release.
+    // Read-modify-write under flock. fd-lock owns the locking; atomicwrites
+    // owns the tmp+rename. Our job is the closure — what to mutate, not how
+    // to fence it. Lock + tmp file release on drop, so panics still clean up.
     pub fn mutate<F, T>(&self, f: F) -> Result<T>
     where
         F: FnOnce(&mut Vec<Session>) -> Result<T>,
@@ -318,22 +320,10 @@ impl Store {
         let _guard = lock.write().context("flock")?;
         let mut sessions = self.read()?;
         let out = f(&mut sessions)?;
-        self.write_atomic(&sessions)?;
+        AtomicFile::new(self.dir.join(SESSIONS_FILE), AllowOverwrite)
+            .write(|w| w.write_all(&serde_json::to_vec_pretty(&sessions)?))
+            .context("atomic write sessions.json")?;
         Ok(out)
-    }
-
-    // Per-pid tmp + rename so concurrent writers don't stomp each
-    // other's tmp file. No fsync — state-dir is scratch.
-    fn write_atomic(&self, sessions: &[Session]) -> Result<()> {
-        fs::create_dir_all(&self.dir)
-            .with_context(|| format!("mkdir -p {}", self.dir.display()))?;
-        let path = self.dir.join(SESSIONS_FILE);
-        let tmp = path.with_extension(format!("json.tmp.{}", std::process::id()));
-        fs::write(&tmp, serde_json::to_vec_pretty(sessions)?)
-            .with_context(|| format!("write {}", tmp.display()))?;
-        fs::rename(&tmp, &path)
-            .with_context(|| format!("rename {} → {}", tmp.display(), path.display()))?;
-        Ok(())
     }
 }
 
@@ -673,12 +663,9 @@ fn uninstall_tmux_keybind() {
 }
 
 fn write_json_atomic(path: &Path, value: &serde_json::Value) -> Result<()> {
-    let tmp = path.with_extension(format!("json.tmp.{}", std::process::id()));
-    let bytes = serde_json::to_vec_pretty(value)?;
-    fs::write(&tmp, &bytes).with_context(|| format!("write {}", tmp.display()))?;
-    fs::rename(&tmp, path)
-        .with_context(|| format!("rename {} → {}", tmp.display(), path.display()))?;
-    Ok(())
+    AtomicFile::new(path, AllowOverwrite)
+        .write(|w| w.write_all(&serde_json::to_vec_pretty(value)?))
+        .with_context(|| format!("atomic write {}", path.display()))
 }
 
 fn user_claude_settings_path() -> Result<PathBuf> {
@@ -1546,20 +1533,20 @@ mod tests {
 
         s.state = State::Waiting;
         s.state_ts = now;
-        assert_eq!(s.priority(now), 0);
+        assert_eq!(s.display_state(now).priority(), 0);
 
         s.state = State::Done;
         s.state_ts = now;
-        assert_eq!(s.priority(now), 1);
+        assert_eq!(s.display_state(now).priority(), 1);
 
         // Same Done record, but aged past the idle threshold:
         // priority becomes 2 (idle bucket) without changing storage.
         s.state_ts = now - IDLE_THRESHOLD_SECS - 1;
-        assert_eq!(s.priority(now), 2);
+        assert_eq!(s.display_state(now).priority(), 2);
 
         s.state = State::Working;
         s.state_ts = now;
-        assert_eq!(s.priority(now), 3);
+        assert_eq!(s.display_state(now).priority(), 3);
     }
 
     #[test]
