@@ -125,25 +125,17 @@ impl Session {
     // cares about tool_name/tool_input can deserialise without changing
     // the trait method.
     fn apply_event(&mut self, event: &str, _payload: &serde_json::Value, now: u64) {
-        // Always bump last_event_ts so the elapsed column tracks any activity,
-        // even events that don't change state.
+        // Always bump activity — even events we don't model still drive the
+        // elapsed column ("recently driven by something").
         self.last_event = event.into();
         self.last_event_ts = now;
-        match event {
-            EVT_USER_PROMPT_SUBMIT | EVT_PRE_TOOL_USE | EVT_POST_TOOL_USE => {
-                self.state = State::Working;
-                self.state_ts = now;
-            }
-            EVT_NOTIFICATION => {
-                self.state = State::Waiting;
-                self.state_ts = now;
-            }
-            EVT_STOP => {
-                self.state = State::Done;
-                self.state_ts = now;
-            }
-            _ => {} // unknown event: only the activity timestamp moves
-        }
+        self.state = match event {
+            EVT_USER_PROMPT_SUBMIT | EVT_PRE_TOOL_USE | EVT_POST_TOOL_USE => State::Working,
+            EVT_NOTIFICATION => State::Waiting,
+            EVT_STOP => State::Done,
+            _ => return, // unknown event: only activity ts moves
+        };
+        self.state_ts = now;
     }
 
     fn display_state(&self, now: u64) -> DisplayState {
@@ -184,33 +176,21 @@ const CWD_COLUMN_WIDTH: usize = 24;
 // path components are nearly always ASCII for tmux panes.
 fn cwd_fixed_width(cwd: &str, width: usize) -> String {
     let chars: Vec<char> = cwd.chars().collect();
-    if chars.len() <= width {
-        let mut out = cwd.to_string();
-        for _ in chars.len()..width {
-            out.push(' ');
-        }
-        return out;
-    }
-    let keep = width.saturating_sub(2); // reserve 2 chars for the `…/` marker
-    let start = chars.len() - keep;
-    // Snap the cut to the nearest `/` (within 4 chars) so we don't slice
-    // mid-segment. Caps at 4 to bound the budget on deep flat paths.
-    let look_within = keep.min(4);
-    let aligned_start = chars[start..start + look_within]
-        .iter()
-        .position(|c| *c == '/')
-        .map(|i| start + i + 1)
-        .unwrap_or(start);
-    let tail: String = chars[aligned_start..].iter().collect();
-    let mut out = String::with_capacity(width + 2);
-    out.push('…');
-    out.push('/');
-    out.push_str(&tail);
-    let cur_chars = out.chars().count();
-    for _ in cur_chars..width {
-        out.push(' ');
-    }
-    out
+    let body = if chars.len() <= width {
+        cwd.to_string()
+    } else {
+        // Cut from the back; reserve 2 chars for `…/`. Snap cut to the
+        // nearest `/` within the next 4 chars so we don't slice mid-segment.
+        let cut = chars.len() - (width - 2);
+        let snap = chars[cut..]
+            .iter()
+            .take(4)
+            .position(|c| *c == '/')
+            .map(|i| cut + i + 1)
+            .unwrap_or(cut);
+        format!("…/{}", chars[snap..].iter().collect::<String>())
+    };
+    format!("{body:<width$}")
 }
 
 // Compact: 5s / 2m / 1h / 3d. Round down to the largest unit that fits.
