@@ -5,26 +5,33 @@
 #
 # <KEY> is the tmux prefix-table suffix to bind for "switch back
 # to the orchestrator session" — e.g. `O` makes
-# `<your-tmux-prefix> O` jump to the kaimux session. Pick any
+# `<your-tmux-prefix> O` jump to the dashboard session. Pick any
 # unbound key in your prefix table; pass `none` to install hooks
 # only with no keybind.
 #
+# All sessions and cwds carry the `kaimux-test-` prefix so the
+# fixture can never collide with the user's real sessions or
+# real project directories. Re-running the script unconditionally
+# kills any pre-existing kaimux-test-* sessions first — safe
+# because the prefix is private to this fixture.
+#
 # Spawns four sessions on the user's running tmux server:
 #
-#   proj-a       1 window, 1 pane: claude wrapped
-#   proj-b       2 windows. window 2 ("code") has a horizontal split
-#                with TWO claudes side-by-side, both wrapped, both
-#                rooted at /tmp/proj-b — exercises multiple agents
-#                in one window sharing a cwd
-#   proj-c       1 window, vertical split — kiro on top, claude
-#                bottom (both wrapped)
-#   kaimux   the orchestrator session itself, hosting the fzf
-#                picker. Bootstrapped detached; you attach with
-#                `tmux attach -t kaimux`.
+#   kaimux-test-proj-a    1 window, 1 pane: claude wrapped
+#   kaimux-test-proj-b    2 windows. window 2 ("code") has a horizontal
+#                          split with TWO claudes side-by-side, both
+#                          wrapped, both rooted at /tmp/kaimux-test-proj-b
+#                          — exercises multiple agents in one window
+#                          sharing a cwd
+#   kaimux-test-proj-c    1 window, vertical split — kiro on top,
+#                          claude on bottom (both wrapped)
+#   kaimux-test-dashboard the orchestrator session hosting the fzf
+#                          picker. Bootstrapped detached; you attach
+#                          with `tmux attach -t kaimux-test-dashboard`.
 #
-# Then runs `kaimux setup --key <KEY>` (or `setup` if <KEY> is
-# `none`) to install the user-global Claude hooks and the
-# orchestrator-switch keybind.
+# Then runs `kaimux setup --session kaimux-test-dashboard --key <KEY>`
+# (or just `--session …` if <KEY> is `none`) to install the
+# user-global Claude hooks and the dashboard-switch keybind.
 #
 # Why launch agents via `tmux send-keys` into a fresh login shell
 # (rather than as the new-session command directly): the user's
@@ -37,8 +44,8 @@
 #
 # Hand-off:
 #
-#   $ tmux attach -t kaimux        # already running, picker visible
-#   $ <prefix> <KEY>                   # from any wrapped pane, jumps back here
+#   $ tmux attach -t kaimux-test-dashboard
+#   $ <prefix> <KEY>      # from any wrapped pane, jumps to dashboard
 #
 # Tear down with: tests/kaimux/functional-automated-teardown.sh
 
@@ -47,6 +54,17 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 BIN="$ROOT/dist/kaimux"
+
+# Hardcoded prefix scopes every session + cwd this fixture creates,
+# so re-running unconditionally kills only ours, never the user's.
+PREFIX="kaimux-test-"
+DASHBOARD="${PREFIX}dashboard"
+PROJ_A="${PREFIX}proj-a"
+PROJ_B="${PREFIX}proj-b"
+PROJ_C="${PREFIX}proj-c"
+CWD_A="/tmp/$PROJ_A"
+CWD_B="/tmp/$PROJ_B"
+CWD_C="/tmp/$PROJ_C"
 
 # ── argv ───────────────────────────────────────────────────────────
 
@@ -62,7 +80,7 @@ KEY="$1"
 TMUX_BIN="$(command -v tmux)"
 
 # Sessions this script creates. Teardown reads the same list.
-SESSIONS=(proj-a proj-b proj-c kaimux)
+SESSIONS=("$PROJ_A" "$PROJ_B" "$PROJ_C" "$DASHBOARD")
 
 log()  { printf '\033[36m[i]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[32m[ok]\033[0m %s\n' "$*"; }
@@ -83,8 +101,32 @@ T list-sessions >/dev/null 2>&1 || fail "no tmux server running — start one fi
 # bootstrap step needs an *outside* client to switch.
 [[ -z "${TMUX:-}" ]] || fail "do not run this from inside tmux — run it from a plain terminal"
 
+# ── pre-kill any leftover fixture sessions ─────────────────────────
+#
+# Idempotent re-run: kill anything matching our private prefix.
+# Safe because real user sessions can't legitimately use the
+# `kaimux-test-` prefix.
+
+for s in "${SESSIONS[@]}"; do
+  if T has-session -t "$s" 2>/dev/null; then
+    T kill-session -t "$s" 2>/dev/null && log "killed pre-existing session: $s"
+  fi
+done
+
+# Wipe any leftover registry entries for the previous fixture so
+# F1.2's count assertion starts from zero.
+REG="$HOME/.local/state/kaimux/sessions.json"
+if [[ -f "$REG" ]]; then
+  printf '[]' > "$REG"
+  log "cleared registry: $REG"
+fi
+
 # ── helpers ────────────────────────────────────────────────────────
 
+# Always launch panes with `zsh -l` so the user's login PATH (the
+# one that promotes ~/.toolbox/bin to the front) is in effect. The
+# wrapper's execvp then resolves `claude` / `kiro-cli` via the
+# toolbox shims rather than whatever the bare-PATH ordering picks.
 ensure_session() {
   local name="$1" cwd="$2"
   if T has-session -t "$name" 2>/dev/null; then
@@ -121,23 +163,39 @@ send_wrap() {
 
 pane_of() { T display-message -p -t "$1" '#{pane_id}'; }
 
+# ── install user-global hooks + (optional) keybind FIRST ──────────
+#
+# Claude reads ~/.claude/settings.json at startup, so hooks have
+# to be in place before we spawn any wrapped claudes. Install the
+# Notification + the four lifecycle hooks here so each claude
+# inherits them on first invocation.
+
+if [[ "$KEY" == "none" ]]; then
+  log "installing user-global Claude hooks targeting $DASHBOARD (no keybind)"
+  "$BIN" --session "$DASHBOARD" setup
+else
+  log "installing user-global Claude hooks + prefix '$KEY' keybind → $DASHBOARD"
+  "$BIN" --session "$DASHBOARD" setup --key "$KEY"
+fi
+ok "setup complete (hooks installed before agents start)"
+
 # ── proj-a — single-pane Claude session ────────────────────────────
 
-log "proj-a (single-pane Claude)"
-ensure_session proj-a /tmp/proj-a
-PANE_A="$(pane_of proj-a)"
+log "$PROJ_A (single-pane Claude)"
+ensure_session "$PROJ_A" "$CWD_A"
+PANE_A="$(pane_of "$PROJ_A")"
 if already_wrapped "$PANE_A"; then
-  skip "proj-a · pane $PANE_A already wrapped — leaving alone"
+  skip "$PROJ_A · pane $PANE_A already wrapped — leaving alone"
 else
-  send_wrap "$PANE_A" /tmp/proj-a claude claude
-  ok "proj-a · claude wrapped (pane $PANE_A)"
+  send_wrap "$PANE_A" "$CWD_A" claude claude
+  ok "$PROJ_A · claude wrapped (pane $PANE_A)"
 fi
 
 # ── proj-b — two windows; window 2 = two claudes side-by-side ──────
 #
 # Window 1 ("notes") is just a plain shell. Window 2 ("code") has a
 # horizontal split: claude on the left, claude on the right, BOTH
-# wrapped, BOTH rooted at /tmp/proj-b. Exercises:
+# wrapped, BOTH rooted at $CWD_B. Exercises:
 #   - two separate claude lifecycles per pane (the registry must
 #     keep both rows distinct via $TMUX_PANE / $KAIMUX_PANE);
 #   - two claudes sharing one cwd (no per-cwd refcount logic for
@@ -146,95 +204,85 @@ fi
 #   - hook events fire independently per pane → picker shows each
 #     row advancing on its own.
 
-log "proj-b (two windows; window 2 = two claudes side-by-side)"
-ensure_session proj-b /tmp/proj-b
-PROJB_WIN1="$(T list-windows -t proj-b -F '#{window_id}' | head -1)"
-PROJB_WIN_COUNT="$(T list-windows -t proj-b | wc -l)"
+log "$PROJ_B (two windows; window 2 = two claudes side-by-side)"
+ensure_session "$PROJ_B" "$CWD_B"
+PROJB_WIN1="$(T list-windows -t "$PROJ_B" -F '#{window_id}' | head -1)"
+PROJB_WIN_COUNT="$(T list-windows -t "$PROJ_B" | wc -l)"
 if [[ "$PROJB_WIN_COUNT" -lt 2 ]]; then
   T rename-window -t "$PROJB_WIN1" notes
-  T new-window -t proj-b -n code -c /tmp/proj-b
-  T split-window -h -t proj-b:code -c /tmp/proj-b
+  T new-window -t "$PROJ_B" -n code -c "$CWD_B"
+  T split-window -h -t "$PROJ_B:code" -c "$CWD_B"
 fi
 # Resolve left and right panes by `pane_left` (column position) —
 # don't trust pane index ordering after splits.
-PROJB_CODE_LEFT="$(T list-panes -t proj-b:code -F '#{pane_id} #{pane_left}' \
+PROJB_CODE_LEFT="$(T list-panes -t "$PROJ_B:code" -F '#{pane_id} #{pane_left}' \
   | sort -k2 -n | awk 'NR==1{print $1}')"
-PROJB_CODE_RIGHT="$(T list-panes -t proj-b:code -F '#{pane_id} #{pane_left}' \
+PROJB_CODE_RIGHT="$(T list-panes -t "$PROJ_B:code" -F '#{pane_id} #{pane_left}' \
   | sort -k2 -n | awk 'NR==2{print $1}')"
 if already_wrapped "$PROJB_CODE_LEFT"; then
-  skip "proj-b · left pane $PROJB_CODE_LEFT already wrapped"
+  skip "$PROJ_B · left pane $PROJB_CODE_LEFT already wrapped"
 else
-  send_wrap "$PROJB_CODE_LEFT" /tmp/proj-b claude claude
-  ok "proj-b · claude wrapped (pane $PROJB_CODE_LEFT, window 'code', left)"
+  send_wrap "$PROJB_CODE_LEFT" "$CWD_B" claude claude
+  ok "$PROJ_B · claude wrapped (pane $PROJB_CODE_LEFT, window 'code', left)"
 fi
 if already_wrapped "$PROJB_CODE_RIGHT"; then
-  skip "proj-b · right pane $PROJB_CODE_RIGHT already wrapped"
+  skip "$PROJ_B · right pane $PROJB_CODE_RIGHT already wrapped"
 else
-  send_wrap "$PROJB_CODE_RIGHT" /tmp/proj-b claude claude
-  ok "proj-b · claude wrapped (pane $PROJB_CODE_RIGHT, window 'code', right)"
+  send_wrap "$PROJB_CODE_RIGHT" "$CWD_B" claude claude
+  ok "$PROJ_B · claude wrapped (pane $PROJB_CODE_RIGHT, window 'code', right)"
 fi
 
 # ── proj-c — vertical split, Kiro top + Claude bottom ──────────────
 
-log "proj-c (Kiro top, Claude bottom)"
-ensure_session proj-c /tmp/proj-c
-PROJC_PANE_COUNT="$(T list-panes -t proj-c | wc -l)"
+log "$PROJ_C (Kiro top, Claude bottom)"
+ensure_session "$PROJ_C" "$CWD_C"
+PROJC_PANE_COUNT="$(T list-panes -t "$PROJ_C" | wc -l)"
 if [[ "$PROJC_PANE_COUNT" -lt 2 ]]; then
-  T split-window -v -t proj-c -c /tmp/proj-c
+  T split-window -v -t "$PROJ_C" -c "$CWD_C"
 fi
 # Sort panes by `pane_top` so we get top→bottom regardless of how
 # tmux numbered them after the split.
-PROJC_TOP="$(T list-panes -t proj-c -F '#{pane_id} #{pane_top}' \
+PROJC_TOP="$(T list-panes -t "$PROJ_C" -F '#{pane_id} #{pane_top}' \
   | sort -k2 -n | awk 'NR==1{print $1}')"
-PROJC_BOTTOM="$(T list-panes -t proj-c -F '#{pane_id} #{pane_top}' \
+PROJC_BOTTOM="$(T list-panes -t "$PROJ_C" -F '#{pane_id} #{pane_top}' \
   | sort -k2 -n | awk 'NR==2{print $1}')"
 if already_wrapped "$PROJC_BOTTOM"; then
-  skip "proj-c · bottom pane $PROJC_BOTTOM already wrapped"
+  skip "$PROJ_C · bottom pane $PROJC_BOTTOM already wrapped"
 else
-  send_wrap "$PROJC_BOTTOM" /tmp/proj-c claude claude
-  ok "proj-c · claude wrapped (pane $PROJC_BOTTOM, bottom)"
+  send_wrap "$PROJC_BOTTOM" "$CWD_C" claude claude
+  ok "$PROJ_C · claude wrapped (pane $PROJC_BOTTOM, bottom)"
 fi
 if already_wrapped "$PROJC_TOP"; then
-  skip "proj-c · top pane $PROJC_TOP already wrapped"
+  skip "$PROJ_C · top pane $PROJC_TOP already wrapped"
 else
-  send_wrap "$PROJC_TOP" /tmp/proj-c kiro kiro-cli
-  ok "proj-c · kiro wrapped (pane $PROJC_TOP, top)"
+  send_wrap "$PROJC_TOP" "$CWD_C" kiro kiro-cli
+  ok "$PROJ_C · kiro wrapped (pane $PROJC_TOP, top)"
 fi
 
-# ── install user-global hooks + (optional) keybind ─────────────────
-
-if [[ "$KEY" == "none" ]]; then
-  log "installing user-global Claude hooks (no keybind)"
-  "$BIN" setup
-else
-  log "installing user-global Claude hooks + prefix '$KEY' keybind"
-  "$BIN" setup --key "$KEY"
-fi
-ok "setup complete"
-
-# ── kaimux — bootstrap the orchestrator session itself ─────────
+# ── dashboard — bootstrap the orchestrator session itself ──────────
 #
-# Bare `kaimux` from a non-tmux shell creates the orchestrator
-# session detached, then tries `switch-client -t kaimux` —
-# which fails with "no current client" since we're outside tmux.
-# That's fine: the session is created and running the body, the
-# user attaches later. Replicate just the session-create half here
-# without the failing switch-client call.
+# Bare `kaimux` from a non-tmux shell creates the dashboard session
+# detached, then tries `switch-client -t <name>` — which fails with
+# "no current client" since we're outside tmux. That's fine: the
+# session is created and running the body, the user attaches later.
+# Replicate just the session-create half here without the failing
+# switch-client call. Pass --session through so the session's
+# startup command (a child kaimux) self-identifies as the dashboard.
 
-if T has-session -t kaimux 2>/dev/null; then
-  skip "kaimux session already exists"
+if T has-session -t "$DASHBOARD" 2>/dev/null; then
+  skip "$DASHBOARD already exists"
 else
-  log "kaimux (the orchestrator session itself)"
-  T new-session -d -s kaimux "$BIN"
-  ok "kaimux session ready (running fzf picker)"
+  log "$DASHBOARD (the orchestrator session itself)"
+  T new-session -d -s "$DASHBOARD" "$BIN --session $DASHBOARD"
+  ok "$DASHBOARD ready (running fzf picker)"
 fi
 
 # ── done ───────────────────────────────────────────────────────────
 
 if [[ "$KEY" == "none" ]]; then
-  switch_hint="no keybind installed — use \`tmux switch-client -t kaimux\` directly"
+  switch_hint="no keybind installed — use \`tmux switch-client -t $DASHBOARD\` directly"
 else
-  switch_hint="<tmux-prefix> $KEY from any wrapped pane → kaimux"
+  switch_hint="<tmux-prefix> $KEY from any wrapped pane → $DASHBOARD"
 fi
 
 cat <<EOF
@@ -242,7 +290,7 @@ cat <<EOF
   Sessions ready: ${SESSIONS[*]}
 
     Attach the orchestrator picker:
-      tmux attach -t kaimux
+      tmux attach -t $DASHBOARD
 
     Switch back from any wrapped pane:
       $switch_hint
