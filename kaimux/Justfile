@@ -2,17 +2,25 @@
 # in release and lands a flat binary at dist/kaimux. No symlinking;
 # users invoke the binary directly (typically via the tmux
 # keybinding `kaimux setup` installs).
+#
+# `[no-cd]` keeps the recipe in the workspace root so cargo's
+# workspace target dir (`target/release/kaimux`) and the relative
+# integration script path resolve correctly. Without it Just would
+# chdir into kaimux/ and the target/dist paths would be wrong.
 
 # Build kaimux in release; copy to dist/kaimux.
+[no-cd]
 build:
     cargo build -p kaimux --release
     mkdir -p dist
     cp target/release/kaimux dist/kaimux
 
 # Kaimux unit tests (sub-second).
+[no-cd]
 test:
     cargo test -p kaimux
 
 # Kaimux end-to-end integration test (real tmux, requires tmux + jq).
+[no-cd]
 integration: build
     kaimux/tests/integration.sh
