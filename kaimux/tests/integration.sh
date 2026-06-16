@@ -257,24 +257,38 @@ env "XDG_STATE_HOME=$STATE_PARENT" "$BIN" unregister "$PANE_ID"
 [[ "$(jq 'length' <<<"$(sessions_json)")" -eq 0 ]] || fail "case 6: record not removed"
 pass "unregister cleaned record"
 
-# ── case 7 — kiro refcount cleanup (close-creator-first) ───────────
+# ── case 7 — kiro orphan-file cleanup (sibling-protection) ─────────
+#
+# Kiro is observation-only in v1: wrap registers but never writes
+# .kiro/agents/kaimux.json. cleanup retains, though, so that users
+# upgrading from a binary that DID write the file see the orphan
+# get cleaned up on pane-exit. This case pre-places the orphan and
+# walks the two-pane sibling-protection path.
 
-log "case 7: kiro refcount survives close-creator-first ordering"
+log "case 7: kiro orphan-file cleanup with sibling protection"
 KIRO_CWD="$(mktemp -d)"
+
+# Orphan from a hypothetical older install.
+mkdir -p "$KIRO_CWD/.kiro/agents"
+echo '{}' > "$KIRO_CWD/.kiro/agents/kaimux.json"
+
 P1="$(spawn k1 "$KIRO_CWD" kiro sleep 300)"
 trace "p1=$P1"
 wait_for_sessions 1
 P2="$(spawn k1:p2 "$KIRO_CWD" kiro sleep 300)"
 trace "p2=$P2"
 wait_for_sessions 2
-[[ -f "$KIRO_CWD/.kiro/agents/kaimux.json" ]] || fail "case 7: kiro config missing"
+
+# Observation-only: wrap doesn't touch .kiro/agents/. The orphan
+# we pre-placed should still be on disk untouched by `wrap`.
+[[ -f "$KIRO_CWD/.kiro/agents/kaimux.json" ]] || fail "case 7: orphan file went missing during wrap"
 
 env "XDG_STATE_HOME=$STATE_PARENT" "$BIN" unregister "$P1"
-[[ -f "$KIRO_CWD/.kiro/agents/kaimux.json" ]] || fail "case 7: kiro config removed too early"
+[[ -f "$KIRO_CWD/.kiro/agents/kaimux.json" ]] || fail "case 7: orphan removed while sibling kiro still alive"
 
 env "XDG_STATE_HOME=$STATE_PARENT" "$BIN" unregister "$P2"
-[[ ! -f "$KIRO_CWD/.kiro/agents/kaimux.json" ]] || fail "case 7: kiro config not removed after last close"
-pass "kiro refcount cleanup survives close-creator-first ordering"
+[[ ! -f "$KIRO_CWD/.kiro/agents/kaimux.json" ]] || fail "case 7: orphan not cleaned up after last kiro close"
+pass "kiro orphan-file cleanup with sibling protection"
 rm -rf "$KIRO_CWD"
 
 # ── case 8 — wrap refuses without $TMUX_PANE ───────────────────────

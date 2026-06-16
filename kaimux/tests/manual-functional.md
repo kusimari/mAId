@@ -74,11 +74,12 @@ spelled `kaimux` — adjust if your shell can't resolve it.
 > **Heads-up.** Claude hooks live user-globally now (installed
 > by `setup` above; removed by `teardown` after the test). The
 > wrapper itself just registers the pane and `execvp`s the
-> agent. For Kiro, the wrapper writes a project-scoped
-> `<cwd>/.kiro/agents/kaimux.json` for that cwd; it's
-> removed when the last Kiro session in that cwd exits. If
-> something gets wedged mid-test, just delete
-> `~/.local/state/kaimux/sessions.json` to clear the
+> agent. Kiro is observation-only in v1 — wrap does not write
+> anything under `<cwd>/.kiro/`. If a prior install left an
+> orphan `<cwd>/.kiro/agents/kaimux.json`, `kaimux unregister`
+> removes it on pane-exit when no sibling Kiro session in
+> that cwd remains. If something gets wedged mid-test, just
+> delete `~/.local/state/kaimux/sessions.json` to clear the
 > registry and `kaimux teardown` to roll back the hook +
 > keybind install.
 
@@ -259,22 +260,25 @@ running, `✓` if `Stop` fired since you last looked).
 Pick a different agent. Switch in. Press `M-o`. Switch in
 again. The loop is the user-loop you'd actually use.
 
-### Step 5 — verify Kiro refcount cleanup at exit
+### Step 5 — verify Kiro orphan-file cleanup at exit
 
-In `proj-c`, you have one Claude and one Kiro both rooted at
-`/tmp/proj-c`. Kiro's first wrap created
-`/tmp/proj-c/.kiro/agents/kaimux.json`:
+Kiro is observation-only — wrap does not write anything under
+`<cwd>/.kiro/`. To exercise the orphan-cleanup path that
+catches users upgrading from older binaries, pre-place a
+bogus file under `proj-c`:
 
 ```sh
+mkdir -p /tmp/proj-c/.kiro/agents
+echo '{}' > /tmp/proj-c/.kiro/agents/kaimux.json
 ls /tmp/proj-c/.kiro/agents/
 # → kaimux.json
 ```
 
 Now exit just the Kiro pane (Ctrl-D it, or whatever Kiro's quit
 verb is, or `tmux kill-pane` from another tmux client). The tmux
-`pane-exited` hook fires `kaimux unregister %N`. Since this
-was the only `kind=kiro` session in `/tmp/proj-c`, the file
-should be removed:
+`pane-exited` hook fires `kaimux unregister %N`. Since this was
+the only `kind=kiro` session in `/tmp/proj-c`, the orphan should
+be removed:
 
 ```sh
 ls /tmp/proj-c/.kiro/agents/ 2>&1
@@ -282,10 +286,11 @@ ls /tmp/proj-c/.kiro/agents/ 2>&1
 ```
 
 If you had two Kiro panes in `/tmp/proj-c` and exited the
-*first* one (the creator), the file should still be there — the
-second pane is still using it. This is the close-creator-first
-ordering covered by integration case 7; manually exercising it
-gives you confidence the lifecycle works under real tmux events.
+*first* one, the orphan should still be there — the second
+Kiro pane is the sibling-protection guard. This is the
+sibling-protection case covered by integration case 7;
+manually exercising it gives you confidence the lifecycle
+works under real tmux events.
 
 ### Step 6 — verify dead-pid filtering
 
@@ -417,7 +422,8 @@ jq '.. | objects | select(."kaimux")' ~/.claude/settings.json 2>/dev/null
   switches the *current* tmux client — meaning you must be
   *inside* a tmux session (the `viewer` session in this test)
   for the switch to land.
-- **Stale Kiro config** — if a wrap crashed between writing
-  `<cwd>/.kiro/agents/kaimux.json` and registering the
-  session, the file may stay until manually removed. Future
-  `kaimux doctor` will surface this.
+- **Stale Kiro config** — `<cwd>/.kiro/agents/kaimux.json`
+  files left by an older binary clean up on the next
+  pane-exit of a Kiro pane in that cwd. If you've stopped
+  using Kiro entirely from that cwd, the orphan stays put;
+  delete it by hand or rely on a future `kaimux doctor`.

@@ -64,15 +64,17 @@ if [[ -f "$REG" ]]; then
   ok "cleared registry: $REG"
 fi
 
-# Also clean up any project-scoped Kiro configs the wrapper wrote
-# during the test cycle. Refcount-agnostic cleanup normally handles
-# this on unregister, but again, we may have raced ahead.
+# Sweep any orphan project-scoped Kiro configs left under the
+# fixture cwds. Kiro is observation-only in v1 — wrap never writes
+# kaimux.json — so this should be a no-op on a fresh checkout. It's
+# kept as a safety net for anyone with leftovers from an older
+# binary that did write the file.
 for d in /tmp/proj-a /tmp/proj-b /tmp/proj-c; do
   if [[ -f "$d/.kiro/agents/kaimux.json" ]]; then
     rm -f "$d/.kiro/agents/kaimux.json"
     rmdir "$d/.kiro/agents" 2>/dev/null || true
     rmdir "$d/.kiro" 2>/dev/null || true
-    ok "cleared kiro config under $d"
+    ok "cleared orphan kiro config under $d"
   fi
 done
 
