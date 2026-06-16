@@ -57,23 +57,23 @@ test is **deleted** along with the `created_kiro_config` field.
 
 ## Implementation Plan
 
-- [ ] `Kiro::prepare` becomes `Ok(passthrough(ctx))` — same as
+- [x] `Kiro::prepare` becomes `Ok(passthrough(ctx))` — same as
       `Claude::prepare`.
-- [ ] `Kiro::cleanup` keeps its body (it already removes the
+- [x] `Kiro::cleanup` keeps its body (it already removes the
       file on no-sibling-kiro), drops the `created_kiro_config`
       reasoning from its comment.
-- [ ] Delete `build_kiro_config` (only caller was the dropped
+- [x] Delete `build_kiro_config` (only caller was the dropped
       write).
-- [ ] Drop `created_kiro_config: bool` from `Prepared`.
-- [ ] Drop `created_kiro_config: bool` from `Session`. The
+- [x] Drop `created_kiro_config: bool` from `Prepared`.
+- [x] Drop `created_kiro_config: bool` from `Session`. The
       `#[serde(default)]` makes older registries deserialize
       cleanly (the extra on-disk field is ignored by serde).
-- [ ] In `wrap()`, drop the `created_kiro_config: prepared.created_kiro_config`
+- [x] In `wrap()`, drop the `created_kiro_config: prepared.created_kiro_config`
       line of the `Session` literal.
-- [ ] In `passthrough()`, drop the `created_kiro_config: false`
+- [x] In `passthrough()`, drop the `created_kiro_config: false`
       line.
-- [ ] Update tests per Test Strategy.
-- [ ] `just ci` green.
+- [x] Update tests per Test Strategy.
+- [x] `just ci` green (53 unit tests).
 
 ## Migration
 
