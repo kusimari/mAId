@@ -21,10 +21,10 @@ loop, navigate around, come back."
 
 ```sh
 # From the repo root, in a real terminal (NOT inside tmux):
-deno task kaimux:check
-deno task kaimux:test
-deno task kaimux:build         # produces dist/kaimux/kaimux
-deno task kaimux:integration   # confirms 10/10 shell cases pass
+just check
+just kaimux::test
+just kaimux::build         # produces dist/kaimux
+just kaimux::integration   # confirms all integration cases pass
 ```
 
 Have on PATH:

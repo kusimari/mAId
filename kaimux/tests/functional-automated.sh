@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# tests/kaimux/functional-test.sh — assert the spec's F1-F8
+# tests/kaimux/functional-automated.sh — assert the spec's F1-F8
 # scenarios end-to-end against the user's real tmux server with
 # real claude/kiro-cli CLIs.
 #
 # Usage:
-#   tests/kaimux/functional-setup.sh O      # spawn fixture first
-#   tests/kaimux/functional-test.sh         # run all scenarios
-#   tests/kaimux/functional-test.sh F2      # run a single scenario
-#   tests/kaimux/functional-test.sh F2,F5   # comma-separated subset
+#   tests/kaimux/functional-automated-setup.sh O      # spawn fixture first
+#   tests/kaimux/functional-automated.sh         # run all scenarios
+#   tests/kaimux/functional-automated.sh F2      # run a single scenario
+#   tests/kaimux/functional-automated.sh F2,F5   # comma-separated subset
 #
 # ── Scenario index ────────────────────────────────────────────────
 #
@@ -52,7 +52,7 @@
 #
 # Refuses to run inside tmux (we send-keys into panes the user
 # might be looking at — too easy to clobber). Refuses without
-# the fixture (functional-setup.sh must have run first).
+# the fixture (functional-automated-setup.sh must have run first).
 #
 # What's asserted is the user-visible behaviour of the
 # dashboard, not internal field names. The hidden hook verb
@@ -92,14 +92,14 @@ section() { printf '\n\033[1;34m── %s ──\033[0m\n' "$*"; }
 [[ -n "$TMUX_BIN" ]]      || { fail "tmux not on PATH"; exit 2; }
 command -v fzf >/dev/null || { fail "fzf not on PATH"; exit 2; }
 command -v jq  >/dev/null || { fail "jq not on PATH";  exit 2; }
-[[ -x "$BIN" ]]           || { fail "binary not built — run \`deno task kaimux:build\`"; exit 2; }
+[[ -x "$BIN" ]]           || { fail "binary not built — run \`just kaimux::build\`"; exit 2; }
 [[ -z "${TMUX:-}" ]]      || { fail "do not run from inside tmux"; exit 2; }
 
 # Fixture must already exist. We don't auto-spawn it because
-# functional-setup.sh requires arguments (the keybind suffix)
+# functional-automated-setup.sh requires arguments (the keybind suffix)
 # and may need API credits to bootstrap.
 T list-sessions 2>/dev/null | awk -F: '{print $1}' | grep -q '^proj-a$' || {
-  fail "fixture not present — run functional-setup.sh first"
+  fail "fixture not present — run functional-automated-setup.sh first"
   exit 2
 }
 [[ -f "$REG" ]] || { fail "registry not found at $REG"; exit 2; }
@@ -499,7 +499,7 @@ if want F6; then
   fi
 
   # Cleanup. kill-session triggers pane-exited which fires
-  # unregister; functional-teardown.sh's registry-flush will
+  # unregister; functional-automated-teardown.sh's registry-flush will
   # mop up any straggler.
   T kill-session -t "$fresh_session" 2>/dev/null || true
   rm -rf "$fresh_cwd"

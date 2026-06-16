@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/kaimux/functional-teardown.sh — undo functional-setup.sh.
+# tests/kaimux/functional-automated-teardown.sh — undo functional-automated-setup.sh.
 #
 # Kills the four sessions the setup script creates (proj-a, proj-b,
 # proj-c, kaimux), runs `kaimux teardown` to remove the

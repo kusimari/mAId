@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# tests/kaimux/functional-setup.sh — spin up the functional fixture.
+# tests/kaimux/functional-automated-setup.sh — spin up the functional fixture.
 #
-# Usage: functional-setup.sh <KEY>
+# Usage: functional-automated-setup.sh <KEY>
 #
 # <KEY> is the tmux prefix-table suffix to bind for "switch back
 # to the orchestrator session" — e.g. `O` makes
@@ -40,7 +40,7 @@
 #   $ tmux attach -t kaimux        # already running, picker visible
 #   $ <prefix> <KEY>                   # from any wrapped pane, jumps back here
 #
-# Tear down with: tests/kaimux/functional-teardown.sh
+# Tear down with: tests/kaimux/functional-automated-teardown.sh
 
 set -euo pipefail
 
@@ -75,7 +75,7 @@ T() { "$TMUX_BIN" "$@"; }
 
 [[ -n "$TMUX_BIN" ]]      || fail "tmux not on PATH"
 command -v fzf >/dev/null || fail "fzf not on PATH"
-[[ -x "$BIN" ]]           || fail "binary not built — run \`deno task kaimux:build\` first"
+[[ -x "$BIN" ]]           || fail "binary not built — run \`just kaimux::build\` first"
 T list-sessions >/dev/null 2>&1 || fail "no tmux server running — start one first"
 
 # Refuse to run inside tmux: send-keys timing into a pane the user
@@ -248,6 +248,6 @@ cat <<EOF
       $switch_hint
 
   Tear down with:
-    $HERE/functional-teardown.sh
+    $HERE/functional-automated-teardown.sh
 
 EOF

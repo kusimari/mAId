@@ -8,7 +8,7 @@
 # real argv handling on a live process.
 #
 # Skips (exit 0) if tmux/jq/the dist binary are missing — this lets
-# CI environments without tmux pass `deno task test:smoke` cleanly.
+# CI environments without tmux pass `just test` cleanly.
 #
 # Usage:
 #   tests/kaimux/integration.sh
@@ -57,7 +57,7 @@ trap cleanup EXIT
 
 command -v tmux >/dev/null || skip "tmux not on PATH"
 command -v jq   >/dev/null || skip "jq not on PATH"
-[[ -x "$BIN" ]] || skip "binary not built — run \`deno task kaimux:build\` first"
+[[ -x "$BIN" ]] || skip "binary not built — run \`just kaimux::build\` first"
 
 # Resolve `tmux` to the actual binary path so our internal calls work
 # even under shells that alias `tmux` (zsh-with-tmux-plugin etc).
