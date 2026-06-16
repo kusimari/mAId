@@ -1,71 +1,38 @@
 # Feature: kaimux
 
-<!-- Read this Session handoff block FIRST. Everything below
-     it is design history brought forward from the abandoned
-     feat/agent-orch-fix branch. Don't re-read 1800 lines on
-     session entry — the handoff names where to start. -->
+<!-- The body below is design history brought forward from the
+     abandoned feat/agent-orch-fix branch. The session-handoff
+     block names current state + what the next slice is. -->
 
-## Session handoff (next session — read this first)
+## Session handoff (closure → next slice)
 
-You are continuing the kaimux dev/review loop. The branch
-`feat/kaimux` is open as PR #24, awaiting the user's review.
+PR #24 closed `feat/kaimux`. The agent-orch design lives as
+the `kaimux/` workspace member with the review-driven
+simplification pass applied. The next slice is **Kiro
+observation-only (drift fix)** — see `### Open issues` below.
 
 ### State on entry
-- `feat/kaimux` branched from main (post-merge of
-  `feat/resources-and-kaimux`, commit `e6b8273`).
-- The agent-orch source tree is reapplied here as
-  `kaimux/`, with `agent-orch` → `kaimux` rename applied
-  throughout (88 src refs + tests + this spec).
-- Workspace member registered. `just ci` green
-  (fmt + clippy + workspace test, 54 kaimux tests
-  passing). `just kaimux::build` produces the binary at
-  `dist/kaimux`.
-- PR #24 body names provenance + what's-landed vs.
-  in-flight.
+- PR #24 squash-merged to main; `feat/kaimux` worktree
+  retired.
+- Six-section main.rs (Session / Store / Wrapper / Hook /
+  Configure / Loop), 53 unit tests, atomicwrites + fd-lock
+  for persistence, `[no-cd]` Just modules.
+- Three open items deferred from PR #24, listed under
+  `### Open issues — deferred to post-PR-#24 slices`.
+- Backlog: `specs/backlog/kaimux-functional-tests-in-rust.md`.
 
-### What the user expects you to do next
-1. **Wait for PR #24 review.** The user opened the
-   review themselves; respond to comments via the kdevkit
-   §7 comment-prefix convention (`[agent]:`).
-2. **After PR #24 merges to main**, continue the
-   in-flight kaimux design work — the items in this spec
-   under `## Implementation Plan` → `### Open issues`
-   (picker-row redesign with inline pane extract,
-   end-to-end test hardening with real tmux, spec ↔ code
-   reconciliation).
-3. **Operate per kdevkit §6/§7/§8.** Each in-flight
-   item is its own dev-loop iteration: implement →
-   Quality + Test gates → Code Review Gate → Push →
-   Agent-dev Review Gate. Closure when the user gives
-   the cue.
+### Files to read first
+1. `### Open issues` and `### Closed in PR #24` below.
+2. `kaimux/src/main.rs` — six sections, top-to-bottom.
+3. `specs/project.md` Architecture for the surrounding
+   mAId shape.
 
-### What you should NOT do on session entry
-- Don't re-do the rename or restructure — already done.
-- Don't squash-merge the agent-orch branch — already
-  abandoned; the manual reapply landed instead.
-- Don't propose rewriting the spec from scratch — the
-  design history below is the dev memory; preserve it.
-
-### Files to read before any code change
-1. This file's Git Setup, Feature Brief,
-   `## Implementation Plan` → `### Open issues` (search
-   for "Open issues" or read the bottom).
-2. `kaimux/src/main.rs` — single-file, organized as four
-   typeclasses (Session / Store / Wrapper / Loop). The
-   typeclass-redesign commits in agent-orch-fix's history
-   established this shape.
-3. `Cargo.toml` (workspace), `Justfile` (kaimux verbs).
-4. `specs/project.md` Architecture section for the
-   surrounding mAId shape.
-
-### Backlog item to be aware of
-`specs/backlog/kdevkit-functional-style-and-idiomatic-libs.md`
-captures a kdevkit promotion candidate that emerged from
-the `feat/resources-and-kaimux` review: design + dev should
-use functional style + idiomatic libraries from the start.
-Apply this lens when implementing the in-flight kaimux
-items — reach for `Iterator::partition` / `serde-as-schema`
-/ `try_for_each` rather than hand-rolling.
+### Code-comment style note
+Code-comment style for this codebase: terse side comments,
+additive only. Comments document what code can't (intent,
+why-choices, subtle workarounds); never narrate what
+well-named identifiers say. Captured in user memory as
+`feedback_code_comment_style`.
 
 ---
 
@@ -1666,105 +1633,83 @@ get hit when reading top-to-bottom.
 
 ## Implementation Plan
 
-v1 is **incomplete — needs more work before merge.**
-The bones are in place (single binary, hooks, picker,
-keybind, lifecycle + side preview), but real use plus
-a sanity-check against
-[workmux's dashboard](https://github.com/raine/workmux)
-surfaced that the UX needs more density and the
-lifecycle needs more states. Open work continues on
-`feat/kaimux-fix`.
+v1 ships on PR #24 (`feat/kaimux`). The agent-orch
+design landed as a workspace member, then went through
+a review-driven simplification pass (six-section
+restructure of main.rs, library replacement of hand-
+rolled mechanism, terse-comment style, Just module
+split). Three open items stay deferred to post-PR-#24
+slices — see "Open issues" below.
 
-### Status — what's landed (on the parent feature branch)
+### Status — what's landed on `feat/kaimux` (PR #24)
 
-- Single binary, three user-facing verbs + bare
-  invocation.
-- Claude hook reporter wired through user-global
-  `setup` / `teardown` (hooks installed in
-  `~/.claude/settings.json`, tagged for clean
-  removal).
-- Kiro observation-only (registers + lifecycle
-  cleanup; lifecycle state stays inactive without
-  hook reporting).
-- Event-driven persistent picker via fzf `--listen`
-  + filesystem watcher. **Two-state lifecycle**
-  (Running/Idle) + tmux pane side-preview window.
-- User-specified prefix-table keybind via
-  `setup --key X` + self-discovering teardown.
-- Three test layers: unit tests, integration cases
-  on a private tmux server, functional scripts
-  driving the user's live server. All gates green
-  (44 unit, 17 integration).
+- **Agent-orch design ported** as `kaimux/` workspace
+  member: single binary, three user-facing verbs +
+  bare invocation, Claude hook reporter wired through
+  user-global `setup` / `teardown`, event-driven
+  persistent picker via fzf `--listen` + filesystem
+  watcher, **four-state lifecycle** (Working /
+  Waiting / Done / Idle) with priority sort, multi-
+  line picker rows with inline pane snippet.
+- **Module-level restructure** of `main.rs` per review
+  feedback: six sections (Session / Store / Wrapper /
+  Hook / Configure / Loop) instead of the original
+  four. Hook reporter pulled out as a free function;
+  per-event registration data lives on the variant
+  (DisplayState owns glyph + priority).
+- **Library replacement of hand-rolled mechanism:**
+  `atomicwrites` for tmp+rename, `fd-lock` for
+  inter-process flock (was already library, now
+  composed cleanly in `Store::mutate`).
+- **Comment style** trimmed to terse side-comments
+  per the user's "code is the documentation" lens.
+- **Justfile module split** with `[no-cd]` recipes
+  pinning to the workspace root.
+- 53 unit tests pass; clippy + fmt + check green.
+- Backlog item recorded: Rust functional-test rewrite.
 
-### Open issues — to address before we call v1 done
+### Open issues — deferred to post-PR-#24 slices
 
-Using the shipped slice end-to-end + comparing to
-adjacent tools (Prior art) showed the surface needs
-more density. None of these are blockers for the
-design, but together they mean v1 isn't yet "the
-state we want."
+None of the items below are ship-blockers for the
+design; they were named v1 polish work and stay open
+as separate slices.
 
-- **Four-state lifecycle + priority sort.** Today's
-  two-state (running/idle) is too coarse — it hides
-  the most important case (waiting on permission)
-  and doesn't help the user prioritize across N
-  agents. Move to working / waiting / done / idle
-  (stored as Working/Waiting/Done in JSON; idle is
-  a render-time decay), with priority sort
-  waiting > done > idle > working — sort by
-  attention-needed, so the things blocking the user
-  are at the top and self-managing working agents
-  sit at the bottom.
-- **Picker-row redesign (this revision's main
-  payload).** The current row is `<glyph> <kind>
-  <cwd>` with all live signal in the side preview
-  only. Real use showed that's too thin: a 6-row
-  picker hides everything until the user focuses
-  each row in turn. The redesign carries the
-  four-state icon, `session:window.pane`, kind,
-  cwd-tail, and elapsed time in the header line,
-  plus a 3-line inline pane-content snippet — at-
-  a-glance density without losing the side
-  preview. Needs:
-  - `State` becomes a 3-variant enum;
-    `DisplayState` adds Idle as a render-time
-    decay.
-  - `Session::apply_event` re-mapped to the new
-    states; `Notification` becomes a real
-    signal.
-  - `Session::format_header` carries icon + addr
-    + kind + cwd-tail + elapsed.
-  - `Loop::render` returns multi-line `Item`s
-    sorted by priority; `render_to` serializes
-    with `\0` separators.
-  - `Loop::body` adds `--read0 --gap=1
-    --highlight-line --ansi` to fzf invocation,
-    plus the cheatsheet header line, the
-    peek-popup bind, and the unregister bind.
-  - `peek` adds `-e` to `tmux capture-pane` for
-    ANSI.
-  - Default `peek --lines` rises (10 → 25).
-  - `setup` HOOK_EVENTS list adds `Notification`.
-  - `setup` and bare invocation accept
-    `--session NAME` (default `kaimux`).
-- **Stale-shell PATH risk has only been
-  documented, not detected at runtime.** `agent-
-  orch doctor` (follow-up) would catch this.
-- **Functional fixture has not been driven through
-  the full user-loop yet.** The fixture-spawning
-  script and the teardown script exist; the
-  asserted-scenarios script (F1–F8 in Test
-  Strategy above) needs to land in
-  `functional-test.sh` and be exercised end-to-
-  end with real claude/kiro-cli.
-- **Spec ↔ code drift on Kiro hook integration.**
-  Spec says Kiro is observation-only in v1. Code
-  still writes a Claude-shape JSON to
-  `<cwd>/.kiro/agents/kaimux.json`, which
-  Kiro logs as "invalid agent config" on every
-  prompt. Either drop the write entirely (spec-
-  true), or wire the right Kiro shape (close the
-  deferred slice).
+- **[Open] Spec ↔ code drift on Kiro hook integration.**
+  Spec says Kiro is observation-only in v1. Code still
+  writes `<cwd>/.kiro/agents/kaimux.json`, which Kiro
+  logs as "invalid agent config" on every prompt.
+  Next-slice candidate: drop the write entirely
+  (spec-true). Removes the `created_kiro_config`
+  field from `Session` and `Prepared`. Carried over
+  unchanged from agent-orch.
+- **[Open] Stale-shell PATH risk** has only been
+  documented, not detected at runtime. `kaimux doctor`
+  (follow-up) would catch this. Tracked via the
+  follow-up section below.
+- **[Open] Functional fixture (F1–F8) has not been
+  driven through the full user-loop yet.** All
+  scenarios are coded (`kaimux/tests/functional-test.sh`);
+  needs a user-driven run against real claude/kiro-cli
+  on the live tmux server. Costs API credits.
+
+### Closed in PR #24
+
+- ✅ **Four-state lifecycle + priority sort.** Stored
+  state is `Working`/`Waiting`/`Done`; `DisplayState`
+  adds `Idle` as a render-time decay past
+  `IDLE_THRESHOLD_SECS`.
+  `display_state(now).priority()` drives the sort
+  (waiting > done > idle > working).
+- ✅ **Picker-row redesign.** Multi-line `Item`s
+  carry `<icon> <addr>\t<kind>\t<cwd>\t<elapsed>` +
+  3-line pane snippet, NUL-separated for fzf's
+  `--read0`. fzf flags include `--gap=1
+  --highlight-line --ansi --with-nth=2.. --track
+  --id-nth=1` plus the cheatsheet header and the
+  peek-popup / unregister binds. `peek` uses
+  `capture-pane -e` for ANSI; default `--lines = 25`.
+- ✅ **`setup`/bare accept `--session NAME`**, default
+  `kaimux`. `HOOK_EVENTS` includes `Notification`.
 
 ### Follow-up — Kiro state tracking
 
