@@ -1,7 +1,12 @@
 //! kaimux — observation-only orchestrator over tmux + coding-agent panes.
 //!
-//! One file, four sections top-to-bottom: §1 Session, §2 Store,
-//! §3 Wrapper (Claude / Kiro / Other), §4 Loop (picker).
+//! One file, six sections top-to-bottom:
+//!   §1 Session    — registry record, lifecycle state machine
+//!   §2 Store      — flock + atomic-write registry persistence
+//!   §3 Wrapper    — wrap an agent (Claude/Kiro/Other) — register + execvp
+//!   §4 Hook       — entry the wrapped agent's hooks call into
+//!   §5 Configure  — `setup`/`teardown` (Claude settings + tmux keybind)
+//!   §6 Loop       — picker (render, fzf body, run, peek)
 //! `main` dispatches the CLI. End-to-end: tests/kaimux/integration.sh.
 
 use anyhow::{Context, Result};
@@ -259,11 +264,9 @@ impl Store {
     pub fn new(dir: PathBuf) -> Self {
         Store { dir }
     }
-
     pub fn dir(&self) -> &Path {
         &self.dir
     }
-
     pub fn hook_marker(&self) -> PathBuf {
         self.dir.join(HOOK_MARKER)
     }
@@ -308,10 +311,9 @@ impl Store {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// §3 · Wrapper
-//
-// Per-kind variation in the impl blocks. Kind-agnostic bits (registration,
-// pane-exited hook install, execvp) live in the free `wrap()` below.
+// §3 · Wrapper — wrap an agent session: prepare per-kind config, register in
+// the store, install the pane-exited hook, execvp the agent. Kind variation
+// lives in the trait impls; everything else in `wrap()` below.
 
 pub struct WrapCtx<'a> {
     pub store: &'a Store,
@@ -330,44 +332,24 @@ pub struct Prepared {
 
 pub trait Wrapper {
     fn kind(&self) -> &str;
-
     // Ensure per-kind config; return execvp (program, argv) + any flag
     // the session record needs.
     fn prepare(&self, ctx: &WrapCtx) -> Result<Prepared>;
-
     fn cleanup(&self, store: &Store, removing: &Session, others: &[Session]) -> Result<()>;
-
-    // Default hook body — same across kinds today. A kind whose stdin
-    // payload differs can override. Must never error: a failed hook
-    // reporter would block the agent's turn. Caller filters on
-    // $KAIMUX_PANE before dispatching; this body trusts pane_id.
-    fn hook(
-        &self,
-        store: &Store,
-        pane_id: &str,
-        event: &str,
-        stdin: &mut dyn Read,
-        now: u64,
-    ) -> Result<()> {
-        let mut buf = Vec::new();
-        stdin.read_to_end(&mut buf).context("read hook payload")?;
-        let payload: serde_json::Value = if buf.is_empty() {
-            serde_json::json!({})
-        } else {
-            serde_json::from_slice(&buf).unwrap_or(serde_json::json!({}))
-        };
-        store.mutate(|sessions| {
-            if let Some(s) = sessions.iter_mut().find(|s| s.pane_id == pane_id) {
-                s.apply_event(event, &payload, now);
-            }
-            Ok(()) // stale fire after unregister: silent no-op
-        })
-    }
 }
 
 pub struct Claude;
 pub struct Kiro;
 pub struct Other(pub String);
+
+// Argv-passthrough Prepared for kinds whose prepare has no per-kind state.
+fn passthrough(ctx: &WrapCtx) -> Prepared {
+    Prepared {
+        program: ctx.agent_argv[0].clone(),
+        argv: ctx.agent_argv.to_vec(),
+        created_kiro_config: false,
+    }
+}
 
 impl Wrapper for Claude {
     fn kind(&self) -> &str {
@@ -376,11 +358,7 @@ impl Wrapper for Claude {
 
     // Claude hooks live user-globally via `kaimux setup`, not per-launch.
     fn prepare(&self, ctx: &WrapCtx) -> Result<Prepared> {
-        Ok(Prepared {
-            program: ctx.agent_argv[0].clone(),
-            argv: ctx.agent_argv.to_vec(),
-            created_kiro_config: false,
-        })
+        Ok(passthrough(ctx))
     }
 
     fn cleanup(&self, _store: &Store, _removing: &Session, _others: &[Session]) -> Result<()> {
@@ -396,20 +374,17 @@ impl Wrapper for Kiro {
     fn prepare(&self, ctx: &WrapCtx) -> Result<Prepared> {
         let dir = ctx.cwd.join(".kiro").join("agents");
         let path = dir.join("kaimux.json");
-        let created = if path.exists() {
-            false
-        } else {
+        let created = !path.exists();
+        if created {
             fs::create_dir_all(&dir).with_context(|| format!("mkdir -p {}", dir.display()))?;
             fs::write(
                 &path,
                 serde_json::to_vec_pretty(&build_kiro_config(ctx.self_path))?,
             )?;
-            true
-        };
+        }
         Ok(Prepared {
-            program: ctx.agent_argv[0].clone(),
-            argv: ctx.agent_argv.to_vec(),
             created_kiro_config: created,
+            ..passthrough(ctx)
         })
     }
 
@@ -443,15 +418,9 @@ impl Wrapper for Other {
     fn kind(&self) -> &str {
         &self.0
     }
-
     fn prepare(&self, ctx: &WrapCtx) -> Result<Prepared> {
-        Ok(Prepared {
-            program: ctx.agent_argv[0].clone(),
-            argv: ctx.agent_argv.to_vec(),
-            created_kiro_config: false,
-        })
+        Ok(passthrough(ctx))
     }
-
     fn cleanup(&self, _store: &Store, _removing: &Session, _others: &[Session]) -> Result<()> {
         Ok(())
     }
@@ -465,212 +434,6 @@ fn wrapper_for(kind: &str) -> Box<dyn Wrapper> {
         "kiro" => Box::new(Kiro),
         other => Box::new(Other(other.to_string())),
     }
-}
-
-// Idempotent merge of our four hook entries into Claude's settings shape:
-//   hooks.<event> = [ { matcher: "", hooks: [{type:"command",command}], x-kaimux-managed: true }, ... ]
-// Existing tagged entries get their command rewritten (binary moved case);
-// user-authored entries (no tag) preserved verbatim. Errors loud on shape
-// mismatches — silent-drop would leave the user with a hookless wrapper.
-fn merge_claude_hooks(settings: &mut serde_json::Value, self_path: &Path) -> Result<()> {
-    use serde_json::{json, Value};
-    let self_str = self_path.to_string_lossy();
-    let root = settings
-        .as_object_mut()
-        .context("user claude settings root must be a JSON object")?;
-    let hooks = root
-        .entry("hooks".to_string())
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
-        .context("user claude settings.hooks must be a JSON object")?;
-    for ev in HOOK_EVENTS {
-        let arr = hooks.entry((*ev).to_string()).or_insert_with(|| json!([]));
-        let Value::Array(list) = arr else {
-            anyhow::bail!("user claude settings.hooks.{} must be an array", ev);
-        };
-        let cmd = format!("{} hook {}", self_str, ev);
-        if let Some(existing) = list
-            .iter_mut()
-            .find(|e| e.get(KAIMUX_TAG).and_then(|v| v.as_bool()).unwrap_or(false))
-        {
-            // Happy path: rewrite command in slot 0; continue skips the overwrite.
-            if let Some(inner) = existing.get_mut("hooks").and_then(|h| h.as_array_mut()) {
-                if let Some(first) = inner.first_mut() {
-                    first["command"] = json!(cmd);
-                    continue;
-                }
-            }
-            // Tagged entry with unexpected shape — overwrite cleanly.
-            *existing = json!({
-                "matcher": "",
-                "hooks": [{ "type": "command", "command": cmd }],
-                KAIMUX_TAG: true,
-            });
-        } else {
-            list.push(json!({
-                "matcher": "",
-                "hooks": [{ "type": "command", "command": cmd }],
-                KAIMUX_TAG: true,
-            }));
-        }
-    }
-    Ok(())
-}
-
-// Inverse of merge: drop tagged entries, prune empty containers. Caller
-// decides whether to delete the file when the result is `{}`.
-fn unmerge_claude_hooks(settings: &mut serde_json::Value) {
-    let Some(root) = settings.as_object_mut() else {
-        return;
-    };
-    let Some(hooks) = root.get_mut("hooks").and_then(|v| v.as_object_mut()) else {
-        return;
-    };
-    let event_names: Vec<String> = hooks.keys().cloned().collect();
-    for ev in event_names {
-        let Some(arr) = hooks.get_mut(&ev).and_then(|v| v.as_array_mut()) else {
-            continue;
-        };
-        arr.retain(|e| !e.get(KAIMUX_TAG).and_then(|v| v.as_bool()).unwrap_or(false));
-        if arr.is_empty() {
-            hooks.remove(&ev);
-        }
-    }
-    if hooks.is_empty() {
-        root.remove("hooks");
-    }
-}
-
-// `kaimux setup`. Idempotent: re-running rewrites our entries' command
-// paths (binary-moved case) without duplicating. With `key`, also binds
-// `<tmux-prefix> <key>` to switch to the dashboard; any prior dashboard
-// binding is removed first so re-keying is clean.
-fn run_setup(path: &Path, self_path: &Path, key: Option<&str>, session_name: &str) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("mkdir -p {}", parent.display()))?;
-    }
-    let mut settings: serde_json::Value = if path.exists() {
-        let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
-        if bytes.is_empty() {
-            serde_json::json!({})
-        } else {
-            serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?
-        }
-    } else {
-        serde_json::json!({})
-    };
-    merge_claude_hooks(&mut settings, self_path)?;
-    write_json_atomic(path, &settings)?;
-    if let Some(suffix) = key {
-        uninstall_tmux_keybind(); // remove any prior binding before re-key
-        install_tmux_keybind(suffix, session_name);
-    }
-    Ok(())
-}
-
-// `kaimux teardown`. Self-discovers the keybind via marker — no flags
-// needed, works regardless of the suffix or session name used at install.
-fn run_teardown(path: &Path) -> Result<()> {
-    uninstall_tmux_keybind();
-    if !path.exists() {
-        return Ok(());
-    }
-    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
-    if bytes.is_empty() {
-        return Ok(()); // empty file: leave it alone
-    }
-    let mut settings: serde_json::Value =
-        serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
-    unmerge_claude_hooks(&mut settings);
-    let is_empty_obj = settings.as_object().map(|o| o.is_empty()).unwrap_or(false);
-    if is_empty_obj {
-        fs::remove_file(path).with_context(|| format!("rm {}", path.display()))?;
-        Ok(())
-    } else {
-        write_json_atomic(path, &settings)
-    }
-}
-
-// $KAIMUX_TMUX_SOCKET → `-L <name>` (integration tests target a private
-// server). Stderr suppressed: "no server" is normal pre-first-run noise.
-fn tmux_cmd(args: &[&str]) -> std::process::Command {
-    let mut cmd = std::process::Command::new("tmux");
-    if let Ok(name) = std::env::var("KAIMUX_TMUX_SOCKET") {
-        if !name.is_empty() {
-            cmd.arg("-L").arg(name);
-        }
-    }
-    cmd.args(args).stderr(std::process::Stdio::null());
-    cmd
-}
-
-// Bind <prefix> <suffix> → switch-client. Prefix-bound (not root-bound)
-// so inner TUIs (claude/kiro) never see it. Action chain rides a no-op
-// `run-shell "true #<marker>"`; tmux preserves the marker verbatim in
-// list-keys output, which is how teardown self-discovers the binding
-// without a state file or a --key flag. Live-only — server restart
-// drops it; persistence across restarts is the user's job (bake the
-// equivalent line into ~/.tmux.conf).
-fn install_tmux_keybind(suffix: &str, session_name: &str) {
-    let action = format!("run-shell \"true #{KEYBIND_MARKER}\" ; switch-client -t {session_name}");
-    let _ = tmux_cmd(&["bind-key", "-T", "prefix", suffix, &action]).status();
-}
-
-fn uninstall_tmux_keybind() {
-    let out = tmux_cmd(&["list-keys", "-T", "prefix"])
-        .stderr(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .output();
-    let Ok(out) = out else { return };
-    if !out.status.success() {
-        return;
-    }
-    // list-keys line shape:
-    //   bind-key -T prefix O run-shell "true #x-kaimux-managed" \; switch-client -t <name>
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    for line in stdout.lines() {
-        if !line.contains(KEYBIND_MARKER) {
-            continue;
-        }
-        let Some(after) = line.split("-T prefix").nth(1) else {
-            continue;
-        };
-        let Some(suffix) = after.split_whitespace().next() else {
-            continue;
-        };
-        let _ = tmux_cmd(&["unbind-key", "-T", "prefix", suffix]).status();
-    }
-}
-
-fn write_json_atomic(path: &Path, value: &serde_json::Value) -> Result<()> {
-    AtomicFile::new(path, AllowOverwrite)
-        .write(|w| w.write_all(&serde_json::to_vec_pretty(value)?))
-        .with_context(|| format!("atomic write {}", path.display()))
-}
-
-fn user_claude_settings_path() -> Result<PathBuf> {
-    let home = std::env::var("HOME").context("$HOME unset")?;
-    Ok(PathBuf::from(home).join(".claude/settings.json"))
-}
-
-// Same nested schema as Claude's hooks.
-fn build_kiro_config(self_path: &Path) -> serde_json::Value {
-    use serde_json::json;
-    let s = self_path.to_string_lossy();
-    let entry = |ev: &str| {
-        json!([{
-            "matcher": "",
-            "hooks": [{ "type": "command", "command": format!("{} hook {}", s, ev) }],
-        }])
-    };
-    json!({
-        "hooks": {
-            EVT_USER_PROMPT_SUBMIT: entry(EVT_USER_PROMPT_SUBMIT),
-            EVT_PRE_TOOL_USE:       entry(EVT_PRE_TOOL_USE),
-            EVT_POST_TOOL_USE:      entry(EVT_POST_TOOL_USE),
-            EVT_STOP:               entry(EVT_STOP),
-        }
-    })
 }
 
 // Idempotent via a marker file. tmux `set-hook -g` is itself idempotent
@@ -787,7 +550,253 @@ pub fn unregister(store: &Store, pane_id: &str) -> Result<()> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// §4 · Loop
+// §4 · Hook — single entry the wrapped agent's lifecycle hooks call into.
+// Resolves the pane against the registry, runs `apply_event`, persists.
+// Always Ok — a failing reporter must never block the agent's turn (the
+// Cmd::Hook dispatch swallows errors). Caller filters $KAIMUX_PANE before
+// invoking; this body trusts pane_id.
+pub fn report_event(
+    store: &Store,
+    pane_id: &str,
+    event: &str,
+    stdin: &mut dyn Read,
+    now: u64,
+) -> Result<()> {
+    let mut buf = Vec::new();
+    stdin.read_to_end(&mut buf).context("read hook payload")?;
+    let payload: serde_json::Value = serde_json::from_slice(&buf).unwrap_or(serde_json::json!({}));
+    store.mutate(|sessions| {
+        if let Some(s) = sessions.iter_mut().find(|s| s.pane_id == pane_id) {
+            s.apply_event(event, &payload, now);
+        }
+        Ok(()) // stale fire after unregister: silent no-op
+    })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §5 · Configure — `kaimux setup` / `kaimux teardown`. Edits the user's
+// Claude settings file + tmux prefix-table keybind. Idempotent on both
+// directions; teardown self-discovers the keybind via marker.
+
+// `kaimux setup`. Idempotent: re-running rewrites our entries' command
+// paths (binary-moved case) without duplicating. With `key`, also binds
+// `<tmux-prefix> <key>` to switch to the dashboard; any prior dashboard
+// binding is removed first so re-keying is clean.
+fn run_setup(path: &Path, self_path: &Path, key: Option<&str>, session_name: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("mkdir -p {}", parent.display()))?;
+    }
+    let mut settings: serde_json::Value = if path.exists() {
+        let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+        if bytes.is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?
+        }
+    } else {
+        serde_json::json!({})
+    };
+    merge_claude_hooks(&mut settings, self_path)?;
+    write_json_atomic(path, &settings)?;
+    if let Some(suffix) = key {
+        uninstall_tmux_keybind(); // remove any prior binding before re-key
+        install_tmux_keybind(suffix, session_name);
+    }
+    Ok(())
+}
+
+// `kaimux teardown`. Self-discovers the keybind via marker — no flags
+// needed, works regardless of the suffix or session name used at install.
+fn run_teardown(path: &Path) -> Result<()> {
+    uninstall_tmux_keybind();
+    if !path.exists() {
+        return Ok(());
+    }
+    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    if bytes.is_empty() {
+        return Ok(()); // empty file: leave it alone
+    }
+    let mut settings: serde_json::Value =
+        serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
+    unmerge_claude_hooks(&mut settings);
+    let is_empty_obj = settings.as_object().map(|o| o.is_empty()).unwrap_or(false);
+    if is_empty_obj {
+        fs::remove_file(path).with_context(|| format!("rm {}", path.display()))?;
+        Ok(())
+    } else {
+        write_json_atomic(path, &settings)
+    }
+}
+
+// Idempotent merge of our four hook entries into Claude's settings shape:
+//   hooks.<event> = [ { matcher: "", hooks: [{type:"command",command}], x-kaimux-managed: true }, ... ]
+// Existing tagged entries get their command rewritten (binary moved case);
+// user-authored entries (no tag) preserved verbatim. Errors loud on shape
+// mismatches — silent-drop would leave the user with a hookless wrapper.
+fn merge_claude_hooks(settings: &mut serde_json::Value, self_path: &Path) -> Result<()> {
+    use serde_json::{json, Value};
+    let self_str = self_path.to_string_lossy();
+    let root = settings
+        .as_object_mut()
+        .context("user claude settings root must be a JSON object")?;
+    let hooks = root
+        .entry("hooks".to_string())
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .context("user claude settings.hooks must be a JSON object")?;
+    for ev in HOOK_EVENTS {
+        let arr = hooks.entry((*ev).to_string()).or_insert_with(|| json!([]));
+        let Value::Array(list) = arr else {
+            anyhow::bail!("user claude settings.hooks.{} must be an array", ev);
+        };
+        let cmd = format!("{} hook {}", self_str, ev);
+        if let Some(existing) = list
+            .iter_mut()
+            .find(|e| e.get(KAIMUX_TAG).and_then(|v| v.as_bool()).unwrap_or(false))
+        {
+            // Happy path: rewrite command in slot 0; continue skips the overwrite.
+            if let Some(inner) = existing.get_mut("hooks").and_then(|h| h.as_array_mut()) {
+                if let Some(first) = inner.first_mut() {
+                    first["command"] = json!(cmd);
+                    continue;
+                }
+            }
+            // Tagged entry with unexpected shape — overwrite cleanly.
+            *existing = json!({
+                "matcher": "",
+                "hooks": [{ "type": "command", "command": cmd }],
+                KAIMUX_TAG: true,
+            });
+        } else {
+            list.push(json!({
+                "matcher": "",
+                "hooks": [{ "type": "command", "command": cmd }],
+                KAIMUX_TAG: true,
+            }));
+        }
+    }
+    Ok(())
+}
+
+// Inverse of merge: drop tagged entries, prune empty containers. Caller
+// decides whether to delete the file when the result is `{}`.
+fn unmerge_claude_hooks(settings: &mut serde_json::Value) {
+    let Some(root) = settings.as_object_mut() else {
+        return;
+    };
+    let Some(hooks) = root.get_mut("hooks").and_then(|v| v.as_object_mut()) else {
+        return;
+    };
+    let event_names: Vec<String> = hooks.keys().cloned().collect();
+    for ev in event_names {
+        let Some(arr) = hooks.get_mut(&ev).and_then(|v| v.as_array_mut()) else {
+            continue;
+        };
+        arr.retain(|e| !e.get(KAIMUX_TAG).and_then(|v| v.as_bool()).unwrap_or(false));
+        if arr.is_empty() {
+            hooks.remove(&ev);
+        }
+    }
+    if hooks.is_empty() {
+        root.remove("hooks");
+    }
+}
+
+// Same nested schema as Claude's hooks (Kiro reuses the matcher-array shape).
+fn build_kiro_config(self_path: &Path) -> serde_json::Value {
+    use serde_json::json;
+    let s = self_path.to_string_lossy();
+    let entry = |ev: &str| {
+        json!([{
+            "matcher": "",
+            "hooks": [{ "type": "command", "command": format!("{} hook {}", s, ev) }],
+        }])
+    };
+    json!({
+        "hooks": {
+            EVT_USER_PROMPT_SUBMIT: entry(EVT_USER_PROMPT_SUBMIT),
+            EVT_PRE_TOOL_USE:       entry(EVT_PRE_TOOL_USE),
+            EVT_POST_TOOL_USE:      entry(EVT_POST_TOOL_USE),
+            EVT_STOP:               entry(EVT_STOP),
+        }
+    })
+}
+
+// Bind <prefix> <suffix> → switch-client. Prefix-bound (not root-bound)
+// so inner TUIs (claude/kiro) never see it. Action chain rides a no-op
+// `run-shell "true #<marker>"`; tmux preserves the marker verbatim in
+// list-keys output, which is how teardown self-discovers the binding
+// without a state file or a --key flag. Live-only — server restart
+// drops it; persistence across restarts is the user's job (bake the
+// equivalent line into ~/.tmux.conf).
+fn install_tmux_keybind(suffix: &str, session_name: &str) {
+    let action = format!("run-shell \"true #{KEYBIND_MARKER}\" ; switch-client -t {session_name}");
+    let _ = tmux_cmd(&["bind-key", "-T", "prefix", suffix, &action]).status();
+}
+
+fn uninstall_tmux_keybind() {
+    let out = tmux_cmd(&["list-keys", "-T", "prefix"])
+        .stderr(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .output();
+    let Ok(out) = out else { return };
+    if !out.status.success() {
+        return;
+    }
+    // list-keys line shape:
+    //   bind-key -T prefix O run-shell "true #x-kaimux-managed" \; switch-client -t <name>
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for line in stdout.lines() {
+        if !line.contains(KEYBIND_MARKER) {
+            continue;
+        }
+        let Some(after) = line.split("-T prefix").nth(1) else {
+            continue;
+        };
+        let Some(suffix) = after.split_whitespace().next() else {
+            continue;
+        };
+        let _ = tmux_cmd(&["unbind-key", "-T", "prefix", suffix]).status();
+    }
+}
+
+fn write_json_atomic(path: &Path, value: &serde_json::Value) -> Result<()> {
+    AtomicFile::new(path, AllowOverwrite)
+        .write(|w| w.write_all(&serde_json::to_vec_pretty(value)?))
+        .with_context(|| format!("atomic write {}", path.display()))
+}
+
+fn user_claude_settings_path() -> Result<PathBuf> {
+    Ok(PathBuf::from(std::env::var("HOME").context("$HOME unset")?).join(".claude/settings.json"))
+}
+
+// $KAIMUX_TMUX_SOCKET → `-L <name>` (integration tests target a private
+// server). Stderr suppressed: "no server" is normal pre-first-run noise.
+// Used by Configure (keybind ops) and Loop (preview/capture/address).
+fn tmux_cmd(args: &[&str]) -> std::process::Command {
+    let mut cmd = std::process::Command::new("tmux");
+    if let Ok(name) = std::env::var("KAIMUX_TMUX_SOCKET") {
+        if !name.is_empty() {
+            cmd.arg("-L").arg(name);
+        }
+    }
+    cmd.args(args).stderr(std::process::Stdio::null());
+    cmd
+}
+
+// Run a raw `tmux` command (no socket override, no stderr suppression) and
+// return whether it exited 0. Convenience for the dashboard bootstrap
+// (`Loop::run`) where we need a yes/no on session presence + spawn ops.
+fn tmux_ok(args: &[&str]) -> bool {
+    std::process::Command::new("tmux")
+        .args(args)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §6 · Loop
 
 // Fixed: a varying row height would reflow the whole fzf list on every
 // reload. v2 follow-up makes this runtime-tunable.
@@ -842,21 +851,19 @@ impl<'a> Loop<'a> {
     // `?` so a pane spitting raw NULs can't split the item early.
     pub fn render_to(&self, stdout: &mut dyn Write) -> Result<()> {
         let items = self.render()?;
-        let last = items.len().saturating_sub(1);
-        for (i, item) in items.iter().enumerate() {
-            write!(stdout, "{}\t{}", item.pane_id, item.header)?;
-            for line in &item.snippet {
-                stdout.write_all(b"\n")?;
-                let sanitised: String = line
-                    .chars()
-                    .map(|c| if c == '\0' { '?' } else { c })
-                    .collect();
-                stdout.write_all(sanitised.as_bytes())?;
-            }
-            if i != last {
-                stdout.write_all(b"\0")?;
-            }
-        }
+        let blocks: Vec<String> = items
+            .iter()
+            .map(|i| {
+                let snippet = i
+                    .snippet
+                    .iter()
+                    .map(|l| l.replace('\0', "?"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                format!("{}\t{}\n{snippet}", i.pane_id, i.header)
+            })
+            .collect();
+        stdout.write_all(blocks.join("\0").as_bytes())?;
         Ok(())
     }
 
@@ -864,30 +871,22 @@ impl<'a> Loop<'a> {
     // picker body runs inside that session as a bare `kaimux --session NAME`
     // (bare detects "already inside the dashboard" and runs body, not run).
     pub fn run(&self, self_path: &Path, session_name: &str) -> Result<()> {
-        let has = std::process::Command::new("tmux")
-            .args(["has-session", "-t", session_name])
-            .status()
-            .context("tmux has-session")?
-            .success();
-        if !has {
-            // Pass --session through to the bare child so it self-identifies
-            // against the same name (inside_dashboard reads it).
+        if !tmux_ok(&["has-session", "-t", session_name]) {
+            // Pass --session through to the bare child so it self-identifies.
             let cmd = format!(
                 "{} --session {}",
                 self_path.display(),
                 shell_quote(session_name)
             );
-            let status = std::process::Command::new("tmux")
-                .args(["new-session", "-d", "-s", session_name, &cmd])
-                .status()
-                .context("tmux new-session")?;
-            anyhow::ensure!(status.success(), "tmux new-session failed");
+            anyhow::ensure!(
+                tmux_ok(&["new-session", "-d", "-s", session_name, &cmd]),
+                "tmux new-session failed"
+            );
         }
-        let status = std::process::Command::new("tmux")
-            .args(["switch-client", "-t", session_name])
-            .status()
-            .context("tmux switch-client")?;
-        anyhow::ensure!(status.success(), "tmux switch-client failed");
+        anyhow::ensure!(
+            tmux_ok(&["switch-client", "-t", session_name]),
+            "tmux switch-client failed"
+        );
         Ok(())
     }
 
@@ -1283,17 +1282,9 @@ fn main() -> Result<()> {
         }
 
         Some(Cmd::Hook { event }) => {
-            // Hooks must never block the agent's turn — fail-soft. Corrupt
-            // registry: silently skip rather than surface the error.
+            // Hooks must never block the agent's turn — fail-soft.
             if let Some(pane) = std::env::var("KAIMUX_PANE").ok().filter(|s| !s.is_empty()) {
-                let kind = store
-                    .read()
-                    .ok()
-                    .and_then(|s| s.iter().find(|x| x.pane_id == pane).map(|x| x.kind.clone()));
-                if let Some(kind) = kind {
-                    let mut stdin = std::io::stdin();
-                    let _ = wrapper_for(&kind).hook(&store, &pane, &event, &mut stdin, now_secs());
-                }
+                let _ = report_event(&store, &pane, &event, &mut std::io::stdin(), now_secs());
             }
             Ok(())
         }
@@ -2203,6 +2194,10 @@ mod tests {
 
     // 8 · Wrapper — hook (default trait method) ──────────────────
 
+    fn empty_stdin() -> Cursor<Vec<u8>> {
+        Cursor::new(b"{}".to_vec())
+    }
+
     #[test]
     fn hook_pre_tool_use_marks_running() {
         let (dir, store) = fixtures();
@@ -2212,15 +2207,7 @@ mod tests {
         let ctx = ctx(&store, "%9", &cwd, &argv, &self_path);
         wrap(&Claude, &ctx, false).unwrap();
 
-        Claude
-            .hook(
-                &store,
-                "%9",
-                EVT_PRE_TOOL_USE,
-                &mut Cursor::new(b"{}".to_vec()),
-                1234,
-            )
-            .unwrap();
+        report_event(&store, "%9", EVT_PRE_TOOL_USE, &mut empty_stdin(), 1234).unwrap();
         let v = store.read().unwrap();
         assert_eq!(v[0].state, State::Working);
         assert_eq!(v[0].last_event_ts, 1234);
@@ -2234,29 +2221,20 @@ mod tests {
         let self_path = PathBuf::from("/test/kaimux");
         let ctx = ctx(&store, "%1", &cwd, &argv, &self_path);
         wrap(&Claude, &ctx, false).unwrap();
+
         // Drive into Working first so we can observe the flip back.
-        Claude
-            .hook(
-                &store,
-                "%1",
-                EVT_PRE_TOOL_USE,
-                &mut Cursor::new(b"{}".to_vec()),
-                50,
-            )
-            .unwrap();
+        report_event(&store, "%1", EVT_PRE_TOOL_USE, &mut empty_stdin(), 50).unwrap();
         assert_eq!(store.read().unwrap()[0].state, State::Working);
 
-        Claude
-            .hook(&store, "%1", EVT_STOP, &mut Cursor::new(b"{}".to_vec()), 99)
-            .unwrap();
+        report_event(&store, "%1", EVT_STOP, &mut empty_stdin(), 99).unwrap();
         assert_eq!(store.read().unwrap()[0].state, State::Done);
     }
 
     #[test]
     fn hook_notification_marks_waiting() {
         // The load-bearing case for the four-state machine —
-        // permission prompts must surface via the hook reporter
-        // as Waiting so they sort to the top of the dashboard.
+        // permission prompts must surface as Waiting so they sort
+        // to the top of the dashboard.
         let (dir, store) = fixtures();
         let cwd = dir.path().to_path_buf();
         let argv = vec!["stub".to_string()];
@@ -2264,15 +2242,7 @@ mod tests {
         let ctx = ctx(&store, "%1", &cwd, &argv, &self_path);
         wrap(&Claude, &ctx, false).unwrap();
 
-        Claude
-            .hook(
-                &store,
-                "%1",
-                EVT_NOTIFICATION,
-                &mut Cursor::new(b"{}".to_vec()),
-                250,
-            )
-            .unwrap();
+        report_event(&store, "%1", EVT_NOTIFICATION, &mut empty_stdin(), 250).unwrap();
         let s = &store.read().unwrap()[0];
         assert_eq!(s.state, State::Waiting);
         assert_eq!(s.last_event, "Notification");
@@ -2282,38 +2252,8 @@ mod tests {
     fn hook_no_op_for_unknown_pane() {
         let (_dir, store) = fixtures();
         // No record for %999 — must not error, must not phantom-write.
-        Claude
-            .hook(
-                &store,
-                "%999",
-                EVT_STOP,
-                &mut Cursor::new(b"{}".to_vec()),
-                1,
-            )
-            .unwrap();
+        report_event(&store, "%999", EVT_STOP, &mut empty_stdin(), 1).unwrap();
         assert!(store.read().unwrap().is_empty());
-    }
-
-    #[test]
-    fn hook_default_method_works_via_kiro_impl_too() {
-        // Both impls inherit the default method body; verify by
-        // dispatching through Kiro on a kiro-registered session.
-        let (dir, store) = fixtures();
-        let cwd = dir.path().to_path_buf();
-        let argv = vec!["stub".to_string()];
-        let self_path = PathBuf::from("/test/kaimux");
-        let ctx = ctx(&store, "%7", &cwd, &argv, &self_path);
-        wrap(&Kiro, &ctx, false).unwrap();
-
-        Kiro.hook(
-            &store,
-            "%7",
-            EVT_PRE_TOOL_USE,
-            &mut Cursor::new(b"{}".to_vec()),
-            42,
-        )
-        .unwrap();
-        assert_eq!(store.read().unwrap()[0].state, State::Working);
     }
 
     // 9 · unregister + Loop ──────────────────────────────────────
