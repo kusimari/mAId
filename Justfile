@@ -1,5 +1,5 @@
 _default:
-    @just --list --unsorted
+    @just --list --unsorted --list-submodules
 
 # ── modules ──────────────────────────────────────────────────────
 # Per-area verbs live next to the area they operate on. Invoke as
