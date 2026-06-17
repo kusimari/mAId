@@ -277,6 +277,30 @@ else
   ok "$DASHBOARD ready (running fzf picker)"
 fi
 
+# ── wait for all 5 wraps to register ───────────────────────────────
+#
+# `send_wrap` types the wrap command into a fresh login shell — claude
+# / kiro-cli launch + register asynchronously. Setup's contract is
+# "fixture is ready on exit", so block here until the registry has 5
+# rows or we hit a timeout. Without this the test script can race
+# ahead and resolve panes from a partial registry.
+
+REG="$HOME/.local/state/kaimux/sessions.json"
+log "waiting for all 5 wraps to register (up to 30s)"
+deadline=$(( $(date +%s) + 30 ))
+while [[ "$(date +%s)" -lt "$deadline" ]]; do
+  count="$(jq 'length' "$REG" 2>/dev/null || echo 0)"
+  if [[ "$count" -ge 5 ]]; then
+    ok "registry has $count wrapped panes"
+    break
+  fi
+  sleep 0.5
+done
+count="$(jq 'length' "$REG" 2>/dev/null || echo 0)"
+if [[ "$count" -lt 5 ]]; then
+  fail "fixture incomplete: registry has $count panes after 30s, expected 5"
+fi
+
 # ── done ───────────────────────────────────────────────────────────
 
 if [[ "$KEY" == "none" ]]; then

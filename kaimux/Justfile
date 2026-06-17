@@ -24,3 +24,26 @@ test:
 [no-cd]
 integration: build
     kaimux/tests/integration.sh
+
+# Spins up the kaimux-test-* fixture, runs F1–F8, tears down. Wrapped
+# in `zsh -lc` so the user's login PATH (the one that promotes
+# ~/.toolbox/bin) is in effect — claude/kiro-cli resolve via the
+# toolbox shims rather than whatever bare-PATH would pick. KEY is the
+# tmux prefix-table suffix to bind for "switch back to the dashboard"
+# (e.g. `O`); pass `none` to install hooks only. Teardown runs even
+# if the F-block run fails.
+#
+# Drive F1–F8 against real claude/kiro-cli (costs API credits + minutes).
+[confirm("This costs API credits and runs against real claude/kiro-cli. Continue? (y/N)")]
+[no-cd]
+functional KEY="O": build
+    #!/usr/bin/env bash
+    set -uo pipefail
+    [[ -z "${TMUX:-}" ]] || { echo "do not run from inside tmux — run from a plain terminal" >&2; exit 2; }
+    cmd='set -uo pipefail
+    bash kaimux/tests/functional-automated-setup.sh "$1" || exit
+    bash kaimux/tests/functional-automated.sh
+    rc=$?
+    bash kaimux/tests/functional-automated-teardown.sh
+    exit $rc'
+    zsh -lc "$cmd" zsh "{{ KEY }}"
