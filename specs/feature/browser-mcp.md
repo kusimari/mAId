@@ -66,14 +66,21 @@ server with each agent harness. It establishes the pattern for
   default location or any path the user chooses. The user edits
   it directly — add a site, remove a site — with any editor.
 - Changes take effect on the **next browser-control session**
-  with no re-install and no involvement from the install
-  tooling.
+  (the next time the agent's browser server connects) with no
+  re-install and no involvement from the install tooling. The
+  user's Chrome — and every login in it — **stays running and
+  untouched** across an allowlist edit; only the lightweight
+  background browser server re-reads the file. Edits do not
+  apply to a connection already in progress; *truly live,
+  mid-session* allowlist changes are a deferred enhancement
+  (see Decision Log).
 - For users who would rather not hand-edit, a verb appends a
   site pattern to the allowlist **verbatim** — mAId does not
   define or validate the pattern syntax; whatever the browser
-  accepts is what the user writes, passed straight through.
-  (Adding through the browser's own UI is preferred where the
-  browser supports it; the verb is the fallback.)
+  accepts is what the user writes, passed straight through. The
+  file is the source of truth; managing the allowlist through a
+  browser-native surface is a deferred enhancement (the browser
+  exposes no per-site allowlist UI to build on today).
 - **Empty/absent allowlist means deny, not allow-all** — if no
   sites are listed, the capability refuses to start rather than
   exposing every logged-in site. The user observes a clear
@@ -189,33 +196,39 @@ decoupled from the browser's pattern grammar as it evolves.
    `.kiro/steering/skills` — no installer change.
 
 2. **Launcher** — a small POSIX-shell script shipped in the
-   repo (e.g. `resources/browser/launch`). At launch it:
-   resolves the allowlist file (default
+   repo (e.g. `resources/browser/launch`). The MCP registration
+   points the server-launch command at this script (absolute
+   path in the checkout, same as the symlinks point back into
+   the checkout), so it runs **every time the agent's browser
+   server (re)connects** — that's what makes an allowlist edit
+   take effect on reconnect without touching Chrome. Each run
+   it: resolves the allowlist file (default
    `${XDG_CONFIG_HOME:-$HOME/.config}/maid/browser-allowlist`,
    overridable by an env var); reads non-blank, non-`#` lines as
    site patterns; **refuses to start with a clear message if the
    list is empty/absent** (deny-by-default); otherwise builds one
    enforced-allow flag per pattern and execs the server via the
-   environment's runtime with `--autoConnect`. The MCP
-   registration points here (absolute path in the checkout, same
-   as the symlinks point back into the checkout).
+   environment's runtime with `--autoConnect` (which attaches to
+   the already-running Chrome — the server process is cheap to
+   restart; the browser is not restarted at all).
 
 3. **`resources::` module verbs** (shell, no Rust; added to
-   `resources/Justfile`, invoked as `just resources::<verb>`):
-   - `install-mcp` — prereq-detect (graphical Chrome present;
-     runtime present; harness CLI present); register the server
-     with `claude mcp add` and/or `kiro-cli mcp add` pointing at
-     the launcher; print the one-time remote-debugging setup
-     reminder. Idempotent; graceful per-prereq skip.
-   - `uninstall-mcp` — remove the registration via each harness
-     CLI. Does **not** touch the user's allowlist file.
-   - `mcp-status` — report registration state per harness.
-   - `browser-allow <pattern>` — append a pattern line to the
-     default allowlist file **verbatim** (the hand-edit
+   `resources/Justfile`, invoked as `just resources::<verb>`).
+   Named with a common `browser-mcp-` prefix so they group and
+   sit together in `just --list`:
+   - `browser-mcp-install` — prereq-detect (graphical Chrome
+     present; runtime present; harness CLI present); register
+     the server with `claude mcp add` and/or `kiro-cli mcp add`
+     pointing at the launcher; print the one-time
+     remote-debugging setup reminder. Idempotent; graceful
+     per-prereq skip.
+   - `browser-mcp-uninstall` — remove the registration via each
+     harness CLI. Does **not** touch the user's allowlist file.
+   - `browser-mcp-status` — report registration state per
+     harness.
+   - `browser-mcp-allow <pattern>` — append a pattern line to
+     the default allowlist file **verbatim** (the hand-edit
      fallback). Creates the file if absent.
-
-   Final verb names are confirmed at dev time against the
-   module's existing naming; the set above is the contract.
 
 ### Notes / constraints
 
@@ -224,8 +237,8 @@ decoupled from the browser's pattern grammar as it evolves.
   desktop is older, the launcher's deny-by-default still holds
   (it refuses on empty list) and the skill guidance still
   applies, but enforced blocking needs the supported browser.
-- `uninstall-mcp` is deliberately allowlist-preserving: the
-  allowlist is user data, not install state.
+- `browser-mcp-uninstall` is deliberately allowlist-preserving:
+  the allowlist is user data, not install state.
 
 ## Implementation Plan
 
@@ -238,10 +251,11 @@ decoupled from the browser's pattern grammar as it evolves.
   allowlist path (default + env override), parse patterns,
   deny-by-default on empty, build enforced-allow flags, exec the
   server via the environment runtime with `--autoConnect`.
-- [ ] **Module verbs.** Add `install-mcp` / `uninstall-mcp` /
-  `mcp-status` / `browser-allow` to `resources/Justfile` (the
-  `resources::` module), with prereq detection and graceful
-  skip, calling the harness MCP CLIs.
+- [ ] **Module verbs.** Add `browser-mcp-install` /
+  `browser-mcp-uninstall` / `browser-mcp-status` /
+  `browser-mcp-allow` to `resources/Justfile` (the `resources::`
+  module), with prereq detection and graceful skip, calling the
+  harness MCP CLIs.
 - [ ] **Smoke fixture.** Add
   `resources/tests/skills/browser-*.smoke` (substring + judge)
   asserting the skill loads and teaches the safety posture.
@@ -251,8 +265,8 @@ decoupled from the browser's pattern grammar as it evolves.
 - *Risk note:* enforced-allow flag is browser-version-gated;
   deny-by-default in the launcher is the portable floor.
 - *Risk note:* registration stores an absolute checkout path;
-  moving the checkout requires a re-`install-mcp` (same
-  property the symlink registry already has).
+  moving the checkout requires a re-run of `browser-mcp-install`
+  (same property the symlink registry already has).
 - *Risk note:* coexistence of mAId's environment with the
   sibling internal-resources repo's environment is **out of
   scope** — explicitly a follow-up after this works.
@@ -275,6 +289,15 @@ decoupled from the browser's pattern grammar as it evolves.
   patterns pass through verbatim — mAId owns no pattern grammar.
   Noted the rebase swapped the flat Justfile for `mod resources`
   / `mod kaimux`; verbs target `resources/Justfile`.
+- 2026-06-22 · Planning Review Gate (PR #29) — 3 review
+  comments resolved: (1) verbs renamed to a common
+  `browser-mcp-` prefix so they group; (2)+(3) "dynamic / no
+  browser reload" + "browser-UI-as-default" — grounded that
+  `--allowedUrlPattern` is launch-only and chrome://inspect is
+  connection-level consent (no per-site UI). Adopted
+  reconnect-rereads-file (Chrome never reloads) as the shipping
+  behavior; true mid-session-live and browser-native allowlist
+  management recorded as deferred enhancements.
 
 ## Decision Log
 
@@ -300,10 +323,14 @@ decoupled from the browser's pattern grammar as it evolves.
   harness's MCP CLI, keeping the Rust build-tool pure-symlink
   per hard constraints.
 - **Verbs separate now, converge later.** Modeled as distinct
-  `resources::install-mcp` (env-gated) beside
+  `resources::browser-mcp-install` (env-gated) beside
   `resources::install` (skills, always works); `resources::
   install` can absorb all resource kinds once the model matures.
-- **Pattern pass-through.** `browser-allow` and the launcher
+- **Verb naming: `browser-mcp-` prefix** (PR #29). Chosen over
+  `install-mcp` / `mcp-status` so the capability's verbs group
+  and sit together in `just --list` rather than scattering
+  across the module's alphabetical listing.
+- **Pattern pass-through.** `browser-mcp-allow` and the launcher
   pass allowlist lines to the browser verbatim; mAId defines no
   pattern syntax, staying decoupled from the browser's grammar.
 - **Generic/public framing.** mAId is a generic public repo; the
@@ -316,3 +343,19 @@ decoupled from the browser's pattern grammar as it evolves.
   scripts stay dependency-free shell. Cross-environment
   coexistence with the sibling internal repo is a deliberate
   follow-up, not this feature.
+- **Allowlist freshness: reconnect-rereads, not mid-session
+  live** (PR #29). Considered a custom enforcement layer that
+  checks each navigation against the live file so edits apply
+  instantly; rejected for this feature — `--allowedUrlPattern`
+  is launch-only and the tool exposes no runtime allowlist API,
+  so live updates require building that layer. Chosen: the
+  launcher re-reads the file each time the browser server
+  (re)connects, so an edit applies on reconnect while Chrome and
+  its logins stay up. Genuinely-live updates = deferred
+  enhancement.
+- **Browser-native allowlist management = deferred** (PR #29).
+  Explored making the browser's own UI the default management
+  surface; rejected for now — chrome://inspect is
+  connection-level consent only, with no per-site allowlist UI
+  to build on. The user-owned file stays the source of truth;
+  a browser-native surface is a later abstraction.
