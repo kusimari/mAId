@@ -121,8 +121,6 @@ pub struct Session {
     pub last_event: String,
     #[serde(default)]
     pub last_event_ts: u64, // unix secs of last hook of any kind — drives elapsed column
-    #[serde(default)]
-    pub created_kiro_config: bool, // true iff this wrap wrote .kiro/agents/kaimux.json
 }
 
 impl Session {
@@ -327,7 +325,6 @@ pub struct WrapCtx<'a> {
 pub struct Prepared {
     pub program: String, // execvp target — split from argv[0] so wrappers can rewrite it
     pub argv: Vec<String>,
-    pub created_kiro_config: bool, // true ⇒ this wrap wrote .kiro/agents/kaimux.json
 }
 
 pub trait Wrapper {
@@ -347,7 +344,6 @@ fn passthrough(ctx: &WrapCtx) -> Prepared {
     Prepared {
         program: ctx.agent_argv[0].clone(),
         argv: ctx.agent_argv.to_vec(),
-        created_kiro_config: false,
     }
 }
 
@@ -371,27 +367,16 @@ impl Wrapper for Kiro {
         "kiro"
     }
 
+    // Observation-only: register, no file write. Kiro hook integration
+    // is a follow-up — the spec calls Kiro observation-only for v1.
     fn prepare(&self, ctx: &WrapCtx) -> Result<Prepared> {
-        let dir = ctx.cwd.join(".kiro").join("agents");
-        let path = dir.join("kaimux.json");
-        let created = !path.exists();
-        if created {
-            fs::create_dir_all(&dir).with_context(|| format!("mkdir -p {}", dir.display()))?;
-            fs::write(
-                &path,
-                serde_json::to_vec_pretty(&build_kiro_config(ctx.self_path))?,
-            )?;
-        }
-        Ok(Prepared {
-            created_kiro_config: created,
-            ..passthrough(ctx)
-        })
+        Ok(passthrough(ctx))
     }
 
-    // Refcount on cwd — keep the project-scoped config alive while any kiro
-    // session in this cwd is live. The created_kiro_config flag isn't
-    // consulted: closing the last reuser removes it even if a different
-    // session created it.
+    // Best-effort cleanup of orphan `<cwd>/.kiro/agents/kaimux.json`
+    // files left by prior installs that did write the file. Skips when
+    // a sibling kiro pane in the same cwd is still live (we still want
+    // to leave the user's other panes alone).
     fn cleanup(&self, _store: &Store, removing: &Session, others: &[Session]) -> Result<()> {
         let has_sibling = others
             .iter()
@@ -523,7 +508,6 @@ pub fn wrap(w: &dyn Wrapper, ctx: &WrapCtx, side_effects: bool) -> Result<Prepar
             state_ts: now,
             last_event: String::new(),
             last_event_ts: 0,
-            created_kiro_config: prepared.created_kiro_config,
         });
         Ok(prepared)
     })?;
@@ -700,26 +684,6 @@ fn unmerge_claude_hooks(settings: &mut serde_json::Value) {
     if hooks.is_empty() {
         root.remove("hooks");
     }
-}
-
-// Same nested schema as Claude's hooks (Kiro reuses the matcher-array shape).
-fn build_kiro_config(self_path: &Path) -> serde_json::Value {
-    use serde_json::json;
-    let s = self_path.to_string_lossy();
-    let entry = |ev: &str| {
-        json!([{
-            "matcher": "",
-            "hooks": [{ "type": "command", "command": format!("{} hook {}", s, ev) }],
-        }])
-    };
-    json!({
-        "hooks": {
-            EVT_USER_PROMPT_SUBMIT: entry(EVT_USER_PROMPT_SUBMIT),
-            EVT_PRE_TOOL_USE:       entry(EVT_PRE_TOOL_USE),
-            EVT_POST_TOOL_USE:      entry(EVT_POST_TOOL_USE),
-            EVT_STOP:               entry(EVT_STOP),
-        }
-    })
 }
 
 // Bind <prefix> <suffix> → switch-client. Prefix-bound (not root-bound)
@@ -1361,7 +1325,6 @@ mod tests {
             state_ts: started,
             last_event: String::new(),
             last_event_ts: 0,
-            created_kiro_config: false,
         }
     }
 
@@ -1699,7 +1662,6 @@ mod tests {
         let p = Claude.prepare(&ctx).unwrap();
         assert_eq!(p.program, "claude");
         assert_eq!(p.argv, vec!["claude", "--resume", "abc"]);
-        assert!(!p.created_kiro_config);
     }
 
     #[test]
@@ -1944,10 +1906,12 @@ mod tests {
         assert_eq!(after, before);
     }
 
-    // 6 · Wrapper — Kiro prepare + cleanup (refcount) ────────────
+    // 6 · Wrapper — Kiro prepare + cleanup (observation-only) ────
 
     #[test]
-    fn kiro_prepare_writes_project_config_first_time() {
+    fn kiro_prepare_does_not_write_any_file() {
+        // Spec: Kiro is observation-only in v1. prepare must not
+        // touch <cwd>/.kiro/.
         let (dir, store) = fixtures();
         let cwd = dir.path().to_path_buf();
         let argv = vec!["kiro".to_string(), "chat".into()];
@@ -1955,92 +1919,58 @@ mod tests {
         let ctx = ctx(&store, "%1", &cwd, &argv, &self_path);
         let p = Kiro.prepare(&ctx).unwrap();
 
-        assert!(p.created_kiro_config);
-        let cfg = cwd.join(".kiro").join("agents").join("kaimux.json");
-        assert!(cfg.exists());
-        // argv unchanged for kiro
         assert_eq!(p.program, "kiro");
         assert_eq!(p.argv, vec!["kiro", "chat"]);
-
-        let parsed: serde_json::Value = serde_json::from_slice(&fs::read(&cfg).unwrap()).unwrap();
-        // Kiro's project config currently mirrors the original Claude
-        // 4-event set (the new Notification / PostToolUseFailure events
-        // ship to ~/.claude/settings.json only). The wider Kiro hook
-        // integration is a separate decision — see project memory.
-        for ev in [
-            EVT_USER_PROMPT_SUBMIT,
-            EVT_PRE_TOOL_USE,
-            EVT_POST_TOOL_USE,
-            EVT_STOP,
-        ] {
-            let entry = &parsed["hooks"][ev][0];
-            assert_eq!(entry["matcher"], "");
-            assert_eq!(
-                entry["hooks"][0]["command"],
-                format!("/test/kaimux hook {}", ev)
-            );
-        }
+        assert!(
+            !cwd.join(".kiro").exists(),
+            "Kiro::prepare must not create .kiro/"
+        );
     }
 
     #[test]
-    fn kiro_prepare_reuser_does_not_stamp_flag() {
-        let (dir, store) = fixtures();
-        let cwd = dir.path().to_path_buf();
-        let argv = vec!["kiro".to_string()];
-        let self_path = PathBuf::from("/test/kaimux");
-        // First creates.
-        let ctx_a = ctx(&store, "%1", &cwd, &argv, &self_path);
-        let pa = Kiro.prepare(&ctx_a).unwrap();
-        assert!(pa.created_kiro_config);
-        // Second reuses.
-        let ctx_b = ctx(&store, "%2", &cwd, &argv, &self_path);
-        let pb = Kiro.prepare(&ctx_b).unwrap();
-        assert!(!pb.created_kiro_config);
-    }
-
-    #[test]
-    fn kiro_cleanup_keeps_config_while_sibling_alive() {
+    fn kiro_cleanup_removes_stale_kaimux_json_left_by_prior_install() {
+        // Users upgrading from the old binary still carry orphan
+        // <cwd>/.kiro/agents/kaimux.json files. cleanup must remove
+        // the stale file (and the empty parent dirs) on pane-exit
+        // when no sibling kiro session shares the cwd.
         let (dir, store) = fixtures();
         let cwd = dir.path().to_path_buf();
         let cfg = cwd.join(".kiro").join("agents").join("kaimux.json");
-        // Pretend two sessions registered, file exists.
+        fs::create_dir_all(cfg.parent().unwrap()).unwrap();
+        fs::write(&cfg, b"{}").unwrap();
+
+        let removing = mk("%1", "kiro", cwd.to_str().unwrap(), 1);
+        Kiro.cleanup(&store, &removing, &[]).unwrap();
+        assert!(!cfg.exists(), "stale config must be removed");
+        assert!(
+            !cwd.join(".kiro").join("agents").exists(),
+            "empty parent dirs cleaned up"
+        );
+    }
+
+    #[test]
+    fn kiro_cleanup_keeps_stale_file_while_sibling_kiro_in_same_cwd() {
+        // Don't yank a file out from under another live kiro pane —
+        // it isn't ours to manage exclusively, just clean.
+        let (dir, store) = fixtures();
+        let cwd = dir.path().to_path_buf();
+        let cfg = cwd.join(".kiro").join("agents").join("kaimux.json");
         fs::create_dir_all(cfg.parent().unwrap()).unwrap();
         fs::write(&cfg, b"{}").unwrap();
 
         let removing = mk("%1", "kiro", cwd.to_str().unwrap(), 1);
         let sibling = mk("%2", "kiro", cwd.to_str().unwrap(), 2);
         Kiro.cleanup(&store, &removing, &[sibling]).unwrap();
-        assert!(cfg.exists(), "sibling alive — config must remain");
+        assert!(cfg.exists(), "sibling alive — leave the file alone");
     }
 
     #[test]
-    fn kiro_cleanup_removes_config_when_last_session_closes_creator_first_ordering() {
-        // The load-bearing case: the creator closes first while a
-        // reuser remains, so the file stays. Then the reuser closes;
-        // its created_kiro_config=false, but cleanup is refcount-
-        // agnostic so the file must be removed.
+    fn kiro_cleanup_no_op_when_no_stale_file() {
         let (dir, store) = fixtures();
         let cwd = dir.path().to_path_buf();
-        let cfg = cwd.join(".kiro").join("agents").join("kaimux.json");
-        fs::create_dir_all(cfg.parent().unwrap()).unwrap();
-        fs::write(&cfg, b"{}").unwrap();
-
-        let creator = {
-            let mut s = mk("%1", "kiro", cwd.to_str().unwrap(), 1);
-            s.created_kiro_config = true;
-            s
-        };
-        let reuser = mk("%2", "kiro", cwd.to_str().unwrap(), 2); // flag false
-                                                                 // Creator closes first while reuser is still alive.
-        Kiro.cleanup(&store, &creator, std::slice::from_ref(&reuser))
-            .unwrap();
-        assert!(cfg.exists(), "creator closed but reuser alive — keep file");
-        // Reuser closes last.
-        Kiro.cleanup(&store, &reuser, &[]).unwrap();
-        assert!(
-            !cfg.exists(),
-            "reuser was last — file must go (refcount-agnostic)"
-        );
+        let removing = mk("%1", "kiro", cwd.to_str().unwrap(), 1);
+        Kiro.cleanup(&store, &removing, &[]).unwrap();
+        // Nothing existed; nothing to verify beyond "didn't error".
     }
 
     // 7 · Wrapper — top-level wrap() integration  ────────────────
@@ -2061,11 +1991,10 @@ mod tests {
         assert_eq!(v[0].pid, std::process::id() as i32);
         // Fresh wrap with no events fired yet sits in Done.
         assert_eq!(v[0].state, State::Done);
-        assert!(!v[0].created_kiro_config);
     }
 
     #[test]
-    fn wrap_kiro_stamps_created_flag_and_writes_project_config() {
+    fn wrap_kiro_registers_observation_only_no_files_written() {
         let (dir, store) = fixtures();
         let cwd = dir.path().to_path_buf();
         let argv = vec!["kiro-stub".to_string()];
@@ -2075,8 +2004,8 @@ mod tests {
 
         let v = store.read().unwrap();
         assert_eq!(v.len(), 1);
-        assert!(v[0].created_kiro_config);
-        assert!(cwd.join(".kiro/agents/kaimux.json").exists());
+        assert_eq!(v[0].kind, "kiro");
+        assert!(!cwd.join(".kiro").exists(), "Kiro must not create .kiro/");
     }
 
     #[test]
@@ -2141,10 +2070,10 @@ mod tests {
 
     #[test]
     fn wrap_replaces_stale_kiro_runs_per_kind_cleanup() {
-        // Stale-record replacement also runs the prior kind's
-        // cleanup. For Kiro, that's the refcount-agnostic check —
-        // and since the stale record was the only kiro session in
-        // that cwd, the project config gets removed.
+        // Stale-record replacement runs the prior kind's cleanup.
+        // For Kiro that means orphan kaimux.json files left by an
+        // older binary get cleaned up — even though the new
+        // observation-only Kiro::prepare itself never writes one.
         let (dir, store) = fixtures();
         let cwd = dir.path().to_path_buf();
         let cfg = cwd.join(".kiro").join("agents").join("kaimux.json");
@@ -2156,29 +2085,22 @@ mod tests {
             .mutate(|v| {
                 let mut s = mk("%9", "kiro", cwd.to_str().unwrap(), 1);
                 s.pid = dp;
-                s.created_kiro_config = true;
                 v.push(s);
                 Ok(())
             })
             .unwrap();
 
-        // Wrap a fresh kiro on the same pane. Stale cleanup removes
-        // the old config; prepare immediately writes a new one.
         let argv = vec!["kiro".to_string()];
         let self_path = PathBuf::from("/test/kaimux");
         let ctx = ctx(&store, "%9", &cwd, &argv, &self_path);
         wrap(&Kiro, &ctx, false).unwrap();
 
-        // The new wrap re-created the kiro config (its prepare runs
-        // ensure_kiro_config and sees the file absent after stale
-        // cleanup ran).
-        assert!(cfg.exists());
+        // Stale cleanup removed the orphan file; new observation-only
+        // prepare didn't write a replacement.
+        assert!(!cfg.exists());
         let v = store.read().unwrap();
         assert_eq!(v.len(), 1);
-        assert!(
-            v[0].created_kiro_config,
-            "fresh wrap should be the creator since stale cleanup removed the file"
-        );
+        assert_eq!(v[0].kind, "kiro");
     }
 
     #[test]
@@ -2260,18 +2182,26 @@ mod tests {
 
     #[test]
     fn unregister_runs_per_kind_cleanup_via_trait() {
+        // Pre-place an orphan kaimux.json (simulates an upgrade from
+        // the old binary that did write the file). Wrap a kiro pane,
+        // unregister, assert the orphan was cleaned by Kiro::cleanup.
         let (dir, store) = fixtures();
         let cwd = dir.path().to_path_buf();
+        let cfg = cwd.join(".kiro/agents/kaimux.json");
+        fs::create_dir_all(cfg.parent().unwrap()).unwrap();
+        fs::write(&cfg, b"{}").unwrap();
+
         let argv = vec!["stub".to_string()];
         let self_path = PathBuf::from("/test/kaimux");
         let ctx = ctx(&store, "%1", &cwd, &argv, &self_path);
         wrap(&Kiro, &ctx, false).unwrap();
-        let cfg = cwd.join(".kiro/agents/kaimux.json");
-        assert!(cfg.exists());
 
         unregister(&store, "%1").unwrap();
         assert!(store.read().unwrap().is_empty());
-        assert!(!cfg.exists(), "Kiro::cleanup should have removed config");
+        assert!(
+            !cfg.exists(),
+            "Kiro::cleanup should have removed the orphan config"
+        );
     }
 
     #[test]

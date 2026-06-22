@@ -1,6 +1,6 @@
 ---
 name: kaimux-functional-tests-in-rust
-description: Consider rewriting kaimux/tests/functional-test.sh as a Rust harness so assertions are typed and helpers are sharable with unit tests.
+description: Consider rewriting kaimux/tests/functional-automated.sh as a Rust harness so assertions are typed and helpers are sharable with unit tests.
 metadata:
   type: backlog
 ---
@@ -9,7 +9,7 @@ metadata:
 
 ## What
 
-Move `kaimux/tests/functional-test.sh` (~550 LOC bash, F1–F8
+Move `kaimux/tests/functional-automated.sh` (~550 LOC bash, F1–F8
 scenarios driving real claude/kiro-cli on the user's tmux
 server) to a Rust harness behind `cargo test --features
 functional` (or a `tests/functional.rs` integration test).
@@ -46,6 +46,6 @@ The case against rewriting *now*:
 ## Provenance
 
 Surfaced on PR #24 in the
-[`functional-test.sh:1` review thread](https://github.com/kusimari/mAId/pull/24#discussion_r3415854364).
+[`functional-automated.sh:1` review thread](https://github.com/kusimari/mAId/pull/24#discussion_r3415854364).
 The agent committed an F1–F8 scenario index in `f701699` and
 deferred the Rust rewrite pending a real friction point.

@@ -611,7 +611,7 @@ The cases where Rust would shine — concurrent state,
 structured polling, type-safe parsing — aren't hot in
 the current scenarios. Bash also lets the user run a
 single script directly to debug a fixture by hand
-(`functional-test.sh F2b`), which a `cargo test
+(`functional-automated.sh F2b`), which a `cargo test
 --features functional` workflow forces into a
 recompile cycle. Re-evaluate if the functional script
 grows past ~500 lines or if cross-platform assertions
@@ -626,12 +626,12 @@ update loop quietly stopped."
 
 Three scripts:
 
-- `functional-setup.sh <KEY>` — spawns a four-session
+- `functional-automated-setup.sh <KEY>` — spawns a four-session
   fixture and runs `kaimux setup --key <KEY>`.
-- `functional-test.sh` — fires real prompts at the wrapped
+- `functional-automated.sh` — fires real prompts at the wrapped
   agents via `tmux send-keys`, polls the dashboard, asserts
   the user-observable behaviors below.
-- `functional-teardown.sh` — kills the fixture, runs
+- `functional-automated-teardown.sh` — kills the fixture, runs
   `kaimux teardown`. Idempotent.
 
 The fixture (four tmux sessions on the live server,
@@ -650,7 +650,7 @@ message rather than failing.
 
 #### F1. Setup spawns the multi-session fixture cleanly
 
-After `functional-setup.sh O`:
+After `functional-automated-setup.sh O`:
 
 - `tmux ls` shows all four sessions.
 - The dashboard (`kaimux render`) emits one item per
@@ -942,9 +942,9 @@ sources/kaimux/
 
 tests/kaimux/
 ├── integration.sh                private-server shell-driven E2E (load-bearing)
-├── functional-setup.sh           live-server fixture spawn (user-driven)
-├── functional-test.sh            live-server prompt-driven assertions (user-driven)
-└── functional-teardown.sh        live-server fixture cleanup (idempotent)
+├── functional-automated-setup.sh           live-server fixture spawn (user-driven)
+├── functional-automated.sh            live-server prompt-driven assertions (user-driven)
+└── functional-automated-teardown.sh        live-server fixture cleanup (idempotent)
 
 dist/kaimux/kaimux        gitignored; the released binary
 ```
@@ -1688,7 +1688,7 @@ as separate slices.
   follow-up section below.
 - **[Open] Functional fixture (F1–F8) has not been
   driven through the full user-loop yet.** All
-  scenarios are coded (`kaimux/tests/functional-test.sh`);
+  scenarios are coded (`kaimux/tests/functional-automated.sh`);
   needs a user-driven run against real claude/kiro-cli
   on the live tmux server. Costs API credits.
 

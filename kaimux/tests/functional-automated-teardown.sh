@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# tests/kaimux/functional-teardown.sh — undo functional-setup.sh.
+# tests/kaimux/functional-automated-teardown.sh — undo functional-automated-setup.sh.
 #
-# Kills the four sessions the setup script creates (proj-a, proj-b,
-# proj-c, kaimux), runs `kaimux teardown` to remove the
-# user-global Claude hooks and any prefix-table keybind that routes
-# to the kaimux session (self-discovered — no key argument
-# needed), and clears the registry file. Idempotent — safe to run
-# when nothing is set up.
+# Kills the four kaimux-test-* sessions the setup script creates,
+# runs `kaimux teardown` to remove the user-global Claude hooks
+# and any prefix-table keybind that routes to the dashboard
+# (self-discovered — no key argument needed), and clears the
+# registry file. Idempotent — safe to run when nothing is set up.
 
 set -euo pipefail
 
@@ -16,7 +15,13 @@ BIN="$ROOT/dist/kaimux"
 
 TMUX_BIN="$(command -v tmux)"
 
-SESSIONS=(kaimux proj-a proj-b proj-c)
+# Match the prefix the setup script uses. Hardcoded so this stays
+# usable as a manual cleanup script even if setup wasn't run from
+# the same shell session.
+PREFIX="kaimux-test-"
+DASHBOARD="${PREFIX}dashboard"
+SESSIONS=("$DASHBOARD" "${PREFIX}proj-a" "${PREFIX}proj-b" "${PREFIX}proj-c")
+CWDS=("/tmp/${PREFIX}proj-a" "/tmp/${PREFIX}proj-b" "/tmp/${PREFIX}proj-c")
 REG="$HOME/.local/state/kaimux/sessions.json"
 
 ok()   { printf '\033[32m[ok]\033[0m %s\n' "$*"; }
@@ -64,15 +69,17 @@ if [[ -f "$REG" ]]; then
   ok "cleared registry: $REG"
 fi
 
-# Also clean up any project-scoped Kiro configs the wrapper wrote
-# during the test cycle. Refcount-agnostic cleanup normally handles
-# this on unregister, but again, we may have raced ahead.
-for d in /tmp/proj-a /tmp/proj-b /tmp/proj-c; do
+# Sweep any orphan project-scoped Kiro configs left under the
+# fixture cwds. Kiro is observation-only in v1 — wrap never writes
+# kaimux.json — so this should be a no-op on a fresh checkout. It's
+# kept as a safety net for anyone with leftovers from an older
+# binary that did write the file.
+for d in "${CWDS[@]}"; do
   if [[ -f "$d/.kiro/agents/kaimux.json" ]]; then
     rm -f "$d/.kiro/agents/kaimux.json"
     rmdir "$d/.kiro/agents" 2>/dev/null || true
     rmdir "$d/.kiro" 2>/dev/null || true
-    ok "cleared kiro config under $d"
+    ok "cleared orphan kiro config under $d"
   fi
 done
 
