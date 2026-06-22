@@ -6,9 +6,11 @@
 # the legacy flat Justfile.
 
 # Validate content and create/refresh $HOME-facing symlinks.
+# Pass flags through, e.g. `just resources::install --force` to repoint
+# symlinks that currently point elsewhere.
 [no-cd]
-install:
-    cargo run -p build-tool --release --quiet -- install
+install *FLAGS:
+    cargo run -p build-tool --release --quiet -- install {{ FLAGS }}
 
 # Remove install-managed symlinks.
 [no-cd]

@@ -33,7 +33,10 @@ a sketch to validate after the fact.
    Design primitives — is the default; situation overrides
    when it doesn't fit.
 3. **Design.** Lead with rationale — why this shape, what
-   was considered and rejected. Then the technical approach:
+   was considered and rejected, including **what well-known
+   library or language idiom already does this job** (name it
+   before designing a hand-rolled alternative; see SKILL.md §6
+   "Reach for what exists"). Then the technical approach:
    components, interactions, trade-offs. A reader shouldn't
    reach the end of Design before learning why it's shaped
    the way it is.
