@@ -1,0 +1,36 @@
+# Resources verbs operate on $HOME — they read or write the
+# symlinks the AI tools consume. Validation of content runs
+# inside `install`. Recipes invoke from the workspace root
+# (via `[no-cd]`), so `cargo run -p build-tool` and
+# `resources/tests/run` resolve against the same paths as
+# the legacy flat Justfile.
+
+# Validate content and create/refresh $HOME-facing symlinks.
+# Pass flags through, e.g. `just resources::install --force` to repoint
+# symlinks that currently point elsewhere.
+[no-cd]
+install *FLAGS:
+    cargo run -p build-tool --release --quiet -- install {{ FLAGS }}
+
+# Remove install-managed symlinks.
+[no-cd]
+uninstall:
+    cargo run -p build-tool --release --quiet -- uninstall
+
+# Report each managed symlink's state.
+[no-cd]
+status:
+    cargo run -p build-tool --release --quiet -- status
+
+# Drive the AI tools (claude --print, kiro-cli) against the
+# installed content to confirm skills load correctly. Costs API
+# credits and takes minutes — gated behind a confirmation prompt.
+[confirm("This costs API credits and takes minutes. Continue? (y/N)")]
+[no-cd]
+verify:
+    resources/tests/run
+
+# Drive a single fixture (e.g. `just resources::verify-one kdevkit`).
+[no-cd]
+verify-one name:
+    resources/tests/run "{{ name }}"

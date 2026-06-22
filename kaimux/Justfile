@@ -1,0 +1,54 @@
+# kaimux verbs build and test the tmux-pane orchestrator. Builds
+# in release and lands a flat binary at dist/kaimux. No symlinking;
+# users invoke the binary directly (typically via the tmux
+# keybinding `kaimux setup` installs).
+#
+# `[no-cd]` keeps the recipe in the workspace root so cargo's
+# workspace target dir (`target/release/kaimux`) and the relative
+# integration script path resolve correctly. Without it Just would
+# chdir into kaimux/ and the target/dist paths would be wrong.
+
+# Build kaimux in release; copy to dist/kaimux.
+[no-cd]
+build:
+    cargo build -p kaimux --release
+    mkdir -p dist
+    cp target/release/kaimux dist/kaimux
+
+# Kaimux unit tests (sub-second).
+[no-cd]
+test:
+    cargo test -p kaimux
+
+# Kaimux end-to-end integration test (real tmux, requires tmux + jq).
+[no-cd]
+integration: build
+    kaimux/tests/integration.sh
+
+# Spins up the kaimux-test-* fixture, runs F1–F8, tears down. Wrapped
+# in `zsh -lc` so the user's login PATH (the one that promotes
+# ~/.toolbox/bin) is in effect — claude/kiro-cli resolve via the
+# toolbox shims rather than whatever bare-PATH would pick. KEY is the
+# tmux prefix-table suffix to bind for "switch back to the dashboard"
+# (e.g. `O`); pass `none` to install hooks only. Teardown runs even
+# if the F-block run fails.
+#
+# Safe to run from inside tmux: the recipe unsets $TMUX before
+# invoking the test scripts. The scripts themselves still refuse if
+# $TMUX is set (a guardrail for direct invocation) — they only
+# send-keys into kaimux-test-* panes, never the caller's session.
+#
+# Drive F1–F8 against real claude/kiro-cli (costs API credits + minutes).
+[confirm("This costs API credits and runs against real claude/kiro-cli. Continue? (y/N)")]
+[no-cd]
+functional KEY="O": build
+    #!/usr/bin/env bash
+    set -uo pipefail
+    cmd='set -uo pipefail
+    bash kaimux/tests/functional-automated-setup.sh "$1" || exit
+    bash kaimux/tests/functional-automated.sh
+    rc=$?
+    bash kaimux/tests/functional-automated-teardown.sh
+    exit $rc'
+    env -u TMUX -u TMUX_PANE -u TMUX_PLUGIN_MANAGER_PATH \
+      zsh -lc "$cmd" zsh "{{ KEY }}"

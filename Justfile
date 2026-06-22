@@ -1,40 +1,17 @@
 _default:
-    @just --list --unsorted
+    @just --list --unsorted --list-submodules
 
-# ── resources ────────────────────────────────────────────────────
-# These verbs operate on $HOME — they read or write the symlinks
-# the AI tools consume. Validation of content runs inside `install`.
+# ── modules ──────────────────────────────────────────────────────
+# Per-area verbs live next to the area they operate on. Invoke as
+# `just resources::install`, `just kaimux::build`, etc.
+mod resources
+mod kaimux
 
-# Validate content and create/refresh $HOME-facing symlinks.
-# Pass flags through, e.g. `just install --force` to repoint
-# symlinks that currently point elsewhere.
-install *FLAGS:
-    cargo run -p build-tool --release --quiet -- install {{ FLAGS }}
+# ── workspace hygiene ────────────────────────────────────────────
+# These verbs operate on the Rust workspace itself. They never touch
+# $HOME or AI tools.
 
-# Remove install-managed symlinks.
-uninstall:
-    cargo run -p build-tool --release --quiet -- uninstall
-
-# Report each managed symlink's state.
-status:
-    cargo run -p build-tool --release --quiet -- status
-
-# Drive the AI tools (claude --print, kiro-cli) against the
-# installed content to confirm skills load correctly. Costs API
-# credits and takes minutes — gated behind a confirmation prompt.
-[confirm("This costs API credits and takes minutes. Continue? (y/N)")]
-verify:
-    resources/tests/run
-
-# Drive a single fixture (e.g. `just verify-one kdevkit`).
-verify-one name:
-    resources/tests/run "{{ name }}"
-
-# ── build-tool hygiene ───────────────────────────────────────────
-# These verbs operate on the Rust crate that implements install /
-# uninstall / status. They never touch $HOME.
-
-# Workspace unit tests for build-tool (sub-second; tempfile-fake-HOME).
+# Workspace unit tests for every member.
 test:
     cargo test --workspace
 
@@ -50,5 +27,5 @@ lint:
 check:
     cargo check --workspace
 
-# Full build-tool quality + test gate.
+# Full workspace quality + test gate.
 ci: fmt-check lint check test

@@ -11,13 +11,15 @@ The repo has two halves:
   the markdown content (`resources/content/`) the AI tools
   load; the Rust + bash tooling (`resources/build-tool/`,
   `resources/tests/run`) that installs and tests it; and
-  the Justfile verbs (`install`, `uninstall`, `status`,
-  `verify`) that drive the tooling.
+  the Justfile verbs (`resources::install`,
+  `resources::uninstall`, `resources::status`,
+  `resources::verify`) that drive the tooling.
 - **`kaimux/`** — sibling workspace member for the kaimux
-  app (placeholder; lands with code in its own feature).
+  tmux-pane orchestrator. Built via `kaimux::build`.
 
-`just install` creates symlinks from `$HOME` into the
-content tree so edits are live for the next AI session.
+`just resources::install` creates symlinks from `$HOME`
+into the content tree so edits are live for the next AI
+session.
 
 ## Develop
 
@@ -40,24 +42,31 @@ Feature specs: [`specs/feature/`](./specs/feature/).
 
 ## Verbs
 
-Two groups, separated by what they touch:
+Three groups, namespaced by what they touch:
 
-**AI verbs** — operate on `$HOME` or the AI tools:
-
-```
-just install      # validate content + create $HOME-facing symlinks
-just uninstall    # remove install-managed symlinks
-just status       # report current symlink state
-just verify       # drive `claude --print` against installed content (costs API credits, gated)
-just verify-one <name>   # single fixture
-```
-
-**Build-tool hygiene** — operate on the Rust crate that
-implements the AI verbs; never touch `$HOME` or the AI
-tools:
+**`resources::*`** — operate on `$HOME` or the AI tools:
 
 ```
-just test         # workspace unit tests (sub-second; tempfile-fake-HOME)
+just resources::install     # validate content + create $HOME-facing symlinks
+just resources::uninstall   # remove install-managed symlinks
+just resources::status      # report current symlink state
+just resources::verify      # drive `claude --print` against installed content (costs API credits, gated)
+just resources::verify-one <name>   # single fixture
+```
+
+**`kaimux::*`** — operate on the kaimux crate:
+
+```
+just kaimux::build          # release build + copy to dist/kaimux
+just kaimux::test           # unit tests
+just kaimux::integration    # end-to-end tmux integration test
+```
+
+**Workspace hygiene** (no namespace; operates on every
+member):
+
+```
+just test         # workspace unit tests (sub-second; tempfile-fake-HOME for resources, tempdir Store for kaimux)
 just fmt          # rustfmt
 just fmt-check    # rustfmt --check
 just lint         # clippy --workspace --all-targets -- -D warnings
@@ -68,7 +77,7 @@ just ci           # the full hygiene gate
 ## Install
 
 ```
-just install
+just resources::install
 ```
 
 What it does:
@@ -86,7 +95,7 @@ What it does:
    plus the skills tree (`~/.claude/skills` and
    `~/.kiro/steering/skills`).
 
-`just uninstall` is idempotent. Hand-written files at a
+`just resources::uninstall` is idempotent. Hand-written files at a
 managed destination are preserved unless you pass
 `--force`.
 
