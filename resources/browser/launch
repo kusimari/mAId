@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# mAId/resources/browser/launch — start the chrome-devtools-mcp
+# server against the user's already-running Chrome, restricted to
+# the sites on the user's allowlist.
+#
+# The MCP registration (see the browser-mcp-* verbs in
+# resources/Justfile) points the server-launch command here, so
+# this runs every time the agent's browser server (re)connects.
+# That is what makes an allowlist edit take effect on the next
+# connection without restarting Chrome: this script re-reads the
+# file each run.
+#
+# Allowlist:
+#   - File of URL patterns, one per line. Blank lines and lines
+#     starting with `#` are ignored. Patterns are passed to the
+#     server VERBATIM — mAId defines no pattern syntax; whatever
+#     the browser's allowed-pattern flag accepts is what you write.
+#   - Path resolves from $MAID_BROWSER_ALLOWLIST, else
+#     ${XDG_CONFIG_HOME:-$HOME/.config}/maid/browser-allowlist.
+#   - DENY BY DEFAULT: an empty or absent allowlist refuses to
+#     start rather than exposing every logged-in site.
+#
+# Runtime is environment-provided: this calls `npx`, which must be
+# on PATH (e.g. from the user's version manager). mAId does not
+# install it.
+
+set -euo pipefail
+
+ALLOWLIST="${MAID_BROWSER_ALLOWLIST:-${XDG_CONFIG_HOME:-$HOME/.config}/maid/browser-allowlist}"
+
+die() { printf 'browser/launch: %s\n' "$*" >&2; exit 1; }
+
+command -v npx >/dev/null 2>&1 \
+    || die "npx not found on PATH — install a Node.js LTS runtime (e.g. via your version manager) and retry"
+
+[[ -f "$ALLOWLIST" ]] \
+    || die "no allowlist at $ALLOWLIST — add at least one site pattern (deny-by-default); see: just resources::browser-mcp-allow '<pattern>'"
+
+# Read non-blank, non-comment lines into one allowed-pattern flag
+# each. Patterns pass through unaltered.
+patterns=()
+while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line#"${line%%[![:space:]]*}"}"   # ltrim
+    line="${line%"${line##*[![:space:]]}"}"   # rtrim
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    patterns+=(--allowedUrlPattern "$line")
+done <"$ALLOWLIST"
+
+(( ${#patterns[@]} > 0 )) \
+    || die "allowlist $ALLOWLIST has no site patterns (only blanks/comments) — add at least one (deny-by-default)"
+
+exec npx chrome-devtools-mcp@latest --autoConnect "${patterns[@]}"
