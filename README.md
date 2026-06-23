@@ -52,6 +52,11 @@ just resources::uninstall   # remove install-managed symlinks
 just resources::status      # report current symlink state
 just resources::verify      # drive `claude --print` against installed content (costs API credits, gated)
 just resources::verify-one <name>   # single fixture
+
+just resources::browser-mcp-install     # register the browser-control MCP server with each harness
+just resources::browser-mcp-uninstall   # remove it (keeps your allowlist)
+just resources::browser-mcp-status      # report registration state + allowlist size
+just resources::browser-mcp-allow <pattern>   # append a site pattern to the allowlist
 ```
 
 **`kaimux::*`** — operate on the kaimux crate:
@@ -105,6 +110,37 @@ across Codex, Copilot, Cursor, Kiro, Zed, Windsurf). The
 legacy `CLAUDE.md` and `KIRO.md` filenames symlink at the
 same source — drop them when Claude Code makes AGENTS.md a
 default-read location.
+
+## Browser control
+
+`resources::browser-mcp-install` registers Google's
+`chrome-devtools-mcp` server with the installed agent
+harness(es), so the agent can drive your real, already-running
+Chrome (open, navigate, fill, submit, read). It's the first
+non-skill resource mAId installs; it's desktop-only and skips
+gracefully where there's no graphical Chrome, no `npx` runtime
+(environment-provided — mAId doesn't install Node), or no
+harness CLI.
+
+Two things to know before first use:
+
+1. **One-time browser setup.** Enable remote debugging once in
+   Chrome via `chrome://inspect/#remote-debugging`, then accept
+   the permission prompt the first time the agent attaches. The
+   install verb prints this reminder.
+2. **Allowlist (deny-by-default).** The agent may act *only* on
+   sites you allow-list — the browser enforces it. The allowlist
+   is your own plain-text file (default
+   `~/.config/maid/browser-allowlist`, or set
+   `$MAID_BROWSER_ALLOWLIST`), one pattern per line. An empty or
+   absent list refuses to start rather than exposing every
+   logged-in site. Edit it directly or use
+   `resources::browser-mcp-allow '<pattern>'`; changes take
+   effect on the next session — Chrome is not restarted.
+
+The `browser` skill teaches the agent the safe driving loop and
+the attended-use safety posture. `browser-mcp-uninstall` removes
+the registration but leaves your allowlist in place.
 
 ## Where to look next
 
