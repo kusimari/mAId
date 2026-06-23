@@ -230,6 +230,20 @@ Review Gate and before push.
   (`feat/kaimux`, `feat/kiro-observation-only`) touches the kdevkit
   skill files — the `git diff main` "removals" were just those
   branches sitting behind main's v3.4.0. No collision.
+- 2026-06-23 · Rebased onto main (`0eefca5`, kaimux merge #24);
+  committed plan + opened Planning Review Gate (PR #27) from the
+  `mAId-prose-repin` worktree. Plan approved → dev loop.
+- 2026-06-23 · Slice 1 built: comment-style clause + "Re-pin on
+  reactive change" §7 subsection + Code-Review loop-back cross-ref;
+  version 3.4.0 → 3.5.0; two judge fixtures. Quality Gate green
+  (fmt-check/lint/check), Test Gate green (53 passed; content
+  validator + frontmatter tests exercise the edited SKILL.md).
+  Code Review Gate: **92/100** (host-native fresh-context, threshold
+  70) → pass. Two low findings, both ordering/phrasing ergonomics
+  ("no change required"): re-pin subsection precedes its gate caller
+  in linear reading (back-ref in loop-back step 2 closes it);
+  both new rules anchor to §6 (distinct mechanics, lists
+  disambiguate). Public-repo hygiene confirmed clean by reviewer.
 
 ## Decision Log
 
