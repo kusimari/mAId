@@ -122,10 +122,18 @@ server with each agent harness. It establishes the pattern for
 
 - Real end-to-end driving (register → enable remote debugging →
   drive an allow-listed public site → confirm an off-list site
-  is blocked) is **manual on a desktop**, documented as a
-  checklist in the spec's verification. The allowlist
-  deny-by-default behavior and the off-list block are verified
-  here, since they need a live browser.
+  is blocked) is **attended desktop-manual**, now codified as a
+  runnable test: `just resources::browser-functional-test
+  [claude|kiro]` (script: `resources/tests/browser-functional`).
+  It drives the chosen harness(es) through the real browser MCP
+  against an isolated temp allowlist, asserts an allow-listed
+  site loads and an off-list site is **blocked** (the agent must
+  emit `BLOCKED`; a loaded off-list title fails the check). Run
+  by hand because it takes control of Chrome — gated with a
+  `[confirm]` and separate from the bulk `.smoke` runner (which
+  only checks skill knowledge). The harness's own pass/fail
+  logic was validated with stubbed CLIs; the live drive is the
+  user's.
 - Launcher allowlist-argument construction (reads the file →
   one block flag per listed site, refuses on empty) is simple
   enough to eyeball; a shell-level check is nice-to-have, not
@@ -257,24 +265,31 @@ decoupled from the browser's pattern grammar as it evolves.
 
 ## Implementation Plan
 
-- [ ] **Skill.** Write `resources/content/skills/browser/SKILL.md`
+- [x] **Skill.** Write `resources/content/skills/browser/SKILL.md`
   — generic/public wording, the tool list, the
   snapshot→act→verify loop, the allowlist guardrail, and the
   attended-use safety posture. (Rides existing registry; verify
   with `just status` that the symlink resolves it.)
-- [ ] **Launcher.** Add the POSIX-shell launcher: resolve
+- [x] **Launcher.** Add the POSIX-shell launcher: resolve
   allowlist path (default + env override), parse patterns,
   deny-by-default on empty, build enforced-allow flags, exec the
-  server via the environment runtime with `--autoConnect`.
-- [ ] **Module verbs.** Add `browser-mcp-install` /
+  server with `--autoConnect`. (Revised: self-enters mAId's flake
+  for the Node runtime via `nix develop`.)
+- [x] **Module verbs.** Add `browser-mcp-install` /
   `browser-mcp-uninstall` / `browser-mcp-status` /
   `browser-mcp-allow` to `resources/Justfile` (the `resources::`
   module), with prereq detection and graceful skip, calling the
   harness MCP CLIs.
-- [ ] **Smoke fixture.** Add
+- [x] **Smoke fixture.** Add
   `resources/tests/skills/browser-*.smoke` (substring + judge)
   asserting the skill loads and teaches the safety posture.
-- [ ] **Docs.** README/Justfile-help touch so the new verbs and
+- [x] **Attended functional test.** Add
+  `resources/tests/browser-functional` + the
+  `browser-functional-test` verb: drive claude/kiro through the
+  real browser MCP against an isolated allowlist; assert an
+  allow-listed site loads and an off-list site is blocked.
+  `[confirm]`-gated; user-run.
+- [x] **Docs.** README/Justfile-help touch so the new verbs and
   the one-time browser setup are discoverable.
 
 - *Risk note:* enforced-allow flag is browser-version-gated;
@@ -337,8 +352,16 @@ decoupled from the browser's pattern grammar as it evolves.
   actually started chrome-devtools-mcp (real startup banner);
   deny-by-default and no-nix error paths still hold through the
   re-exec. Updated README + spec rationale.
-
-## Decision Log
+- 2026-06-23 · User confirmed a manual install/allow/drive in
+  claude worked. Added an **attended functional test**
+  (`resources/tests/browser-functional` + `browser-functional-test`
+  verb) that drives claude/kiro through the real browser MCP
+  against an isolated temp allowlist and asserts allow-listed
+  load + off-list block. `[confirm]`-gated, separate from the
+  bulk `.smoke` runner. Validated pass/fail/skip logic with
+  stubbed CLIs (incl. a deliberately-broken off-list stub that
+  correctly FAILs); user runs the live drive. shellcheck clean,
+  `just ci` green.
 
 <!-- append: decision · rationale · alternatives rejected -->
 

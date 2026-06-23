@@ -57,6 +57,7 @@ just resources::browser-mcp-install     # register the browser-control MCP serve
 just resources::browser-mcp-uninstall   # remove it (keeps your allowlist)
 just resources::browser-mcp-status      # report registration state + allowlist size
 just resources::browser-mcp-allow <pattern>   # append a site pattern to the allowlist
+just resources::browser-functional-test [claude|kiro]   # ATTENDED: drives real Chrome (run by hand)
 ```
 
 **`kaimux::*`** — operate on the kaimux crate:

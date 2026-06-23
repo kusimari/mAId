@@ -62,3 +62,12 @@ browser-mcp-status:
 [no-cd]
 browser-mcp-allow pattern:
     resources/browser/manage allow "{{ pattern }}"
+
+# ATTENDED functional test: drive claude/kiro to open real Chrome
+# via the browser MCP against an isolated allowlist, and confirm an
+# off-list site is blocked. Takes control of your browser — run it
+# by hand. Requires browser-mcp-install + Chrome remote debugging.
+[confirm("This drives your real Chrome through claude/kiro. Chrome must be running with remote debugging enabled. Continue? (y/N)")]
+[no-cd]
+browser-functional-test *TOOL:
+    resources/tests/browser-functional {{ TOOL }}
