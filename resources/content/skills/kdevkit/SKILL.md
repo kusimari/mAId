@@ -1,7 +1,7 @@
 ---
 name: kdevkit
 description: Spec-driven development workflow — four tiers (project / initiative / feature / backlog), locate spec tree, load context, start a session, run it through planning → dev loop → closure with phase-gating cues, ship via Conventional Commits and Quality/Test/Code-Review/Push/Review gates. Three-phase feature branch on a single PR/CR; main stays single-commit-per-feature via squash. Multi-stream initiatives carry the persistent "you're in stream 2 of 3" context across feature branches. Multi-file skill (always-on SKILL.md + deferred setup.md and interviews.md loaded on demand). Public-repo hygiene. Auto-detects specs/, docs/specs/, or .kdevkit/.
-version: 3.4.0
+version: 3.5.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, initiative, public-repo]
 ---
 
@@ -478,6 +478,53 @@ chain where a plain loop or a typed pattern-match is the
 honest, clearer tool, and don't refactor working code between
 equivalent forms without a readability or correctness gain.
 
+**Comments carry intent, not history.** A comment states the
+present-tense *why* a reader can't read off the code — the
+non-obvious constraint, the gotcha — and stays terse. It does
+not paraphrase the line below it, narrate the decision trail,
+or retell the bug that led here; that history goes to the
+commit / PR / Decision Log (§9 Conventional Commits draws the
+same line — the commit carries *why we changed it*, the comment
+carries *what it is now*). External references are a terse
+pointer (`see project.md "<section>"`), not a retelling of the
+source. Like the rest of this section it's a legibility default,
+not a gate — the Code Review Gate may note a history-narrating
+comment but doesn't hard-stop on phrasing.
+
+### Re-pin on reactive change (always-on)
+
+The altitude rituals in §6 (pin to `project.md`, survey what
+exists, find the right owner, decide the experience before the
+implementation) are gated on *phase* — they fire at planning. But
+a change driven by CR/PR feedback or a verify finding, or any
+mid-dev change the agent makes **reactively**, is just as much a
+design decision; keying the check to *when* (planning) instead of
+*what* (a design decision is being made) lets displaced design
+slip through in fix-mode.
+
+So: before writing a reactive change that **introduces, moves,
+renames, or re-scopes a component, or alters a contract**, re-pin
+with four quick questions —
+
+1. **Owner.** Does `project.md` already name a layer / module /
+   repo whose responsibility this falls under? Put it there, not
+   at the point of failure.
+2. **Altitude.** Is the fix at the right tier, or patching a
+   symptom one level below where the cause lives?
+3. **Reuse / idiom.** Does an existing mechanism already do this
+   that the fix should extend rather than duplicate?
+4. **Symmetry.** If the change adds an install / create / enable,
+   is the inverse (uninstall / delete / disable) covered?
+
+This is §6's "Reach for what exists" and the requirements smell
+test re-fired on the feedback path. **Cost guard:** it's a few
+lines of reasoning in the Session / Decision Log, not a phase
+gate — a pure local fix (off-by-one, wrong string, missing guard)
+doesn't trip it, and when the four answers are trivially "yes,
+right spot" it leaves one log line and proceeds. **Scope limit:**
+the check validates against the *project's own* design; it won't
+surface ecosystem knowledge that lives only in external docs.
+
 ### Inputs · read commands from `project.md`
 
 Read `project.md`'s Testing section for format / lint /
@@ -568,7 +615,8 @@ contract is portable.
      URL where the host produces one) to the feature spec's
      Session Log so they're captured.
   2. Treat the highest-severity findings as the next
-     implementation slice.
+     implementation slice — apply "Re-pin on reactive change"
+     (above) before writing the fix.
   3. Re-enter Quality Gate from the top.
   4. Re-run Test Gate.
   5. Re-run Code Review Gate.
