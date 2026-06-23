@@ -115,12 +115,18 @@ status_kiro() {
 
 cmd_install() {
     LAUNCHER="${1:?manage install: launcher path required}"
-    [[ -x "$LAUNCHER" ]] || { info "launcher not executable: $LAUNCHER"; exit 1; }
+    # A non-executable launcher is a packaging bug, not an
+    # environment gap — hard-fail to stderr, unlike the graceful
+    # prereq skips below.
+    [[ -x "$LAUNCHER" ]] || { printf 'manage: launcher not executable: %s\n' "$LAUNCHER" >&2; exit 1; }
 
     if ! chrome_present; then
         skip "browser-mcp-install (no graphical Chrome found — desktop only)"
         return 0
     fi
+    # Prereq check at install time for a clear up-front skip; the
+    # launcher re-checks npx at each connection, so that is the
+    # real guard if the runtime disappears after install.
     if ! have npx; then
         skip "browser-mcp-install (npx not on PATH — install a Node.js LTS runtime)"
         return 0

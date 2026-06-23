@@ -298,6 +298,19 @@ decoupled from the browser's pattern grammar as it evolves.
   reconnect-rereads-file (Chrome never reloads) as the shipping
   behavior; true mid-session-live and browser-native allowlist
   management recorded as deferred enhancements.
+- 2026-06-22 · Dev loop — built all 5 slices: skill, launcher,
+  `browser-mcp-*` verbs (+ `manage` script), smoke fixture, docs.
+  Functionally tested launcher deny-by-default + pattern parsing
+  with a stubbed runtime, and the full install/status/uninstall
+  lifecycle against the real `claude` CLI (registers, idempotent,
+  clean uninstall, allowlist preserved); kiro skip is auth-gated
+  (logged out → graceful skip with reason). Quality+Test green
+  (`just ci`, shellcheck, 53 Rust tests). Code Review Gate
+  (fresh-context general-purpose agent, host-native): **score
+  88, PASS**, no blockers/majors. Applied 2 nits (fatal launcher
+  msg → stderr; npx recheck comment); verified the status-exit
+  finding was a non-issue (`claude mcp get` / `kiro mcp status
+  --name` both return 1 on absence).
 
 ## Decision Log
 
@@ -359,3 +372,9 @@ decoupled from the browser's pattern grammar as it evolves.
   connection-level consent only, with no per-site allowlist UI
   to build on. The user-owned file stays the source of truth;
   a browser-native surface is a later abstraction.
+- **`@latest` server pin kept** (code review nit). The launcher
+  runs `npx chrome-devtools-mcp@latest` so it tracks the
+  Chrome-team releases, as the spec chose. Noted risk: a future
+  rename of the enforced-allow flag could silently break
+  enforcement. Pinning a major is a possible later hardening;
+  not changed now to avoid a silent deviation from the plan.
