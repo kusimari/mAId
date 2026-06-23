@@ -198,7 +198,7 @@ Review Gate and before push.
      (per the packaging decision), with one combined dev commit
      and the two fixtures. -->
 
-- [ ] **Slice 1 — both §7 prose rules + two fixtures (combined).**
+- [x] **Slice 1 — both §7 prose rules + two fixtures (combined).**
   - Append the comment-style clause to §7 "Write for intent."
   - Add the §7 "Re-pin on reactive change" subsection (4-question
     check + cost guard + scope-limit note + cross-refs).
