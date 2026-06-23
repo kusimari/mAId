@@ -163,14 +163,24 @@ Instead the registration points at a thin launcher that reads
 the user's allowlist file at each launch; editing the file is
 all it takes to change what the agent may touch.
 
-**Tooling is environment-provided.** Per project convention,
-mAId reuses the runtime the environment already supplies (the
-JS runtime that runs the server comes from the user's
-environment, e.g. a version manager) and does not install it.
-mAId-owned scripts stay dependency-free (POSIX shell); should a
-mAId script ever need a tool the environment lacks, it would
-come through the repo flake — not a global install — but this
-feature needs nothing beyond shell + the environment's runtime.
+**MCP runtime is self-contained in mAId's flake.** Skills can't
+be self-contained — claude/kiro require them in their own
+configs, so we register there. An MCP server is different: it's
+an out-of-process service the harness *calls*, so while its
+*registration* lives in the harness config, its *runtime* can
+and should be mAId's own. The server runs on Node.js; mAId
+provides it from the repo flake (the same `nix develop` /
+`direnv` shell that already supplies cargo + just), rather than
+depending on a user-PATH Node. Because claude/kiro launch the
+server from outside mAId's direnv, the launcher re-execs itself
+through `nix develop path:<repo>` to enter the flake — so Node
+need not be on the user's PATH; only `nix` (the repo's standing
+prerequisite). This also makes the capability real-end-to-end
+testable from the repo: `direnv allow` brings the same `npx`
+into reach. mAId-owned scripts otherwise stay dependency-free
+shell. (Sibling-repo precedent: the internal-resources repo
+supplies its runtime via a version manager where the
+environment lacks it; mAId's equivalent is the flake.)
 
 **No build-tool / registry change.** The skill half rides the
 existing symlink registry (zero code). The registration half is
@@ -202,15 +212,20 @@ decoupled from the browser's pattern grammar as it evolves.
    the checkout), so it runs **every time the agent's browser
    server (re)connects** — that's what makes an allowlist edit
    take effect on reconnect without touching Chrome. Each run
-   it: resolves the allowlist file (default
+   it: first **enters mAId's flake** if the Node runtime isn't
+   already present — re-execing itself through `nix develop
+   path:<repo>` (repo root derived from the script's own
+   resolved location), guarded against re-entry — so the
+   server runs on mAId's bundled Node, not a user-PATH one;
+   then resolves the allowlist file (default
    `${XDG_CONFIG_HOME:-$HOME/.config}/maid/browser-allowlist`,
    overridable by an env var); reads non-blank, non-`#` lines as
    site patterns; **refuses to start with a clear message if the
    list is empty/absent** (deny-by-default); otherwise builds one
-   enforced-allow flag per pattern and execs the server via the
-   environment's runtime with `--autoConnect` (which attaches to
-   the already-running Chrome — the server process is cheap to
-   restart; the browser is not restarted at all).
+   enforced-allow flag per pattern and execs the server with
+   `--autoConnect` (which attaches to the already-running
+   Chrome — the server process is cheap to restart; the browser
+   is not restarted at all).
 
 3. **`resources::` module verbs** (shell, no Rust; added to
    `resources/Justfile`, invoked as `just resources::<verb>`).
@@ -311,6 +326,17 @@ decoupled from the browser's pattern grammar as it evolves.
   msg → stderr; npx recheck comment); verified the status-exit
   finding was a non-issue (`claude mcp get` / `kiro mcp status
   --name` both return 1 on absence).
+- 2026-06-22 · Post-dev steer: make the **MCP runtime
+  self-contained**. Added `pkgs.nodejs_22` to `flake.nix`;
+  rewrote the launcher to enter mAId's flake via `nix develop
+  path:<repo>` (repo root derived from its own resolved path,
+  re-entry-guarded) so the server runs on bundled Node, not a
+  user-PATH one. `manage` install prereq changed npx→nix.
+  **Real end-to-end now verified:** from a clean, npx-less env
+  (as claude/kiro invoke it) the launcher entered the flake and
+  actually started chrome-devtools-mcp (real startup banner);
+  deny-by-default and no-nix error paths still hold through the
+  re-exec. Updated README + spec rationale.
 
 ## Decision Log
 
@@ -351,11 +377,20 @@ decoupled from the browser's pattern grammar as it evolves.
   No product/team/internal names in spec, skill, or commits —
   the safety intent (don't loose an agent on credential-gated
   sites unattended) is kept, phrased generically.
-- **Environment-provided tooling.** mAId reuses the
-  environment's JS runtime and does not install it; mAId-owned
-  scripts stay dependency-free shell. Cross-environment
-  coexistence with the sibling internal repo is a deliberate
-  follow-up, not this feature.
+- **MCP runtime self-contained via mAId's flake** (revised
+  post-dev, on user steer). The earlier "reuse the environment's
+  JS runtime, don't install it" call was reversed: mAId should be
+  self-contained where it can. Skills can't (claude/kiro own
+  their config), but an MCP's *runtime* can — it's an
+  out-of-process service. So Node is bundled in the repo flake
+  (`pkgs.nodejs_22`) and the launcher enters that flake via `nix
+  develop path:<repo>` on each connect. Rejected alternative:
+  user-PATH Node (e.g. a version manager) — works but isn't
+  self-contained and made real e2e tests depend on the host. Net
+  effect: Node off the user's PATH is fine; `nix` is the only
+  prerequisite, and `direnv allow` in the repo brings the same
+  `npx` for testing. Cross-environment coexistence with the
+  sibling internal repo is still a deliberate follow-up.
 - **Allowlist freshness: reconnect-rereads, not mid-session
   live** (PR #29). Considered a custom enforcement layer that
   checks each navigation against the live file so edits apply

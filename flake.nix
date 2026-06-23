@@ -1,5 +1,5 @@
 {
-  description = "mAId — repo-local rust toolchain + just for the build-tool crate (and future workspace members)";
+  description = "mAId — repo-local rust toolchain, just, and the Node.js runtime the browser MCP server needs (self-contained env for all workspace members)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -26,6 +26,12 @@
           buildInputs = [
             rustToolchain
             pkgs.just
+            # Node.js LTS — the runtime the browser MCP server
+            # (chrome-devtools-mcp, run via npx) needs. Bundling it
+            # here keeps the MCP runtime self-contained in mAId: the
+            # launcher enters this flake, so node need not be on the
+            # user's PATH.
+            pkgs.nodejs_22
           ];
         };
       }

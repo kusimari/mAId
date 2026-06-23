@@ -118,9 +118,20 @@ default-read location.
 harness(es), so the agent can drive your real, already-running
 Chrome (open, navigate, fill, submit, read). It's the first
 non-skill resource mAId installs; it's desktop-only and skips
-gracefully where there's no graphical Chrome, no `npx` runtime
-(environment-provided — mAId doesn't install Node), or no
+gracefully where there's no graphical Chrome, no `nix`, or no
 harness CLI.
+
+The MCP runtime is **self-contained in mAId**: the server runs
+on Node.js, which mAId provides from its own flake (the same one
+`direnv allow` loads). The launcher enters that flake on each
+connection, so **Node need not be on your PATH** — only `nix`,
+which the repo already requires. Registering with claude/kiro
+writes to *their* configs (an MCP is an out-of-process service
+they call); running it stays inside mAId's environment.
+`browser-mcp-install` warms the flake so the first connection is
+fast; on a cold cache after a fresh checkout that warm-up (or
+the first connection) may take a while as nix builds the
+devShell.
 
 Two things to know before first use:
 
