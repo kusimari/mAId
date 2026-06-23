@@ -244,6 +244,16 @@ Review Gate and before push.
   in linear reading (back-ref in loop-back step 2 closes it);
   both new rules anchor to §6 (distinct mechanics, lists
   disambiguate). Public-repo hygiene confirmed clean by reviewer.
+- 2026-06-23 · Functional tests run (user-authorized, costs
+  credits). Repointed managed symlinks to this worktree via
+  `resources::install --force`, confirmed installed skill = v3.5.0,
+  ran both fixtures, then restored symlinks to the primary checkout
+  (recorded originals first). Both fixtures **fully pass** — all 8
+  checks (claude + kiro × substr + judge). Judges confirm intended
+  behavior on both harnesses. No content issues; nothing to fix.
+  Note: `just resources::verify-one` is `[confirm]`-gated — feed a
+  single `y` (`printf 'y\n' |`), not `yes |`, which floods claude's
+  stdin past its 10MB limit and yields a false FAIL.
 
 ## Decision Log
 
