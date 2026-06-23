@@ -34,3 +34,31 @@ verify:
 [no-cd]
 verify-one name:
     resources/tests/run "{{ name }}"
+
+# ── browser-control MCP ──────────────────────────────────────────
+# Register Google's chrome-devtools-mcp with the installed agent
+# harnesses, launched via resources/browser/launch so the user's
+# allowlist is enforced. Verbs share a `browser-mcp-` prefix so
+# they group together in `just --list`. Desktop-only; graceful
+# skip where there is no GUI Chrome, no npx runtime, or no harness
+# CLI. The allowlist is user-owned data — uninstall never touches it.
+
+# Register the browser-control server with each installed harness.
+[no-cd]
+browser-mcp-install:
+    resources/browser/manage install "{{ source_directory() }}/browser/launch"
+
+# Remove the browser-control server registration (keeps allowlist).
+[no-cd]
+browser-mcp-uninstall:
+    resources/browser/manage uninstall
+
+# Report browser-control registration state and allowlist size.
+[no-cd]
+browser-mcp-status:
+    resources/browser/manage status
+
+# Append a site pattern to the allowlist verbatim (hand-edit fallback).
+[no-cd]
+browser-mcp-allow pattern:
+    resources/browser/manage allow "{{ pattern }}"

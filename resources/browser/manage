@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+# mAId/resources/browser/manage — register / unregister / report
+# the browser-control MCP server with each installed agent
+# harness. Invoked by the browser-mcp-* verbs in
+# resources/Justfile; not meant to be called directly.
+#
+# The server is registered to launch via resources/browser/launch
+# (passed as $LAUNCHER), which enforces the user's allowlist. We
+# register a runnable command, not a symlink, so this lives in
+# shell over each harness's own MCP CLI rather than in the
+# pure-symlink build-tool.
+#
+# Design notes:
+#   - Idempotent. Claude's `mcp add` errors if the name exists, so
+#     install removes-then-adds. Kiro's `mcp add` already replaces.
+#   - Graceful per-prereq skip: no GUI Chrome, no npx runtime, or a
+#     missing harness CLI prints a one-line pointer and is skipped,
+#     never a hard error — a machine may have one harness and not
+#     the other, or no browser at all.
+#   - Allowlist is user data: uninstall never touches it.
+#
+# Usage:
+#   manage install   <launcher>
+#   manage uninstall
+#   manage status
+#   manage allow      <pattern>
+
+set -euo pipefail
+
+SERVER_NAME="chrome-devtools"
+ALLOWLIST="${MAID_BROWSER_ALLOWLIST:-${XDG_CONFIG_HOME:-$HOME/.config}/maid/browser-allowlist}"
+
+info() { printf '  %s\n' "$*"; }
+skip() { printf 'skip  %s\n' "$*"; }
+ok()   { printf 'ok    %s\n' "$*"; }
+
+# ── prereqs ──────────────────────────────────────────────────────
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# A graphical Chrome we could attach to. macOS: the app bundle.
+# Linux: a chrome/chromium binary on PATH. Headless boxes have
+# neither, by design.
+chrome_present() {
+    [[ -d "/Applications/Google Chrome.app" ]] && return 0
+    have google-chrome || have google-chrome-stable || have chromium || have chromium-browser
+}
+
+# ── claude ───────────────────────────────────────────────────────
+
+register_claude() {
+    have claude || { skip "claude (CLI not on PATH)"; return; }
+    # remove-then-add so a re-run refreshes rather than errors
+    claude mcp remove -s user "$SERVER_NAME" >/dev/null 2>&1 || true
+    if claude mcp add -s user "$SERVER_NAME" -- "$LAUNCHER" >/dev/null 2>&1; then
+        ok "claude  ($SERVER_NAME → $LAUNCHER)"
+    else
+        skip "claude (mcp add failed)"
+    fi
+}
+
+unregister_claude() {
+    have claude || { skip "claude (CLI not on PATH)"; return; }
+    if claude mcp remove -s user "$SERVER_NAME" >/dev/null 2>&1; then
+        ok "claude  (removed $SERVER_NAME)"
+    else
+        info "claude  ($SERVER_NAME not registered)"
+    fi
+}
+
+status_claude() {
+    have claude || { skip "claude (CLI not on PATH)"; return; }
+    if claude mcp get "$SERVER_NAME" >/dev/null 2>&1; then
+        ok "claude  ($SERVER_NAME registered)"
+    else
+        info "claude  ($SERVER_NAME not registered)"
+    fi
+}
+
+# ── kiro ─────────────────────────────────────────────────────────
+
+register_kiro() {
+    have kiro-cli || { skip "kiro (CLI not on PATH)"; return; }
+    # kiro's `mcp add` is add-or-replace — idempotent on its own.
+    local err
+    if err="$(kiro-cli mcp add --name "$SERVER_NAME" --scope global \
+            --command "$LAUNCHER" 2>&1)"; then
+        ok "kiro    ($SERVER_NAME → $LAUNCHER)"
+    else
+        # Surface kiro's own first line (e.g. "not logged in") so the
+        # skip is actionable rather than opaque.
+        skip "kiro (mcp add failed: $(printf '%s' "$err" | head -n1))"
+    fi
+}
+
+unregister_kiro() {
+    have kiro-cli || { skip "kiro (CLI not on PATH)"; return; }
+    if kiro-cli mcp remove --name "$SERVER_NAME" --scope global >/dev/null 2>&1; then
+        ok "kiro    (removed $SERVER_NAME)"
+    else
+        info "kiro    ($SERVER_NAME not registered)"
+    fi
+}
+
+status_kiro() {
+    have kiro-cli || { skip "kiro (CLI not on PATH)"; return; }
+    if kiro-cli mcp status --name "$SERVER_NAME" >/dev/null 2>&1; then
+        ok "kiro    ($SERVER_NAME registered)"
+    else
+        info "kiro    ($SERVER_NAME not registered)"
+    fi
+}
+
+# ── subcommands ──────────────────────────────────────────────────
+
+cmd_install() {
+    LAUNCHER="${1:?manage install: launcher path required}"
+    [[ -x "$LAUNCHER" ]] || { info "launcher not executable: $LAUNCHER"; exit 1; }
+
+    if ! chrome_present; then
+        skip "browser-mcp-install (no graphical Chrome found — desktop only)"
+        return 0
+    fi
+    if ! have npx; then
+        skip "browser-mcp-install (npx not on PATH — install a Node.js LTS runtime)"
+        return 0
+    fi
+
+    register_claude
+    register_kiro
+
+    printf '\nOne-time browser setup (do this once, by hand):\n'
+    info "open chrome://inspect/#remote-debugging in Chrome, enable remote"
+    info "debugging, and accept the permission prompt the first time the"
+    info "agent attaches."
+    printf '\nAllowlist (deny-by-default — add at least one site before use):\n'
+    info "$ALLOWLIST"
+    info "edit directly, or: just resources::browser-mcp-allow '<pattern>'"
+}
+
+cmd_uninstall() {
+    unregister_claude
+    unregister_kiro
+    info "allowlist left in place (user data): $ALLOWLIST"
+}
+
+cmd_status() {
+    status_claude
+    status_kiro
+    if [[ -s "$ALLOWLIST" ]]; then
+        local n
+        n="$(grep -cvE '^\s*(#|$)' "$ALLOWLIST" || true)"
+        info "allowlist: $n pattern(s) in $ALLOWLIST"
+    else
+        info "allowlist: empty/absent ($ALLOWLIST) — capability denies all until a site is added"
+    fi
+}
+
+cmd_allow() {
+    local pattern="${1:?manage allow: pattern required}"
+    mkdir -p "$(dirname "$ALLOWLIST")"
+    printf '%s\n' "$pattern" >>"$ALLOWLIST"
+    ok "added to $ALLOWLIST: $pattern"
+    info "takes effect on the next browser-control session (Chrome is not restarted)"
+}
+
+# ── dispatch ─────────────────────────────────────────────────────
+
+sub="${1:-}"; shift || true
+case "$sub" in
+    install)   cmd_install "$@" ;;
+    uninstall) cmd_uninstall ;;
+    status)    cmd_status ;;
+    allow)     cmd_allow "$@" ;;
+    *) printf 'manage: unknown subcommand %q (want: install|uninstall|status|allow)\n' "$sub" >&2; exit 2 ;;
+esac
