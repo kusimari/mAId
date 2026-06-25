@@ -40,23 +40,30 @@ verify-one name:
 # harnesses, launched via resources/browser/launch so the user's
 # allowlist is enforced. Verbs share a `browser-mcp-` prefix so
 # they group together in `just --list`. Desktop-only; graceful
-# skip where there is no GUI Chrome, no npx runtime, or no harness
-# CLI. The allowlist is user-owned data — uninstall never touches it.
+# skip where there is no GUI Chrome, no nix, or no harness CLI.
+# The allowlist is user-owned data — uninstall never touches it.
+#
+# Kiro partitions MCP servers per agent, so the kiro target must be
+# named: pass the agent name as the argument to
+# install/uninstall/status to act on that agent. Omit it and kiro
+# is skipped (claude needs no agent — its server is visible to
+# every session).
 
-# Register the browser-control server with each installed harness.
+# Register the browser-control server (claude always; kiro only if
+# an agent name is given). e.g. `just resources::browser-mcp-install my-agent`
 [no-cd]
-browser-mcp-install:
-    resources/browser/manage install "{{ source_directory() }}/browser/launch"
+browser-mcp-install kiro_agent="":
+    resources/browser/manage install "{{ source_directory() }}/browser/launch" "{{ kiro_agent }}"
 
 # Remove the browser-control server registration (keeps allowlist).
 [no-cd]
-browser-mcp-uninstall:
-    resources/browser/manage uninstall
+browser-mcp-uninstall kiro_agent="":
+    resources/browser/manage uninstall "{{ kiro_agent }}"
 
 # Report browser-control registration state and allowlist size.
 [no-cd]
-browser-mcp-status:
-    resources/browser/manage status
+browser-mcp-status kiro_agent="":
+    resources/browser/manage status "{{ kiro_agent }}"
 
 # Append a site pattern to the allowlist verbatim (hand-edit fallback).
 [no-cd]
@@ -67,7 +74,11 @@ browser-mcp-allow pattern:
 # via the browser MCP against an isolated allowlist, and confirm an
 # off-list site is blocked. Takes control of your browser — run it
 # by hand. Requires browser-mcp-install + Chrome remote debugging.
+# Kiro is tested only when its agent name is given (the agent that
+# carries the chrome-devtools server). e.g.
+#   just resources::browser-functional-test claude
+#   just resources::browser-functional-test kiro my-agent
 [confirm("This drives your real Chrome through claude/kiro. Chrome must be running with remote debugging enabled. Continue? (y/N)")]
 [no-cd]
-browser-functional-test *TOOL:
-    resources/tests/browser-functional {{ TOOL }}
+browser-functional-test tool="" kiro_agent="":
+    resources/tests/browser-functional {{ tool }} {{ if kiro_agent != "" { "--kiro-agent=" + kiro_agent } else { "" } }}

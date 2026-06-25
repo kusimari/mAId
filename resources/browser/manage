@@ -19,11 +19,17 @@
 #     skipped, never a hard error — a machine may have one harness
 #     and not the other, or no browser at all.
 #   - Allowlist is user data: uninstall never touches it.
+#   - Claude has no per-agent MCP model (a `-s user` server is
+#     visible to every session). Kiro partitions MCP servers PER
+#     AGENT, and `kiro-cli chat` runs a specific agent — so the
+#     kiro target must be named explicitly. We require a kiro agent
+#     name; absent it, kiro is skipped (mAId stays non-intrusive,
+#     never guessing which of the user's agents to write into).
 #
 # Usage:
-#   manage install   <launcher>
-#   manage uninstall
-#   manage status
+#   manage install   <launcher> [kiro-agent]
+#   manage uninstall  [kiro-agent]
+#   manage status     [kiro-agent]
 #   manage allow      <pattern>
 
 set -euo pipefail
@@ -80,35 +86,63 @@ status_claude() {
 
 # ── kiro ─────────────────────────────────────────────────────────
 
+# kiro registration is PER AGENT. $KIRO_AGENT (the named agent)
+# must be set; the caller skips kiro otherwise.
+
 register_kiro() {
     have kiro-cli || { skip "kiro (CLI not on PATH)"; return; }
+    [[ -n "${KIRO_AGENT:-}" ]] || {
+        skip "kiro (no agent named — pass kiro_agent=<name> to target a kiro agent)"
+        return
+    }
     # kiro's `mcp add` is add-or-replace — idempotent on its own.
     local err
-    if err="$(kiro-cli mcp add --name "$SERVER_NAME" --scope global \
+    if err="$(kiro-cli mcp add --name "$SERVER_NAME" --agent "$KIRO_AGENT" \
             --command "$LAUNCHER" 2>&1)"; then
-        ok "kiro    ($SERVER_NAME → $LAUNCHER)"
+        ok "kiro    ($SERVER_NAME → $LAUNCHER; agent $KIRO_AGENT)"
     else
-        # Surface kiro's own first line (e.g. "not logged in") so the
-        # skip is actionable rather than opaque.
+        # Surface kiro's own first line (e.g. "Agent X does not
+        # exist", "not logged in") so the skip is actionable.
         skip "kiro (mcp add failed: $(printf '%s' "$err" | head -n1))"
     fi
 }
 
 unregister_kiro() {
     have kiro-cli || { skip "kiro (CLI not on PATH)"; return; }
-    if kiro-cli mcp remove --name "$SERVER_NAME" --scope global >/dev/null 2>&1; then
-        ok "kiro    (removed $SERVER_NAME)"
+    [[ -n "${KIRO_AGENT:-}" ]] || {
+        skip "kiro (no agent named — pass kiro_agent=<name> to target a kiro agent)"
+        return
+    }
+    if kiro-cli mcp remove --name "$SERVER_NAME" --agent "$KIRO_AGENT" >/dev/null 2>&1; then
+        ok "kiro    (removed $SERVER_NAME from agent $KIRO_AGENT)"
     else
-        info "kiro    ($SERVER_NAME not registered)"
+        info "kiro    ($SERVER_NAME not registered in agent $KIRO_AGENT)"
     fi
 }
 
 status_kiro() {
     have kiro-cli || { skip "kiro (CLI not on PATH)"; return; }
-    if kiro-cli mcp status --name "$SERVER_NAME" >/dev/null 2>&1; then
-        ok "kiro    ($SERVER_NAME registered)"
+    [[ -n "${KIRO_AGENT:-}" ]] || {
+        skip "kiro (no agent named — pass kiro_agent=<name> to check a kiro agent)"
+        return
+    }
+    # `kiro-cli mcp status` has no --agent flag, so parse the
+    # agent's block in `mcp list` for the server name. Note: kiro
+    # writes this listing to stderr (hence 2>&1), with ANSI colour
+    # codes (stripped before matching).
+    if kiro-cli mcp list 2>&1 \
+        | sed 's/\x1b\[[0-9;]*m//g' \
+        | awk -v a="$KIRO_AGENT" -v s="$SERVER_NAME" '
+            # Exact string compares (not regex) so agent/server
+            # names with metacharacters cannot mis-match. The block
+            # is the agent header line until the next "  <header>".
+            $0 == "  " a {inblk=1; next}
+            /^  [^ ]/ {inblk=0}
+            inblk && $2 == s {found=1}
+            END {exit !found}'; then
+        ok "kiro    ($SERVER_NAME registered in agent $KIRO_AGENT)"
     else
-        info "kiro    ($SERVER_NAME not registered)"
+        info "kiro    ($SERVER_NAME not registered in agent $KIRO_AGENT)"
     fi
 }
 
@@ -116,6 +150,7 @@ status_kiro() {
 
 cmd_install() {
     LAUNCHER="${1:?manage install: launcher path required}"
+    KIRO_AGENT="${2:-}"
     # A non-executable launcher is a packaging bug, not an
     # environment gap — hard-fail to stderr, unlike the graceful
     # prereq skips below.
@@ -160,12 +195,14 @@ cmd_install() {
 }
 
 cmd_uninstall() {
+    KIRO_AGENT="${1:-}"
     unregister_claude
     unregister_kiro
     info "allowlist left in place (user data): $ALLOWLIST"
 }
 
 cmd_status() {
+    KIRO_AGENT="${1:-}"
     status_claude
     status_kiro
     if [[ -s "$ALLOWLIST" ]]; then
@@ -190,8 +227,8 @@ cmd_allow() {
 sub="${1:-}"; shift || true
 case "$sub" in
     install)   cmd_install "$@" ;;
-    uninstall) cmd_uninstall ;;
-    status)    cmd_status ;;
+    uninstall) cmd_uninstall "$@" ;;
+    status)    cmd_status "$@" ;;
     allow)     cmd_allow "$@" ;;
     *) printf 'manage: unknown subcommand %q (want: install|uninstall|status|allow)\n' "$sub" >&2; exit 2 ;;
 esac

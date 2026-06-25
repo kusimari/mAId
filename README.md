@@ -53,11 +53,11 @@ just resources::status      # report current symlink state
 just resources::verify      # drive `claude --print` against installed content (costs API credits, gated)
 just resources::verify-one <name>   # single fixture
 
-just resources::browser-mcp-install     # register the browser-control MCP server with each harness
-just resources::browser-mcp-uninstall   # remove it (keeps your allowlist)
-just resources::browser-mcp-status      # report registration state + allowlist size
-just resources::browser-mcp-allow <pattern>   # append a site pattern to the allowlist
-just resources::browser-functional-test [claude|kiro]   # ATTENDED: drives real Chrome (run by hand)
+just resources::browser-mcp-install [kiro-agent]     # register the browser-control MCP server (claude; kiro into the named agent)
+just resources::browser-mcp-uninstall [kiro-agent]   # remove it (keeps your allowlist)
+just resources::browser-mcp-status [kiro-agent]      # report registration state + allowlist size
+just resources::browser-mcp-allow <pattern>          # append a site pattern to the allowlist
+just resources::browser-functional-test [claude|kiro] [kiro-agent]   # ATTENDED: drives real Chrome (run by hand)
 ```
 
 **`kaimux::*`** — operate on the kaimux crate:
@@ -134,7 +134,7 @@ fast; on a cold cache after a fresh checkout that warm-up (or
 the first connection) may take a while as nix builds the
 devShell.
 
-Two things to know before first use:
+Three things to know before first use:
 
 1. **One-time browser setup.** Enable remote debugging once in
    Chrome via `chrome://inspect/#remote-debugging`, then accept
@@ -149,6 +149,15 @@ Two things to know before first use:
    logged-in site. Edit it directly or use
    `resources::browser-mcp-allow '<pattern>'`; changes take
    effect on the next session — Chrome is not restarted.
+3. **Kiro is per-agent.** Claude exposes a registered server to
+   every session, so no agent is named. Kiro partitions MCP
+   servers per agent and `kiro-cli chat` runs a specific agent —
+   so name the agent to register into:
+   `just resources::browser-mcp-install <kiro-agent>`. Omit it
+   and kiro is skipped (claude still installs). mAId never
+   guesses which of your agents to write into. Use the *same*
+   agent name when testing: `… browser-functional-test kiro
+   <kiro-agent>`.
 
 The `browser` skill teaches the agent the safe driving loop and
 the attended-use safety posture. `browser-mcp-uninstall` removes

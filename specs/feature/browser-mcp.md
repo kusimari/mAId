@@ -239,19 +239,33 @@ decoupled from the browser's pattern grammar as it evolves.
    `resources/Justfile`, invoked as `just resources::<verb>`).
    Named with a common `browser-mcp-` prefix so they group and
    sit together in `just --list`:
-   - `browser-mcp-install` — prereq-detect (graphical Chrome
-     present; runtime present; harness CLI present); register
-     the server with `claude mcp add` and/or `kiro-cli mcp add`
-     pointing at the launcher; print the one-time
+   - `browser-mcp-install [kiro-agent]` — prereq-detect
+     (graphical Chrome present; `nix` present; harness CLI
+     present); register the server with `claude mcp add -s user`
+     and/or `kiro-cli mcp add --agent <kiro-agent>` pointing at
+     the launcher; warm the flake; print the one-time
      remote-debugging setup reminder. Idempotent; graceful
      per-prereq skip.
-   - `browser-mcp-uninstall` — remove the registration via each
-     harness CLI. Does **not** touch the user's allowlist file.
-   - `browser-mcp-status` — report registration state per
-     harness.
+   - `browser-mcp-uninstall [kiro-agent]` — remove the
+     registration via each harness CLI. Does **not** touch the
+     user's allowlist file.
+   - `browser-mcp-status [kiro-agent]` — report registration
+     state per harness.
    - `browser-mcp-allow <pattern>` — append a pattern line to
      the default allowlist file **verbatim** (the hand-edit
      fallback). Creates the file if absent.
+
+   **Kiro is per-agent.** Claude has no per-agent MCP model (a
+   `-s user` server is visible to every session), but kiro
+   partitions MCP servers per agent and `kiro-cli chat` runs a
+   specific agent. So the kiro verbs take an **explicit agent
+   name** (positional) and register via `--agent <name>`; with no
+   agent named, kiro is skipped — mAId never guesses which of the
+   user's agents to write into. (`kiro-cli mcp status` has no
+   `--agent` flag, so status parses the agent's block in
+   `kiro-cli mcp list`, which kiro emits on **stderr** with ANSI
+   colour.) The attended functional test mirrors this: it drives
+   `kiro-cli chat --agent <name>` and skips kiro without one.
 
 ### Notes / constraints
 
@@ -305,6 +319,24 @@ decoupled from the browser's pattern grammar as it evolves.
 
 <!-- append: date · what was done · decisions made -->
 
+- 2026-06-24 · Attended-test run surfaced two kiro issues. (1)
+  `~/.kiro/settings/mcp.json` was a pre-existing 0-byte file
+  (Jan 30) — kiro failed to parse it and loaded no MCP servers,
+  so kiro never had the browser tools; seeded it with
+  `{ "mcpServers": {} }` (user-confirmed; user data, was empty).
+  (2) **kiro is per-agent**: `kiro-cli chat` runs a specific
+  agent (the user's default is a custom agent), and global
+  registration doesn't reach custom agents. Reworked the kiro
+  path to require an **explicit agent name** in install /
+  uninstall / status and the functional test (positional arg;
+  `--agent` on add/remove; `chat --agent` in the test); kiro is
+  skipped when no agent is named. Fixed status to read
+  `kiro-cli mcp list` from **stderr** (with ANSI stripped) since
+  `mcp status` has no `--agent` flag. Verified the full kiro
+  lifecycle against the real CLI on a live custom agent
+  (install→status→uninstall restores the agent's prior servers)
+  and the test plumbing with stubs. Claude path unchanged.
+  shellcheck clean, `just ci` green.
 - 2026-06-22 · Promoted from backlog; rebased branch onto
   `main` (`0eefca5`). Grounded against the real environment:
   Chrome supports the enforced-allow flag; `claude mcp add` and
@@ -436,3 +468,12 @@ decoupled from the browser's pattern grammar as it evolves.
   rename of the enforced-allow flag could silently break
   enforcement. Pinning a major is a possible later hardening;
   not changed now to avoid a silent deviation from the plan.
+- **Kiro target is an explicit agent, not auto-detected** (user
+  steer). Kiro partitions MCP servers per agent; options were
+  (a) auto-detect the active chat agent and write there, or (b)
+  require the user to name the agent. Chose (b): mAId stays
+  non-intrusive and never writes into a user's agent config
+  without being told which one. Claude needs no agent (global
+  per session). Invocation is positional
+  (`browser-mcp-install <agent>`); `name=value` doesn't bind in
+  just submodule recipes, so the docs use the positional form.
