@@ -196,6 +196,10 @@ the same file write.
      to promote stable entries into the body sections
      above. -->
 
+- 2026-07-08 · use a spaced hyphen " - " for interruptions and asides, not an em-dash
+  · *example:* "Define that role first - what problem this person owns - and then bring in the org footprint"
+  · source: explicit teach
+
 ## Known limits (v1)
 
 - **Concurrency.** Two parallel sessions both teaching at
