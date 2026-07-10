@@ -66,8 +66,9 @@ ALLOWLIST="${MAID_BROWSER_ALLOWLIST:-${XDG_CONFIG_HOME:-$HOME/.config}/maid/brow
 [[ -f "$ALLOWLIST" ]] \
     || die "no allowlist at $ALLOWLIST — add at least one site pattern (deny-by-default); see: just resources::browser-mcp-allow '<pattern>'"
 
-# One --allowedUrlPattern per line, verbatim — mAId owns no pattern
-# grammar, so the browser is the only judge of what's well-formed.
+# One --allowedUrlPattern per line — the pattern text passes through
+# un-interpreted; mAId owns no pattern grammar, so the browser is the
+# only judge of what's well-formed.
 patterns=()
 while IFS= read -r line || [[ -n "$line" ]]; do
     line="${line#"${line%%[![:space:]]*}"}"   # ltrim

@@ -384,6 +384,18 @@ decoupled from the browser's pattern grammar as it evolves.
   actually started chrome-devtools-mcp (real startup banner);
   deny-by-default and no-nix error paths still hold through the
   re-exec. Updated README + spec rationale.
+- 2026-07-10 · Closure. Addressed the sole open PR #29 comment
+  (kdevkit comment-style) as a **diff-wide principle**: swept
+  every comment the branch adds, rewrote two narration offenders
+  to carry intent (`flake.nix` node bundling; `launch` pattern
+  loop — later refined for whitespace-trim accuracy), left the
+  rest (already intent-carrying). Closure gates: `just ci` green
+  (53 tests, fmt/lint/check), shellcheck clean; fresh-context
+  Code Review of the doc-comment delta **PASS (88)**; public-repo
+  internal-marker grep clean. `project.md` reconciled — browser
+  capability now documented across Architecture / Tech Stack /
+  Layout / Deployment so it's discoverable from the project doc
+  alone. Squash-merged to `main`.
 - 2026-06-23 · User confirmed a manual install/allow/drive in
   claude worked. Added an **attended functional test**
   (`resources/tests/browser-functional` + `browser-functional-test`
