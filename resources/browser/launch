@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# mAId/resources/browser/launch — start the chrome-devtools-mcp
+# server against the user's already-running Chrome, restricted to
+# the sites on the user's allowlist.
+#
+# The MCP registration (see the browser-mcp-* verbs in
+# resources/Justfile) points the server-launch command here, so
+# this runs every time the agent's browser server (re)connects.
+# That is what makes an allowlist edit take effect on the next
+# connection without restarting Chrome: this script re-reads the
+# file each run.
+#
+# Self-contained runtime: the MCP server needs a Node.js runtime
+# (it runs via `npx`). claude/kiro launch this script from outside
+# mAId's direnv, so we provide the runtime from mAId's own flake —
+# the script re-execs itself inside `nix develop` for this repo,
+# which puts the flake's node/npx on PATH. node need NOT be on the
+# user's PATH; only `nix` must be (the repo's hard prerequisite).
+#
+# Allowlist:
+#   - File of URL patterns, one per line. Blank lines and lines
+#     starting with `#` are ignored. Patterns are passed to the
+#     server VERBATIM — mAId defines no pattern syntax; whatever
+#     the browser's allowed-pattern flag accepts is what you write.
+#   - Path resolves from $MAID_BROWSER_ALLOWLIST, else
+#     ${XDG_CONFIG_HOME:-$HOME/.config}/maid/browser-allowlist.
+#   - DENY BY DEFAULT: an empty or absent allowlist refuses to
+#     start rather than exposing every logged-in site.
+
+set -euo pipefail
+
+die() { printf 'browser/launch: %s\n' "$*" >&2; exit 1; }
+
+# ── enter mAId's flake env if the runtime isn't already present ───
+# When invoked by claude/kiro we are outside direnv, so npx is
+# absent; re-exec through `nix develop` for this repo to get the
+# flake's node. The guard var stops a second re-exec if the flake
+# still doesn't provide npx (a real misconfig, surfaced as an
+# error rather than an infinite loop).
+if ! command -v npx >/dev/null 2>&1; then
+    [[ -n "${MAID_BROWSER_IN_FLAKE:-}" ]] \
+        && die "npx not found even inside mAId's flake — is pkgs.nodejs in flake.nix devShell?"
+
+    # Resolve the repo root from this script's own location:
+    # <repo>/resources/browser/launch → <repo>.
+    self="${BASH_SOURCE[0]}"
+    while [[ -L "$self" ]]; do
+        dir="$(cd -P "$(dirname "$self")" && pwd)"
+        self="$(readlink "$self")"
+        [[ "$self" != /* ]] && self="$dir/$self"
+    done
+    script_dir="$(cd -P "$(dirname "$self")" && pwd)"
+    repo_root="$(cd -P "$script_dir/../.." && pwd)"
+
+    command -v nix >/dev/null 2>&1 \
+        || die "nix not found on PATH — mAId provides the MCP runtime via its flake; install nix (the repo's prerequisite)"
+
+    export MAID_BROWSER_IN_FLAKE=1
+    exec nix develop "path:$repo_root" --command "$self" "$@"
+fi
+
+# ── from here, npx is on PATH (flake env active) ─────────────────
+
+ALLOWLIST="${MAID_BROWSER_ALLOWLIST:-${XDG_CONFIG_HOME:-$HOME/.config}/maid/browser-allowlist}"
+
+[[ -f "$ALLOWLIST" ]] \
+    || die "no allowlist at $ALLOWLIST — add at least one site pattern (deny-by-default); see: just resources::browser-mcp-allow '<pattern>'"
+
+# One --allowedUrlPattern per line — the pattern text passes through
+# un-interpreted; mAId owns no pattern grammar, so the browser is the
+# only judge of what's well-formed.
+patterns=()
+while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line#"${line%%[![:space:]]*}"}"   # ltrim
+    line="${line%"${line##*[![:space:]]}"}"   # rtrim
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    patterns+=(--allowedUrlPattern "$line")
+done <"$ALLOWLIST"
+
+(( ${#patterns[@]} > 0 )) \
+    || die "allowlist $ALLOWLIST has no site patterns (only blanks/comments) — add at least one (deny-by-default)"
+
+exec npx chrome-devtools-mcp@latest --autoConnect "${patterns[@]}"

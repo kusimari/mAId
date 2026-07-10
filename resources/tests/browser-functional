@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+# mAId/resources/tests/browser-functional — ATTENDED functional
+# test: drive claude and kiro to open the user's real Chrome
+# through the browser MCP server, restricted to an allowlist, and
+# confirm the guardrail holds.
+#
+# This is NOT part of `just resources::verify` (the bulk .smoke
+# runner, which only checks skill knowledge). This one takes
+# control of a real browser, so it is run by hand:
+#
+#   just resources::browser-functional-test
+#
+# Preconditions (the test checks and tells you what's missing):
+#   - The capability is installed: `just resources::browser-mcp-install`
+#     (for kiro, with the same agent you test: `… kiro_agent=<name>`).
+#   - Chrome is running with remote debugging enabled once via
+#     chrome://inspect/#remote-debugging (and you accept the
+#     attach prompt the first time).
+#   - `claude` and/or `kiro-cli` on PATH (kiro must be logged in).
+#
+# Kiro partitions MCP servers per agent, and `kiro-cli chat` runs a
+# specific agent — so to test kiro you must name the agent that
+# carries the chrome-devtools server: `--kiro-agent=<name>`. Without
+# it, kiro is skipped. Claude needs no agent (global per session).
+#
+# What it does, per available harness:
+#   1. Allowed-site check — asks the agent to open an ALLOW-LISTED
+#      URL and report its title. Pass = the known title comes back.
+#   2. Off-list block check — asks the agent to open a URL that is
+#      NOT on the allowlist. Pass = the agent reports the
+#      navigation was blocked/refused (Chrome enforces the
+#      allowlist), NOT the page content.
+#
+# The allowlist used is an isolated temp file (via
+# $MAID_BROWSER_ALLOWLIST), so your real allowlist is untouched.
+#
+# Usage:
+#   resources/tests/browser-functional                      # claude (+ kiro if --kiro-agent given)
+#   resources/tests/browser-functional claude               # claude only
+#   resources/tests/browser-functional kiro --kiro-agent=my-agent
+#   resources/tests/browser-functional --kiro-agent=my-agent   # both
+#   resources/tests/browser-functional --help
+
+set -euo pipefail
+
+# ── config ───────────────────────────────────────────────────────
+# Allowed: a stable, safe public page (IANA's example domain).
+# Off-list: a different host, deliberately absent from the
+# allowlist so the browser must block it.
+ALLOWED_URL="https://example.com/"
+ALLOWED_PATTERN="https://example.com/*"
+ALLOWED_TITLE="Example Domain"     # example.com's <title>
+OFFLIST_URL="https://www.iana.org/"
+
+# ── args ─────────────────────────────────────────────────────────
+SELECTOR=""
+KIRO_AGENT=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --help|-h) awk 'NR==1{next} /^$/{exit} /^#/{sub(/^# ?/,""); print}' "${BASH_SOURCE[0]}"; exit 0 ;;
+        --kiro-agent=*) KIRO_AGENT="${1#--kiro-agent=}"; shift ;;
+        claude|kiro) SELECTOR="$1"; shift ;;
+        "") shift ;;   # defensive: tolerate an empty positional if passed directly
+        -*) echo "unknown flag: $1" >&2; exit 2 ;;
+        *)  echo "unknown arg: $1 (want: claude | kiro | --kiro-agent=<name>)" >&2; exit 2 ;;
+    esac
+done
+
+# ── output ───────────────────────────────────────────────────────
+pass() { printf '\033[32mPASS\033[0m %s\n' "$*"; }
+fail() { printf '\033[31mFAIL\033[0m %s\n' "$*" >&2; FAILURES=$((FAILURES+1)); }
+skip() { printf '\033[33mSKIP\033[0m %s\n' "$*"; }
+info() { printf '  %s\n' "$*"; }
+FAILURES=0
+
+tool_available() {
+    case "$1" in
+        claude) command -v claude   >/dev/null 2>&1 ;;
+        kiro)   command -v kiro-cli >/dev/null 2>&1 ;;
+        *)      return 1 ;;
+    esac
+}
+
+# Drive one harness non-interactively with browser MCP tools
+# permitted. Echoes the captured response. NOTE: unlike the bulk
+# .smoke runner (resources/tests/run), which trusts NO tools
+# (`--trust-tools=`), this test must let the browser tools fire —
+# hence claude's --dangerously-skip-permissions and kiro's
+# --trust-all-tools.
+drive() {
+    local tool="$1" prompt="$2"
+    case "$tool" in
+        claude) claude --print --dangerously-skip-permissions "$prompt" 2>&1 ;;
+        # kiro runs a specific agent; the browser server lives in
+        # the named agent (kiro is per-agent), so target it.
+        kiro)   kiro-cli chat --no-interactive --agent "$KIRO_AGENT" --trust-all-tools "$prompt" 2>&1 ;;
+    esac
+}
+
+# ── preflight ────────────────────────────────────────────────────
+preflight() {
+    # A graphical Chrome to attach to (mirrors the manage script).
+    if [[ ! -d "/Applications/Google Chrome.app" ]] \
+        && ! command -v google-chrome >/dev/null 2>&1 \
+        && ! command -v google-chrome-stable >/dev/null 2>&1 \
+        && ! command -v chromium >/dev/null 2>&1; then
+        echo "no graphical Chrome found — this test is desktop-only" >&2
+        exit 2
+    fi
+    cat <<'EOF'
+ATTENDED TEST — this drives your real, logged-in Chrome.
+Make sure Chrome is running with remote debugging enabled
+(chrome://inspect/#remote-debugging) and accept the attach
+prompt if it appears.
+
+EOF
+    # A real abort window (the message above is otherwise empty
+    # advice; the Justfile [confirm] gate is the first line).
+    read -rp "Proceed? [y/N] " reply
+    [[ "$reply" == [yY]* ]] || { echo "aborted."; exit 130; }
+    echo
+}
+
+# ── one harness ──────────────────────────────────────────────────
+run_for() {
+    local tool="$1"
+    if ! tool_available "$tool"; then
+        skip "$tool (not on PATH)"
+        return
+    fi
+    # kiro is per-agent: without a named agent we can't know where
+    # the browser server lives, so skip rather than drive blind.
+    if [[ "$tool" == kiro && -z "$KIRO_AGENT" ]]; then
+        skip "kiro (no agent — pass --kiro-agent=<name> to test the agent carrying the browser server)"
+        return
+    fi
+
+    info "[$tool] allowed-site check → $ALLOWED_URL"
+    local out1
+    out1="$(drive "$tool" \
+        "Use your browser tools to open ${ALLOWED_URL} and report the page's title text. If you cannot reach it, reply with exactly NAVIGATION_FAILED.")"
+    # Pass only when the known title is present AND the agent did
+    # not signal a failed load — the title alone is guessable from
+    # memory, so the NAVIGATION_FAILED guard forces a real load.
+    if grep -qiF -- "$ALLOWED_TITLE" <<<"$out1" && ! grep -qF 'NAVIGATION_FAILED' <<<"$out1"; then
+        pass "$tool allowed-site loads (saw '$ALLOWED_TITLE')"
+    else
+        fail "$tool allowed-site did not load the expected page"
+        info "response head: $(head -c 300 <<<"$out1")..."
+    fi
+
+    info "[$tool] off-list block check → $OFFLIST_URL (must be blocked)"
+    local out2 offlist_title="Internet Assigned Numbers Authority"
+    out2="$(drive "$tool" \
+        "Use your browser tools to try to open ${OFFLIST_URL}. If the navigation was blocked, refused, or failed for any reason, reply with exactly BLOCKED on its own line. Only if the page actually loaded, report its <title>.")"
+    # The off-list page's real title is the unambiguous signal that
+    # the guardrail FAILED (the page loaded). Otherwise require the
+    # explicit BLOCKED token — loose 'block'-ish substrings in page
+    # prose shouldn't count as a pass.
+    if grep -qiF -- "$offlist_title" <<<"$out2"; then
+        fail "$tool off-list site LOADED — allowlist not enforced"
+        info "response head: $(head -c 300 <<<"$out2")..."
+    elif grep -qE '(^|[^A-Za-z])BLOCKED([^A-Za-z]|$)' <<<"$out2"; then
+        pass "$tool off-list navigation was blocked (allowlist enforced)"
+    else
+        fail "$tool off-list result inconclusive — no BLOCKED signal and no loaded title"
+        info "response head: $(head -c 300 <<<"$out2")..."
+    fi
+}
+
+# ── run ──────────────────────────────────────────────────────────
+preflight
+
+# Isolated allowlist so the user's real one is untouched. Exported
+# so claude/kiro pass it to the MCP server they spawn (the launcher
+# reads $MAID_BROWSER_ALLOWLIST).
+TMP_ALLOW="$(mktemp)"
+trap 'rm -f "$TMP_ALLOW"' EXIT
+printf '%s\n' "$ALLOWED_PATTERN" >"$TMP_ALLOW"
+export MAID_BROWSER_ALLOWLIST="$TMP_ALLOW"
+info "using isolated allowlist: $TMP_ALLOW ($ALLOWED_PATTERN)"
+echo
+
+for tool in claude kiro; do
+    [[ -n "$SELECTOR" && "$SELECTOR" != "$tool" ]] && continue
+    run_for "$tool"
+    echo
+done
+
+if (( FAILURES == 0 )); then
+    echo "browser functional test passed"
+    exit 0
+else
+    echo "$FAILURES check(s) failed"
+    exit 1
+fi
