@@ -26,11 +26,9 @@
           buildInputs = [
             rustToolchain
             pkgs.just
-            # Node.js LTS — the runtime the browser MCP server
-            # (chrome-devtools-mcp, run via npx) needs. Bundling it
-            # here keeps the MCP runtime self-contained in mAId: the
-            # launcher enters this flake, so node need not be on the
-            # user's PATH.
+            # The browser MCP server runs on Node; bundling it here
+            # (vs. the user's PATH) is what keeps that runtime
+            # self-contained — the launcher enters this flake to reach it.
             pkgs.nodejs_22
           ];
         };
