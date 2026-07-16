@@ -1,4 +1,4 @@
-prompt: Load the kdevkit skill (from ~/.claude/skills/kdevkit/SKILL.md, ~/.kiro/steering/skills/kdevkit/SKILL.md, or ~/.codex/skills/kdevkit/SKILL.md — whichever exists). You are on branch feat/add-due-dates; the work is implemented and committed, and the user says: "ship it". Run the kdevkit closure phase: reconcile the feature spec's Implementation Plan (the work is done), then stage and make the closure commit. Do the git and file work now in this repo. When done print [kdevkit] applies. (Do not squash-merge or push — just reconcile and make the close commit.)
+prompt: Load the kdevkit skill (from ~/.claude/skills/kdevkit/SKILL.md, ~/.kiro/steering/skills/kdevkit/SKILL.md, or ~/.codex/skills/kdevkit/SKILL.md — whichever exists). You are on branch feat/add-due-dates. Both Implementation Plan items are already implemented in due.py (read it — the --due flag and the list-output rendering are both present and their commit is on this branch). The user says: "ship it". Run the kdevkit closure phase: reconcile the feature spec's Implementation Plan against the code that is present (the work is done — tick the boxes), then stage and make the closure commit. Do the git and file work now in this repo. When done print [kdevkit] applies. (Do not squash-merge or push — just reconcile and make the close commit.)
 tools: claude,kiro,codex
 --- setup ---
 git init -q
@@ -25,8 +25,22 @@ A nullable due field on the record; a --due flag parses it.
 
 ## Decision Log
 MD
-echo "fn main() {}" > code.rs
-git add -A && git commit -q -m "feat: add due dates (implemented)"
+# The implementation is visibly present, so reconcile can tick both
+# boxes without ambiguity — the fixture tests closure mechanics, not
+# whether the agent should second-guess done work.
+cat > due.py <<'PY'
+import argparse
+
+def parse_args(argv):
+    p = argparse.ArgumentParser()
+    p.add_argument("--due")  # plan item 1: add --due flag and parse the date
+    return p.parse_args(argv)
+
+def render_list(tasks):
+    # plan item 2: render the due date in the list output
+    return "\n".join(f"{t['name']} (due {t['due']})" for t in tasks)
+PY
+git add -A && git commit -q -m "feat: add due dates (--due flag + list rendering)"
 --- assert ---
 set -e
 spec=specs/feature/add-due-dates.md
