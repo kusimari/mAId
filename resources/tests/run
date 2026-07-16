@@ -72,12 +72,44 @@ FAILURES=0
 
 # ── tool plumbing ───────────────────────────────────────────────────
 
-# tool_invoke <tool> <prompt> → echoes captured stdout/stderr.
+# tool_invoke <tool> <prompt> [workdir] → echoes captured stdout/stderr.
+#
+# The single indirection point for driving a coding agent
+# non-interactively. Per-tool CLI flags change across versions; when
+# they do, this is the only function to touch. When <workdir> is given
+# the agent runs there with write access (behavioral fixtures that seed
+# a scratch repo); without it, agents run read-only for cheap
+# load-checks.
 tool_invoke() {
-    local tool="$1" prompt="$2"
+    local tool="$1" prompt="$2" workdir="${3:-}"
     case "$tool" in
-        claude) claude --print --dangerously-skip-permissions "$prompt" 2>&1 ;;
-        kiro)   kiro-cli chat --no-interactive --trust-tools= "$prompt" 2>&1 ;;
+        claude)
+            if [[ -n "$workdir" ]]; then
+                (cd "$workdir" && claude --print --dangerously-skip-permissions "$prompt" 2>&1)
+            else
+                claude --print --dangerously-skip-permissions "$prompt" 2>&1
+            fi
+            ;;
+        kiro)
+            if [[ -n "$workdir" ]]; then
+                (cd "$workdir" && kiro-cli chat --no-interactive --trust-all-tools "$prompt" 2>&1)
+            else
+                kiro-cli chat --no-interactive --trust-tools= "$prompt" 2>&1
+            fi
+            ;;
+        codex)
+            # `exec` is codex's non-interactive mode. stdin must be closed
+            # or it waits for more input. --skip-git-repo-check because a
+            # seeded scratch repo may not be a git tree. read-only for
+            # load-checks; workspace-write when a workdir is seeded.
+            if [[ -n "$workdir" ]]; then
+                codex exec --cd "$workdir" --sandbox workspace-write \
+                    --skip-git-repo-check "$prompt" </dev/null 2>&1
+            else
+                codex exec --sandbox read-only \
+                    --skip-git-repo-check "$prompt" </dev/null 2>&1
+            fi
+            ;;
         *)      echo "tool_invoke: unknown tool '$tool'"; return 1 ;;
     esac
 }
@@ -86,8 +118,18 @@ tool_available() {
     case "$1" in
         claude) command -v claude   >/dev/null 2>&1 ;;
         kiro)   command -v kiro-cli >/dev/null 2>&1 ;;
+        codex)  command -v codex    >/dev/null 2>&1 ;;
         *)      return 1 ;;
     esac
+}
+
+# Tools whose absence is a hard failure, not a skip. codex, kiro, and
+# claude are all expected in this environment; a missing required tool
+# reds the suite (per the feature's "verify across three agents" goal).
+REQUIRED_TOOLS="claude kiro codex"
+
+tool_required() {
+    [[ " $REQUIRED_TOOLS " == *" $1 "* ]]
 }
 
 build_judge_prompt() {
@@ -118,7 +160,11 @@ assert_response() {
     local expected_narrative="$4" name="$5"
 
     if ! tool_available "$tool"; then
-        skip "$name ($tool not on PATH)"
+        if tool_required "$tool"; then
+            fail "$name ($tool required but not on PATH)"
+        else
+            skip "$name ($tool not on PATH)"
+        fi
         return
     fi
 
@@ -198,7 +244,7 @@ for fixture in "$HERE/skills"/*.smoke; do
     for tool in "${_tool_list[@]}"; do
         tool="${tool//[[:space:]]/}"
         case "$tool" in
-            claude|kiro)
+            claude|kiro|codex)
                 assert_response "$tool" "$prompt" "$expect_substr" \
                     "$expected_narrative" "skill:$name via $tool"
                 ;;
