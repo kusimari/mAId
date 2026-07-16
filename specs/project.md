@@ -66,14 +66,17 @@ Tool adaptation lives here: adding a new coding-agent tool
 not rewriting content. Content stays tool-agnostic; the
 registry translates it into each tool's expected layout.
 
-mAId follows the cross-tool **AGENTS.md** standard (Linux
-Foundation Agentic AI Foundation; native support across
-Codex, Copilot, Cursor, Kiro, Zed, Windsurf). Belt-and-
-suspenders symlinks during the transition: legacy
-`CLAUDE.md` and `KIRO.md` symlink at the same merged
-`agents.md` source alongside the modern `AGENTS.md`. Drop
-the legacy filenames when Claude Code adds AGENTS.md as a
-default-read location.
+mAId follows the cross-tool **AGENTS.md** standard (released
+by OpenAI, now under the Linux Foundation's Agentic AI
+Foundation; the agents.md roster lists Codex, Cursor, Copilot,
+Zed, Windsurf, and others). Two of the tools mAId targets are
+*not* on that roster and are bridged deliberately: Claude Code
+reads `CLAUDE.md` (symlinked at the same merged source), and
+Kiro reads `KIRO.md` / its steering `AGENTS.md`. Belt-and-
+suspenders symlinks during the transition: legacy `CLAUDE.md`
+and `KIRO.md` point at the same merged `agents.md` source
+alongside the modern `AGENTS.md`. Drop the legacy filenames
+when Claude Code adds AGENTS.md as a default-read location.
 
 ## Tech Stack
 

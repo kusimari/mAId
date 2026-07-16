@@ -99,12 +99,13 @@ What it does:
 managed destination are preserved unless you pass
 `--force`.
 
-mAId follows the cross-tool **AGENTS.md** standard
-(Linux Foundation Agentic AI Foundation; native support
-across Codex, Copilot, Cursor, Kiro, Zed, Windsurf). The
-legacy `CLAUDE.md` and `KIRO.md` filenames symlink at the
-same source — drop them when Claude Code makes AGENTS.md a
-default-read location.
+mAId follows the cross-tool **AGENTS.md** standard (released
+by OpenAI, now under the Linux Foundation's Agentic AI
+Foundation; the agents.md roster lists Codex, Cursor, Copilot,
+Zed, Windsurf, and others). Claude Code and Kiro aren't on that
+roster, so mAId bridges them: the legacy `CLAUDE.md` and
+`KIRO.md` filenames symlink at the same source — drop them when
+Claude Code makes AGENTS.md a default-read location.
 
 ## Where to look next
 
