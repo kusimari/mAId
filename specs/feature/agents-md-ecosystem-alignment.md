@@ -441,6 +441,22 @@ on the others.
   `all fixtures passed`. The skill is verified carried out across all
   three agents (R8 satisfied).
 
+- 2026-07-16 · Code Review Gate · Fresh-context review (project.md +
+  diff, no feature spec) scored **82/100** (threshold 70 — passes).
+  Three findings, all addressed: (MAJOR) fan-out uninstall/status
+  enumerated only the source dir, so a skill renamed/removed in source
+  orphaned a dangling symlink in codex's dir — fixed `expand()` to also
+  scan the home dir for managed symlinks (union by home path) and
+  reordered `plan_one` so an orphaned managed symlink is a reapable
+  Match even when its source is gone; (MINOR) `uninstall --force` could
+  `remove_dir_all` a codex-owned real dir sharing a skill name — mAId
+  only ever installs symlinks, so a real dir at a managed path is now
+  never removed regardless of `--force`; (MINOR) `prompt:`/`tools:`
+  greps lacked `|| true`, so under `set -e` a missing line aborted the
+  suite and made the malformed-guard dead code — added `|| true`. Two
+  new regression tests (orphan reaping, force-refuse real dir); 40
+  build-tool tests green.
+
 - 2026-07-16 · Planning · Promoted from backlog
   (`agents-md-ecosystem-alignment`) in a fresh worktree. Ran the four
   §6 interviews. Grounding: deep-research report (25 claims 3-0) plus

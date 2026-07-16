@@ -202,8 +202,11 @@ type Link = (PathBuf, PathBuf);
 /// Resolve a registry entry into the concrete symlinks it manages.
 /// `FanOut` enumerates the source directory's children at call time,
 /// so a new skill under the source is picked up without a registry
-/// edit. A `FanOut` whose source is missing (or not a dir) yields no
-/// links; the entry is reported as source-missing by the caller.
+/// edit — AND scans the home dir for already-installed symlinks that
+/// point back into this source tree, so a child renamed or removed in
+/// source is still reaped by uninstall/status instead of being orphaned
+/// as a dangling link inside a dir mAId does not own. A `FanOut` whose
+/// source is missing still reports its previously-installed links.
 fn expand(entry: Entry, home_root: &Path, checkout: &Path) -> io::Result<Vec<Link>> {
     let (home_sub, source_sub, kind) = entry;
     let home = home_root.join(home_sub);
@@ -211,32 +214,51 @@ fn expand(entry: Entry, home_root: &Path, checkout: &Path) -> io::Result<Vec<Lin
     match kind {
         Kind::Link => Ok(vec![(home, source)]),
         Kind::FanOut => {
-            if !source.is_dir() {
-                return Ok(vec![]);
+            use std::collections::BTreeMap;
+            // Keyed by home path so a child present in both source and
+            // home appears once. BTreeMap gives deterministic order.
+            let mut links: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
+            // Children that currently exist in source — the links we
+            // want present after install.
+            if source.is_dir() {
+                for e in fs::read_dir(&source)?.filter_map(Result::ok) {
+                    links.insert(home.join(e.file_name()), e.path());
+                }
             }
-            let mut links: Vec<Link> = fs::read_dir(&source)?
-                .filter_map(Result::ok)
-                .map(|e| (home.join(e.file_name()), e.path()))
-                .collect();
-            // Deterministic order so output and tests don't depend on
-            // the filesystem's directory-entry ordering.
-            links.sort();
-            Ok(links)
+            // Symlinks already in the home dir that point into this
+            // source tree — managed by us, so a removed/renamed source
+            // child is still reaped rather than orphaned. Foreign links
+            // and the tool's own real dirs (e.g. codex's .system/) are
+            // left out.
+            if home.is_dir() {
+                for e in fs::read_dir(&home)?.filter_map(Result::ok) {
+                    let h = e.path();
+                    if let Ok(target) = fs::read_link(&h) {
+                        if target.starts_with(&source) {
+                            links.entry(h).or_insert(target);
+                        }
+                    }
+                }
+            }
+            Ok(links.into_iter().collect())
         }
     }
 }
 
 fn plan_one(home: PathBuf, source: PathBuf) -> io::Result<Plan> {
-    if !path_exists(&source) {
-        return Ok(Plan {
-            home,
-            source,
-            cmp: Comparison::SourceMissing,
-        });
-    }
-
+    // Inspect the home path first: a symlink already pointing at `source`
+    // is a Match to be reaped even when `source` has since been removed
+    // (a fan-out child orphaned by a source rename/removal — the target
+    // of a symlink need not exist). Only report SourceMissing when there
+    // is nothing installed at home to act on.
     let cmp = match fs::symlink_metadata(&home) {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Comparison::Missing,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            if path_exists(&source) {
+                Comparison::Missing
+            } else {
+                Comparison::SourceMissing
+            }
+        }
         Err(e) => return Err(e),
         Ok(meta) if meta.file_type().is_symlink() => {
             let current = fs::read_link(&home)?;
@@ -472,22 +494,22 @@ fn uninstall_one(home: PathBuf, source: PathBuf, dry_run: bool, force: bool) -> 
             println!("{tag}force-removed {target} (was file)");
             Ok(false)
         }
-        Comparison::BlockedByRealDir if force => {
-            if !dry_run {
-                fs::remove_dir_all(&plan.home)?;
-            }
-            println!("{tag}force-removed {target} (was dir)");
-            Ok(false)
+        Comparison::BlockedByRealDir => {
+            // A real directory at a managed path is never mAId's to
+            // delete — mAId only ever installs symlinks, so a real dir
+            // here belongs to the owning tool (e.g. codex's own skill
+            // under ~/.codex/skills that shares a name with one of
+            // ours). --force removes foreign symlinks and files, but
+            // recursively deleting a non-owned directory is refused
+            // regardless of --force.
+            eprintln!(
+                "{tag}skip          {target} (real dir; not mAId-managed — refusing to remove)"
+            );
+            Ok(true)
         }
         Comparison::BlockedByRealFile => {
             eprintln!(
                 "{tag}skip          {target} (existing file; not managed; use --force to remove)"
-            );
-            Ok(true)
-        }
-        Comparison::BlockedByRealDir => {
-            eprintln!(
-                "{tag}skip          {target} (existing dir; not managed; use --force to remove)"
             );
             Ok(true)
         }
@@ -989,6 +1011,51 @@ mod tests {
         }
         // The tool-owned sibling survives the round-trip.
         assert_eq!(fs::read_to_string(&system_marker).unwrap(), "codex-owned");
+    }
+
+    #[test]
+    fn fanout_reaps_orphaned_child_after_source_removal() {
+        // Install two skills, then remove one from source. expand() must
+        // still surface the orphaned home symlink so uninstall reaps it
+        // rather than leaving a dangling link in codex's dir.
+        let checkout = make_checkout_with_skills();
+        let home = TempDir::new().unwrap();
+        cmd_install(home.path(), checkout.path(), false, false).unwrap();
+        // Drop "notes" from the source checkout.
+        fs::remove_dir_all(checkout.path().join("resources/content/skills/notes")).unwrap();
+
+        let codex = REGISTRY
+            .iter()
+            .find(|(h, _, k)| *k == Kind::FanOut && h.contains("codex"))
+            .copied()
+            .unwrap();
+        let homes: Vec<_> = expand(codex, home.path(), checkout.path())
+            .unwrap()
+            .into_iter()
+            .map(|(h, _)| h)
+            .collect();
+        // The orphaned link is still in the managed set.
+        assert!(homes.iter().any(|h| h.ends_with("notes")));
+
+        // Uninstall reaps it — no dangling symlink left behind.
+        cmd_uninstall(home.path(), checkout.path(), false, false).unwrap();
+        assert!(!path_exists(&home.path().join(".codex/skills/notes")));
+        assert!(!path_exists(&home.path().join(".codex/skills/kdevkit")));
+    }
+
+    #[test]
+    fn fanout_uninstall_force_refuses_to_delete_tool_owned_real_dir() {
+        // A real dir at a fan-out child path (a codex-owned skill sharing
+        // a name with one of ours) is never mAId's to remove — even with
+        // --force, which only reaps foreign symlinks and files.
+        let checkout = make_checkout_with_skills();
+        let home = TempDir::new().unwrap();
+        let collision = home.path().join(".codex/skills/kdevkit/OWNED.md");
+        write(&collision, "codex-owned skill");
+
+        let rc = cmd_uninstall(home.path(), checkout.path(), false, true).unwrap();
+        assert_eq!(rc, 1); // soft-skip counts as a failure exit
+        assert_eq!(fs::read_to_string(&collision).unwrap(), "codex-owned skill");
     }
 
     #[test]

@@ -289,10 +289,13 @@ for fixture in "$HERE/skills"/*.smoke; do
     name="$(basename "$fixture" .smoke)"
     [[ -n "$SELECTOR" && "$SELECTOR" != "$name" ]] && continue
 
-    prompt="$(grep '^prompt:' "$fixture" | sed 's/^prompt:[[:space:]]*//')"
+    # All greps need `|| true`: under `set -e` a missing line exits
+    # non-zero and would abort the whole suite before the malformed
+    # guards below can fire (and before the tools: default applies).
+    prompt="$(grep '^prompt:' "$fixture" | sed 's/^prompt:[[:space:]]*//' || true)"
     expect_substr="$(grep '^expect_substr:' "$fixture" | sed 's/^expect_substr:[[:space:]]*//' || true)"
     expected_narrative="$(grep '^expected_narrative:' "$fixture" | sed 's/^expected_narrative:[[:space:]]*//' || true)"
-    tools="$(grep '^tools:' "$fixture" | sed 's/^tools:[[:space:]]*//')"
+    tools="$(grep '^tools:' "$fixture" | sed 's/^tools:[[:space:]]*//' || true)"
     : "${tools:=claude}"
 
     # Behavioral fixtures carry fenced setup + assert shell blocks;
