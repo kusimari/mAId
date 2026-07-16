@@ -329,7 +329,7 @@ on the others.
 <!-- One slice per item. Tick in the commit that completes the slice.
      Ordered so the repo stays working at every commit. -->
 
-- [ ] **1 · Skill change: three-layer model + AGENTS.md convention.**
+- [x] **1 · Skill change: three-layer model + AGENTS.md convention.**
   Edit `resources/content/skills/kdevkit/SKILL.md` (§1/§2 layer model
   + AGENTS.md detection; §7 command-resolution defer; §8.2 promotion
   extension + convention guard; new always-on "Context layers &

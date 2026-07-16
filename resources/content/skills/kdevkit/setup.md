@@ -32,12 +32,24 @@ keep them in place so future sessions re-read the intent.
 
 ## Testing
 
-<!-- Test layers + commands; load-bearing vs. nice-to-have. -->
+<!-- Test layers + which is load-bearing. Command strings live in
+     a repo-root AGENTS.md where one exists (SKILL.md §2 Context
+     layers); here, carry the layer semantics, not duplicated
+     commands. -->
 
 ## Deployment
 
 <!-- Build / release / install path, or how it's consumed. -->
 ```
+
+**Context layers (SKILL.md §2).** `project.md` is the
+project-knowledge layer — the persistent *why* and *shape*. It is
+not a repo-root `AGENTS.md`: operational command strings belong in
+`AGENTS.md` where the repo keeps one, and kdevkit never writes its
+own scaffold (these headers, HTML prompts, logs, the initiatives
+index) into `AGENTS.md`. Keep both persistent files lean — exact
+commands and explicit boundaries over prose; over-stuffed context
+files degrade agent performance.
 
 ## First-time `project.md` detection
 

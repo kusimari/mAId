@@ -1,7 +1,7 @@
 ---
 name: kdevkit
-description: Spec-driven development workflow — four tiers (project / initiative / feature / backlog), locate spec tree, load context, start a session, run it through planning → dev loop → closure with phase-gating cues, ship via Conventional Commits and Quality/Test/Code-Review/Push/Review gates. Three-phase feature branch on a single PR/CR; main stays single-commit-per-feature via squash. Multi-stream initiatives carry the persistent "you're in stream 2 of 3" context across feature branches. Multi-file skill (always-on SKILL.md + deferred setup.md and interviews.md loaded on demand). Public-repo hygiene. Auto-detects specs/, docs/specs/, or .kdevkit/.
-version: 3.5.0
+description: Spec-driven development workflow — four tiers (project / initiative / feature / backlog), locate spec tree, load context, start a session, run it through planning → dev loop → closure with phase-gating cues, ship via Conventional Commits and Quality/Test/Code-Review/Push/Review gates. Three-phase feature branch on a single PR/CR; main stays single-commit-per-feature via squash. Multi-stream initiatives carry the persistent "you're in stream 2 of 3" context across feature branches. Three context layers — operational (repo-root AGENTS.md), project-knowledge (project.md), per-feature (feature spec); closure bubbles durable content up. Multi-file skill (always-on SKILL.md + deferred setup.md and interviews.md loaded on demand). Public-repo hygiene. Auto-detects specs/, docs/specs/, or .kdevkit/.
+version: 3.6.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, initiative, public-repo]
 ---
 
@@ -151,6 +151,47 @@ references one or the current feature is auto-linked to one,
 per §6) → feature(s) for the current branch. Read only the
 referenced initiative(s); do not load the whole `initiative/`
 tree unconditionally.
+
+### Context layers & the AGENTS.md convention
+
+kdevkit's context spans three layers, each with its own home —
+the split the wider agent ecosystem converged on (AGENTS.md as
+the operational file; a separate project-knowledge file — Kiro
+steering, spec-kit constitution, memory-bank; per-feature specs):
+
+- **Operational** → a repo-root `AGENTS.md` where one exists —
+  build / test / lint commands, code style, PR/commit
+  conventions. The tool-agnostic "README for agents," read by
+  many coding agents beyond this skill.
+- **Project-knowledge** → `project.md` — mission, architecture,
+  tech rationale, constraints, and which test layer is
+  load-bearing. The persistent *why* and *shape*; kdevkit's home
+  tier. `project.md` is the project-knowledge layer, not an
+  AGENTS.md variant.
+- **Per-feature** → the feature spec — transient, alive only
+  while the feature is in flight. §8 closure bubbles its durable
+  content up into the two persistent layers.
+
+**Detect, don't assume.** Read a repo-root `AGENTS.md` if
+present (same first-hit-wins spirit as the spec-tree detection).
+A repo whose operational context lives in `AGENTS.md` is worked
+with as-is; do not force a `project.md` into being beside it, and
+do not duplicate the same commands across both files.
+
+**Never corrupt the AGENTS.md convention.** Anything written to a
+repo-root `AGENTS.md` must still read as a normal, lean AGENTS.md
+to any tool or human. Never write kdevkit-internal scaffold into
+it — the fixed six-section headers, HTML-comment prompts,
+Session/Decision logs, or the `## Active initiatives` index. That
+scaffold stays in `project.md` and the spec tree. AGENTS.md holds
+operational instruction, not methodology structure.
+
+**Lean beats detailed.** Both persistent layers stay concise:
+exact commands and explicit boundaries over vague prose, no
+auto-generated bloat. Over-stuffed context files measurably
+*degrade* agent performance and cost — the same compaction
+discipline that keeps this skill's always-on context lean applies
+to what the agent writes into `project.md` and `AGENTS.md`.
 
 ## 3 · Load feature context
 
@@ -525,11 +566,15 @@ right spot" it leaves one log line and proceeds. **Scope limit:**
 the check validates against the *project's own* design; it won't
 surface ecosystem knowledge that lives only in external docs.
 
-### Inputs · read commands from `project.md`
+### Inputs · read commands from AGENTS.md → project.md
 
-Read `project.md`'s Testing section for format / lint /
-type-check / test commands; missing → fall back to §2
-first-time detection. The `kdevkit` block under `## Agent
+Resolve format / lint / type-check / test commands from the
+operational layer first: a repo-root `AGENTS.md` where one exists
+(§2 Context layers), then `project.md`'s Testing section, then §2
+first-time detection. `project.md`'s Testing section carries the
+layer semantics and which suite is load-bearing; the command
+*strings* live in `AGENTS.md` when the repo keeps one, so the two
+files don't duplicate them. The `kdevkit` block under `## Agent
 Development` overrides defaults below (the full `code_review.*`
 block — `reviewer`, `threshold`, `authority`, `retry_budget` —
 plus review CLI, branch-cleanup, merge).
@@ -727,13 +772,25 @@ entries and unresolved questions the same way. The merged
 spec is "done in place" — do not move directories. Stage
 edits.
 
-**2 · `project.md` verify (per touched section).** For each
-`project.md` section the feature touched — Mission,
-Architecture, Tech Stack, Layout, Testing, Deployment, Hard
-constraints, Agent Development — ask one targeted question:
-_"Did this feature change what's documented under
-\<section\>?"_. Asking is mandatory; declining the edit
-is fine. Stage any accepted edits.
+**2 · Persistent-layer verify (per touched section).** Closure
+bubbles durable content up out of the transient feature spec into
+the two persistent layers (§2 Context layers). For each
+`project.md` section the feature touched — Mission, Architecture,
+Tech Stack, Layout, Testing, Deployment, Hard constraints, Agent
+Development — ask one targeted question: _"Did this feature change
+what's documented under \<section\>?"_. Asking is mandatory;
+declining the edit is fine. Stage any accepted edits.
+
+**Operational changes go to `AGENTS.md`, not `project.md`.** If
+the feature changed a build/test/lint command or another
+operational fact and the repo keeps a root `AGENTS.md`, the edit
+lands there (kept lean, per §2's convention) — `project.md`
+Testing keeps only the layer semantics. **Binding decisions
+bubble up as rationale:** a Decision Log entry that constrains
+*future* features gets its *why* folded into the relevant
+`project.md` section (not copied verbatim, not a standing
+decisions log). Non-binding decisions stay in the feature spec's
+Decision Log, archived in place with the feature.
 
 Decide which sections were touched from the diff:
 
@@ -754,6 +811,9 @@ Decide which sections were touched from the diff:
 - **Agent Development** — a `kdevkit` (or other skill)
   block key changed, or a new skill-scoped preference
   landed.
+- **AGENTS.md (operational)** — a build/test/lint command,
+  code-style rule, or PR/commit convention changed, and the
+  repo keeps a root `AGENTS.md`. The edit lands there, lean.
 
 Untouched sections aren't asked about. The asking is the
 artifact; the user can answer "no, project.md is fine"
