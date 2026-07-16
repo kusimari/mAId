@@ -284,10 +284,24 @@ on the others.
 ### Registry + harness diff shape (the non-trivial infra)
 
 - **`resources/build-tool/src/main.rs`** — REGISTRY gains
-  `.codex/AGENTS.md` → `resources/content/agents.md` and
-  `.codex/skills` → `resources/content/skills` (codex reads
-  `~/.codex/skills/` and `~/.codex/AGENTS.md`, confirmed on-disk).
-  Extend the table-driven deploy tests to cover the two rows.
+  `.codex/AGENTS.md` → `resources/content/agents.md` (plain symlink)
+  and a **fan-out entry** for codex skills. Discovered mid-dev:
+  `~/.codex/skills/` is codex-owned (ships `.system/` inside; user
+  skills are siblings), so a whole-directory symlink is wrong (the
+  build-tool correctly reports `BlockedByRealDir`). This adds a
+  **new registry `kind`** to the build-tool — *fan-out*: symlink each
+  child of a source directory into a target directory mAId does not
+  own, leaving the tool's own entries (`.system/`) untouched. Symlink
+  stays the deploy mode (source edits remain live); the fan-out kind
+  applies the same primitive at child granularity. The existing
+  whole-path entries become the default `kind`. Codex discovers
+  skills by directory scan (presence-based, `~/.codex/skills/<name>/
+  SKILL.md`), so per-child symlinks satisfy it natively — no
+  config-file mutation, so no content-merge install is needed (that
+  heavier mode, already present in `kaimux` for settings.json hooks,
+  isn't warranted here). Extend the table-driven deploy tests to
+  cover both the symlink row and the fan-out kind (children linked,
+  `.system/` preserved, round-trip clean).
 - **`resources/tests/run`** — add the codex arm behind `tool_invoke`
   / `tool_available` / fixture-loop `case`; add codex telemetry-noise
   stripping alongside the kiro ANSI strip; implement the `setup:` /
@@ -336,11 +350,14 @@ on the others.
   AGENTS.md convention" subsection; lean/concrete authoring rule).
   Edit `setup.md` project.md template guidance. Version bump.
   `just ci` (markdown — fmt may rewrap; lint/check no-op).
-- [ ] **2 · Registry: codex deploy targets.** Add the two `.codex/*`
-  rows to REGISTRY in `resources/build-tool/src/main.rs`; extend
-  table-driven deploy tests; `just test` green; `just
-  resources::install` + `just resources::status` show codex symlinks
-  resolved.
+- [x] **2 · Registry: codex deploy targets + fan-out kind.** Add a
+  registry `kind` (default whole-path symlink vs. fan-out per-child
+  symlink) to `resources/build-tool/src/main.rs`; add `.codex/AGENTS.md`
+  (symlink) and `.codex/skills` (fan-out) rows; extend table-driven
+  deploy tests to cover the fan-out kind (children linked, tool-owned
+  `.system/` preserved, round-trip clean); `just test` green; `just
+  resources::install` + `just resources::status` show codex targets
+  resolved without clobbering codex's own skills.
 - [ ] **3 · Harness: codex arm + one indirection point.** Add codex
   to `tool_invoke` / `tool_available` / fixture-loop `case`; codex
   telemetry-noise strip; validate the stable invocation live
@@ -452,6 +469,25 @@ on the others.
   Alternative rejected: codex skip-if-absent like kiro — wouldn't
   guarantee the third agent actually runs, weakening the robustness
   claim.
+- **Registry gains a fan-out kind; symlink stays the deploy mode
+  (plan amendment, slice 2).** Discovered mid-dev that `~/.codex/skills/`
+  is codex-owned (ships `.system/`; user skills are siblings), so the
+  whole-directory symlink the original plan assumed is wrong — the
+  build-tool reports `BlockedByRealDir`. Investigated symlink vs.
+  idempotent-install as the deploy mode (user question). Finding: we've
+  hit the first tool that owns its skills dir, but codex discovers
+  skills by directory scan (not config registration), so per-child
+  symlinks satisfy it — no content-merge needed. Chose to add a
+  **fan-out symlink kind** (link each source child into a
+  not-owned target dir, preserving the tool's own entries) rather than
+  (a) whole-dir symlink (clobbers `.system/`), (b) enumerate per-skill
+  registry rows (breaks "add a skill = no registry edit"), or (c) a
+  full idempotent copy-and-merge install (heavier than needed; that
+  mode already exists in `kaimux` for settings.json hooks and isn't
+  warranted for presence-based discovery). Symlink remains the mode —
+  source edits stay live — applied at child granularity. Bundled into
+  this feature (user direction) since it owns "codex as a real third
+  tool."
 - **codex invocation chosen at implementation, not pinned in spec.**
   Rationale: `codex exec` flags (sandbox mode, git-check) are
   version-sensitive; recording the working form in the Decision Log at
