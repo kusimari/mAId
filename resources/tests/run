@@ -9,19 +9,31 @@
 # exercises behavior in the real AI tools.
 #
 # Fixture shape — one file per artefact:
-#   resources/tests/skills/<name>.smoke    Generic format:
+#   resources/tests/skills/<name>.smoke
 #     prompt: <one-line prompt>
+#     tools: claude,kiro,codex   (optional; defaults to "claude")
+#
+#   Then ONE of two verification styles:
+#
+#   (a) Judge / substring — tests what the agent SAYS:
 #     expect_substr: <substring the response must contain>
-#     expected_narrative: <prose describing what a correct answer
-#                          should cover; triggers a second judge
-#                          call on the same tool>
-#     tools: claude,kiro       (optional; defaults to "claude")
+#     expected_narrative: <prose a correct answer should cover;
+#                          triggers a second judge call on the tool>
 #
-#   Each fixture must declare prompt: plus at least one of
-#   expect_substr: or expected_narrative:. Both may be set
-#   (substring is checked first, then the judge).
+#   (b) Behavioral — tests what the agent DOES. Fenced shell blocks
+#       run before/after the agent, which is driven inside a fresh
+#       scratch repo with write access:
+#     --- setup ---
+#     <shell that seeds the scratch repo (cwd = the repo)>
+#     --- assert ---
+#     <shell that inspects the working tree after the agent runs;
+#      non-zero exit = fail>
 #
-# Missing CLIs skip (don't fail) their respective assertions.
+#   A behavioral fixture (has an --- assert --- block) uses style (b);
+#   otherwise it needs expect_substr: or expected_narrative:.
+#
+# Required tools (claude, kiro, codex) fail when absent; other tools
+# skip. A skill that drives all three to the same artefacts is robust.
 #
 # Usage:
 #   resources/tests/run                 Run every fixture.
@@ -216,6 +228,60 @@ assert_response() {
     fi
 }
 
+# extract_block <marker> <file> → the lines of a fenced block, where a
+# block is introduced by `--- <marker> ---` on its own line and runs to
+# the next `--- ... ---` fence or EOF. Used for the multi-line setup:
+# and assert: shell of behavioral fixtures.
+extract_block() {
+    awk -v want="--- $1 ---" '
+        $0 == want { grab = 1; next }
+        /^--- .* ---$/ { grab = 0 }
+        grab { print }
+    ' "$2"
+}
+
+# assert_behavioral <tool> <prompt> <setup> <assert> <check-name>
+#
+# Seeds a fresh scratch repo, runs the agent inside it with write
+# access, then runs the assert shell against the resulting working
+# tree. A non-zero assert exit is a fail — the agent didn't produce
+# the artefacts the methodology requires. Tests execution, not recall.
+assert_behavioral() {
+    local tool="$1" prompt="$2" setup="$3" assert="$4" name="$5"
+
+    if ! tool_available "$tool"; then
+        if tool_required "$tool"; then
+            fail "$name ($tool required but not on PATH)"
+        else
+            skip "$name ($tool not on PATH)"
+        fi
+        return
+    fi
+
+    local work
+    work="$(mktemp -d)"
+    # shellcheck disable=SC2064
+    trap "rm -rf '$work'" RETURN
+
+    if ! ( cd "$work" && bash -c "$setup" ) >/tmp/verify-setup.log 2>&1; then
+        fail "$name (setup failed): $(head -c 200 /tmp/verify-setup.log)"
+        return
+    fi
+
+    local out
+    out="$(tool_invoke "$tool" "$prompt" "$work")" || true
+
+    local alog
+    alog="$(mktemp)"
+    if ( cd "$work" && bash -c "$assert" ) >"$alog" 2>&1; then
+        pass "$name (behavioral)"
+    else
+        fail "$name (behavioral): assert failed — $(head -c 200 "$alog")"
+        info "agent output head: $(head -c 200 <<<"$out")..."
+    fi
+    rm -f "$alog"
+}
+
 # ── fixture loop ────────────────────────────────────────────────────
 
 for fixture in "$HERE/skills"/*.smoke; do
@@ -229,6 +295,13 @@ for fixture in "$HERE/skills"/*.smoke; do
     tools="$(grep '^tools:' "$fixture" | sed 's/^tools:[[:space:]]*//')"
     : "${tools:=claude}"
 
+    # Behavioral fixtures carry fenced setup + assert shell blocks;
+    # judge/substr fixtures carry expect_substr / expected_narrative.
+    setup_block="$(extract_block setup "$fixture")"
+    assert_block="$(extract_block assert "$fixture")"
+    behavioral=0
+    [[ -n "$setup_block" || -n "$assert_block" ]] && behavioral=1
+
     if [[ -z "$prompt" ]]; then
         fail "fixture $fixture malformed (missing prompt:)"
         continue
@@ -236,8 +309,13 @@ for fixture in "$HERE/skills"/*.smoke; do
     if (( STRESSED )); then
         prompt="$STRESS_PREFIX"$'\n'"$prompt"
     fi
-    if [[ -z "$expect_substr" && -z "$expected_narrative" ]]; then
-        fail "fixture $fixture malformed (needs expect_substr: or expected_narrative:)"
+    if (( behavioral )); then
+        if [[ -z "$assert_block" ]]; then
+            fail "fixture $fixture malformed (behavioral needs an --- assert --- block)"
+            continue
+        fi
+    elif [[ -z "$expect_substr" && -z "$expected_narrative" ]]; then
+        fail "fixture $fixture malformed (needs expect_substr:, expected_narrative:, or an --- assert --- block)"
         continue
     fi
     IFS=',' read -ra _tool_list <<<"$tools"
@@ -245,8 +323,13 @@ for fixture in "$HERE/skills"/*.smoke; do
         tool="${tool//[[:space:]]/}"
         case "$tool" in
             claude|kiro|codex)
-                assert_response "$tool" "$prompt" "$expect_substr" \
-                    "$expected_narrative" "skill:$name via $tool"
+                if (( behavioral )); then
+                    assert_behavioral "$tool" "$prompt" "$setup_block" \
+                        "$assert_block" "skill:$name via $tool"
+                else
+                    assert_response "$tool" "$prompt" "$expect_substr" \
+                        "$expected_narrative" "skill:$name via $tool"
+                fi
                 ;;
             "") ;;
             *)  fail "fixture $fixture: unknown tool '$tool' in tools: field" ;;
