@@ -1,0 +1,47 @@
+prompt: Load the kdevkit skill (from ~/.claude/skills/kdevkit/SKILL.md, ~/.kiro/steering/skills/kdevkit/SKILL.md, or ~/.codex/skills/kdevkit/SKILL.md — whichever exists). This repo keeps operational context in a repo-root AGENTS.md and project knowledge in specs/project.md. A feature just added a new lint step run with the command `just lint`. Record this durable operational change in the right context layer. Make the file edits now in this repo. When done print [kdevkit] applies.
+tools: claude,kiro,codex
+--- setup ---
+git init -q
+mkdir -p specs
+cat > AGENTS.md <<'MD'
+# todo-cli — agent guide
+
+## Build & test
+- Build: `cargo build`
+- Test: `cargo test`
+
+## Style
+Run `cargo fmt` before committing.
+MD
+cat > specs/project.md <<'MD'
+# Project: todo-cli
+
+## Mission
+A small command-line to-do manager.
+
+## Architecture
+One Rust binary.
+
+## Tech Stack
+Rust.
+
+## Layout
+src/main.rs.
+
+## Testing
+Unit tests are load-bearing; commands live in AGENTS.md.
+
+## Deployment
+cargo install.
+MD
+git add -A && git commit -q -m "seed" || true
+--- assert ---
+set -e
+# The operational command landed in AGENTS.md (the operational layer).
+grep -qF 'just lint' AGENTS.md
+# It was NOT duplicated into project.md (which holds knowledge, not commands).
+test -z "$(grep -F 'just lint' specs/project.md || true)"
+# AGENTS.md stays a lean, convention-clean file — no kdevkit scaffold
+# leaked in (no six-section headers, no HTML-comment prompts, no logs).
+test -z "$(grep -iE 'Session Log|Decision Log|Active initiatives|Feature Brief|Implementation Plan' AGENTS.md || true)"
+test -z "$(grep -F '<!--' AGENTS.md || true)"

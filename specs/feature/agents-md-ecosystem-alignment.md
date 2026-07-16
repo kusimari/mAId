@@ -367,7 +367,7 @@ on the others.
   (seed scratch repo) + `assert:` (inspect working tree/commits);
   keep the legacy judge path. Unit-cover the `tools:`/required-set
   parsing.
-- [ ] **5 · Rebuild fixtures: 17 → 4 behavioral.** Author
+- [x] **5 · Rebuild fixtures: 17 → 4 behavioral.** Author
   `kdevkit-planning`, `kdevkit-dev-loop`, `kdevkit-closure`, and the
   new `kdevkit-agents-md`; `git rm` the 13 absorbed probes. Each
   seeds a repo, drives a phase, asserts artefacts; `tools:
