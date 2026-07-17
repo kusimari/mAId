@@ -38,6 +38,19 @@
 # Usage:
 #   resources/tests/run                 Run every fixture.
 #   resources/tests/run <name>          Run only <name>'s fixture.
+#   resources/tests/run --tools <list>  Comma-separated coding agents to
+#                                       test against (claude, kiro,
+#                                       codex). Default: all three, and
+#                                       all must pass. Override to scope
+#                                       to a subset, e.g. --tools codex
+#                                       to test one agent — useful when
+#                                       another agent's backend is slow
+#                                       or flaky. The requested set is
+#                                       the required set: a fixture only
+#                                       runs the intersection of its own
+#                                       tools: field with this list, and
+#                                       a requested tool missing from
+#                                       PATH is a failure, not a skip.
 #   resources/tests/run --stressed      Prepend the shared
 #                                       conversational-stream prefix
 #                                       to each fixture's prompt to
@@ -52,8 +65,17 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 STRESSED=0
 SELECTOR=""
+# The coding agents to test against. Empty = the built-in default set
+# (all three); --tools narrows it. This is also the required set — a
+# requested tool that's absent fails rather than skips.
+TOOLS_OVERRIDE=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --tools)
+            shift
+            [[ $# -gt 0 ]] || { echo "--tools needs a comma-separated list" >&2; exit 2; }
+            TOOLS_OVERRIDE="$1"; shift
+            ;;
         --stressed) STRESSED=1; shift ;;
         --help|-h)
             awk '/^$/{exit} /^#/{sub(/^# ?/,""); print}' "${BASH_SOURCE[0]}"
@@ -135,14 +157,37 @@ tool_available() {
     esac
 }
 
-# Tools whose absence is a hard failure, not a skip. codex, kiro, and
-# claude are all expected in this environment; a missing required tool
-# reds the suite (per the feature's "verify across three agents" goal).
-REQUIRED_TOOLS="claude kiro codex"
+# The set of coding agents this run tests against — every fixture is
+# scoped to the intersection of its own tools: field with this set, and
+# a tool here that's absent from PATH is a hard failure, not a skip
+# (the feature's "verify across the agents we asked for" goal). Defaults
+# to all three; --tools narrows it (e.g. to isolate one agent when
+# another's backend is slow). The default set is also the recognized
+# universe of tools, so it validates --tools values.
+ALL_TOOLS="claude kiro codex"
+REQUIRED_TOOLS="$ALL_TOOLS"
+if [[ -n "$TOOLS_OVERRIDE" ]]; then
+    _req=""
+    IFS=',' read -ra _ovr <<<"$TOOLS_OVERRIDE"
+    for t in "${_ovr[@]}"; do
+        t="${t//[[:space:]]/}"
+        [[ -z "$t" ]] && continue
+        if [[ " $ALL_TOOLS " != *" $t "* ]]; then
+            echo "--tools: unknown coding agent '$t' (known: $ALL_TOOLS)" >&2
+            exit 2
+        fi
+        _req="$_req $t"
+    done
+    [[ -n "$_req" ]] || { echo "--tools: no valid coding agents in '$TOOLS_OVERRIDE'" >&2; exit 2; }
+    REQUIRED_TOOLS="${_req# }"
+fi
 
-tool_required() {
+# True when the tool is in this run's requested set — both "should this
+# fixture run it" and "is its absence a failure" derive from this.
+tool_requested() {
     [[ " $REQUIRED_TOOLS " == *" $1 "* ]]
 }
+tool_required() { tool_requested "$1"; }
 
 build_judge_prompt() {
     local question="$1" answer="$2" expected="$3"
@@ -324,19 +369,22 @@ for fixture in "$HERE/skills"/*.smoke; do
     IFS=',' read -ra _tool_list <<<"$tools"
     for tool in "${_tool_list[@]}"; do
         tool="${tool//[[:space:]]/}"
+        [[ -z "$tool" ]] && continue
         case "$tool" in
-            claude|kiro|codex)
-                if (( behavioral )); then
-                    assert_behavioral "$tool" "$prompt" "$setup_block" \
-                        "$assert_block" "skill:$name via $tool"
-                else
-                    assert_response "$tool" "$prompt" "$expect_substr" \
-                        "$expected_narrative" "skill:$name via $tool"
-                fi
-                ;;
-            "") ;;
-            *)  fail "fixture $fixture: unknown tool '$tool' in tools: field" ;;
+            claude|kiro|codex) ;;
+            *)  fail "fixture $fixture: unknown tool '$tool' in tools: field"; continue ;;
         esac
+        # Only run agents in this run's requested set (default all three,
+        # narrowed by --tools). A fixture that names none of the
+        # requested tools simply contributes nothing this run.
+        tool_requested "$tool" || continue
+        if (( behavioral )); then
+            assert_behavioral "$tool" "$prompt" "$setup_block" \
+                "$assert_block" "skill:$name via $tool"
+        else
+            assert_response "$tool" "$prompt" "$expect_substr" \
+                "$expected_narrative" "skill:$name via $tool"
+        fi
     done
 done
 

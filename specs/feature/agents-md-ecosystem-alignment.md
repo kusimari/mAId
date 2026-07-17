@@ -117,8 +117,17 @@ The behavioral outcome an operator observes: running the kdevkit
 verify suite exercises the skill on claude, kiro, **and** codex, and
 each agent is shown to actually perform the methodology (produce the
 right artefacts), not merely describe it. A skill change that passes
-on all three is trusted to be robust; codex is a required tool, not
-skip-if-absent.
+on all three is trusted to be robust; by default all are required.
+
+### R9 · The tested agents are a run parameter
+
+The operator can scope a verify run to a subset of coding agents:
+`resources/tests/run --tools <list>` (e.g. `--tools codex`). Default
+is all three, and all must pass. The requested set is also the
+required set — a requested agent missing from PATH is a failure, and
+agents outside the set simply don't run. This lets an operator isolate
+one agent when another's backend is slow or flaky, without editing
+fixtures.
 
 ## Test Strategy
 
@@ -440,6 +449,18 @@ on the others.
   tools = 12/12), plus notes/writing-style regression fixtures green —
   `all fixtures passed`. The skill is verified carried out across all
   three agents (R8 satisfied).
+
+- 2026-07-17 · `--tools` parameter added (R9) · A codex-only re-run
+  (after a host bwrap/install fix) showed codex's backend can be slow
+  or reconnect-loop while claude/kiro are fine — a single flaky agent
+  shouldn't hold the suite hostage, and isolating one agent shouldn't
+  need fixture edits. Added `resources/tests/run --tools <list>`:
+  defaults to all three (all required), narrows to a subset on request;
+  the requested set is the required set (absent → fail, out-of-set →
+  don't run). Validated: unknown/empty values rejected (exit 2);
+  `--tools claude kdevkit-agents-md` runs exactly one agent and passes;
+  scoping logic unit-checked under bash for default/single/subset.
+  `just ci` green (40 + 53).
 
 - 2026-07-16 · Code Review Gate · Fresh-context review (project.md +
   diff, no feature spec) scored **82/100** (threshold 70 — passes).
