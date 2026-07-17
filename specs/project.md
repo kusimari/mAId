@@ -5,13 +5,14 @@
 <!-- What this project exists to do, and who it serves. One
      paragraph. Change only when the goal itself changes. -->
 
-Tool-agnostic source of truth for my agentic resources — skills
-and the AGENTS.md preamble — compiled into whatever AI tool I'm
-using (Claude Code, Kiro, future tools). The repo is the
-checked-in source; `just resources::install` creates the `$HOME`-facing
-symlinks that each tool reads from. One canonical set of
-artefacts, many consumer surfaces. Apps that ship binaries
-(today: future `kaimux/`, the agent-orch successor) live as
+Tool-agnostic source of truth for my agentic skills — compiled
+into whatever AI tool I'm using (Claude Code, Kiro, Codex, future
+tools). The repo is the checked-in source; `just resources::install`
+creates the `$HOME`-facing symlinks each tool reads from. Every
+supported tool discovers skills natively at its own skills path, so
+skills are all that's installed — no global instruction preamble.
+One canonical set of skills, many consumer surfaces. Apps that ship
+binaries (today: future `kaimux/`, the agent-orch successor) live as
 sibling workspace members with their own native cargo verbs.
 
 ## Architecture
@@ -23,11 +24,10 @@ sibling workspace members with their own native cargo verbs.
 Two halves at the top level:
 
 - **`resources/`** — three layers, working together:
-  1. **Content** (`resources/content/`) — markdown the AI
-     tools load. `agents.md` is the merged tool-agnostic
-     preamble (one source replacing per-tool CLAUDE.md /
-     KIRO.md duplicates). `skills/<name>/SKILL.md` are the
-     skill definitions.
+  1. **Content** (`resources/content/skills/<name>/SKILL.md`) —
+     the skill definitions the AI tools load. Skills are the only
+     deployed artefact; each tool auto-discovers them at its own
+     skills path.
   2. **Tooling** (`resources/build-tool/`) — Rust crate
      (single-file) that does the install. Validates content
      and creates/removes/reports the `$HOME`-facing
@@ -66,17 +66,14 @@ Tool adaptation lives here: adding a new coding-agent tool
 not rewriting content. Content stays tool-agnostic; the
 registry translates it into each tool's expected layout.
 
-mAId follows the cross-tool **AGENTS.md** standard (released
-by OpenAI, now under the Linux Foundation's Agentic AI
-Foundation; the agents.md roster lists Codex, Cursor, Copilot,
-Zed, Windsurf, and others). Two of the tools mAId targets are
-*not* on that roster and are bridged deliberately: Claude Code
-reads `CLAUDE.md` (symlinked at the same merged source), and
-Kiro reads `KIRO.md` / its steering `AGENTS.md`. Belt-and-
-suspenders symlinks during the transition: legacy `CLAUDE.md`
-and `KIRO.md` point at the same merged `agents.md` source
-alongside the modern `AGENTS.md`. Drop the legacy filenames
-when Claude Code adds AGENTS.md as a default-read location.
+mAId installs **skills only** — each supported tool discovers them
+natively at its own skills path (`~/.claude/skills`,
+`~/.kiro/steering/skills`, `~/.codex/skills`), verified to load with
+no extra preamble. mAId deliberately installs no global instruction
+file: `AGENTS.md` is a repo-root convention (per-project, alongside
+README.md), not a global per-tool preamble, and "load the project's
+AGENTS.md / project.md" is kdevkit's work-time instruction rather
+than something deployed here.
 
 ## Tech Stack
 
@@ -131,9 +128,8 @@ mAId/
 │   ├── build-tool/         single-file Rust crate (install/uninstall/status)
 │   │   ├── Cargo.toml      deps: clap, anyhow; dev: tempfile
 │   │   └── src/main.rs     registry + content checks + symlink core + clap + tests
-│   ├── content/            the deployable markdown
-│   │   ├── agents.md       merged AGENTS.md preamble (→ CLAUDE.md, AGENTS.md, KIRO.md)
-│   │   └── skills/<name>/SKILL.md
+│   ├── content/            the deployable skills
+│   │   └── skills/<name>/SKILL.md   (the only deployed artefact)
 │   └── tests/              bash fixture-runner (drives `claude --print` against installed content)
 │       ├── run             entrypoint (`just resources::verify` calls this)
 │       └── skills/<name>.smoke   fixtures: prompt + expect_substr or expected_narrative
@@ -227,12 +223,14 @@ into `dist/`).
 
 ### Hard constraints
 
-- **Never write into `~/.claude/skills/`, `~/.kiro/steering/`,
-  or any registry destination directly.** These paths are
-  symlinks back into the checkout; a non-symlink file there
+- **Never write into `~/.claude/skills/`, `~/.kiro/steering/skills/`,
+  `~/.codex/skills/`, or any registry destination directly.** These
+  paths are symlinks back into the checkout; a non-symlink file there
   breaks deploy invariants. Edit the source under
   `resources/content/` instead — the symlink exposes changes
-  live.
+  live. (This guardrail is mAId-project context — it protects mAId's
+  own deploy invariant — which is why it lives here, not in a
+  globally-installed preamble.)
 - **Registry is the single source of truth** for deployment.
   Adding a new managed path = a registry change + CR, never an
   ad-hoc edit.

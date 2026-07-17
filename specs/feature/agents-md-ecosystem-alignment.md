@@ -455,6 +455,23 @@ on the others.
   `all fixtures passed`. The skill is verified carried out across all
   three agents (R8 satisfied).
 
+- 2026-07-17 · Preamble cut (CR follow-through) · The codex-AGENTS.md
+  fix prompted a deeper review question: does *any* tool need mAId's
+  global `agents.md` preamble? Tested skill discovery with the preamble
+  absent: **claude** (isolated fresh-HOME) ✓, **codex** (isolated
+  `CODEX_HOME`) ✓, **kiro** (live config, preamble symlinks moved aside
+  + restored — kiro reads everything under `steering/` as context) ✓.
+  All three discover skills with no preamble. Also checked the
+  preamble for "strong standing instructions that can't be skills":
+  only two sections — routing (redundant) and a managed-paths guardrail
+  that is *mAId-project* context (protects mAId's own symlink invariant)
+  and already lives in project.md Hard constraints. So the global
+  preamble is fully redundant. **Cut it entirely:** registry is now 3
+  skills entries (claude/kiro Link, codex FanOut); removed the 4
+  preamble rows, `resources/content/agents.md`, and its content
+  validator + tests (40 → 38 build-tool tests). Guardrail note added to
+  project.md. Docs (project.md, README) rewritten to skills-only.
+
 - 2026-07-17 · CR rework · Two review comments, both "design intent
   buried in verbose commentary." (1) Architectural: verified against
   codex's own docs that codex reads AGENTS.md as a *per-project*
@@ -560,6 +577,21 @@ on the others.
   Alternative rejected: codex skip-if-absent like kiro — wouldn't
   guarantee the third agent actually runs, weakening the robustness
   claim.
+- **mAId installs skills only; the global agents.md preamble is cut
+  (CR follow-through).** Review asked why mAId installs a global
+  preamble at all. Verified empirically that claude, codex, and kiro
+  all discover skills natively with no preamble (isolated tests +
+  live kiro test with restore). The preamble's only non-routing
+  content — a managed-paths guardrail — is mAId-project context that
+  belongs in project.md (and already did). And `AGENTS.md` is a
+  repo-root convention, not a global per-tool file, so installing one
+  globally misused the name. Chose to remove the preamble entirely
+  (registry, `resources/content/agents.md`, validator, tests) rather
+  than (a) keep it as belt-and-suspenders (dead weight; the ETH
+  lean-wins finding argues against unneeded always-on context) or (b)
+  defer to a follow-up (the review raised it here; leaving a known
+  misuse in place is worse than fixing it). Skills-only is the honest
+  deploy contract.
 - **Registry gains a fan-out kind; symlink stays the deploy mode
   (plan amendment, slice 2).** Discovered mid-dev that `~/.codex/skills/`
   is codex-owned (ships `.system/`; user skills are siblings), so the

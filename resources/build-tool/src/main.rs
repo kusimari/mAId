@@ -22,26 +22,23 @@ use std::process::ExitCode;
 // ─────────────────────────────────────────────────────────────────
 // 1. Registry — the deployment manifest.
 //
-// The job: mAId keeps skills (and a small session-routing preamble) in
-// the checkout; each coding agent expects them under its own home dir.
-// The registry maps checkout source → agent home, one row per target,
-// in one of two shapes (`Kind`):
+// The job: mAId keeps skills in the checkout; each coding agent expects
+// them under its own home dir and discovers them there natively (claude
+// ~/.claude/skills, kiro ~/.kiro/steering, codex ~/.codex/skills — all
+// verified to load skills with no extra preamble). The registry maps
+// checkout source → agent home, one row per target, in one of two
+// shapes (`Kind`):
 //
 //   Link   — the agent's home layout matches the checkout, so symlink
-//            the home path straight at the source (a whole dir or a
-//            single file). mAId owns that leaf.
+//            the home path straight at the source dir. mAId owns it.
 //   FanOut — the agent owns the home dir and puts its own entries
 //            there, so we can't replace it; mirror each source child in
 //            as its own symlink and leave the rest alone.
 //
-// The preamble is a skills-routing note (how to load skills), so it
-// only goes where the agent auto-reads a global instruction file:
-// claude (CLAUDE.md/AGENTS.md) and kiro (KIRO.md/AGENTS.md). codex
-// reads AGENTS.md only as a per-project file from the working tree, so
-// it gets skills alone — no global preamble. "Load the project's
-// AGENTS.md / project.md" is kdevkit's work-time instruction, not
-// something installed here. Drop the legacy CLAUDE.md/KIRO.md names
-// when those tools read AGENTS.md by default.
+// Skills are all that's installed. There is no global instruction
+// preamble: loading a project's AGENTS.md / project.md is kdevkit's
+// work-time instruction, and AGENTS.md is a repo-root convention, not a
+// global per-tool file.
 // ─────────────────────────────────────────────────────────────────
 
 type Entry = (&'static str, &'static str, Kind); // (home_subpath, source_subpath, kind)
@@ -53,72 +50,33 @@ enum Kind {
 }
 
 const REGISTRY: &[Entry] = &[
-    (
-        ".claude/CLAUDE.md",
-        "resources/content/agents.md",
-        Kind::Link,
-    ),
-    (
-        ".claude/AGENTS.md",
-        "resources/content/agents.md",
-        Kind::Link,
-    ),
     (".claude/skills", "resources/content/skills", Kind::Link),
-    (
-        ".kiro/steering/KIRO.md",
-        "resources/content/agents.md",
-        Kind::Link,
-    ),
-    (
-        ".kiro/steering/AGENTS.md",
-        "resources/content/agents.md",
-        Kind::Link,
-    ),
     (
         ".kiro/steering/skills",
         "resources/content/skills",
         Kind::Link,
     ),
-    // codex reads AGENTS.md per-project (working tree), not globally, so
-    // it gets skills only — fanned in beside codex's own ~/.codex/skills
-    // entries.
     (".codex/skills", "resources/content/skills", Kind::FanOut),
 ];
 
 // ─────────────────────────────────────────────────────────────────
 // 2. Content checks.
 //
-// Two shapes the AI tools care about:
-//   - resources/content/agents.md       plain markdown preamble (no
-//                                        frontmatter — cross-tool
-//                                        AGENTS.md standard). Check:
-//                                        present + non-empty.
-//   - resources/content/skills/<name>/SKILL.md
-//                                       YAML frontmatter required:
-//                                        name + description, both
-//                                        non-empty.
+// Only skills are deployed. Each resources/content/skills/<name>/
+// SKILL.md needs YAML frontmatter with a non-empty name + description.
 // ─────────────────────────────────────────────────────────────────
 
 /// Validate `resources/content/`, returning the count of validated
 /// files or the joined error list. Caller decides whether to print or
 /// abort.
 fn check_content(content_dir: &Path) -> Result<usize, Vec<String>> {
-    let agents_md = content_dir.join("agents.md");
-    let agents_result: Option<Result<(), String>> =
-        agents_md.exists().then(|| check_agents_md(&agents_md));
-
-    let skill_results: Vec<Result<(), String>> = fs::read_dir(content_dir.join("skills"))
+    let (oks, errs): (Vec<_>, Vec<_>) = fs::read_dir(content_dir.join("skills"))
         .into_iter()
         .flatten()
         .filter_map(Result::ok)
         .map(|entry| entry.path().join("SKILL.md"))
         .filter(|p| p.exists())
         .map(|p| check_one_skill(&p))
-        .collect();
-
-    let (oks, errs): (Vec<_>, Vec<_>) = agents_result
-        .into_iter()
-        .chain(skill_results)
         .partition(Result::is_ok);
 
     if errs.is_empty() {
@@ -126,16 +84,6 @@ fn check_content(content_dir: &Path) -> Result<usize, Vec<String>> {
     } else {
         Err(errs.into_iter().map(Result::unwrap_err).collect())
     }
-}
-
-fn check_agents_md(path: &Path) -> Result<(), String> {
-    fs::read_to_string(path)
-        .map_err(|e| format!("{}: cannot read: {e}", path.display()))
-        .and_then(|body| {
-            (!body.trim().is_empty())
-                .then_some(())
-                .ok_or_else(|| format!("{}: AGENTS.md preamble is empty", path.display()))
-        })
 }
 
 fn check_one_skill(path: &Path) -> Result<(), String> {
@@ -559,23 +507,6 @@ mod tests {
     }
 
     #[test]
-    fn check_content_agents_md_present_ok() {
-        let dir = TempDir::new().unwrap();
-        write(&dir.path().join("agents.md"), "# preamble\n\nbody.\n");
-        assert_eq!(check_content(dir.path()).unwrap(), 1);
-    }
-
-    #[test]
-    fn check_content_agents_md_empty_rejected() {
-        let dir = TempDir::new().unwrap();
-        write(&dir.path().join("agents.md"), "  \n\n  \n");
-        let errs = check_content(dir.path()).unwrap_err();
-        assert!(errs
-            .iter()
-            .any(|e| e.contains("AGENTS.md preamble is empty")));
-    }
-
-    #[test]
     fn check_content_skill_with_frontmatter_ok() {
         let dir = TempDir::new().unwrap();
         write(
@@ -598,13 +529,15 @@ mod tests {
 
     #[test]
     fn check_content_collects_multiple_errors() {
-        // Both agents.md (empty) AND a SKILL.md (missing description)
-        // — caller sees ALL problems, not just the first.
+        // Two bad skills — caller sees ALL problems, not just the first.
         let dir = TempDir::new().unwrap();
-        write(&dir.path().join("agents.md"), "");
         write(
             &dir.path().join("skills/foo/SKILL.md"),
             "---\nname: foo\n---\n",
+        );
+        write(
+            &dir.path().join("skills/bar/SKILL.md"),
+            "---\nname: bar\n---\n",
         );
         let errs = check_content(dir.path()).unwrap_err();
         assert_eq!(errs.len(), 2);
@@ -682,15 +615,11 @@ mod tests {
     fn make_checkout() -> TempDir {
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(dir.path().join("resources/content/skills")).unwrap();
-        write(
-            &dir.path().join("resources/content/agents.md"),
-            "# Agents preamble\n\nbody.\n",
-        );
         dir
     }
 
-    /// Resolve `REGISTRY[0]` (a `Kind::Link` entry) to its single
-    /// (home, source) pair for the per-link plan_one tests.
+    /// Resolve `REGISTRY[0]` (`.claude/skills`, a `Kind::Link` entry) to
+    /// its single (home, source) pair for the per-link plan_one tests.
     fn link0(home: &Path, checkout: &Path) -> (PathBuf, PathBuf) {
         expand(REGISTRY[0], home, checkout)
             .unwrap()
