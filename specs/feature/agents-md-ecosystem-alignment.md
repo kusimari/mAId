@@ -292,9 +292,14 @@ on the others.
 
 ### Registry + harness diff shape (the non-trivial infra)
 
+<!-- Superseded at CR (see Session Log 2026-07-17): the
+     `.codex/AGENTS.md` entry was dropped — codex reads AGENTS.md
+     per-project, not globally, so it gets skills (fan-out) only. The
+     fan-out design below stands. -->
+
 - **`resources/build-tool/src/main.rs`** — REGISTRY gains
-  `.codex/AGENTS.md` → `resources/content/agents.md` (plain symlink)
-  and a **fan-out entry** for codex skills. Discovered mid-dev:
+  a **fan-out entry** for codex skills (the originally-planned
+  `.codex/AGENTS.md` symlink was dropped at CR). Discovered mid-dev:
   `~/.codex/skills/` is codex-owned (ships `.system/` inside; user
   skills are siblings), so a whole-directory symlink is wrong (the
   build-tool correctly reports `BlockedByRealDir`). This adds a
@@ -449,6 +454,24 @@ on the others.
   tools = 12/12), plus notes/writing-style regression fixtures green —
   `all fixtures passed`. The skill is verified carried out across all
   three agents (R8 satisfied).
+
+- 2026-07-17 · CR rework · Two review comments, both "design intent
+  buried in verbose commentary." (1) Architectural: verified against
+  codex's own docs that codex reads AGENTS.md as a *per-project*
+  working-tree file ("durable repo conventions ... nested files apply
+  under their subtree"), NOT a global `~/.codex/AGENTS.md` preamble —
+  so installing mAId's skills-routing preamble there was wrong.
+  **Dropped the `.codex/AGENTS.md` registry entry**; codex gets skills
+  only (fan-out). "Load the project's AGENTS.md/project.md" is
+  kdevkit's work-time instruction, not a mAId install target. Removed
+  the orphaned `~/.codex/AGENTS.md` symlink on disk. (2) Legibility:
+  replaced the scattered line-by-line comments in `main.rs` and
+  `tests/run` with one top-of-section design comment each — registry
+  intent (checkout skills → each agent's expected home; Link for
+  same-structure agents, FanOut for agents that own their dir) and the
+  three verification styles (substring / semantic / behavioral) + what
+  the phase smokes cover. `just ci` green (40 + 53); behavioral smoke
+  re-confirmed.
 
 - 2026-07-17 · `--tools` parameter added (R9) · A codex-only re-run
   (after a host bwrap/install fix) showed codex's backend can be slow

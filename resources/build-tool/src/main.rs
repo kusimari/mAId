@@ -22,27 +22,33 @@ use std::process::ExitCode;
 // ─────────────────────────────────────────────────────────────────
 // 1. Registry — the deployment manifest.
 //
-// Eight entries: the merged AGENTS.md preamble deployed per tool
-// (legacy CLAUDE.md / KIRO.md alongside AGENTS.md, all pointing at
-// the same source; codex reads ~/.codex/AGENTS.md), plus the skills
-// tree per tool (~/.claude, ~/.kiro/steering, ~/.codex). Drop the
-// legacy filenames when Claude Code adds AGENTS.md as a default-read
-// location.
+// The job: mAId keeps skills (and a small session-routing preamble) in
+// the checkout; each coding agent expects them under its own home dir.
+// The registry maps checkout source → agent home, one row per target,
+// in one of two shapes (`Kind`):
+//
+//   Link   — the agent's home layout matches the checkout, so symlink
+//            the home path straight at the source (a whole dir or a
+//            single file). mAId owns that leaf.
+//   FanOut — the agent owns the home dir and puts its own entries
+//            there, so we can't replace it; mirror each source child in
+//            as its own symlink and leave the rest alone.
+//
+// The preamble is a skills-routing note (how to load skills), so it
+// only goes where the agent auto-reads a global instruction file:
+// claude (CLAUDE.md/AGENTS.md) and kiro (KIRO.md/AGENTS.md). codex
+// reads AGENTS.md only as a per-project file from the working tree, so
+// it gets skills alone — no global preamble. "Load the project's
+// AGENTS.md / project.md" is kdevkit's work-time instruction, not
+// something installed here. Drop the legacy CLAUDE.md/KIRO.md names
+// when those tools read AGENTS.md by default.
 // ─────────────────────────────────────────────────────────────────
 
 type Entry = (&'static str, &'static str, Kind); // (home_subpath, source_subpath, kind)
 
-/// How a registry entry maps its source onto the home path.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Kind {
-    /// Symlink the home path straight at the source. mAId owns the
-    /// home leaf (`~/.claude/skills`, `~/.claude/AGENTS.md`).
     Link,
-    /// Symlink each child of the source dir into the home dir,
-    /// leaving the home dir itself — and any entries the owning tool
-    /// put there — untouched. For directories mAId does *not* own,
-    /// e.g. `~/.codex/skills`, where codex ships its own `.system/`
-    /// skills and expects user skills as siblings.
     FanOut,
 }
 
@@ -73,11 +79,9 @@ const REGISTRY: &[Entry] = &[
         "resources/content/skills",
         Kind::Link,
     ),
-    (
-        ".codex/AGENTS.md",
-        "resources/content/agents.md",
-        Kind::Link,
-    ),
+    // codex reads AGENTS.md per-project (working tree), not globally, so
+    // it gets skills only — fanned in beside codex's own ~/.codex/skills
+    // entries.
     (".codex/skills", "resources/content/skills", Kind::FanOut),
 ];
 
@@ -194,19 +198,15 @@ struct Plan {
     cmp: Comparison,
 }
 
-/// One concrete symlink an entry resolves to: (home path, source path).
-/// A `Link` entry yields one; a `FanOut` entry yields one per source
-/// child so each is an independent symlink the verbs can act on.
+/// A concrete symlink to manage: (home path, source path).
 type Link = (PathBuf, PathBuf);
 
-/// Resolve a registry entry into the concrete symlinks it manages.
-/// `FanOut` enumerates the source directory's children at call time,
-/// so a new skill under the source is picked up without a registry
-/// edit — AND scans the home dir for already-installed symlinks that
-/// point back into this source tree, so a child renamed or removed in
-/// source is still reaped by uninstall/status instead of being orphaned
-/// as a dangling link inside a dir mAId does not own. A `FanOut` whose
-/// source is missing still reports its previously-installed links.
+/// Resolve a registry entry to the concrete symlinks it manages —
+/// `Link` yields one; `FanOut` yields one per child. FanOut unions the
+/// source's current children (what should exist) with home symlinks
+/// already pointing into this source (so a child renamed or removed in
+/// source is still reaped, not orphaned as a dangling link in a dir we
+/// don't own). Keyed by home path for dedupe + deterministic order.
 fn expand(entry: Entry, home_root: &Path, checkout: &Path) -> io::Result<Vec<Link>> {
     let (home_sub, source_sub, kind) = entry;
     let home = home_root.join(home_sub);
@@ -215,21 +215,12 @@ fn expand(entry: Entry, home_root: &Path, checkout: &Path) -> io::Result<Vec<Lin
         Kind::Link => Ok(vec![(home, source)]),
         Kind::FanOut => {
             use std::collections::BTreeMap;
-            // Keyed by home path so a child present in both source and
-            // home appears once. BTreeMap gives deterministic order.
             let mut links: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
-            // Children that currently exist in source — the links we
-            // want present after install.
             if source.is_dir() {
                 for e in fs::read_dir(&source)?.filter_map(Result::ok) {
                     links.insert(home.join(e.file_name()), e.path());
                 }
             }
-            // Symlinks already in the home dir that point into this
-            // source tree — managed by us, so a removed/renamed source
-            // child is still reaped rather than orphaned. Foreign links
-            // and the tool's own real dirs (e.g. codex's .system/) are
-            // left out.
             if home.is_dir() {
                 for e in fs::read_dir(&home)?.filter_map(Result::ok) {
                     let h = e.path();
@@ -246,11 +237,9 @@ fn expand(entry: Entry, home_root: &Path, checkout: &Path) -> io::Result<Vec<Lin
 }
 
 fn plan_one(home: PathBuf, source: PathBuf) -> io::Result<Plan> {
-    // Inspect the home path first: a symlink already pointing at `source`
-    // is a Match to be reaped even when `source` has since been removed
-    // (a fan-out child orphaned by a source rename/removal — the target
-    // of a symlink need not exist). Only report SourceMissing when there
-    // is nothing installed at home to act on.
+    // Inspect home first: a symlink already pointing at `source` is a
+    // Match to reap even if `source` is now gone (an orphaned fan-out
+    // child). SourceMissing only when there's nothing at home to act on.
     let cmp = match fs::symlink_metadata(&home) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
             if path_exists(&source) {
@@ -495,13 +484,9 @@ fn uninstall_one(home: PathBuf, source: PathBuf, dry_run: bool, force: bool) -> 
             Ok(false)
         }
         Comparison::BlockedByRealDir => {
-            // A real directory at a managed path is never mAId's to
-            // delete — mAId only ever installs symlinks, so a real dir
-            // here belongs to the owning tool (e.g. codex's own skill
-            // under ~/.codex/skills that shares a name with one of
-            // ours). --force removes foreign symlinks and files, but
-            // recursively deleting a non-owned directory is refused
-            // regardless of --force.
+            // mAId only ever installs symlinks, so a real dir at a
+            // managed path belongs to the owning tool — never removed,
+            // even with --force (which only reaps foreign symlinks/files).
             eprintln!(
                 "{tag}skip          {target} (real dir; not mAId-managed — refusing to remove)"
             );

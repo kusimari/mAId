@@ -1,39 +1,28 @@
 #!/usr/bin/env bash
-# mAId/resources/tests/run — drives the AI tools against installed
-# content. The Justfile invokes this as `just verify` (or
-# `just verify-one <name>`).
+# mAId/resources/tests/run — verify that installed skills actually make
+# the coding agents do the right thing. Runs each fixture against every
+# requested agent (claude/kiro/codex); a skill that drives all of them
+# to the same result is robust. `just verify` / `just verify-one <name>`.
+# Pre-condition: `just install` has deployed the symlinks (install
+# correctness itself is a `cargo test` concern, not this script's).
 #
-# Pre-condition: `just install` has run, so $HOME has the managed
-# symlinks. Structural correctness of the install is covered by
-# `cargo test` against tempfile-fake-HOME — this script ONLY
-# exercises behavior in the real AI tools.
+# Three ways a fixture verifies a skill (a fixture picks one):
+#   1. substring  — run a prompt, check the reply contains a string
+#                   (expect_substr:).
+#   2. semantic   — run a prompt, a judge call checks the reply carries
+#                   the meaning we expect (expected_narrative:).
+#   3. behavioral — run a prompt against a seeded test project, check the
+#                   agent made the right changes to it (--- setup --- /
+#                   --- assert --- shell blocks; a non-zero assert fails).
 #
-# Fixture shape — one file per artefact:
-#   resources/tests/skills/<name>.smoke
-#     prompt: <one-line prompt>
-#     tools: claude,kiro,codex   (optional; defaults to "claude")
+# The kdevkit smokes cover the skill driving an agent through each phase
+# of working on a project: setting up context, planning a feature,
+# running the dev loop (code → quality/style → tests, looping), closing
+# the feature, and adapting when a phase has to revisit an earlier one.
 #
-#   Then ONE of two verification styles:
-#
-#   (a) Judge / substring — tests what the agent SAYS:
-#     expect_substr: <substring the response must contain>
-#     expected_narrative: <prose a correct answer should cover;
-#                          triggers a second judge call on the tool>
-#
-#   (b) Behavioral — tests what the agent DOES. Fenced shell blocks
-#       run before/after the agent, which is driven inside a fresh
-#       scratch repo with write access:
-#     --- setup ---
-#     <shell that seeds the scratch repo (cwd = the repo)>
-#     --- assert ---
-#     <shell that inspects the working tree after the agent runs;
-#      non-zero exit = fail>
-#
-#   A behavioral fixture (has an --- assert --- block) uses style (b);
-#   otherwise it needs expect_substr: or expected_narrative:.
-#
-# Required tools (claude, kiro, codex) fail when absent; other tools
-# skip. A skill that drives all three to the same artefacts is robust.
+# Fixture file (resources/tests/skills/<name>.smoke): a `prompt:` line, a
+# `tools:` line (comma-separated agents; default claude), and one of the
+# three verification styles above.
 #
 # Usage:
 #   resources/tests/run                 Run every fixture.
