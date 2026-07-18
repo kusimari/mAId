@@ -5,14 +5,17 @@
 <!-- What this project exists to do, and who it serves. One
      paragraph. Change only when the goal itself changes. -->
 
-Tool-agnostic source of truth for my agentic skills — compiled
-into whatever AI tool I'm using (Claude Code, Kiro, Codex, future
-tools). The repo is the checked-in source; `just resources::install`
-creates the `$HOME`-facing symlinks each tool reads from. Every
-supported tool discovers skills natively at its own skills path, so
-skills are all that's installed — no global instruction preamble.
-One canonical set of skills, many consumer surfaces. Apps that ship
-binaries (today: future `kaimux/`, the agent-orch successor) live as
+Tool-agnostic source of truth for my agentic resources — mostly
+skills — compiled into whatever AI tool I'm using (Claude Code,
+Kiro, Codex, future tools). The repo is the checked-in source;
+`just resources::install` creates the `$HOME`-facing symlinks each
+tool reads from. Every supported tool discovers skills natively at
+its own skills path, so skills install as plain symlinks with no
+global instruction preamble; the one non-skill resource
+(browser-control MCP) registers as a runnable server via Just verbs
+(see Architecture). One canonical set of resources, many consumer
+surfaces. Apps that ship binaries (today: future `kaimux/`, the
+agent-orch successor) live as
 sibling workspace members with their own native cargo verbs.
 
 ## Architecture
@@ -66,14 +69,40 @@ Tool adaptation lives here: adding a new coding-agent tool
 not rewriting content. Content stays tool-agnostic; the
 registry translates it into each tool's expected layout.
 
-mAId installs **skills only** — each supported tool discovers them
-natively at its own skills path (`~/.claude/skills`,
+Skills deploy through the registry as symlinks — each supported tool
+discovers them natively at its own skills path (`~/.claude/skills`,
 `~/.kiro/steering/skills`, `~/.codex/skills`), verified to load with
-no extra preamble. mAId deliberately installs no global instruction
-file: `AGENTS.md` is a repo-root convention (per-project, alongside
+no extra preamble. mAId installs no global instruction file:
+`AGENTS.md` is a repo-root convention (per-project, alongside
 README.md), not a global per-tool preamble, and "load the project's
 AGENTS.md / project.md" is kdevkit's work-time instruction rather
 than something deployed here.
+
+**Browser-control MCP** is the one resource that isn't a skill — the
+first *runnable* one (skills are markdown symlinks; this is a live
+server). It lets the agent drive the user's already-running Chrome
+over the DevTools Protocol, so existing logins are reused with no
+re-auth. Its shape differs from skills in two ways:
+
+- **Registration vs. runtime split.** A skill lives entirely
+  in the harness config as a symlink. An MCP server is an
+  out-of-process service the harness *calls*, so only its
+  *registration* goes in each harness config (`claude mcp
+  add` / `kiro-cli mcp add`); its *runtime* (Node) is mAId's
+  own, supplied from the repo flake. This is why the registry
+  above can't express it — registration is a runnable command,
+  not a symlink — so it lives in `resources::browser-mcp-*`
+  Just verbs (shell over each harness's MCP CLI), keeping the
+  Rust build-tool pure-symlink.
+- **Browser-enforced allowlist.** The agent may act only on
+  sites in a user-owned allowlist file
+  (`${XDG_CONFIG_HOME:-$HOME/.config}/maid/browser-allowlist`).
+  Enforcement is at the browser (a launch flag), not in skill
+  prose — a prompt-injected agent still can't leave the list.
+  Deny-by-default: an empty/absent list refuses to start. A
+  thin launcher (`resources/browser/launch`) re-reads the file
+  and enters the flake on each (re)connect, so edits apply next
+  session without restarting Chrome.
 
 ## Tech Stack
 
@@ -88,6 +117,11 @@ than something deployed here.
   toolchain + `just` via direnv (rust-overlay). Cargo and
   just are hard prerequisites — no `./install` shim. Users
   on machines without them enter `nix develop` themselves.
+  The flake also bundles `nodejs_22` — the runtime the
+  browser-control MCP server (`chrome-devtools-mcp`, run via
+  `npx`) needs — so that capability is self-contained in mAId:
+  `nix` is its only host prerequisite, node need not be on the
+  user's PATH.
 - **Entrypoints:** Justfile organised as a root file with
   `mod` declarations per area, so verbs are namespaced by
   what they touch:
@@ -96,7 +130,12 @@ than something deployed here.
     `just resources::status`, `just resources::verify`
     (drives claude / kiro / codex against installed content;
     costs API credits, gated behind a confirmation prompt),
-    `just resources::verify-one <name>`.
+    `just resources::verify-one <name>`. Browser-control MCP
+    adds `browser-mcp-install [kiro-agent]` /
+    `browser-mcp-uninstall` / `browser-mcp-status` /
+    `browser-mcp-allow <pattern>` (register/report the server
+    + append allowlist patterns), plus `browser-functional-test`
+    (attended, `[confirm]`-gated — drives real Chrome).
   - **`kaimux::*`** (operate on the kaimux crate):
     `just kaimux::build` (release + copy to `dist/`),
     `just kaimux::test`, `just kaimux::integration`.
@@ -128,11 +167,15 @@ mAId/
 │   ├── build-tool/         single-file Rust crate (install/uninstall/status)
 │   │   ├── Cargo.toml      deps: clap, anyhow; dev: tempfile
 │   │   └── src/main.rs     registry + content checks + symlink core + clap + tests
-│   ├── content/            the deployable skills
-│   │   └── skills/<name>/SKILL.md   (the only deployed artefact)
+│   ├── content/            the deployable skills (symlinked in)
+│   │   └── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
+│   ├── browser/            browser-control MCP (not symlinked — runnable)
+│   │   ├── launch          allowlist-enforcing launcher; enters flake, execs chrome-devtools-mcp
+│   │   └── manage          register/unregister/status per harness (claude, kiro per-agent)
 │   └── tests/              bash fixture-runner (drives claude / kiro / codex against installed content)
 │       ├── run             entrypoint (`just resources::verify` calls this)
-│       └── skills/<name>.smoke   fixtures: prompt + expect_substr or expected_narrative
+│       ├── browser-functional   ATTENDED test: drives real Chrome, asserts off-list blocked
+│       └── skills/<name>.smoke   fixtures: substring / semantic-judge / behavioral (setup+assert)
 ├── kaimux/                 tmux-pane orchestrator for coding-agent sessions
 │   ├── Justfile            `kaimux::*` verb surface (build/test/integration)
 │   ├── Cargo.toml          deps: clap, anyhow, fd-lock, nix, notify, serde, serde_json
@@ -222,6 +265,18 @@ real AI tools against the installed content. App workspace
 members (`kaimux/`) build via `just kaimux::build` (a
 one-liner over `cargo build -p kaimux --release` + copy
 into `dist/`).
+
+The browser-control MCP deploys separately from skills
+(env-gated, opt-in): `just resources::browser-mcp-install
+[kiro-agent]` registers the server with each harness and
+prints the one-time manual step (enable Chrome remote
+debugging via `chrome://inspect`). It graceful-skips where a
+prereq is missing (no GUI Chrome, no `nix`, no harness CLI) —
+never a half-register. `browser-mcp-uninstall` removes the
+registration but preserves the user-owned allowlist (it's user
+data). The intended direction is convergence — `resources::
+install` absorbing every resource kind — but MCP's env
+prerequisites keep it a separate verb today.
 
 ### Hard constraints
 
