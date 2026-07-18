@@ -43,6 +43,9 @@ use std::process::ExitCode;
 
 type Entry = (&'static str, &'static str, Kind); // (home_subpath, source_subpath, kind)
 
+/// A concrete symlink to manage, resolved from an entry: (home, source).
+type Link = (PathBuf, PathBuf);
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Kind {
     Link,
@@ -70,18 +73,21 @@ const REGISTRY: &[Entry] = &[
 /// files or the joined error list. Caller decides whether to print or
 /// abort.
 fn check_content(content_dir: &Path) -> Result<usize, Vec<String>> {
-    let (oks, errs): (Vec<_>, Vec<_>) = fs::read_dir(content_dir.join("skills"))
+    // Walk every skill, partition into (oks, errs), and report the Ok
+    // count or the FULL error list — matching on the partitioned tuple
+    // so there's no intermediate binding but all errors are still kept.
+    match fs::read_dir(content_dir.join("skills"))
         .into_iter()
         .flatten()
         .filter_map(Result::ok)
         .map(|entry| entry.path().join("SKILL.md"))
         .filter(|p| p.exists())
         .map(|p| check_one_skill(&p))
-        .partition(Result::is_ok);
-
-    errs.is_empty()
-        .then_some(oks.len())
-        .ok_or_else(|| errs.into_iter().map(Result::unwrap_err).collect())
+        .partition::<Vec<_>, _>(Result::is_ok)
+    {
+        (oks, errs) if errs.is_empty() => Ok(oks.len()),
+        (_, errs) => Err(errs.into_iter().map(Result::unwrap_err).collect()),
+    }
 }
 
 fn check_one_skill(path: &Path) -> Result<(), String> {
@@ -121,9 +127,6 @@ fn check_skill_frontmatter(content: &str) -> Result<(), String> {
 // Each verb walks REGISTRY and asks `plan_one()` what it sees at the
 // home path. The verb decides the action.
 // ─────────────────────────────────────────────────────────────────
-
-/// A concrete symlink to manage: (home path, source path).
-type Link = (PathBuf, PathBuf);
 
 #[derive(Debug, PartialEq, Eq)]
 enum Comparison {
