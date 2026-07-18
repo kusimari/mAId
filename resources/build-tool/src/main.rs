@@ -79,11 +79,9 @@ fn check_content(content_dir: &Path) -> Result<usize, Vec<String>> {
         .map(|p| check_one_skill(&p))
         .partition(Result::is_ok);
 
-    if errs.is_empty() {
-        Ok(oks.len())
-    } else {
-        Err(errs.into_iter().map(Result::unwrap_err).collect())
-    }
+    errs.is_empty()
+        .then_some(oks.len())
+        .ok_or_else(|| errs.into_iter().map(Result::unwrap_err).collect())
 }
 
 fn check_one_skill(path: &Path) -> Result<(), String> {
@@ -124,6 +122,9 @@ fn check_skill_frontmatter(content: &str) -> Result<(), String> {
 // home path. The verb decides the action.
 // ─────────────────────────────────────────────────────────────────
 
+/// A concrete symlink to manage: (home path, source path).
+type Link = (PathBuf, PathBuf);
+
 #[derive(Debug, PartialEq, Eq)]
 enum Comparison {
     /// The symlink exists and points where REGISTRY says it should.
@@ -145,9 +146,6 @@ struct Plan {
     source: PathBuf,
     cmp: Comparison,
 }
-
-/// A concrete symlink to manage: (home path, source path).
-type Link = (PathBuf, PathBuf);
 
 /// Resolve a registry entry to the concrete symlinks it manages —
 /// `Link` yields one; `FanOut` yields one per child. FanOut unions the
