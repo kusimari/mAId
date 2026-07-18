@@ -36,7 +36,7 @@ Two halves at the top level:
      against the installed content. Rust where types help
      (the symlink state machine and content validator);
      bash where shelling out to other tools is the job
-     (driving `claude --print` / `kiro-cli`).
+     (driving `claude` / `kiro-cli` / `codex`).
   3. **Verbs** (Justfile recipes that use the tooling) —
      `just resources::install`, `just resources::uninstall`,
      `just resources::status`, `just resources::verify`
@@ -94,7 +94,7 @@ than something deployed here.
   - **`resources::*`** (operate on `$HOME` or the AI tools):
     `just resources::install`, `just resources::uninstall`,
     `just resources::status`, `just resources::verify`
-    (drives `claude --print` against installed content;
+    (drives claude / kiro / codex against installed content;
     costs API credits, gated behind a confirmation prompt),
     `just resources::verify-one <name>`.
   - **`kaimux::*`** (operate on the kaimux crate):
@@ -130,7 +130,7 @@ mAId/
 │   │   └── src/main.rs     registry + content checks + symlink core + clap + tests
 │   ├── content/            the deployable skills
 │   │   └── skills/<name>/SKILL.md   (the only deployed artefact)
-│   └── tests/              bash fixture-runner (drives `claude --print` against installed content)
+│   └── tests/              bash fixture-runner (drives claude / kiro / codex against installed content)
 │       ├── run             entrypoint (`just resources::verify` calls this)
 │       └── skills/<name>.smoke   fixtures: prompt + expect_substr or expected_narrative
 ├── kaimux/                 tmux-pane orchestrator for coding-agent sessions
@@ -164,17 +164,19 @@ a structural integration test (`structural_install_to_real_directory_layout`)
 that runs a full install→status→uninstall round-trip in
 the fake $HOME, replacing the older bash structural smoke.
 
-**`just resources::verify` — AI-tool functional tests.** Drives
-`claude --print` (and `kiro-cli` when available) with the
-`.smoke` fixtures under `resources/tests/skills/`. Two
-fixture styles share the harness: substring fixtures
-(`expect_substr:`) for cheap load-checks, and judge fixtures
-(`expected_narrative:`) that run a second tool call to
-evaluate whether the primary answer covers the expected
-behavior. Slow (minutes), costs API credits, requires the
-managed symlinks already deployed (i.e., run
-`just resources::install` first). Gated behind a
-confirmation prompt in the Justfile.
+**`just resources::verify` — AI-tool functional tests.** Drives the
+real coding agents (claude, kiro, codex) against the `.smoke`
+fixtures under `resources/tests/skills/`. Three verification styles
+share the harness: **substring** (`expect_substr:` — the reply
+contains a string), **semantic** (`expected_narrative:` — a judge
+call checks the reply's meaning), and **behavioral** (`--- setup ---`
+/ `--- assert ---` shell blocks — the agent runs against a seeded
+test project and the assert inspects the changes it made). Every
+fixture runs against each requested agent; `--tools <list>` scopes
+to a subset (default all three, all required). Slow (minutes), costs
+API credits, requires the managed symlinks already deployed (run
+`just resources::install` first). Gated behind a confirmation prompt
+in the Justfile.
 
 The §8 Test Gate uses `just test` by default. SKILL.md
 prose revisions add `just resources::verify` (judge mode)

@@ -372,12 +372,12 @@ on the others.
   `.system/` preserved, round-trip clean); `just test` green; `just
   resources::install` + `just resources::status` show codex targets
   resolved without clobbering codex's own skills.
-- [ ] **3 · Harness: codex arm + one indirection point.** Add codex
+- [x] **3 · Harness: codex arm + one indirection point.** Add codex
   to `tool_invoke` / `tool_available` / fixture-loop `case`; codex
   telemetry-noise strip; validate the stable invocation live
   (`codex exec` flags); introduce the required-tool set. Prove a
   trivial fixture passes on codex.
-- [ ] **4 · Harness: behavioral fixture format.** Implement `setup:`
+- [x] **4 · Harness: behavioral fixture format.** Implement `setup:`
   (seed scratch repo) + `assert:` (inspect working tree/commits);
   keep the legacy judge path. Unit-cover the `tools:`/required-set
   parsing.
@@ -386,16 +386,20 @@ on the others.
   new `kdevkit-agents-md`; `git rm` the 13 absorbed probes. Each
   seeds a repo, drives a phase, asserts artefacts; `tools:
   claude,kiro,codex`.
-- [ ] **6 · mAId accuracy (R7).** Correct `specs/project.md`
-  Architecture + `README.md` AGENTS.md-adoption wording.
+- [x] **6 · mAId accuracy (R7).** Correct `specs/project.md`
+  Architecture + `README.md` AGENTS.md-adoption wording. (Superseded
+  by the skills-only rework: the adoption claims were removed, not
+  just corrected — mAId installs skills only, no AGENTS.md preamble.)
 - [x] **7 · Quality + Test Gate + tri-tool behavioral verify.** `just ci` + `just test` green.
   Prepare the tri-tool verify commands and **hand off** to the user
   (per project.md user-driven rule) — do not spend credits
   autonomously.
-- [ ] **8 · Code Review Gate.** host-native reviewer, threshold 70,
+- [x] **8 · Code Review Gate.** host-native reviewer, threshold 70,
   hard-stop, retry-budget 2. Reviewer sees project.md + diff, no
-  feature spec.
-- [ ] **9 · Push + Agent-dev Review Gate.** Body: Approach + Reading
+  feature spec. (Scored 82; findings fixed. Plus a second human review
+  round on PR #30 — codex/preamble architecture + code-style — all
+  addressed.)
+- [x] **9 · Push + Agent-dev Review Gate.** Body: Approach + Reading
   order (SKILL.md as intent; harness + registry as contract; fixtures
   as plumbing).
 
@@ -454,6 +458,22 @@ on the others.
   tools = 12/12), plus notes/writing-style regression fixtures green —
   `all fixtures passed`. The skill is verified carried out across all
   three agents (R8 satisfied).
+
+- 2026-07-18 · Closure · §8.1 reconciled Implementation Plan (items
+  3/4/6/8/9 ticked; 6 noted superseded by the skills-only rework, 8
+  noted the extra human-review round). §8.2 project.md verify caught a
+  stale **Testing** section — updated to the three verification styles
+  (substring / semantic / behavioral) + codex as a driven tool +
+  `--tools`; also fixed Architecture / Tech Stack / Layout
+  "drives claude --print" refs to name all three agents. The feature
+  grew well past its "kdevkit skill changes" brief — it reshaped how
+  *all* skills build/install (skills-only registry + fan-out kind),
+  how skills are tested (3 verification styles), and added codex as a
+  third agent — so those cross-cutting changes are now reflected in
+  project.md's timeless sections. §8.3: no existing backlog items
+  closed; **added** `behavioral-verification-for-all-skills` to carry
+  this feature's pattern to notes/writing-style in a later session.
+  `just ci` green (38 + 53).
 
 - 2026-07-17 · Preamble cut (CR follow-through) · The codex-AGENTS.md
   fix prompted a deeper review question: does *any* tool need mAId's
