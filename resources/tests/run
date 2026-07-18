@@ -1,31 +1,45 @@
 #!/usr/bin/env bash
-# mAId/resources/tests/run — drives the AI tools against installed
-# content. The Justfile invokes this as `just verify` (or
-# `just verify-one <name>`).
+# mAId/resources/tests/run — verify that installed skills actually make
+# the coding agents do the right thing. Runs each fixture against every
+# requested agent (claude/kiro/codex); a skill that drives all of them
+# to the same result is robust. `just verify` / `just verify-one <name>`.
+# Pre-condition: `just install` has deployed the symlinks (install
+# correctness itself is a `cargo test` concern, not this script's).
 #
-# Pre-condition: `just install` has run, so $HOME has the managed
-# symlinks. Structural correctness of the install is covered by
-# `cargo test` against tempfile-fake-HOME — this script ONLY
-# exercises behavior in the real AI tools.
+# Three ways a fixture verifies a skill (a fixture picks one):
+#   1. substring  — run a prompt, check the reply contains a string
+#                   (expect_substr:).
+#   2. semantic   — run a prompt, a judge call checks the reply carries
+#                   the meaning we expect (expected_narrative:).
+#   3. behavioral — run a prompt against a seeded test project, check the
+#                   agent made the right changes to it (--- setup --- /
+#                   --- assert --- shell blocks; a non-zero assert fails).
 #
-# Fixture shape — one file per artefact:
-#   resources/tests/skills/<name>.smoke    Generic format:
-#     prompt: <one-line prompt>
-#     expect_substr: <substring the response must contain>
-#     expected_narrative: <prose describing what a correct answer
-#                          should cover; triggers a second judge
-#                          call on the same tool>
-#     tools: claude,kiro       (optional; defaults to "claude")
+# The kdevkit smokes cover the skill driving an agent through each phase
+# of working on a project: setting up context, planning a feature,
+# running the dev loop (code → quality/style → tests, looping), closing
+# the feature, and adapting when a phase has to revisit an earlier one.
 #
-#   Each fixture must declare prompt: plus at least one of
-#   expect_substr: or expected_narrative:. Both may be set
-#   (substring is checked first, then the judge).
-#
-# Missing CLIs skip (don't fail) their respective assertions.
+# Fixture file (resources/tests/skills/<name>.smoke): a `prompt:` line, a
+# `tools:` line (comma-separated agents; default claude), and one of the
+# three verification styles above.
 #
 # Usage:
 #   resources/tests/run                 Run every fixture.
 #   resources/tests/run <name>          Run only <name>'s fixture.
+#   resources/tests/run --tools <list>  Comma-separated coding agents to
+#                                       test against (claude, kiro,
+#                                       codex). Default: all three, and
+#                                       all must pass. Override to scope
+#                                       to a subset, e.g. --tools codex
+#                                       to test one agent — useful when
+#                                       another agent's backend is slow
+#                                       or flaky. The requested set is
+#                                       the required set: a fixture only
+#                                       runs the intersection of its own
+#                                       tools: field with this list, and
+#                                       a requested tool missing from
+#                                       PATH is a failure, not a skip.
 #   resources/tests/run --stressed      Prepend the shared
 #                                       conversational-stream prefix
 #                                       to each fixture's prompt to
@@ -40,8 +54,17 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 STRESSED=0
 SELECTOR=""
+# The coding agents to test against. Empty = the built-in default set
+# (all three); --tools narrows it. This is also the required set — a
+# requested tool that's absent fails rather than skips.
+TOOLS_OVERRIDE=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --tools)
+            shift
+            [[ $# -gt 0 ]] || { echo "--tools needs a comma-separated list" >&2; exit 2; }
+            TOOLS_OVERRIDE="$1"; shift
+            ;;
         --stressed) STRESSED=1; shift ;;
         --help|-h)
             awk '/^$/{exit} /^#/{sub(/^# ?/,""); print}' "${BASH_SOURCE[0]}"
@@ -72,12 +95,44 @@ FAILURES=0
 
 # ── tool plumbing ───────────────────────────────────────────────────
 
-# tool_invoke <tool> <prompt> → echoes captured stdout/stderr.
+# tool_invoke <tool> <prompt> [workdir] → echoes captured stdout/stderr.
+#
+# The single indirection point for driving a coding agent
+# non-interactively. Per-tool CLI flags change across versions; when
+# they do, this is the only function to touch. When <workdir> is given
+# the agent runs there with write access (behavioral fixtures that seed
+# a scratch repo); without it, agents run read-only for cheap
+# load-checks.
 tool_invoke() {
-    local tool="$1" prompt="$2"
+    local tool="$1" prompt="$2" workdir="${3:-}"
     case "$tool" in
-        claude) claude --print --dangerously-skip-permissions "$prompt" 2>&1 ;;
-        kiro)   kiro-cli chat --no-interactive --trust-tools= "$prompt" 2>&1 ;;
+        claude)
+            if [[ -n "$workdir" ]]; then
+                (cd "$workdir" && claude --print --dangerously-skip-permissions "$prompt" 2>&1)
+            else
+                claude --print --dangerously-skip-permissions "$prompt" 2>&1
+            fi
+            ;;
+        kiro)
+            if [[ -n "$workdir" ]]; then
+                (cd "$workdir" && kiro-cli chat --no-interactive --trust-all-tools "$prompt" 2>&1)
+            else
+                kiro-cli chat --no-interactive --trust-tools= "$prompt" 2>&1
+            fi
+            ;;
+        codex)
+            # `exec` is codex's non-interactive mode. stdin must be closed
+            # or it waits for more input. --skip-git-repo-check because a
+            # seeded scratch repo may not be a git tree. read-only for
+            # load-checks; workspace-write when a workdir is seeded.
+            if [[ -n "$workdir" ]]; then
+                codex exec --cd "$workdir" --sandbox workspace-write \
+                    --skip-git-repo-check "$prompt" </dev/null 2>&1
+            else
+                codex exec --sandbox read-only \
+                    --skip-git-repo-check "$prompt" </dev/null 2>&1
+            fi
+            ;;
         *)      echo "tool_invoke: unknown tool '$tool'"; return 1 ;;
     esac
 }
@@ -86,9 +141,42 @@ tool_available() {
     case "$1" in
         claude) command -v claude   >/dev/null 2>&1 ;;
         kiro)   command -v kiro-cli >/dev/null 2>&1 ;;
+        codex)  command -v codex    >/dev/null 2>&1 ;;
         *)      return 1 ;;
     esac
 }
+
+# The set of coding agents this run tests against — every fixture is
+# scoped to the intersection of its own tools: field with this set, and
+# a tool here that's absent from PATH is a hard failure, not a skip
+# (the feature's "verify across the agents we asked for" goal). Defaults
+# to all three; --tools narrows it (e.g. to isolate one agent when
+# another's backend is slow). The default set is also the recognized
+# universe of tools, so it validates --tools values.
+ALL_TOOLS="claude kiro codex"
+REQUIRED_TOOLS="$ALL_TOOLS"
+if [[ -n "$TOOLS_OVERRIDE" ]]; then
+    _req=""
+    IFS=',' read -ra _ovr <<<"$TOOLS_OVERRIDE"
+    for t in "${_ovr[@]}"; do
+        t="${t//[[:space:]]/}"
+        [[ -z "$t" ]] && continue
+        if [[ " $ALL_TOOLS " != *" $t "* ]]; then
+            echo "--tools: unknown coding agent '$t' (known: $ALL_TOOLS)" >&2
+            exit 2
+        fi
+        _req="$_req $t"
+    done
+    [[ -n "$_req" ]] || { echo "--tools: no valid coding agents in '$TOOLS_OVERRIDE'" >&2; exit 2; }
+    REQUIRED_TOOLS="${_req# }"
+fi
+
+# True when the tool is in this run's requested set — both "should this
+# fixture run it" and "is its absence a failure" derive from this.
+tool_requested() {
+    [[ " $REQUIRED_TOOLS " == *" $1 "* ]]
+}
+tool_required() { tool_requested "$1"; }
 
 build_judge_prompt() {
     local question="$1" answer="$2" expected="$3"
@@ -118,7 +206,11 @@ assert_response() {
     local expected_narrative="$4" name="$5"
 
     if ! tool_available "$tool"; then
-        skip "$name ($tool not on PATH)"
+        if tool_required "$tool"; then
+            fail "$name ($tool required but not on PATH)"
+        else
+            skip "$name ($tool not on PATH)"
+        fi
         return
     fi
 
@@ -170,6 +262,60 @@ assert_response() {
     fi
 }
 
+# extract_block <marker> <file> → the lines of a fenced block, where a
+# block is introduced by `--- <marker> ---` on its own line and runs to
+# the next `--- ... ---` fence or EOF. Used for the multi-line setup:
+# and assert: shell of behavioral fixtures.
+extract_block() {
+    awk -v want="--- $1 ---" '
+        $0 == want { grab = 1; next }
+        /^--- .* ---$/ { grab = 0 }
+        grab { print }
+    ' "$2"
+}
+
+# assert_behavioral <tool> <prompt> <setup> <assert> <check-name>
+#
+# Seeds a fresh scratch repo, runs the agent inside it with write
+# access, then runs the assert shell against the resulting working
+# tree. A non-zero assert exit is a fail — the agent didn't produce
+# the artefacts the methodology requires. Tests execution, not recall.
+assert_behavioral() {
+    local tool="$1" prompt="$2" setup="$3" assert="$4" name="$5"
+
+    if ! tool_available "$tool"; then
+        if tool_required "$tool"; then
+            fail "$name ($tool required but not on PATH)"
+        else
+            skip "$name ($tool not on PATH)"
+        fi
+        return
+    fi
+
+    local work
+    work="$(mktemp -d)"
+    # shellcheck disable=SC2064
+    trap "rm -rf '$work'" RETURN
+
+    if ! ( cd "$work" && bash -c "$setup" ) >/tmp/verify-setup.log 2>&1; then
+        fail "$name (setup failed): $(head -c 200 /tmp/verify-setup.log)"
+        return
+    fi
+
+    local out
+    out="$(tool_invoke "$tool" "$prompt" "$work")" || true
+
+    local alog
+    alog="$(mktemp)"
+    if ( cd "$work" && bash -c "$assert" ) >"$alog" 2>&1; then
+        pass "$name (behavioral)"
+    else
+        fail "$name (behavioral): assert failed — $(head -c 200 "$alog")"
+        info "agent output head: $(head -c 200 <<<"$out")..."
+    fi
+    rm -f "$alog"
+}
+
 # ── fixture loop ────────────────────────────────────────────────────
 
 for fixture in "$HERE/skills"/*.smoke; do
@@ -177,11 +323,21 @@ for fixture in "$HERE/skills"/*.smoke; do
     name="$(basename "$fixture" .smoke)"
     [[ -n "$SELECTOR" && "$SELECTOR" != "$name" ]] && continue
 
-    prompt="$(grep '^prompt:' "$fixture" | sed 's/^prompt:[[:space:]]*//')"
+    # All greps need `|| true`: under `set -e` a missing line exits
+    # non-zero and would abort the whole suite before the malformed
+    # guards below can fire (and before the tools: default applies).
+    prompt="$(grep '^prompt:' "$fixture" | sed 's/^prompt:[[:space:]]*//' || true)"
     expect_substr="$(grep '^expect_substr:' "$fixture" | sed 's/^expect_substr:[[:space:]]*//' || true)"
     expected_narrative="$(grep '^expected_narrative:' "$fixture" | sed 's/^expected_narrative:[[:space:]]*//' || true)"
-    tools="$(grep '^tools:' "$fixture" | sed 's/^tools:[[:space:]]*//')"
+    tools="$(grep '^tools:' "$fixture" | sed 's/^tools:[[:space:]]*//' || true)"
     : "${tools:=claude}"
+
+    # Behavioral fixtures carry fenced setup + assert shell blocks;
+    # judge/substr fixtures carry expect_substr / expected_narrative.
+    setup_block="$(extract_block setup "$fixture")"
+    assert_block="$(extract_block assert "$fixture")"
+    behavioral=0
+    [[ -n "$setup_block" || -n "$assert_block" ]] && behavioral=1
 
     if [[ -z "$prompt" ]]; then
         fail "fixture $fixture malformed (missing prompt:)"
@@ -190,21 +346,34 @@ for fixture in "$HERE/skills"/*.smoke; do
     if (( STRESSED )); then
         prompt="$STRESS_PREFIX"$'\n'"$prompt"
     fi
-    if [[ -z "$expect_substr" && -z "$expected_narrative" ]]; then
-        fail "fixture $fixture malformed (needs expect_substr: or expected_narrative:)"
+    if (( behavioral )); then
+        if [[ -z "$assert_block" ]]; then
+            fail "fixture $fixture malformed (behavioral needs an --- assert --- block)"
+            continue
+        fi
+    elif [[ -z "$expect_substr" && -z "$expected_narrative" ]]; then
+        fail "fixture $fixture malformed (needs expect_substr:, expected_narrative:, or an --- assert --- block)"
         continue
     fi
     IFS=',' read -ra _tool_list <<<"$tools"
     for tool in "${_tool_list[@]}"; do
         tool="${tool//[[:space:]]/}"
+        [[ -z "$tool" ]] && continue
         case "$tool" in
-            claude|kiro)
-                assert_response "$tool" "$prompt" "$expect_substr" \
-                    "$expected_narrative" "skill:$name via $tool"
-                ;;
-            "") ;;
-            *)  fail "fixture $fixture: unknown tool '$tool' in tools: field" ;;
+            claude|kiro|codex) ;;
+            *)  fail "fixture $fixture: unknown tool '$tool' in tools: field"; continue ;;
         esac
+        # Only run agents in this run's requested set (default all three,
+        # narrowed by --tools). A fixture that names none of the
+        # requested tools simply contributes nothing this run.
+        tool_requested "$tool" || continue
+        if (( behavioral )); then
+            assert_behavioral "$tool" "$prompt" "$setup_block" \
+                "$assert_block" "skill:$name via $tool"
+        else
+            assert_response "$tool" "$prompt" "$expect_substr" \
+                "$expected_narrative" "skill:$name via $tool"
+        fi
     done
 done
 

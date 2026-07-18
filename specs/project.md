@@ -5,13 +5,17 @@
 <!-- What this project exists to do, and who it serves. One
      paragraph. Change only when the goal itself changes. -->
 
-Tool-agnostic source of truth for my agentic resources — skills
-and the AGENTS.md preamble — compiled into whatever AI tool I'm
-using (Claude Code, Kiro, future tools). The repo is the
-checked-in source; `just resources::install` creates the `$HOME`-facing
-symlinks that each tool reads from. One canonical set of
-artefacts, many consumer surfaces. Apps that ship binaries
-(today: future `kaimux/`, the agent-orch successor) live as
+Tool-agnostic source of truth for my agentic resources — mostly
+skills — compiled into whatever AI tool I'm using (Claude Code,
+Kiro, Codex, future tools). The repo is the checked-in source;
+`just resources::install` creates the `$HOME`-facing symlinks each
+tool reads from. Every supported tool discovers skills natively at
+its own skills path, so skills install as plain symlinks with no
+global instruction preamble; the one non-skill resource
+(browser-control MCP) registers as a runnable server via Just verbs
+(see Architecture). One canonical set of resources, many consumer
+surfaces. Apps that ship binaries (today: future `kaimux/`, the
+agent-orch successor) live as
 sibling workspace members with their own native cargo verbs.
 
 ## Architecture
@@ -23,11 +27,10 @@ sibling workspace members with their own native cargo verbs.
 Two halves at the top level:
 
 - **`resources/`** — three layers, working together:
-  1. **Content** (`resources/content/`) — markdown the AI
-     tools load. `agents.md` is the merged tool-agnostic
-     preamble (one source replacing per-tool CLAUDE.md /
-     KIRO.md duplicates). `skills/<name>/SKILL.md` are the
-     skill definitions.
+  1. **Content** (`resources/content/skills/<name>/SKILL.md`) —
+     the skill definitions the AI tools load. Skills are the only
+     deployed artefact; each tool auto-discovers them at its own
+     skills path.
   2. **Tooling** (`resources/build-tool/`) — Rust crate
      (single-file) that does the install. Validates content
      and creates/removes/reports the `$HOME`-facing
@@ -36,7 +39,7 @@ Two halves at the top level:
      against the installed content. Rust where types help
      (the symlink state machine and content validator);
      bash where shelling out to other tools is the job
-     (driving `claude --print` / `kiro-cli`).
+     (driving `claude` / `kiro-cli` / `codex`).
   3. **Verbs** (Justfile recipes that use the tooling) —
      `just resources::install`, `just resources::uninstall`,
      `just resources::status`, `just resources::verify`
@@ -66,10 +69,19 @@ Tool adaptation lives here: adding a new coding-agent tool
 not rewriting content. Content stays tool-agnostic; the
 registry translates it into each tool's expected layout.
 
-**Browser-control MCP** is the first *runnable* resource
-(skills are markdown symlinks; this is a live server). It
-lets the agent drive the user's already-running Chrome over
-the DevTools Protocol, so existing logins are reused with no
+Skills deploy through the registry as symlinks — each supported tool
+discovers them natively at its own skills path (`~/.claude/skills`,
+`~/.kiro/steering/skills`, `~/.codex/skills`), verified to load with
+no extra preamble. mAId installs no global instruction file:
+`AGENTS.md` is a repo-root convention (per-project, alongside
+README.md), not a global per-tool preamble, and "load the project's
+AGENTS.md / project.md" is kdevkit's work-time instruction rather
+than something deployed here.
+
+**Browser-control MCP** is the one resource that isn't a skill — the
+first *runnable* one (skills are markdown symlinks; this is a live
+server). It lets the agent drive the user's already-running Chrome
+over the DevTools Protocol, so existing logins are reused with no
 re-auth. Its shape differs from skills in two ways:
 
 - **Registration vs. runtime split.** A skill lives entirely
@@ -91,15 +103,6 @@ re-auth. Its shape differs from skills in two ways:
   thin launcher (`resources/browser/launch`) re-reads the file
   and enters the flake on each (re)connect, so edits apply next
   session without restarting Chrome.
-
-mAId follows the cross-tool **AGENTS.md** standard (Linux
-Foundation Agentic AI Foundation; native support across
-Codex, Copilot, Cursor, Kiro, Zed, Windsurf). Belt-and-
-suspenders symlinks during the transition: legacy
-`CLAUDE.md` and `KIRO.md` symlink at the same merged
-`agents.md` source alongside the modern `AGENTS.md`. Drop
-the legacy filenames when Claude Code adds AGENTS.md as a
-default-read location.
 
 ## Tech Stack
 
@@ -125,7 +128,7 @@ default-read location.
   - **`resources::*`** (operate on `$HOME` or the AI tools):
     `just resources::install`, `just resources::uninstall`,
     `just resources::status`, `just resources::verify`
-    (drives `claude --print` against installed content;
+    (drives claude / kiro / codex against installed content;
     costs API credits, gated behind a confirmation prompt),
     `just resources::verify-one <name>`. Browser-control MCP
     adds `browser-mcp-install [kiro-agent]` /
@@ -164,16 +167,15 @@ mAId/
 │   ├── build-tool/         single-file Rust crate (install/uninstall/status)
 │   │   ├── Cargo.toml      deps: clap, anyhow; dev: tempfile
 │   │   └── src/main.rs     registry + content checks + symlink core + clap + tests
-│   ├── content/            the deployable markdown
-│   │   ├── agents.md       merged AGENTS.md preamble (→ CLAUDE.md, AGENTS.md, KIRO.md)
+│   ├── content/            the deployable skills (symlinked in)
 │   │   └── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
 │   ├── browser/            browser-control MCP (not symlinked — runnable)
 │   │   ├── launch          allowlist-enforcing launcher; enters flake, execs chrome-devtools-mcp
 │   │   └── manage          register/unregister/status per harness (claude, kiro per-agent)
-│   └── tests/              bash fixture-runner (drives `claude --print` against installed content)
+│   └── tests/              bash fixture-runner (drives claude / kiro / codex against installed content)
 │       ├── run             entrypoint (`just resources::verify` calls this)
 │       ├── browser-functional   ATTENDED test: drives real Chrome, asserts off-list blocked
-│       └── skills/<name>.smoke   fixtures: prompt + expect_substr or expected_narrative
+│       └── skills/<name>.smoke   fixtures: substring / semantic-judge / behavioral (setup+assert)
 ├── kaimux/                 tmux-pane orchestrator for coding-agent sessions
 │   ├── Justfile            `kaimux::*` verb surface (build/test/integration)
 │   ├── Cargo.toml          deps: clap, anyhow, fd-lock, nix, notify, serde, serde_json
@@ -205,17 +207,19 @@ a structural integration test (`structural_install_to_real_directory_layout`)
 that runs a full install→status→uninstall round-trip in
 the fake $HOME, replacing the older bash structural smoke.
 
-**`just resources::verify` — AI-tool functional tests.** Drives
-`claude --print` (and `kiro-cli` when available) with the
-`.smoke` fixtures under `resources/tests/skills/`. Two
-fixture styles share the harness: substring fixtures
-(`expect_substr:`) for cheap load-checks, and judge fixtures
-(`expected_narrative:`) that run a second tool call to
-evaluate whether the primary answer covers the expected
-behavior. Slow (minutes), costs API credits, requires the
-managed symlinks already deployed (i.e., run
-`just resources::install` first). Gated behind a
-confirmation prompt in the Justfile.
+**`just resources::verify` — AI-tool functional tests.** Drives the
+real coding agents (claude, kiro, codex) against the `.smoke`
+fixtures under `resources/tests/skills/`. Three verification styles
+share the harness: **substring** (`expect_substr:` — the reply
+contains a string), **semantic** (`expected_narrative:` — a judge
+call checks the reply's meaning), and **behavioral** (`--- setup ---`
+/ `--- assert ---` shell blocks — the agent runs against a seeded
+test project and the assert inspects the changes it made). Every
+fixture runs against each requested agent; `--tools <list>` scopes
+to a subset (default all three, all required). Slow (minutes), costs
+API credits, requires the managed symlinks already deployed (run
+`just resources::install` first). Gated behind a confirmation prompt
+in the Justfile.
 
 The §8 Test Gate uses `just test` by default. SKILL.md
 prose revisions add `just resources::verify` (judge mode)
@@ -276,12 +280,14 @@ prerequisites keep it a separate verb today.
 
 ### Hard constraints
 
-- **Never write into `~/.claude/skills/`, `~/.kiro/steering/`,
-  or any registry destination directly.** These paths are
-  symlinks back into the checkout; a non-symlink file there
+- **Never write into `~/.claude/skills/`, `~/.kiro/steering/skills/`,
+  `~/.codex/skills/`, or any registry destination directly.** These
+  paths are symlinks back into the checkout; a non-symlink file there
   breaks deploy invariants. Edit the source under
   `resources/content/` instead — the symlink exposes changes
-  live.
+  live. (This guardrail is mAId-project context — it protects mAId's
+  own deploy invariant — which is why it lives here, not in a
+  globally-installed preamble.)
 - **Registry is the single source of truth** for deployment.
   Adding a new managed path = a registry change + CR, never an
   ad-hoc edit.

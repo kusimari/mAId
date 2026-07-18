@@ -1,3 +1,0 @@
-prompt: Load the `kdevkit` skill from ~/.claude/skills/kdevkit/SKILL.md or ~/.kiro/steering/skills/kdevkit/SKILL.md — whichever path exists. Begin your response with the literal line `[kdevkit] applies` on its own line, then answer in one short sentence: what directory does kdevkit look for first when locating the spec tree?
-expect_substr: [kdevkit] applies
-tools: claude,kiro

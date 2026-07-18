@@ -1,0 +1,52 @@
+prompt: Load the kdevkit skill (from ~/.claude/skills/kdevkit/SKILL.md, ~/.kiro/steering/skills/kdevkit/SKILL.md, or ~/.codex/skills/kdevkit/SKILL.md — whichever exists). This repo has specs/project.md and a backlog item specs/backlog/task-snooze.md. Start the feature "task-snooze": promote the backlog item and write specs/feature/task-snooze.md as a kdevkit feature spec grounded in project.md. Do the file work now (create the feature spec); this is the planning phase so do NOT start writing implementation code. When done, print [kdevkit] applies.
+tools: claude,kiro,codex
+--- setup ---
+git init -q
+mkdir -p specs/backlog specs/feature
+cat > specs/project.md <<'MD'
+# Project: todo-cli
+
+## Mission
+A small command-line to-do manager for a single user.
+
+## Architecture
+One Rust binary; commands parse argv and mutate a JSON store.
+
+## Tech Stack
+Rust, serde_json. Tests via `cargo test`.
+
+## Layout
+src/main.rs, tests/.
+
+## Testing
+Unit tests in-crate; `cargo test` is load-bearing.
+
+## Deployment
+`cargo install` from the repo.
+MD
+cat > specs/backlog/task-snooze.md <<'MD'
+# Backlog: task-snooze
+
+## What
+Let a user snooze a to-do so it disappears until a chosen date.
+
+## Why
+Long lists bury things that aren't actionable yet.
+
+## Open questions
+How is "today" resolved — local tz?
+MD
+git add -A && git commit -q -m "seed" || true
+--- assert ---
+set -e
+# The feature spec was produced (promotion + planning happened).
+test -f specs/feature/task-snooze.md
+spec=specs/feature/task-snooze.md
+# It reads as a feature spec, not a copy of the backlog item.
+grep -qiE '^#+ .*(feature|task-snooze)' "$spec"
+grep -qiE 'requirement' "$spec"
+grep -qiE 'design' "$spec"
+# Planning phase only — no implementation code was written.
+test ! -e src/main.rs
+# It is grounded in the project (a to-do / snooze capability), not generic.
+grep -qiE 'snooze|to-?do|task' "$spec"

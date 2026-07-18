@@ -1,9 +1,9 @@
 # mAId
 
-Tool-agnostic source of truth for agentic resources — skills
-and the AGENTS.md preamble — compiled into whatever AI tool
-happens to be in use (Claude Code, Kiro, Cursor, Codex,
-Copilot, Zed, Windsurf, future tools).
+Tool-agnostic source of truth for agentic skills — compiled
+into whatever AI tool happens to be in use (Claude Code, Kiro,
+Codex, future tools). Skills are the only deployed artefact; each
+tool discovers them natively at its own skills path.
 
 The repo has two halves:
 
@@ -88,29 +88,26 @@ just resources::install
 
 What it does:
 
-1. Validates `resources/content/` — the AGENTS.md preamble
-   is present + non-empty; each `skills/<name>/SKILL.md`
+1. Validates `resources/content/` — each `skills/<name>/SKILL.md`
    has the required frontmatter.
 2. Creates `$HOME`-facing symlinks per the registry at the
    top of
    [`resources/build-tool/src/main.rs`](./resources/build-tool/src/main.rs).
-   Today: the merged AGENTS.md preamble (deployed as
-   `~/.claude/CLAUDE.md`, `~/.claude/AGENTS.md`,
-   `~/.kiro/steering/KIRO.md`, and
-   `~/.kiro/steering/AGENTS.md` for cross-tool support)
-   plus the skills tree (`~/.claude/skills` and
-   `~/.kiro/steering/skills`).
+   The skills tree, per tool: `~/.claude/skills` and
+   `~/.kiro/steering/skills` (whole-dir symlinks), and
+   `~/.codex/skills` (per-skill symlinks, since codex owns that
+   directory and ships its own skills there).
 
 `just resources::uninstall` is idempotent. Hand-written files at a
 managed destination are preserved unless you pass
 `--force`.
 
-mAId follows the cross-tool **AGENTS.md** standard
-(Linux Foundation Agentic AI Foundation; native support
-across Codex, Copilot, Cursor, Kiro, Zed, Windsurf). The
-legacy `CLAUDE.md` and `KIRO.md` filenames symlink at the
-same source — drop them when Claude Code makes AGENTS.md a
-default-read location.
+mAId installs **skills only**. Each supported tool discovers them
+natively at its own skills path (verified: claude, kiro, codex all
+load skills with no extra preamble), so mAId deploys no global
+instruction file. `AGENTS.md` is a repo-root convention
+(per-project), not a global per-tool preamble; loading a project's
+`AGENTS.md` / `project.md` is the `kdevkit` skill's work-time job.
 
 ## Browser control
 
