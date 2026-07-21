@@ -310,10 +310,9 @@ get symlinked*; the mechanic is still "create/remove a symlink."
    - `resources::verify-browser-mcp [claude|kiro|codex]
      [kiro-subagent]` — the attended browser drive (renamed from
      `browser-functional-test`); `[confirm]`-gated; codex added.
-   - *(Note: `verify-one <name>` for a single skill fixture is
-     kept; decide at dev time whether it becomes
-     `verify-skills-one` for pattern-consistency or stays as-is —
-     a minor call, flagged in the Session Log.)*
+   - `resources::verify-skills-one <name> [agent]` — single
+     skill fixture (renamed from `verify-one` for
+     pattern-consistency; confirmed at plan approval).
 
 4. **Tests** —
    - Add `codex` to the `tools:` field of the six fixtures
@@ -346,7 +345,7 @@ get symlinked*; the mechanic is still "create/remove a symlink."
 
 ## Implementation Plan
 
-- [ ] **Slice 1 — table-driven `manage` + codex MCP + agent
+- [x] **Slice 1 — table-driven `manage` + codex MCP + agent
   filter.** Convert `resources/browser/manage`'s per-agent
   functions to the `MCP_AGENTS` table + `mcp_foreach` + three
   dispatchers; add the codex row; add the optional agent filter
@@ -418,8 +417,29 @@ get symlinked*; the mechanic is still "create/remove a symlink."
   `install-browser-mcp`, and likewise for uninstall, status, and
   the two verify (token-spending) tests. Renamed the whole verb
   surface accordingly — no bare `install` / `verify` /
-  `browser-functional-test` survive. Flagged the `verify-one`
-  single-fixture verb as a minor naming call for dev time.
+  `browser-functional-test` survive. At approval the user also
+  confirmed `verify-one` → `verify-skills-one`. Plan approved;
+  entering the dev loop.
+- 2026-07-21 · Slice 1 done. Refactored `resources/browser/manage`
+  from hand-written `register_claude`/`register_kiro` (+ variants)
+  to a data-driven `MCP_AGENTS` table + `mcp_foreach` loop + three
+  leaf dispatchers (`mcp_add`/`mcp_remove`/`mcp_get`); added the
+  codex row (global) and an agent filter + validate. Renamed the
+  coupled Justfile recipes to `install-/uninstall-/status-browser-mcp`
+  with the `[agent] [kiro_sub]` arg order. Verified: status
+  all/codex/kiro-skip/unknown-error paths, chrome graceful-skip,
+  codex add→get→remove round-trip, shellcheck clean, `just ci`
+  green (53 tests, Rust untouched). Code Review Gate (fresh-context
+  agent, host-native): **78/100, PASS** (threshold 70). Confirmed
+  the `set -e`/`readd` line is correct and no claude/kiro behavior
+  regresses. Applied the in-diff findings: refreshed the stale
+  in-file usage/design header, gated codex's "removed" message on a
+  prior registration check (codex `mcp remove` exits 0 even when
+  absent), fixed the two graceful-skip verb strings, column-aligned
+  output, and de-SC2015'd the remove-then-add line. The doc-sweep
+  findings (README / browser SKILL.md / project.md / the
+  functional-test comment still name old verbs) are deferred to
+  Slice 3 + the Docs task, which own the rename sweep.
 
 <!-- append: decision · rationale · alternatives rejected -->
 

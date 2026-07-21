@@ -38,32 +38,34 @@ verify-one name:
 # ── browser-control MCP ──────────────────────────────────────────
 # Register Google's chrome-devtools-mcp with the installed agent
 # harnesses, launched via resources/browser/launch so the user's
-# allowlist is enforced. Verbs share a `browser-mcp-` prefix so
-# they group together in `just --list`. Desktop-only; graceful
-# skip where there is no GUI Chrome, no nix, or no harness CLI.
-# The allowlist is user-owned data — uninstall never touches it.
+# allowlist is enforced. Verbs follow the `<action>-browser-mcp`
+# pattern so they read as peers of the `*-skills` verbs. Desktop-only;
+# graceful skip where there is no GUI Chrome, no nix, or no harness
+# CLI. The allowlist is user-owned data — uninstall never touches it.
 #
-# Kiro partitions MCP servers per agent, so the kiro target must be
-# named: pass the agent name as the argument to
-# install/uninstall/status to act on that agent. Omit it and kiro
-# is skipped (claude needs no agent — its server is visible to
-# every session).
+# Every verb takes the uniform coding-agent selector as its first
+# argument (claude|kiro|codex; omit for all three). Kiro partitions
+# MCP servers per named sub-agent, so targeting kiro also needs a
+# trailing sub-agent name; omit it and kiro is skipped (claude and
+# codex are global — their server is visible to every session).
 
-# Register the browser-control server (claude always; kiro only if
-# an agent name is given). e.g. `just resources::browser-mcp-install my-agent`
+# Register the browser-control server. e.g.
+#   just resources::install-browser-mcp             (all three)
+#   just resources::install-browser-mcp codex       (codex only)
+#   just resources::install-browser-mcp kiro my-sub  (kiro sub-agent)
 [no-cd]
-browser-mcp-install kiro_agent="":
-    resources/browser/manage install "{{ source_directory() }}/browser/launch" "{{ kiro_agent }}"
+install-browser-mcp agent="" kiro_sub="":
+    resources/browser/manage install "{{ source_directory() }}/browser/launch" "{{ agent }}" "{{ kiro_sub }}"
 
 # Remove the browser-control server registration (keeps allowlist).
 [no-cd]
-browser-mcp-uninstall kiro_agent="":
-    resources/browser/manage uninstall "{{ kiro_agent }}"
+uninstall-browser-mcp agent="" kiro_sub="":
+    resources/browser/manage uninstall "{{ agent }}" "{{ kiro_sub }}"
 
 # Report browser-control registration state and allowlist size.
 [no-cd]
-browser-mcp-status kiro_agent="":
-    resources/browser/manage status "{{ kiro_agent }}"
+status-browser-mcp agent="" kiro_sub="":
+    resources/browser/manage status "{{ agent }}" "{{ kiro_sub }}"
 
 # Append a site pattern to the allowlist verbatim (hand-edit fallback).
 [no-cd]
