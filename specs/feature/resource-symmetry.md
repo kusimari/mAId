@@ -18,13 +18,22 @@ functional test cover only claude and kiro — codex is missing —
 and most skill fixtures test only claude and kiro.
 
 This feature makes both kinds **symmetric across all three
-agents behind one simple CLI shape**. The organizing idea is a
-single **coding-agent selector** on both install verbs: name an
-agent to act on just that one, or omit it to act on all three.
+agents behind one simple, patterned CLI**. Two ideas do the
+work:
+
+1. **A `<action>-<resource-kind>` verb pattern.** Every verb
+   names both what it does and which resource kind it touches —
+   `install-skills` / `install-browser-mcp`,
+   `uninstall-skills` / `uninstall-browser-mcp`, and so on — so
+   neither kind is the implicit default. There is no bare
+   `install`; the kind is always explicit.
+2. **A uniform coding-agent selector** on those verbs: name an
+   agent (`claude`/`kiro`/`codex`) to act on just that one, or
+   omit it to act on all three.
 
 ```
-just resources::install [claude|kiro|codex]              # skills
-just resources::browser-mcp-install [claude|kiro|codex]  # the installable
+just resources::install-skills       [claude|kiro|codex]              # skills
+just resources::install-browser-mcp  [claude|kiro|codex] [kiro-sub]   # the installable
 ```
 
 After it lands: codex is a first-class target for MCP
@@ -34,83 +43,97 @@ be scoped to one agent or all; and the MCP install layer is
 registry, so adding the next agent (or the next installable) is a
 table edit, not a new hand-written function.
 
-The two verbs stay **separate** (skills are always safe;
-installables are env-gated and opt-in) but share the **same
-selector UX**, so the experience is uniform even though the
-mechanisms differ. The browser MCP is the first installable, so
-its verb stays deliberately simple until a second one justifies a
-generalized `installable` surface.
+The two resource kinds keep **separate verbs** (skills are always
+safe; installables are env-gated and opt-in) but share the **same
+action verbs and selector UX**, so the experience is uniform even
+though the mechanisms differ. The browser MCP is the first
+installable, so its `-browser-mcp` verbs name it directly; when a
+second installable lands, the same `<action>-<kind>` pattern
+generalizes cleanly (`install-<kind>`, …).
 
 ## Requirements
 
 <!-- The experience layer — what the user touches and observes.
      Library/flag/path/script names live in Design. -->
 
-### The coding-agent selector (uniform across both verbs)
+### The verb pattern + coding-agent selector
 
-- Every install/uninstall verb takes an **optional coding-agent
-  argument** — `claude`, `kiro`, or `codex`. Name one to act on
-  just that agent; **omit it to act on all three**. The same
-  word means the same thing on every verb.
-  - `just resources::install` — install skills for all three.
-  - `just resources::install codex` — install skills for codex
-    only.
-  - `just resources::browser-mcp-install` — register the browser
+- Every verb reads `<action>-<resource-kind>`: the action
+  (`install` / `uninstall` / `status` / `verify`) and the kind
+  (`-skills` / `-browser-mcp`) are both explicit. There is no
+  bare `install` or `verify` — the kind is never implicit.
+- Every verb takes an **optional coding-agent argument** —
+  `claude`, `kiro`, or `codex`. Name one to act on just that
+  agent; **omit it to act on all three**. The same word means
+  the same thing on every verb.
+  - `just resources::install-skills` — install skills for all
+    three.
+  - `just resources::install-skills codex` — install skills for
+    codex only.
+  - `just resources::install-browser-mcp` — register the browser
     MCP for all three (kiro caveat below).
-  - `just resources::browser-mcp-install claude` — register it
+  - `just resources::install-browser-mcp claude` — register it
     for claude only.
 - An unrecognized selector is a clear error listing the valid
   agents; it never silently does nothing.
 
-### Skills install (`resources::install`)
+### Skills verbs (`*-skills`)
 
-- Installs skills for the selected agent, or all three when no
-  agent is named. Always safe — no environment prerequisites.
-- `just resources::uninstall [claude|kiro|codex]` reverses it
-  for the same scope.
+- `install-skills [agent]` installs skills for the selected
+  agent, or all three when none is named. Always safe — no
+  environment prerequisites.
+- `uninstall-skills [agent]` and `status-skills [agent]` reverse
+  and report for the same scope.
 - Idempotent: re-running install reports "ok"; re-running
   uninstall reports "not-installed".
 - **No kiro sub-agent anywhere here.** kiro *skills* are global
   (one steering path, every kiro agent sees them), so the skills
-  verb never asks which kiro agent — that concern belongs only
-  to the browser MCP verb (below).
+  verbs never ask which kiro agent — that concern belongs only
+  to the browser MCP verbs (below).
 
-### Installable install (`resources::browser-mcp-install`)
+### Installable verbs (`*-browser-mcp`)
 
-- Registers the browser-control MCP for the selected agent, or
-  all three when none is named. Env-gated: on a machine with no
-  graphical Chrome, no `nix`, or a missing agent CLI, it prints
-  a one-line pointer and **graceful-skips** that agent — never a
+- `install-browser-mcp [agent] [kiro-sub]` registers the
+  browser-control MCP for the selected agent, or all three when
+  none is named. Env-gated: on a machine with no graphical
+  Chrome, no `nix`, or a missing agent CLI, it prints a one-line
+  pointer and **graceful-skips** that agent — never a
   half-register or error.
-- `just resources::browser-mcp-uninstall [claude|kiro|codex]`
-  removes the registration for the same scope and **preserves
-  the user-owned allowlist** (user data, not install state).
+- `uninstall-browser-mcp [agent] [kiro-sub]` removes the
+  registration for the same scope and **preserves the
+  user-owned allowlist** (user data, not install state).
+  `status-browser-mcp [agent] [kiro-sub]` reports registration
+  state.
 - **codex reaches parity with claude:** the browser MCP
   registers with codex globally, so after install codex has the
   browser tools — the same as claude.
-- **kiro's per-agent caveat, confined to this verb.** kiro
+- **kiro's per-agent caveat, confined to these verbs.** kiro
   partitions MCP servers per named sub-agent and mAId never
   guesses which one. So targeting kiro takes a **trailing
-  sub-agent name**: `just resources::browser-mcp-install kiro
-  <sub-agent>`. Targeting kiro (or `all`) *without* a name
+  sub-agent name**: `just resources::install-browser-mcp kiro
+  <sub-agent>`. Targeting kiro (or all) *without* a name
   graceful-skips kiro's MCP with a message telling the user to
   name the agent; claude and codex need no such name. This is
   the one asymmetry the browser MCP can't erase (it's kiro's
   model), and it lives here rather than leaking into the general
   selector.
-- `browser-mcp-status` and `browser-mcp-allow` are unchanged in
-  spirit; `-allow` stays browser-specific (the allowlist is a
-  browser concept).
+- `browser-mcp-allow <pattern>` (allowlist management, not an
+  action-on-resource verb) keeps its name — it's browser-specific
+  and orthogonal to the install lifecycle.
 
-### Codex parity in tests
+### Codex parity in the verify (token-spending) tests
 
-- `just resources::verify` drives **codex against every skill
-  fixture**, not just the kdevkit ones, so a skill that behaves
-  correctly is one that behaves correctly on all three agents.
-- `just resources::browser-functional-test codex` drives codex
+- `verify-skills [agent]` drives the selected agent (or all
+  three) against every skill fixture — not just the kdevkit ones
+  — so a skill that behaves correctly is one that behaves
+  correctly on all three agents. Replaces today's bare `verify`.
+- `verify-browser-mcp [agent] [kiro-sub]` is the attended
+  functional test: it drives the selected agent (or all three)
   through the real browser MCP, asserting an allow-listed site
-  loads and an off-list site is blocked — the same attended
-  check claude and kiro already have.
+  loads and an off-list site is blocked. Replaces today's
+  `browser-functional-test`; codex now included (global, so no
+  sub-agent needed). Both `verify-*` verbs spend tokens / drive
+  real Chrome and stay `[confirm]`-gated and user-run.
 
 ## Test Strategy
 
@@ -131,7 +154,7 @@ generalized `installable` surface.
   assert against the tempfile-fake `$HOME`, same as the existing
   symlink tests.
 
-### Functional smoke (`just resources::verify`, user-run)
+### Functional smoke (`just resources::verify-skills`, user-run)
 
 - Every `.smoke` fixture runs against **all three agents**
   (`tools: claude,kiro,codex`). The runner already supports
@@ -139,18 +162,19 @@ generalized `installable` surface.
   "verify across every agent we ship" success criterion.
 - Risk accepted (see Decision Log): a skill whose prose was
   tuned for claude/kiro may not yet drive codex to the same
-  result. Those surface only in the user-run, API-costed verify
-  — never in `just ci` — and are content-fix follow-ups, not
-  blockers for this feature.
+  result. Those surface only in the user-run, API-costed
+  `verify-skills` — never in `just ci` — and are content-fix
+  follow-ups, not blockers for this feature.
 
 ### Desktop-manual (attended, user-run)
 
-- `just resources::browser-functional-test codex` (and the
-  existing claude/kiro forms) drives the real browser MCP
-  against an isolated temp allowlist, asserting an allow-listed
-  site loads and an off-list site is **blocked**. Codex is
-  global, so no agent name is needed. `[confirm]`-gated and
-  separate from the bulk `.smoke` runner, as today.
+- `just resources::verify-browser-mcp codex` (and the claude /
+  kiro forms) drives the real browser MCP against an isolated
+  temp allowlist, asserting an allow-listed site loads and an
+  off-list site is **blocked**. Codex is global, so no sub-agent
+  name is needed. `[confirm]`-gated and separate from the bulk
+  `.smoke` runner, as today. Renamed from
+  `browser-functional-test` to fit the `verify-<kind>` pattern.
 
 ## Design
 
@@ -262,33 +286,43 @@ get symlinked*; the mechanic is still "create/remove a symlink."
    the launcher path stay in `manage` (it's the only
    installable; no manifest needed yet).
 
-3. **Verb surface** (`resources/Justfile`) — the uniform
-   selector on each verb:
-   - `resources::install [agent]` — skills; `cargo run -p
+3. **Verb surface** (`resources/Justfile`) — the
+   `<action>-<kind>` pattern with the uniform selector. The
+   current bare `install` / `uninstall` / `status` / `verify` and
+   `browser-functional-test` are **renamed** (no bare action
+   verbs survive):
+   - `resources::install-skills [agent]` — `cargo run -p
      build-tool ... install` with `--agent <agent>` when given.
      Keeps `--dry-run` / `--force` passthrough.
-   - `resources::uninstall [agent]` — skills uninstall, same
-     scoping.
-   - `resources::status [agent]` — unchanged output, optionally
-     scoped.
-   - `resources::browser-mcp-install [agent] [kiro-subagent]` /
-     `-uninstall [agent] [kiro-subagent]` /
-     `-status [agent] [kiro-subagent]` — call the table-driven
-     `manage` with the agent filter; codex covered. Targeting
-     kiro needs the trailing sub-agent name or kiro
+   - `resources::uninstall-skills [agent]` /
+     `resources::status-skills [agent]` — skills uninstall /
+     status, same scoping.
+   - `resources::install-browser-mcp [agent] [kiro-subagent]` /
+     `uninstall-browser-mcp [agent] [kiro-subagent]` /
+     `status-browser-mcp [agent] [kiro-subagent]` — call the
+     table-driven `manage` with the agent filter; codex covered.
+     Targeting kiro needs the trailing sub-agent name or kiro
      graceful-skips.
    - `resources::browser-mcp-allow <pattern>` — unchanged
-     (browser-specific).
-   - `resources::browser-functional-test [claude|kiro|codex]
-     [kiro-subagent]` — doc comment gains codex.
+     (allowlist management, browser-specific).
+   - `resources::verify-skills [agent]` — the `.smoke` runner
+     (renamed from `verify`); `[confirm]`-gated.
+   - `resources::verify-browser-mcp [claude|kiro|codex]
+     [kiro-subagent]` — the attended browser drive (renamed from
+     `browser-functional-test`); `[confirm]`-gated; codex added.
+   - *(Note: `verify-one <name>` for a single skill fixture is
+     kept; decide at dev time whether it becomes
+     `verify-skills-one` for pattern-consistency or stays as-is —
+     a minor call, flagged in the Session Log.)*
 
 4. **Tests** —
    - Add `codex` to the `tools:` field of the six fixtures
      currently `claude,kiro` (`browser-safety`, `notes`,
      `notes-add-note`, `notes-git-commit`, `notes-vault-selector`,
      `writing-style`). The four `kdevkit-*` already include it.
-   - `resources/tests/browser-functional` gains a codex branch
-     in `tool_available()` and `drive()` (via `codex exec
+   - `resources/tests/browser-functional` (the script behind
+     `verify-browser-mcp`) gains a codex branch in
+     `tool_available()` and `drive()` (via `codex exec
      --sandbox workspace-write --skip-git-repo-check
      --dangerously-bypass-approvals-and-sandbox` so the browser
      MCP tools actually fire — the parallel to claude's
@@ -318,27 +352,36 @@ get symlinked*; the mechanic is still "create/remove a symlink."
   dispatchers; add the codex row; add the optional agent filter
   + trailing kiro sub-agent arg; keep the browser-specific
   epilogue. Verify: shellcheck clean,
-  `just resources::browser-mcp-status` and `… browser-mcp-status
-  codex` both run, `just ci` green (Rust untouched).
+  `just resources::status-browser-mcp` and
+  `… status-browser-mcp codex` both run, `just ci` green (Rust
+  untouched).
 - [ ] **Slice 2 — agent selector on the skills install.** Add
   the agent tag to `REGISTRY` and the `--agent` filter to
   `install` / `uninstall` / `status`; thread the optional
-  selector through the `resources::install` / `uninstall` /
-  `status` Just recipes. Add the Rust selector tests. Verify:
-  `just resources::install codex` links only codex,
-  `just resources::install` links all three, unknown agent
-  errors; `just ci` green.
-- [ ] **Slice 3 — tests across all three agents.** Add `codex`
-  to the six `tools:` fields; add the codex branch/loop/parser
-  to `resources/tests/browser-functional`; update the Justfile
-  doc comments. `just ci` unaffected.
-- [ ] **Docs.** README + `project.md` touch so the agent
-  selector and codex-everywhere are discoverable (closure phase
-  bubbles the durable bits up).
+  selector through the renamed `resources::install-skills` /
+  `uninstall-skills` / `status-skills` Just recipes. Add the
+  Rust selector tests. Verify: `just resources::install-skills
+  codex` links only codex, `just resources::install-skills`
+  links all three, unknown agent errors; `just ci` green.
+- [ ] **Slice 3 — verb rename + tests across all three agents.**
+  Apply the `<action>-<kind>` rename across `resources/Justfile`
+  (`verify` → `verify-skills`, `browser-functional-test` →
+  `verify-browser-mcp`, `browser-mcp-install/-uninstall/-status`
+  keep their kind suffix reordered to `install-browser-mcp` etc.);
+  add `codex` to the six `tools:` fields; add the codex
+  branch/loop/parser to `resources/tests/browser-functional`;
+  update the Justfile doc comments. `just ci` unaffected.
+- [ ] **Docs.** README + `project.md` touch so the verb pattern,
+  the agent selector, and codex-everywhere are discoverable
+  (closure phase bubbles the durable bits up).
 
+- *Risk note:* the verb rename is a breaking CLI change — sweep
+  README, `project.md`, and any spec/backlog reference to the old
+  `resources::install` / `verify` / `browser-functional-test`
+  names so nothing points at a dead verb.
 - *Risk note:* codex skill-prose portability may make some
-  fixtures fail in the user-run `verify` until prose is tuned;
-  accepted, surfaces only in API-costed verify.
+  fixtures fail in the user-run `verify-skills` until prose is
+  tuned; accepted, surfaces only in API-costed verify.
 - *Risk note:* the codex sandbox mode for MCP tool use in the
   functional test needs the bypass flag; confirmed present, low
   blast radius (attended, user-run).
@@ -369,15 +412,33 @@ get symlinked*; the mechanic is still "create/remove a symlink."
   browser-mcp verb (kiro skills are global, so it never belonged
   on the skills verb). Rust gains an agent filter (still
   pure-symlink) instead of a manifest-consistency test.
+- 2026-07-21 · Planning-review round 2 (PR #31 comment). User
+  asked for a symmetric `<action>-<resource-kind>` verb pattern
+  so neither kind is the implicit default: `install-skills` /
+  `install-browser-mcp`, and likewise for uninstall, status, and
+  the two verify (token-spending) tests. Renamed the whole verb
+  surface accordingly — no bare `install` / `verify` /
+  `browser-functional-test` survive. Flagged the `verify-one`
+  single-fixture verb as a minor naming call for dev time.
 
 <!-- append: decision · rationale · alternatives rejected -->
 
+- **`<action>-<resource-kind>` verb pattern** (review steer,
+  PR #31). Every verb names both the action and the kind
+  (`install-skills`, `install-browser-mcp`, `verify-skills`,
+  `verify-browser-mcp`, …); no bare `install` / `verify`. Chosen
+  over keeping `install` as the implicit skills default (with the
+  installable prefixed `browser-mcp-*`) because the asymmetric
+  naming was exactly what made one kind feel primary and the
+  other bolted-on. The patterned names make the two kinds read as
+  peers and scale to a third kind by the same rule. Cost: a
+  breaking CLI rename (swept in Slice 3).
 - **Uniform agent selector, two separate verbs** (review steer,
   supersedes the first-draft "single unified install"). The
   organizing principle is one selector word — `claude`/`kiro`/
   `codex`, omit for all — meaning the same thing on both
-  `resources::install` (skills) and
-  `resources::browser-mcp-install` (installable). Rejected
+  `resources::install-skills` and
+  `resources::install-browser-mcp`. Rejected
   merging them into one verb: skills are always safe and
   prerequisite-free, the installable is env-gated and opt-in, and
   merging drags the installable's prerequisites plus kiro's
