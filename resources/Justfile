@@ -5,7 +5,6 @@
 # `resources/tests/run` resolve against the same paths as
 # the legacy flat Justfile.
 
-# Validate content and create/refresh $HOME-facing skill symlinks.
 # First arg is the coding-agent selector (claude|kiro|codex; omit for
 # all three); remaining flags pass through, e.g.
 #   just resources::install-skills                 (all agents)
@@ -14,6 +13,7 @@
 #   just resources::install-skills --force         (all agents, repoint)
 # The `=~ '^-'` guard lets a leading flag (no agent given) pass through
 # as a flag rather than being mistaken for an agent name.
+# Validate content and create/refresh $HOME-facing skill symlinks.
 [no-cd]
 install-skills agent="" *FLAGS:
     cargo run -p build-tool --release --quiet -- install {{ if agent =~ '^-' { agent } else if agent != "" { "--agent " + agent } else { "" } }} {{ FLAGS }}
@@ -28,18 +28,21 @@ uninstall-skills agent="" *FLAGS:
 status-skills agent="":
     cargo run -p build-tool --release --quiet -- status {{ if agent != "" { "--agent " + agent } else { "" } }}
 
-# Drive the AI tools (claude --print, kiro-cli) against the
-# installed content to confirm skills load correctly. Costs API
-# credits and takes minutes — gated behind a confirmation prompt.
+# Costs API credits and takes minutes — gated behind a confirmation
+# prompt. Optional agent selector scopes to one; omit for all three.
+#   just resources::verify-skills          (all three)
+#   just resources::verify-skills codex    (codex only)
+# Drive the coding agents against installed skills to confirm they load.
 [confirm("This costs API credits and takes minutes. Continue? (y/N)")]
 [no-cd]
-verify:
-    resources/tests/run
+verify-skills agent="":
+    resources/tests/run {{ if agent != "" { "--tools " + agent } else { "" } }}
 
-# Drive a single fixture (e.g. `just resources::verify-one kdevkit`).
+# e.g. `just resources::verify-skills-one kdevkit`
+# Drive a single skill fixture, optionally scoped to one agent.
 [no-cd]
-verify-one name:
-    resources/tests/run "{{ name }}"
+verify-skills-one name agent="":
+    resources/tests/run "{{ name }}" {{ if agent != "" { "--tools " + agent } else { "" } }}
 
 # ── browser-control MCP ──────────────────────────────────────────
 # Register Google's chrome-devtools-mcp with the installed agent
@@ -57,10 +60,11 @@ verify-one name:
 # trailing sub-agent name; omit it and kiro is skipped (claude and
 # codex are global — their server is visible to every session).
 
-# Register the browser-control server. e.g.
+# Usage:
 #   just resources::install-browser-mcp             (all three)
 #   just resources::install-browser-mcp codex       (codex only)
 #   just resources::install-browser-mcp kiro my-sub  (kiro sub-agent)
+# Register the browser-control MCP server (optionally for one agent).
 [no-cd]
 install-browser-mcp agent="" kiro_sub="":
     resources/browser/manage install "{{ source_directory() }}/browser/launch" "{{ agent }}" "{{ kiro_sub }}"
@@ -80,15 +84,19 @@ status-browser-mcp agent="" kiro_sub="":
 browser-mcp-allow pattern:
     resources/browser/manage allow "{{ pattern }}"
 
-# ATTENDED functional test: drive claude/kiro to open real Chrome
-# via the browser MCP against an isolated allowlist, and confirm an
-# off-list site is blocked. Takes control of your browser — run it
-# by hand. Requires browser-mcp-install + Chrome remote debugging.
-# Kiro is tested only when its agent name is given (the agent that
-# carries the chrome-devtools server). e.g.
-#   just resources::browser-functional-test claude
-#   just resources::browser-functional-test kiro my-agent
-[confirm("This drives your real Chrome through claude/kiro. Chrome must be running with remote debugging enabled. Continue? (y/N)")]
+# ATTENDED functional test: drive claude/kiro/codex to open real
+# Chrome via the browser MCP against an isolated allowlist, and confirm
+# an off-list site is blocked. Takes control of your browser — run it
+# by hand. Requires install-browser-mcp + Chrome remote debugging.
+# The `verify-browser-mcp` name mirrors `verify-skills`: it's the
+# token/attended verify for the installable. Omit the agent to drive
+# every available one; kiro is tested only when its sub-agent name is
+# given (the agent that carries the chrome-devtools server). e.g.
+#   just resources::verify-browser-mcp                 (all available)
+#   just resources::verify-browser-mcp codex
+#   just resources::verify-browser-mcp kiro my-agent
+# ATTENDED: drive real Chrome via the browser MCP; confirm off-list blocked.
+[confirm("This drives your real Chrome through the coding agents. Chrome must be running with remote debugging enabled. Continue? (y/N)")]
 [no-cd]
-browser-functional-test tool="" kiro_agent="":
-    resources/tests/browser-functional {{ tool }} {{ if kiro_agent != "" { "--kiro-agent=" + kiro_agent } else { "" } }}
+verify-browser-mcp agent="" kiro_sub="":
+    resources/tests/browser-functional {{ agent }} {{ if kiro_sub != "" { "--kiro-agent=" + kiro_sub } else { "" } }}

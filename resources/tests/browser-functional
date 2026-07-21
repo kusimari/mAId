@@ -1,27 +1,29 @@
 #!/usr/bin/env bash
 # mAId/resources/tests/browser-functional — ATTENDED functional
-# test: drive claude and kiro to open the user's real Chrome
+# test: drive claude, kiro, and codex to open the user's real Chrome
 # through the browser MCP server, restricted to an allowlist, and
-# confirm the guardrail holds.
+# confirm the guardrail holds. Backs `just resources::verify-browser-mcp`.
 #
-# This is NOT part of `just resources::verify` (the bulk .smoke
+# This is NOT part of `just resources::verify-skills` (the bulk .smoke
 # runner, which only checks skill knowledge). This one takes
 # control of a real browser, so it is run by hand:
 #
-#   just resources::browser-functional-test
+#   just resources::verify-browser-mcp
 #
 # Preconditions (the test checks and tells you what's missing):
-#   - The capability is installed: `just resources::browser-mcp-install`
-#     (for kiro, with the same agent you test: `… kiro_agent=<name>`).
+#   - The capability is installed: `just resources::install-browser-mcp`
+#     (for kiro, with the same sub-agent you test: `… kiro my-agent`).
 #   - Chrome is running with remote debugging enabled once via
 #     chrome://inspect/#remote-debugging (and you accept the
 #     attach prompt the first time).
-#   - `claude` and/or `kiro-cli` on PATH (kiro must be logged in).
+#   - `claude`, `kiro-cli`, and/or `codex` on PATH (kiro must be
+#     logged in).
 #
 # Kiro partitions MCP servers per agent, and `kiro-cli chat` runs a
 # specific agent — so to test kiro you must name the agent that
 # carries the chrome-devtools server: `--kiro-agent=<name>`. Without
-# it, kiro is skipped. Claude needs no agent (global per session).
+# it, kiro is skipped. Claude and codex need no agent (global per
+# session).
 #
 # What it does, per available harness:
 #   1. Allowed-site check — asks the agent to open an ALLOW-LISTED
@@ -35,10 +37,11 @@
 # $MAID_BROWSER_ALLOWLIST), so your real allowlist is untouched.
 #
 # Usage:
-#   resources/tests/browser-functional                      # claude (+ kiro if --kiro-agent given)
+#   resources/tests/browser-functional                      # claude + codex (+ kiro if --kiro-agent given)
 #   resources/tests/browser-functional claude               # claude only
+#   resources/tests/browser-functional codex                # codex only
 #   resources/tests/browser-functional kiro --kiro-agent=my-agent
-#   resources/tests/browser-functional --kiro-agent=my-agent   # both
+#   resources/tests/browser-functional --kiro-agent=my-agent   # all three
 #   resources/tests/browser-functional --help
 
 set -euo pipefail
@@ -59,10 +62,10 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --help|-h) awk 'NR==1{next} /^$/{exit} /^#/{sub(/^# ?/,""); print}' "${BASH_SOURCE[0]}"; exit 0 ;;
         --kiro-agent=*) KIRO_AGENT="${1#--kiro-agent=}"; shift ;;
-        claude|kiro) SELECTOR="$1"; shift ;;
+        claude|kiro|codex) SELECTOR="$1"; shift ;;
         "") shift ;;   # defensive: tolerate an empty positional if passed directly
         -*) echo "unknown flag: $1" >&2; exit 2 ;;
-        *)  echo "unknown arg: $1 (want: claude | kiro | --kiro-agent=<name>)" >&2; exit 2 ;;
+        *)  echo "unknown arg: $1 (want: claude | kiro | codex | --kiro-agent=<name>)" >&2; exit 2 ;;
     esac
 done
 
@@ -77,6 +80,7 @@ tool_available() {
     case "$1" in
         claude) command -v claude   >/dev/null 2>&1 ;;
         kiro)   command -v kiro-cli >/dev/null 2>&1 ;;
+        codex)  command -v codex    >/dev/null 2>&1 ;;
         *)      return 1 ;;
     esac
 }
@@ -94,6 +98,12 @@ drive() {
         # kiro runs a specific agent; the browser server lives in
         # the named agent (kiro is per-agent), so target it.
         kiro)   kiro-cli chat --no-interactive --agent "$KIRO_AGENT" --trust-all-tools "$prompt" 2>&1 ;;
+        # codex is global (no agent). --dangerously-bypass-approvals-
+        # and-sandbox is codex's parallel to the trust flags above: it
+        # lets the browser MCP tools actually fire in non-interactive
+        # exec (workspace-write alone would still gate tool approval).
+        codex)  codex exec --sandbox workspace-write --skip-git-repo-check \
+                    --dangerously-bypass-approvals-and-sandbox "$prompt" </dev/null 2>&1 ;;
     esac
 }
 
@@ -181,7 +191,7 @@ export MAID_BROWSER_ALLOWLIST="$TMP_ALLOW"
 info "using isolated allowlist: $TMP_ALLOW ($ALLOWED_PATTERN)"
 echo
 
-for tool in claude kiro; do
+for tool in claude kiro codex; do
     [[ -n "$SELECTOR" && "$SELECTOR" != "$tool" ]] && continue
     run_for "$tool"
     echo

@@ -2,8 +2,9 @@
 # mAId/resources/tests/run — verify that installed skills actually make
 # the coding agents do the right thing. Runs each fixture against every
 # requested agent (claude/kiro/codex); a skill that drives all of them
-# to the same result is robust. `just verify` / `just verify-one <name>`.
-# Pre-condition: `just install` has deployed the symlinks (install
+# to the same result is robust. `just resources::verify-skills` /
+# `just resources::verify-skills-one <name>`.
+# Pre-condition: `just resources::install-skills` has deployed the symlinks (install
 # correctness itself is a `cargo test` concern, not this script's).
 #
 # Three ways a fixture verifies a skill (a fixture picks one):

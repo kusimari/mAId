@@ -362,7 +362,7 @@ get symlinked*; the mechanic is still "create/remove a symlink."
   Rust selector tests. Verify: `just resources::install-skills
   codex` links only codex, `just resources::install-skills`
   links all three, unknown agent errors; `just ci` green.
-- [ ] **Slice 3 — verb rename + tests across all three agents.**
+- [x] **Slice 3 — verb rename + tests across all three agents.**
   Apply the `<action>-<kind>` rename across `resources/Justfile`
   (`verify` → `verify-skills`, `browser-functional-test` →
   `verify-browser-mcp`, `browser-mcp-install/-uninstall/-status`
@@ -454,6 +454,20 @@ get symlinked*; the mechanic is still "create/remove a symlink."
   current `verify` verb; clarified the browser-mcp verb-pattern
   comment re: `browser-mcp-allow`). The `browser-functional-test`
   comment + wider doc sweep stay with Slice 3.
+- 2026-07-21 · Slice 3 done. Completed the `<action>-<kind>` rename:
+  `verify`→`verify-skills` (agent → runner `--tools`),
+  `verify-one`→`verify-skills-one`,
+  `browser-functional-test`→`verify-browser-mcp`; all four
+  browser-mcp verbs now share `agent="" kiro_sub=""` params. Added
+  `codex` to the six `claude,kiro` `.smoke` fixtures (all 10 now
+  tri-tool), and a codex branch to `resources/tests/browser-functional`
+  (`tool_available`, `drive` via `codex exec … --dangerously-bypass-
+  approvals-and-sandbox`, the run loop, the arg parser, header docs).
+  Reordered Just recipe comments so `just --list` summaries read as
+  descriptions. shellcheck clean, `just ci` green (53 tests). Code
+  Review Gate (fresh-context, host-native): **90/100, PASS**. Applied
+  both findings: stale `just install` ref in tests/run, and param-name
+  parity on `verify-browser-mcp`.
 
 <!-- append: decision · rationale · alternatives rejected -->
 
