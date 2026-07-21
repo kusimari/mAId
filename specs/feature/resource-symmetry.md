@@ -370,7 +370,7 @@ get symlinked*; the mechanic is still "create/remove a symlink."
   add `codex` to the six `tools:` fields; add the codex
   branch/loop/parser to `resources/tests/browser-functional`;
   update the Justfile doc comments. `just ci` unaffected.
-- [ ] **Docs.** README + `project.md` touch so the verb pattern,
+- [x] **Docs.** README + `project.md` touch so the verb pattern,
   the agent selector, and codex-everywhere are discoverable
   (closure phase bubbles the durable bits up).
 
@@ -468,6 +468,17 @@ get symlinked*; the mechanic is still "create/remove a symlink."
   Review Gate (fresh-context, host-native): **90/100, PASS**. Applied
   both findings: stale `just install` ref in tests/run, and param-name
   parity on `verify-browser-mcp`.
+- 2026-07-21 · Docs sweep. Updated the live docs to the new verb
+  surface + codex-everywhere: README (verb table, Install, Browser
+  control), `project.md` (Mission, Architecture registry-tuple shape
+  + Verbs, Tech Stack entrypoints, Layout tree, Testing, Deployment),
+  the root `Justfile` example comment, and the deployed
+  `browser/SKILL.md` (install verb + the frontmatter "pairs with"
+  line). Left the archived `specs/feature/*` and `specs/backlog/*`
+  records untouched (they reflect what was true when written, per
+  kdevkit). `just ci` green, shellcheck clean, browser skill still
+  validates. All three dev slices + docs complete; ready for the
+  closure cue.
 
 <!-- append: decision · rationale · alternatives rejected -->
 

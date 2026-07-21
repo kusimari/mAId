@@ -11,13 +11,13 @@ The repo has two halves:
   the markdown content (`resources/content/`) the AI tools
   load; the Rust + bash tooling (`resources/build-tool/`,
   `resources/tests/run`) that installs and tests it; and
-  the Justfile verbs (`resources::install`,
-  `resources::uninstall`, `resources::status`,
-  `resources::verify`) that drive the tooling.
+  the Justfile verbs (`resources::install-skills`,
+  `resources::uninstall-skills`, `resources::status-skills`,
+  `resources::verify-skills`) that drive the tooling.
 - **`kaimux/`** — sibling workspace member for the kaimux
   tmux-pane orchestrator. Built via `kaimux::build`.
 
-`just resources::install` creates symlinks from `$HOME`
+`just resources::install-skills` creates symlinks from `$HOME`
 into the content tree so edits are live for the next AI
 session.
 
@@ -44,20 +44,22 @@ Feature specs: [`specs/feature/`](./specs/feature/).
 
 Three groups, namespaced by what they touch:
 
-**`resources::*`** — operate on `$HOME` or the AI tools:
+**`resources::*`** — operate on `$HOME` or the AI tools. Every
+verb reads `<action>-<resource-kind>` and takes the uniform
+coding-agent selector (`claude|kiro|codex`; omit for all three):
 
 ```
-just resources::install     # validate content + create $HOME-facing symlinks
-just resources::uninstall   # remove install-managed symlinks
-just resources::status      # report current symlink state
-just resources::verify      # drive `claude --print` against installed content (costs API credits, gated)
-just resources::verify-one <name>   # single fixture
+just resources::install-skills [agent]     # validate content + create $HOME-facing symlinks
+just resources::uninstall-skills [agent]   # remove install-managed symlinks
+just resources::status-skills [agent]      # report current symlink state
+just resources::verify-skills [agent]      # drive the coding agents against installed content (costs API credits, gated)
+just resources::verify-skills-one <name> [agent]   # single fixture
 
-just resources::browser-mcp-install [kiro-agent]     # register the browser-control MCP server (claude; kiro into the named agent)
-just resources::browser-mcp-uninstall [kiro-agent]   # remove it (keeps your allowlist)
-just resources::browser-mcp-status [kiro-agent]      # report registration state + allowlist size
-just resources::browser-mcp-allow <pattern>          # append a site pattern to the allowlist
-just resources::browser-functional-test [claude|kiro] [kiro-agent]   # ATTENDED: drives real Chrome (run by hand)
+just resources::install-browser-mcp [agent] [kiro-sub]     # register the browser-control MCP server (claude/codex global; kiro into the named sub-agent)
+just resources::uninstall-browser-mcp [agent] [kiro-sub]   # remove it (keeps your allowlist)
+just resources::status-browser-mcp [agent] [kiro-sub]      # report registration state + allowlist size
+just resources::browser-mcp-allow <pattern>               # append a site pattern to the allowlist
+just resources::verify-browser-mcp [claude|kiro|codex] [kiro-sub]   # ATTENDED: drives real Chrome (run by hand)
 ```
 
 **`kaimux::*`** — operate on the kaimux crate:
@@ -83,7 +85,8 @@ just ci           # the full hygiene gate
 ## Install
 
 ```
-just resources::install
+just resources::install-skills          # all three agents
+just resources::install-skills codex    # or scope to one
 ```
 
 What it does:
@@ -98,7 +101,7 @@ What it does:
    `~/.codex/skills` (per-skill symlinks, since codex owns that
    directory and ships its own skills there).
 
-`just resources::uninstall` is idempotent. Hand-written files at a
+`just resources::uninstall-skills` is idempotent. Hand-written files at a
 managed destination are preserved unless you pass
 `--force`.
 
@@ -111,22 +114,23 @@ instruction file. `AGENTS.md` is a repo-root convention
 
 ## Browser control
 
-`resources::browser-mcp-install` registers Google's
+`resources::install-browser-mcp` registers Google's
 `chrome-devtools-mcp` server with the installed agent
 harness(es), so the agent can drive your real, already-running
 Chrome (open, navigate, fill, submit, read). It's the first
 non-skill resource mAId installs; it's desktop-only and skips
 gracefully where there's no graphical Chrome, no `nix`, or no
-harness CLI.
+harness CLI. Like the skills verbs, it takes the coding-agent
+selector (`claude|kiro|codex`; omit for all three).
 
 The MCP runtime is **self-contained in mAId**: the server runs
 on Node.js, which mAId provides from its own flake (the same one
 `direnv allow` loads). The launcher enters that flake on each
 connection, so **Node need not be on your PATH** — only `nix`,
-which the repo already requires. Registering with claude/kiro
-writes to *their* configs (an MCP is an out-of-process service
+which the repo already requires. Registering with an agent
+writes to *its* config (an MCP is an out-of-process service
 they call); running it stays inside mAId's environment.
-`browser-mcp-install` warms the flake so the first connection is
+`install-browser-mcp` warms the flake so the first connection is
 fast; on a cold cache after a fresh checkout that warm-up (or
 the first connection) may take a while as nix builds the
 devShell.
@@ -146,18 +150,18 @@ Three things to know before first use:
    logged-in site. Edit it directly or use
    `resources::browser-mcp-allow '<pattern>'`; changes take
    effect on the next session — Chrome is not restarted.
-3. **Kiro is per-agent.** Claude exposes a registered server to
-   every session, so no agent is named. Kiro partitions MCP
-   servers per agent and `kiro-cli chat` runs a specific agent —
-   so name the agent to register into:
-   `just resources::browser-mcp-install <kiro-agent>`. Omit it
-   and kiro is skipped (claude still installs). mAId never
-   guesses which of your agents to write into. Use the *same*
-   agent name when testing: `… browser-functional-test kiro
-   <kiro-agent>`.
+3. **Kiro is per-agent.** Claude and codex expose a registered
+   server to every session, so no agent is named. Kiro partitions
+   MCP servers per agent and `kiro-cli chat` runs a specific agent
+   — so name the sub-agent to register into:
+   `just resources::install-browser-mcp kiro <kiro-sub>`. Omit it
+   and kiro is skipped (claude and codex still install). mAId
+   never guesses which of your agents to write into. Use the
+   *same* sub-agent name when testing:
+   `… verify-browser-mcp kiro <kiro-sub>`.
 
 The `browser` skill teaches the agent the safe driving loop and
-the attended-use safety posture. `browser-mcp-uninstall` removes
+the attended-use safety posture. `uninstall-browser-mcp` removes
 the registration but leaves your allowlist in place.
 
 ## Where to look next

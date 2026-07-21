@@ -3,7 +3,7 @@ _default:
 
 # ── modules ──────────────────────────────────────────────────────
 # Per-area verbs live next to the area they operate on. Invoke as
-# `just resources::install`, `just kaimux::build`, etc.
+# `just resources::install-skills`, `just kaimux::build`, etc.
 mod resources
 mod kaimux
 
