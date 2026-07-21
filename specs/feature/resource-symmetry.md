@@ -8,54 +8,102 @@
 ## Feature Brief
 
 mAId installs and tests two kinds of AI resource — pure
-**skills** (markdown) and **install+skill** resources (a skill
-plus a runnable install step; `browser` is the only one today).
-Across the three supported coding agents (claude, kiro, codex)
-the two kinds are handled **unevenly**: skills deploy uniformly
-through a data-driven registry that already covers all three
-agents, but the browser MCP install and the browser functional
-test cover only claude and kiro — codex is missing — and most
-skill fixtures test only claude and kiro.
+**skills** (markdown) and **installables** (a skill plus a
+runnable install step; the browser-control MCP is the only one
+today). Across the three supported coding agents (claude, kiro,
+codex) the two kinds are handled **unevenly**: skills deploy
+through a registry that covers all three agents but with no way
+to target one, while the browser MCP install and the browser
+functional test cover only claude and kiro — codex is missing —
+and most skill fixtures test only claude and kiro.
 
-This feature makes every resource **symmetric across all three
-agents**. After it lands: one `just resources::install` deploys
-both halves of every resource (skills *and* MCP registrations)
-for every agent that supports them; codex is a first-class
-target for MCP registration and for every skill fixture; and
-the MCP install layer is **data-driven per agent** in the same
-shape as the skills registry, so adding the next agent (or the
-next install+skill resource) is a table edit, not a new
-hand-written function.
+This feature makes both kinds **symmetric across all three
+agents behind one simple CLI shape**. The organizing idea is a
+single **coding-agent selector** on both install verbs: name an
+agent to act on just that one, or omit it to act on all three.
+
+```
+just resources::install [claude|kiro|codex]              # skills
+just resources::browser-mcp-install [claude|kiro|codex]  # the installable
+```
+
+After it lands: codex is a first-class target for MCP
+registration and for every skill fixture; the skills install can
+be scoped to one agent or all; and the MCP install layer is
+**data-driven per agent** in the same shape as the skills
+registry, so adding the next agent (or the next installable) is a
+table edit, not a new hand-written function.
+
+The two verbs stay **separate** (skills are always safe;
+installables are env-gated and opt-in) but share the **same
+selector UX**, so the experience is uniform even though the
+mechanisms differ. The browser MCP is the first installable, so
+its verb stays deliberately simple until a second one justifies a
+generalized `installable` surface.
 
 ## Requirements
 
 <!-- The experience layer — what the user touches and observes.
      Library/flag/path/script names live in Design. -->
 
-### Unified install experience
+### The coding-agent selector (uniform across both verbs)
 
-- `just resources::install [kiro-agent]` deploys **both halves
-  of every resource** in one command: the skills (symlinked for
-  all three agents) and every install+skill resource's runnable
-  install (e.g. the browser MCP registration) for each agent
-  that supports it.
-- Env-gated parts **graceful-skip**: on a machine with no
-  graphical Chrome, no `nix`, or a missing agent CLI, the
-  install prints a one-line pointer to what's missing and makes
-  no changes for that part — it never half-installs or errors
-  out, and the skills half still completes.
-- `just resources::uninstall [kiro-agent]` reverses **both
-  halves** and **preserves the user-owned allowlist** (it is
-  user data, not install state).
-- Both verbs stay **idempotent**: re-running install is a no-op
-  that reports "ok"; re-running uninstall reports
-  "not-installed".
+- Every install/uninstall verb takes an **optional coding-agent
+  argument** — `claude`, `kiro`, or `codex`. Name one to act on
+  just that agent; **omit it to act on all three**. The same
+  word means the same thing on every verb.
+  - `just resources::install` — install skills for all three.
+  - `just resources::install codex` — install skills for codex
+    only.
+  - `just resources::browser-mcp-install` — register the browser
+    MCP for all three (kiro caveat below).
+  - `just resources::browser-mcp-install claude` — register it
+    for claude only.
+- An unrecognized selector is a clear error listing the valid
+  agents; it never silently does nothing.
 
-### Codex parity
+### Skills install (`resources::install`)
 
-- The browser MCP registers with **codex** exactly as it does
-  with claude — globally, visible to every codex session — so
-  after install, codex has the browser tools.
+- Installs skills for the selected agent, or all three when no
+  agent is named. Always safe — no environment prerequisites.
+- `just resources::uninstall [claude|kiro|codex]` reverses it
+  for the same scope.
+- Idempotent: re-running install reports "ok"; re-running
+  uninstall reports "not-installed".
+- **No kiro sub-agent anywhere here.** kiro *skills* are global
+  (one steering path, every kiro agent sees them), so the skills
+  verb never asks which kiro agent — that concern belongs only
+  to the browser MCP verb (below).
+
+### Installable install (`resources::browser-mcp-install`)
+
+- Registers the browser-control MCP for the selected agent, or
+  all three when none is named. Env-gated: on a machine with no
+  graphical Chrome, no `nix`, or a missing agent CLI, it prints
+  a one-line pointer and **graceful-skips** that agent — never a
+  half-register or error.
+- `just resources::browser-mcp-uninstall [claude|kiro|codex]`
+  removes the registration for the same scope and **preserves
+  the user-owned allowlist** (user data, not install state).
+- **codex reaches parity with claude:** the browser MCP
+  registers with codex globally, so after install codex has the
+  browser tools — the same as claude.
+- **kiro's per-agent caveat, confined to this verb.** kiro
+  partitions MCP servers per named sub-agent and mAId never
+  guesses which one. So targeting kiro takes a **trailing
+  sub-agent name**: `just resources::browser-mcp-install kiro
+  <sub-agent>`. Targeting kiro (or `all`) *without* a name
+  graceful-skips kiro's MCP with a message telling the user to
+  name the agent; claude and codex need no such name. This is
+  the one asymmetry the browser MCP can't erase (it's kiro's
+  model), and it lives here rather than leaking into the general
+  selector.
+- `browser-mcp-status` and `browser-mcp-allow` are unchanged in
+  spirit; `-allow` stays browser-specific (the allowlist is a
+  browser concept).
+
+### Codex parity in tests
+
 - `just resources::verify` drives **codex against every skill
   fixture**, not just the kdevkit ones, so a skill that behaves
   correctly is one that behaves correctly on all three agents.
@@ -63,24 +111,6 @@ hand-written function.
   through the real browser MCP, asserting an allow-listed site
   loads and an off-list site is blocked — the same attended
   check claude and kiro already have.
-
-### Kiro's per-agent rule is honored by the unified entry
-
-- Because kiro partitions MCP servers per agent and mAId never
-  guesses which agent to write into, the unified install
-  registers the browser MCP for claude and codex (global) and
-  **skips kiro's MCP with an actionable message** unless a kiro
-  agent name is passed: `just resources::install <kiro-agent>`.
-  The skills half is unaffected — skills always install for all
-  three agents.
-
-### Granular verbs remain
-
-- The existing `browser-mcp-install` / `-uninstall` / `-status`
-  / `-allow` verbs stay, for re-registering (or inspecting)
-  just the browser MCP without a full symlink pass. Their
-  observable behavior is unchanged except that they now cover
-  codex too.
 
 ## Test Strategy
 
@@ -90,15 +120,16 @@ hand-written function.
 
 ### Build-tool unit (`just test`)
 
-- The Rust build-tool is **unchanged in logic** — it stays
-  pure-symlink and the existing suite (including the
-  `Kind::FanOut` codex coverage) is the regression guard that
-  the symlink half is untouched.
-- **One new test** asserts manifest ↔ skills-dir consistency:
-  every `resources/content/skills/<name>` directory has a row
-  in `resources/manifest` and every manifest row names a real
-  skill dir. This is the only coupling between the new manifest
-  and the checkout, so it is worth a cheap guard against drift.
+- The Rust build-tool stays **pure-symlink**; the existing suite
+  (including the `Kind::FanOut` codex coverage) is the
+  regression guard that the symlink mechanics are untouched.
+- **New tests for the agent selector** (the one behavioral
+  change on the Rust side): install/uninstall/status scoped to a
+  single agent touches only that agent's registry rows and
+  leaves the others alone; the default (no agent) still covers
+  all three; an unknown agent name is a clean error. These
+  assert against the tempfile-fake `$HOME`, same as the existing
+  symlink tests.
 
 ### Functional smoke (`just resources::verify`, user-run)
 
@@ -139,72 +170,74 @@ unregister/status variants); there is simply no codex function,
 and the divergent-per-agent shape is what let codex be omitted
 silently.
 
-The fix mirrors the registry's data-driven shape in the shell
-layer, and adds a small declarative manifest so a single
-orchestrator can deploy every resource's both halves.
+The fix is two-part, both driven by the **same coding-agent
+selector**: give the skills registry an agent tag so install can
+be scoped, and mirror the registry's data-driven shape in the
+shell layer so the MCP registrar gains codex as a table row.
 
-**The Rust build-tool stays pure-symlink.** This is a standing
-hard constraint (see `project.md` Hard constraints and the
-browser-mcp feature): MCP registration is a *runnable command*
-a symlink can't express. So symmetry is achieved entirely in
-the shell/Just layer — the manifest, the table-driven `manage`,
-and a thin orchestrator — never by folding MCP into Rust.
+**Two verbs, not one — but one selector.** Skills and the
+installable stay **separate verbs**: skills are always safe and
+prerequisite-free, while the installable is env-gated (needs
+Chrome, `nix`, the agent CLI) and warrants explicit opt-in.
+Merging them would drag the installable's environment
+prerequisites — and kiro's per-sub-agent MCP concern — onto the
+always-safe skills path. What makes the experience *feel*
+unified is not one verb but **one selector word** (`claude` /
+`kiro` / `codex`, default all) meaning the same thing on both.
 
-**The manifest does not duplicate the registry.** The registry
-maps *content-dir → agent-home* and symlinks the whole skills
-dir (claude, kiro) or fans out per child (codex); it never
-enumerates individual skills. The manifest enumerates
-*individual resources* and marks which additionally carry an
-install step. These are orthogonal axes — "where does each
-agent read skills from" vs. "which resources need a runnable
-install beyond the symlink" — so the manifest carries **no
-agent-home column**. Agent homes stay solely in the registry;
-adding a fourth agent touches the registry (symlink homes) and
-the `manage` per-agent table (MCP), never the manifest.
+**kiro's sub-agent belongs only to the installable.** kiro
+*skills* install to a single global steering path — every kiro
+sub-agent sees them — so the skills verb never needs a sub-agent
+name. Only kiro *MCP* is per-sub-agent. Confining the sub-agent
+argument to `browser-mcp-install` (as a trailing arg) keeps the
+general selector clean; this is why the earlier "thread a
+kiro-agent through the unified install" shape was wrong.
 
-**Unifying install is safe because registration ≠ activation.**
-Folding the browser MCP registration into `resources::install`
-does not make the always-works skills install suddenly
-dangerous: each install hook graceful-skips on missing
-prerequisites, and registering the MCP server is harmless
-without an allowlist — the launcher is **deny-by-default** and
-refuses to start until the user adds a site. So a plain
-`resources::install` on a headless box lays the symlinks and
-cleanly skips the MCP step. This realizes the convergence the
-browser-mcp feature named as the intended direction
-("`resources::install` can orchestrate every resource kind").
+**Keep the installable simple until there's a second one.** The
+browser MCP is the only installable today. Rather than build a
+manifest + generic orchestrator now (a real cost in moving
+parts, and speculative until a second installable exists), the
+browser-mcp verbs stay self-contained and simple. When a second
+installable arrives, generalizing them into an `installable`
+surface is a clean follow-up — the per-agent table refactor here
+is exactly the groundwork that makes that easy.
+
+**The Rust build-tool stays pure-symlink.** Standing hard
+constraint (`project.md` Hard constraints, the browser-mcp
+feature): MCP registration is a runnable command a symlink can't
+express, so it stays in the shell/Just layer. The agent selector
+does **not** violate this — it only *filters which registry rows
+get symlinked*; the mechanic is still "create/remove a symlink."
 
 ### Components
 
-1. **Manifest** — `resources/manifest`. Plain-text,
-   whitespace-delimited, `#`-commented. One row per resource:
+1. **Agent-scoped skills install** — the Rust build-tool gains
+   an **agent tag per `REGISTRY` row** and an optional
+   `--agent <name>` filter on `install` / `uninstall` / `status`.
+   With no filter, every row is processed (today's behavior).
+   With a filter, only that agent's rows are. The tag is the
+   third dimension the registry was missing:
 
    ```
-   # name           kind           install         mcp_server       launcher
-   notes            skill          -               -                -
-   writing-style    skill          -               -                -
-   kdevkit          skill          -               -                -
-   browser          install+skill  browser/manage  chrome-devtools  browser/launch
+   //                 home_subpath              source            kind      agent
+   (".claude/skills",             "…/skills", Kind::Link),   // claude
+   (".kiro/steering/skills",      "…/skills", Kind::Link),   // kiro
+   (".codex/skills",              "…/skills", Kind::FanOut),  // codex
    ```
 
-   `kind` is `skill` (the Rust symlinker fully handles it — the
-   row exists for completeness and the consistency check) or
-   `install+skill` (also run its `install` hook). The
-   `install` / `mcp_server` / `launcher` columns are the data
-   the hook needs; lifting `chrome-devtools` and the launcher
-   path here removes the last hardcoded browser literals from
-   `manage`, so `manage` becomes a generic MCP registrar
-   parameterized by the manifest.
+   An unknown `--agent` value exits non-zero with the valid
+   list. Still pure-symlink — the filter only selects rows.
 
 2. **Table-driven MCP registrar** — refactor
    `resources/browser/manage`. Replace the hand-written
-   per-agent functions with a per-agent **data table**
-   mirroring the registry:
+   per-agent functions with a per-agent **data table** mirroring
+   the registry, plus an **agent filter** so
+   `browser-mcp-install <agent>` scopes to one:
 
    ```
    # agent   cli        scope      style
    #   scope: global (claude, codex — one server, every session)
-   #          per-agent (kiro — needs an explicit agent name)
+   #          per-agent (kiro — needs an explicit sub-agent name)
    #   style: readd   (claude — `mcp add` errors if the name exists)
    #          replace (kiro, codex — add is add-or-replace)
    MCP_AGENTS=(
@@ -214,47 +247,42 @@ browser-mcp feature named as the intended direction
    )
    ```
 
-   A generic `mcp_foreach <op> <server> <launcher> [kiro-agent]`
-   holds all shared logic once — CLI-on-PATH check + graceful
-   skip, per-agent skip when unnamed, message formatting. Three
-   thin `case "$agent"` dispatchers (`mcp_add` / `mcp_remove` /
-   `mcp_get`) issue only the irreducible CLI differences:
-   claude's `-s user` + remove-then-add, kiro's
-   `--name/--agent/--command` + stderr-with-ANSI `mcp list`
-   status parse, codex's global idempotent `mcp add`/`remove`/
-   `get`. This is strictly less hand-written per-agent code than
-   today (one generic loop + three small dispatchers vs. six
-   full functions), and codex joins as a global agent beside
-   claude.
+   A generic `mcp_foreach <op> [agent-filter] [kiro-subagent]`
+   holds all shared logic once — the row filter, CLI-on-PATH
+   check + graceful skip, kiro's skip-when-unnamed, message
+   formatting. Three thin `case "$agent"` dispatchers
+   (`mcp_add` / `mcp_remove` / `mcp_get`) issue only the
+   irreducible CLI differences: claude's `-s user` +
+   remove-then-add, kiro's `--name/--agent/--command` +
+   stderr-with-ANSI `mcp list` status parse, codex's global
+   idempotent `mcp add`/`remove`/`get`. Strictly less
+   hand-written per-agent code than today (one generic loop +
+   three small dispatchers vs. six full functions), and codex
+   joins as a global agent beside claude. `chrome-devtools` and
+   the launcher path stay in `manage` (it's the only
+   installable; no manifest needed yet).
 
-3. **Unified orchestrator** — `resources/install` (new,
-   POSIX-ish bash), invoked by the `resources::install` verb.
-   It (a) runs the Rust build-tool for the skills half of every
-   resource (`cargo run -p build-tool ... install`, passing
-   through `--dry-run` / `--force`), then (b) walks
-   `resources/manifest` and runs each `install+skill` row's
-   hook as `<install> install <launcher> [kiro-agent]`. The
-   hook graceful-skips internally, so the orchestrator stays
-   resource-agnostic. `resources/uninstall` is the mirror (Rust
-   uninstall + `<install> uninstall [kiro-agent]` per row). The
-   kiro-agent name threads through as one optional positional
-   at each layer (positional because just submodule recipes
-   don't bind `name=value`).
-
-4. **Verb surface** (`resources/Justfile`):
-   - `resources::install [kiro-agent]` — now calls
-     `resources/install` (both halves). Still the primary verb.
-   - `resources::uninstall [kiro-agent]` — calls
-     `resources/uninstall` (both halves; allowlist preserved).
-   - `resources::browser-mcp-install [kiro-agent]` /
-     `-uninstall` / `-status` / `-allow` — unchanged surface;
-     they call the now-table-driven `manage`, so they cover
-     codex. `browser-mcp-allow` stays browser-specific (the
-     allowlist is a browser concept).
+3. **Verb surface** (`resources/Justfile`) — the uniform
+   selector on each verb:
+   - `resources::install [agent]` — skills; `cargo run -p
+     build-tool ... install` with `--agent <agent>` when given.
+     Keeps `--dry-run` / `--force` passthrough.
+   - `resources::uninstall [agent]` — skills uninstall, same
+     scoping.
+   - `resources::status [agent]` — unchanged output, optionally
+     scoped.
+   - `resources::browser-mcp-install [agent] [kiro-subagent]` /
+     `-uninstall [agent] [kiro-subagent]` /
+     `-status [agent] [kiro-subagent]` — call the table-driven
+     `manage` with the agent filter; codex covered. Targeting
+     kiro needs the trailing sub-agent name or kiro
+     graceful-skips.
+   - `resources::browser-mcp-allow <pattern>` — unchanged
+     (browser-specific).
    - `resources::browser-functional-test [claude|kiro|codex]
-     [kiro-agent]` — the doc comment gains codex.
+     [kiro-subagent]` — doc comment gains codex.
 
-5. **Tests** —
+4. **Tests** —
    - Add `codex` to the `tools:` field of the six fixtures
      currently `claude,kiro` (`browser-safety`, `notes`,
      `notes-add-note`, `notes-git-commit`, `notes-vault-selector`,
@@ -266,45 +294,47 @@ browser-mcp feature named as the intended direction
      MCP tools actually fire — the parallel to claude's
      `--dangerously-skip-permissions` and kiro's
      `--trust-all-tools`), plus the run loop and arg parser.
-     Codex is global, so it needs no agent gate.
-   - One Rust test asserting manifest ↔ skills-dir consistency.
+     Codex is global, so no sub-agent gate.
+   - Rust tests for the agent selector (see Test Strategy).
 
 ### Notes / constraints
 
 - Codex is a **global** MCP agent (verified: `codex mcp add
   <name> -- <cmd>` is idempotent; `codex mcp remove` exits 0
   when absent; `codex mcp get` exits 1 absent / 0 present). It
-  needs no agent name, so it joins claude in the global path.
+  needs no sub-agent name, so it joins claude in the global path.
 - The ASBX `codex` wrapper intercepts top-level `--help` but
   passes subcommands through; the real signatures come from
   `codex mcp help add` / `codex exec help`. This is why the
   design pins exact flags from live probing, not `--help`.
-- No Rust logic change — the pure-symlink constraint holds. The
-  only Rust delta is a new test.
+- The only Rust behavioral delta is the agent filter (still
+  pure-symlink); everything else is shell/Just.
 
 ## Implementation Plan
 
-- [ ] **Slice 1 — table-driven `manage` + codex MCP.** Convert
-  `resources/browser/manage`'s per-agent functions to the
-  `MCP_AGENTS` table + `mcp_foreach` + three dispatchers; add
-  the codex row; keep the browser-specific epilogue. Verify:
-  shellcheck clean, `just resources::browser-mcp-status` runs,
-  `just ci` green (Rust untouched).
-- [ ] **Slice 2 — tests across all three agents.** Add `codex`
+- [ ] **Slice 1 — table-driven `manage` + codex MCP + agent
+  filter.** Convert `resources/browser/manage`'s per-agent
+  functions to the `MCP_AGENTS` table + `mcp_foreach` + three
+  dispatchers; add the codex row; add the optional agent filter
+  + trailing kiro sub-agent arg; keep the browser-specific
+  epilogue. Verify: shellcheck clean,
+  `just resources::browser-mcp-status` and `… browser-mcp-status
+  codex` both run, `just ci` green (Rust untouched).
+- [ ] **Slice 2 — agent selector on the skills install.** Add
+  the agent tag to `REGISTRY` and the `--agent` filter to
+  `install` / `uninstall` / `status`; thread the optional
+  selector through the `resources::install` / `uninstall` /
+  `status` Just recipes. Add the Rust selector tests. Verify:
+  `just resources::install codex` links only codex,
+  `just resources::install` links all three, unknown agent
+  errors; `just ci` green.
+- [ ] **Slice 3 — tests across all three agents.** Add `codex`
   to the six `tools:` fields; add the codex branch/loop/parser
   to `resources/tests/browser-functional`; update the Justfile
-  doc comment. `just ci` unaffected.
-- [ ] **Slice 3 — manifest + unified orchestrator.** Add
-  `resources/manifest` and `resources/install` /
-  `resources/uninstall`; lift the `chrome-devtools` / launcher
-  literals into manifest columns passed as args to `manage`;
-  point `resources::install` / `resources::uninstall` at the
-  orchestrators; add the Rust consistency test. Verify:
-  graceful-skip on a no-chrome/no-nix box still lays symlinks;
-  `just resources::status` resolves; `just ci` green.
-- [ ] **Docs.** README + `project.md` touch so the unified
-  entry point and codex-everywhere are discoverable (closure
-  phase bubbles the durable bits up).
+  doc comments. `just ci` unaffected.
+- [ ] **Docs.** README + `project.md` touch so the agent
+  selector and codex-everywhere are discoverable (closure phase
+  bubbles the durable bits up).
 
 - *Risk note:* codex skill-prose portability may make some
   fixtures fail in the user-run `verify` until prose is tuned;
@@ -324,28 +354,52 @@ browser-mcp feature named as the intended direction
   claude+kiro. Verified codex's MCP surface (`mcp add` global +
   idempotent, `remove` exits 0 absent, `get` exits 1 absent)
   and the `codex exec --dangerously-bypass-approvals-and-sandbox`
-  flag for the functional test. Wrote this spec; opening the
-  Planning Review Gate.
+  flag for the functional test. Wrote the first spec; opened the
+  Planning Review Gate (PR #31).
+- 2026-07-21 · Planning-review revision. On review, the earlier
+  "single unified `resources::install` that threads a
+  `[kiro-agent]` through both halves" was called out as
+  cluttered. Reframed the whole feature around a **uniform
+  coding-agent selector** (`claude`/`kiro`/`codex`, default all)
+  on two **separate** verbs (skills vs. installable). Dropped the
+  manifest + unified orchestrator (scaffolding for the abandoned
+  single-entry design) — the browser MCP is the only installable,
+  so its verb stays simple until a second one justifies
+  generalizing. Confined kiro's per-sub-agent MCP concern to the
+  browser-mcp verb (kiro skills are global, so it never belonged
+  on the skills verb). Rust gains an agent filter (still
+  pure-symlink) instead of a manifest-consistency test.
 
 <!-- append: decision · rationale · alternatives rejected -->
 
-- **Single unified `resources::install`, not a separate
-  `install-all`.** Considered adding a distinct `install-all`
-  verb beside the skills-only `install` (keeps the always-safe
-  primitive untouched). Rejected in favor of making
-  `resources::install` itself the unified entry: registration ≠
-  activation (deny-by-default launcher) and every hook
-  graceful-skips, so unifying carries no new risk, and one
-  entry point is the convergence the browser-mcp feature
-  named. The granular `browser-mcp-*` verbs remain for
-  MCP-only (re)installs.
-- **Manifest is a checked-in table, not convention-based
-  discovery.** Globbing `resources/content/skills/*` can't
-  express the install half (nothing on disk says "browser also
-  registers an MCP server") and can't be reviewed as one
-  artefact. A checked-in manifest matches the project's
-  "registry is the single source of truth" value. Kept free of
-  agent-home paths so it never duplicates the Rust registry.
+- **Uniform agent selector, two separate verbs** (review steer,
+  supersedes the first-draft "single unified install"). The
+  organizing principle is one selector word — `claude`/`kiro`/
+  `codex`, omit for all — meaning the same thing on both
+  `resources::install` (skills) and
+  `resources::browser-mcp-install` (installable). Rejected
+  merging them into one verb: skills are always safe and
+  prerequisite-free, the installable is env-gated and opt-in, and
+  merging drags the installable's prerequisites plus kiro's
+  per-sub-agent MCP concern onto the always-safe skills path. The
+  uniform *selector* delivers the "feels like one experience"
+  goal without coupling the mechanisms.
+- **kiro sub-agent confined to the installable verb.** kiro
+  *skills* install to one global steering path (every kiro
+  sub-agent sees them), so the skills verb never needs a
+  sub-agent name; only kiro *MCP* is per-sub-agent. The trailing
+  `[kiro-subagent]` arg lives only on `browser-mcp-install`.
+  Rejected threading a `kiro-agent` through the general
+  interface — that was the clutter the review flagged.
+- **No manifest / orchestrator yet — keep the installable
+  simple.** Considered a declarative `resources/manifest` + a
+  generic orchestrator so one entry point deploys every resource
+  kind. Rejected as speculative: there is exactly one installable
+  today, so the manifest would enumerate a single row and the
+  orchestrator would loop once. The per-agent table refactor in
+  `manage` is the real groundwork; generalizing to an
+  `installable` surface is a clean follow-up when a second one
+  lands.
 - **MCP layer made data-driven (table), matching the Rust
   registry's shape.** The whole asymmetry stemmed from
   hand-written per-agent functions; a per-agent table + generic
@@ -355,6 +409,6 @@ browser-mcp feature named as the intended direction
   Accepted that some fixtures may fail on codex until prose is
   tuned; those are content follow-ups surfaced only in the
   user-run verify, never in `just ci`.
-- **Rust stays pure-symlink** (standing hard constraint).
-  Symmetry lives in the shell/Just layer; the only Rust delta
-  is a consistency test.
+- **Rust stays pure-symlink** (standing hard constraint). The
+  agent selector only filters which registry rows are symlinked;
+  the mechanic is unchanged.
