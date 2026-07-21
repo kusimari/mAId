@@ -354,7 +354,7 @@ get symlinked*; the mechanic is still "create/remove a symlink."
   `just resources::status-browser-mcp` and
   `… status-browser-mcp codex` both run, `just ci` green (Rust
   untouched).
-- [ ] **Slice 2 — agent selector on the skills install.** Add
+- [x] **Slice 2 — agent selector on the skills install.** Add
   the agent tag to `REGISTRY` and the `--agent` filter to
   `install` / `uninstall` / `status`; thread the optional
   selector through the renamed `resources::install-skills` /
@@ -440,6 +440,20 @@ get symlinked*; the mechanic is still "create/remove a symlink."
   findings (README / browser SKILL.md / project.md / the
   functional-test comment still name old verbs) are deferred to
   Slice 3 + the Docs task, which own the rename sweep.
+- 2026-07-21 · Slice 2 done. Widened `Entry` to a 4-tuple (added
+  the agent tag), added `selected_entries` + `validate_agent`, and
+  a `--agent` flag on install/uninstall/status (still pure-symlink
+  — the filter only selects rows). Renamed the Just recipes to
+  `install-skills` / `uninstall-skills` / `status-skills` with a
+  leading agent selector; a `=~ '^-'` guard disambiguates a leading
+  flag (all-agents + `--force`) from an agent name. Added 6 Rust
+  selector tests. Verified all disambiguation cases, `just ci`
+  green (53 tests). Code Review Gate (fresh-context, host-native):
+  **86/100, PASS** — pure-symlink constraint confirmed upheld.
+  Applied the in-diff doc fixes (aligned the main.rs rustdoc to the
+  current `verify` verb; clarified the browser-mcp verb-pattern
+  comment re: `browser-mcp-allow`). The `browser-functional-test`
+  comment + wider doc sweep stay with Slice 3.
 
 <!-- append: decision · rationale · alternatives rejected -->
 

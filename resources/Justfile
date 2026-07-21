@@ -5,22 +5,28 @@
 # `resources/tests/run` resolve against the same paths as
 # the legacy flat Justfile.
 
-# Validate content and create/refresh $HOME-facing symlinks.
-# Pass flags through, e.g. `just resources::install --force` to repoint
-# symlinks that currently point elsewhere.
+# Validate content and create/refresh $HOME-facing skill symlinks.
+# First arg is the coding-agent selector (claude|kiro|codex; omit for
+# all three); remaining flags pass through, e.g.
+#   just resources::install-skills                 (all agents)
+#   just resources::install-skills codex           (codex only)
+#   just resources::install-skills codex --force   (codex, repoint)
+#   just resources::install-skills --force         (all agents, repoint)
+# The `=~ '^-'` guard lets a leading flag (no agent given) pass through
+# as a flag rather than being mistaken for an agent name.
 [no-cd]
-install *FLAGS:
-    cargo run -p build-tool --release --quiet -- install {{ FLAGS }}
+install-skills agent="" *FLAGS:
+    cargo run -p build-tool --release --quiet -- install {{ if agent =~ '^-' { agent } else if agent != "" { "--agent " + agent } else { "" } }} {{ FLAGS }}
 
-# Remove install-managed symlinks.
+# Remove install-managed skill symlinks (optionally for one agent).
 [no-cd]
-uninstall:
-    cargo run -p build-tool --release --quiet -- uninstall
+uninstall-skills agent="" *FLAGS:
+    cargo run -p build-tool --release --quiet -- uninstall {{ if agent =~ '^-' { agent } else if agent != "" { "--agent " + agent } else { "" } }} {{ FLAGS }}
 
-# Report each managed symlink's state.
+# Report each managed skill symlink's state (optionally for one agent).
 [no-cd]
-status:
-    cargo run -p build-tool --release --quiet -- status
+status-skills agent="":
+    cargo run -p build-tool --release --quiet -- status {{ if agent != "" { "--agent " + agent } else { "" } }}
 
 # Drive the AI tools (claude --print, kiro-cli) against the
 # installed content to confirm skills load correctly. Costs API
@@ -38,8 +44,10 @@ verify-one name:
 # ── browser-control MCP ──────────────────────────────────────────
 # Register Google's chrome-devtools-mcp with the installed agent
 # harnesses, launched via resources/browser/launch so the user's
-# allowlist is enforced. Verbs follow the `<action>-browser-mcp`
-# pattern so they read as peers of the `*-skills` verbs. Desktop-only;
+# allowlist is enforced. The register/report verbs follow the
+# `<action>-browser-mcp` pattern so they read as peers of the
+# `*-skills` verbs (`browser-mcp-allow` keeps its name — it manages
+# the allowlist, not the registration lifecycle). Desktop-only;
 # graceful skip where there is no GUI Chrome, no nix, or no harness
 # CLI. The allowlist is user-owned data — uninstall never touches it.
 #
