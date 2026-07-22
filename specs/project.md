@@ -8,8 +8,8 @@
 Tool-agnostic source of truth for my agentic resources — mostly
 skills — compiled into whatever AI tool I'm using (Claude Code,
 Kiro, Codex, future tools). The repo is the checked-in source;
-`just resources::install` creates the `$HOME`-facing symlinks each
-tool reads from. Every supported tool discovers skills natively at
+`just resources::install-skills` creates the `$HOME`-facing symlinks
+each tool reads from. Every supported tool discovers skills natively at
 its own skills path, so skills install as plain symlinks with no
 global instruction preamble; the one non-skill resource
 (browser-control MCP) registers as a runnable server via Just verbs
@@ -41,10 +41,13 @@ Two halves at the top level:
      bash where shelling out to other tools is the job
      (driving `claude` / `kiro-cli` / `codex`).
   3. **Verbs** (Justfile recipes that use the tooling) —
-     `just resources::install`, `just resources::uninstall`,
-     `just resources::status`, `just resources::verify`
-     (single-fixture: `just resources::verify-one <name>`).
-     These are how a human or another tool consumes the
+     `just resources::install-skills`, `…::uninstall-skills`,
+     `…::status-skills`, `…::verify-skills`
+     (single-fixture: `just resources::verify-skills-one <name>`).
+     Every verb follows the `<action>-<resource-kind>` pattern and
+     takes an optional coding-agent selector (`claude|kiro|codex`;
+     omit for all three). These are how a human or another tool
+     consumes the
      tooling.
 - **`kaimux/`** — tmux-pane orchestrator for coding-agent
   sessions. Single-binary Rust crate (workspace member).
@@ -61,13 +64,16 @@ Both halves are members of one cargo workspace at the
 root, so `cargo build --workspace` covers everything.
 
 **Registry** lives inline at the top of
-`resources/build-tool/src/main.rs` (a `&[(&str, &str)]`
-slice of `(home_subpath, source_subpath)` tuples). The
-authoritative manifest for what gets installed where.
-Tool adaptation lives here: adding a new coding-agent tool
-= adding its expected `$HOME` paths as registry entries,
-not rewriting content. Content stays tool-agnostic; the
-registry translates it into each tool's expected layout.
+`resources/build-tool/src/main.rs` (a slice of
+`(home_subpath, source_subpath, kind, agent)` tuples). The
+authoritative manifest for what gets installed where. The
+`agent` tag is what lets install/uninstall/status be scoped
+to one coding agent (`--agent`, surfaced as the Just verbs'
+selector) or, by default, cover them all. Tool adaptation
+lives here: adding a new coding-agent tool = adding its
+expected `$HOME` paths as registry entries, not rewriting
+content. Content stays tool-agnostic; the registry translates
+it into each tool's expected layout.
 
 Skills deploy through the registry as symlinks — each supported tool
 discovers them natively at its own skills path (`~/.claude/skills`,
@@ -125,16 +131,19 @@ re-auth. Its shape differs from skills in two ways:
 - **Entrypoints:** Justfile organised as a root file with
   `mod` declarations per area, so verbs are namespaced by
   what they touch:
-  - **`resources::*`** (operate on `$HOME` or the AI tools):
-    `just resources::install`, `just resources::uninstall`,
-    `just resources::status`, `just resources::verify`
-    (drives claude / kiro / codex against installed content;
-    costs API credits, gated behind a confirmation prompt),
-    `just resources::verify-one <name>`. Browser-control MCP
-    adds `browser-mcp-install [kiro-agent]` /
-    `browser-mcp-uninstall` / `browser-mcp-status` /
+  - **`resources::*`** (operate on `$HOME` or the AI tools).
+    Verbs follow the `<action>-<resource-kind>` pattern, each
+    taking the coding-agent selector (`claude|kiro|codex`; omit
+    for all three): `just resources::install-skills [agent]`,
+    `…::uninstall-skills [agent]`, `…::status-skills [agent]`,
+    `…::verify-skills [agent]` (drives the agents against
+    installed content; costs API credits, gated behind a
+    confirmation prompt), `…::verify-skills-one <name> [agent]`.
+    Browser-control MCP adds
+    `install-browser-mcp [agent] [kiro-sub]` /
+    `uninstall-browser-mcp` / `status-browser-mcp` /
     `browser-mcp-allow <pattern>` (register/report the server
-    + append allowlist patterns), plus `browser-functional-test`
+    + append allowlist patterns), plus `verify-browser-mcp`
     (attended, `[confirm]`-gated — drives real Chrome).
   - **`kaimux::*`** (operate on the kaimux crate):
     `just kaimux::build` (release + copy to `dist/`),
@@ -171,9 +180,9 @@ mAId/
 │   │   └── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
 │   ├── browser/            browser-control MCP (not symlinked — runnable)
 │   │   ├── launch          allowlist-enforcing launcher; enters flake, execs chrome-devtools-mcp
-│   │   └── manage          register/unregister/status per harness (claude, kiro per-agent)
+│   │   └── manage          data-driven MCP registrar (MCP_AGENTS table: claude/codex global, kiro per-sub-agent)
 │   └── tests/              bash fixture-runner (drives claude / kiro / codex against installed content)
-│       ├── run             entrypoint (`just resources::verify` calls this)
+│       ├── run             entrypoint (`just resources::verify-skills` calls this)
 │       ├── browser-functional   ATTENDED test: drives real Chrome, asserts off-list blocked
 │       └── skills/<name>.smoke   fixtures: substring / semantic-judge / behavioral (setup+assert)
 ├── kaimux/                 tmux-pane orchestrator for coding-agent sessions
@@ -207,41 +216,42 @@ a structural integration test (`structural_install_to_real_directory_layout`)
 that runs a full install→status→uninstall round-trip in
 the fake $HOME, replacing the older bash structural smoke.
 
-**`just resources::verify` — AI-tool functional tests.** Drives the
-real coding agents (claude, kiro, codex) against the `.smoke`
+**`just resources::verify-skills` — AI-tool functional tests.** Drives
+the real coding agents (claude, kiro, codex) against the `.smoke`
 fixtures under `resources/tests/skills/`. Three verification styles
 share the harness: **substring** (`expect_substr:` — the reply
 contains a string), **semantic** (`expected_narrative:` — a judge
 call checks the reply's meaning), and **behavioral** (`--- setup ---`
 / `--- assert ---` shell blocks — the agent runs against a seeded
 test project and the assert inspects the changes it made). Every
-fixture runs against each requested agent; `--tools <list>` scopes
-to a subset (default all three, all required). Slow (minutes), costs
-API credits, requires the managed symlinks already deployed (run
-`just resources::install` first). Gated behind a confirmation prompt
-in the Justfile.
+fixture runs against each requested agent; the verb's agent selector
+(surfaced to the runner as `--tools <list>`) scopes to one, default
+all three, all required. Slow (minutes), costs API credits, requires
+the managed symlinks already deployed (run
+`just resources::install-skills` first). Gated behind a confirmation
+prompt in the Justfile.
 
 The §8 Test Gate uses `just test` by default. SKILL.md
-prose revisions add `just resources::verify` (judge mode)
+prose revisions add `just resources::verify-skills` (judge mode)
 as their A/B evidence. The §9 close-out can run
-`just resources::status` after an install to confirm
+`just resources::status-skills` after an install to confirm
 symlinks resolved.
 
 ### Functional tests are user-driven
 
 Agentic runs (an AI assistant working through this project)
-**must** stop at `just test`. `just resources::verify` costs
+**must** stop at `just test`. `just resources::verify-skills` costs
 API credits and takes minutes; whether to spend that budget
 on a given change is a human call. The agent prepares the
 fixture, names the exact command, and hands off — it does
-not run it. The Justfile's `[confirm]` gate on `verify`
+not run it. The Justfile's `[confirm]` gate on `verify-skills`
 provides a second line of defense.
 
 Commands the user runs by hand:
 
-- All fixtures: `just resources::verify`
-- A single fixture: `just resources::verify-one <name>`
-  (e.g. `just resources::verify-one notes-git-commit`).
+- All fixtures: `just resources::verify-skills`
+- A single fixture: `just resources::verify-skills-one <name>`
+  (e.g. `just resources::verify-skills-one notes-git-commit`).
 
 The fixture file's basename (without `.smoke`) is the
 `<name>`.
@@ -257,26 +267,29 @@ slice.
      in a traditional sense, describe how it's consumed. -->
 
 Not a service — consumed locally.
-`just resources::install` validates content and creates the
-`$HOME`-facing symlinks; `just resources::uninstall`
-reverses them. `just resources::status` reports current
-managed-symlink state. `just resources::verify` drives the
-real AI tools against the installed content. App workspace
-members (`kaimux/`) build via `just kaimux::build` (a
-one-liner over `cargo build -p kaimux --release` + copy
-into `dist/`).
+`just resources::install-skills` validates content and creates the
+`$HOME`-facing symlinks; `just resources::uninstall-skills`
+reverses them. `just resources::status-skills` reports current
+managed-symlink state. `just resources::verify-skills` drives the
+real AI tools against the installed content. Each takes an
+optional coding-agent selector (`claude|kiro|codex`; omit for all
+three). App workspace members (`kaimux/`) build via
+`just kaimux::build` (a one-liner over `cargo build -p kaimux
+--release` + copy into `dist/`).
 
 The browser-control MCP deploys separately from skills
-(env-gated, opt-in): `just resources::browser-mcp-install
-[kiro-agent]` registers the server with each harness and
-prints the one-time manual step (enable Chrome remote
-debugging via `chrome://inspect`). It graceful-skips where a
-prereq is missing (no GUI Chrome, no `nix`, no harness CLI) —
-never a half-register. `browser-mcp-uninstall` removes the
-registration but preserves the user-owned allowlist (it's user
-data). The intended direction is convergence — `resources::
-install` absorbing every resource kind — but MCP's env
-prerequisites keep it a separate verb today.
+(env-gated, opt-in): `just resources::install-browser-mcp
+[agent] [kiro-sub]` registers the server with each harness
+(claude/codex global; kiro per named sub-agent) and prints the
+one-time manual step (enable Chrome remote debugging via
+`chrome://inspect`). It graceful-skips where a prereq is missing
+(no GUI Chrome, no `nix`, no harness CLI) — never a
+half-register. `uninstall-browser-mcp` removes the registration
+but preserves the user-owned allowlist (it's user data). Skills
+and the installable stay separate verbs (skills always safe;
+the installable env-gated) but share the uniform
+`<action>-<resource-kind>` naming and coding-agent selector, so
+the experience is symmetric across resource kinds.
 
 ### Hard constraints
 

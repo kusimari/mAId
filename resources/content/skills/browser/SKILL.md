@@ -1,6 +1,6 @@
 ---
 name: browser
-description: Drive a real Chrome browser through the chrome-devtools-mcp server — open pages, navigate, fill and submit forms, read results — against the user's already-running, logged-in session. Teaches the snapshot→act→verify driving loop, the user-owned allowlist guardrail (the browser enforces which sites the agent may touch), and an attended-use-only safety posture given the live-credential blast radius. Pairs with the browser-mcp-* install verbs.
+description: Drive a real Chrome browser through the chrome-devtools-mcp server — open pages, navigate, fill and submit forms, read results — against the user's already-running, logged-in session. Teaches the snapshot→act→verify driving loop, the user-owned allowlist guardrail (the browser enforces which sites the agent may touch), and an attended-use-only safety posture given the live-credential blast radius. Pairs with the *-browser-mcp install verbs.
 version: 1.0.0
 tags: [browser, chrome, mcp, automation, web, forms, navigation, safety]
 ---
@@ -18,7 +18,7 @@ user's *already-running* Chrome over the DevTools Protocol
 also the risk; the safety posture below is not optional.
 
 The tools are only present after the capability is installed
-(`just resources::browser-mcp-install`). If the browser tools
+(`just resources::install-browser-mcp`). If the browser tools
 are not in your toolset, say so and point the user at that verb
 — do not pretend to drive.
 

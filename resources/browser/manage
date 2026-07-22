@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # mAId/resources/browser/manage — register / unregister / report
-# the browser-control MCP server with each installed agent
-# harness. Invoked by the browser-mcp-* verbs in
+# the browser-control MCP server with each installed coding agent
+# (claude, kiro, codex). Invoked by the *-browser-mcp verbs in
 # resources/Justfile; not meant to be called directly.
 #
 # The server is registered to launch via resources/browser/launch
@@ -11,25 +11,31 @@
 # pure-symlink build-tool.
 #
 # Design notes:
+#   - Data-driven, mirroring the Rust REGISTRY's shape: one row per
+#     agent in MCP_AGENTS drives a generic loop (mcp_foreach); the
+#     three leaf dispatchers carry only the per-CLI differences.
+#     Adding an agent is a row, not a new function.
 #   - Idempotent. Claude's `mcp add` errors if the name exists, so
-#     install removes-then-adds. Kiro's `mcp add` already replaces.
+#     it removes-then-adds (the `readd` style); kiro's and codex's
+#     `mcp add` already replace.
 #   - Graceful per-prereq skip: no GUI Chrome, no `nix` (the MCP
 #     runtime comes from mAId's flake, entered by the launcher), or
 #     a missing harness CLI prints a one-line pointer and is
 #     skipped, never a hard error — a machine may have one harness
 #     and not the other, or no browser at all.
 #   - Allowlist is user data: uninstall never touches it.
-#   - Claude has no per-agent MCP model (a `-s user` server is
-#     visible to every session). Kiro partitions MCP servers PER
-#     AGENT, and `kiro-cli chat` runs a specific agent — so the
-#     kiro target must be named explicitly. We require a kiro agent
-#     name; absent it, kiro is skipped (mAId stays non-intrusive,
-#     never guessing which of the user's agents to write into).
+#   - Agent scope: claude and codex are GLOBAL (a server is visible
+#     to every session). Kiro partitions MCP servers PER SUB-AGENT
+#     and `kiro-cli chat` runs a specific one — so kiro must be
+#     named explicitly; absent a sub-agent name, kiro is skipped
+#     (mAId never guesses which of the user's agents to write into).
+#   - Agent filter: the optional <agent> arg scopes to one coding
+#     agent; empty means all three.
 #
 # Usage:
-#   manage install   <launcher> [kiro-agent]
-#   manage uninstall  [kiro-agent]
-#   manage status     [kiro-agent]
+#   manage install   <launcher> [agent] [kiro-sub-agent]
+#   manage uninstall  [agent] [kiro-sub-agent]
+#   manage status     [agent] [kiro-sub-agent]
 #   manage allow      <pattern>
 
 set -euo pipefail
@@ -53,111 +59,163 @@ chrome_present() {
     have google-chrome || have google-chrome-stable || have chromium || have chromium-browser
 }
 
-# ── claude ───────────────────────────────────────────────────────
+# ── per-agent registrar table ────────────────────────────────────
+# One row per coding agent, mirroring the Rust REGISTRY's data-driven
+# shape: the loop and every shared decision (PATH check, per-agent
+# skip, message framing) live once in mcp_foreach; the three leaf
+# dispatchers below carry only the irreducible per-CLI differences.
+#
+#   agent  cli        scope       style
+#   scope  global     one server, visible to every session (claude, codex)
+#          per-agent  registered under a named sub-agent (kiro)
+#   style  readd      `mcp add` errors if the name exists → remove first (claude)
+#          replace    `mcp add` is add-or-replace, idempotent (kiro, codex)
+MCP_AGENTS=(
+    "claude  claude    global      readd"
+    "kiro    kiro-cli  per-agent   replace"
+    "codex   codex     global      replace"
+)
 
-register_claude() {
-    have claude || { skip "claude (CLI not on PATH)"; return; }
-    # remove-then-add so a re-run refreshes rather than errors
-    claude mcp remove -s user "$SERVER_NAME" >/dev/null 2>&1 || true
-    if claude mcp add -s user "$SERVER_NAME" -- "$LAUNCHER" >/dev/null 2>&1; then
-        ok "claude  ($SERVER_NAME → $LAUNCHER)"
-    else
-        skip "claude (mcp add failed)"
-    fi
+KNOWN_AGENTS="claude kiro codex"
+
+# Reject an agent filter that isn't a coding agent we know — a clear
+# error beats silently acting on nothing. Empty = all agents.
+validate_agent_filter() {
+    local f="$1" a
+    [[ -z "$f" ]] && return 0
+    for a in $KNOWN_AGENTS; do [[ "$f" == "$a" ]] && return 0; done
+    printf 'manage: unknown coding agent %q (known: %s)\n' "$f" "$KNOWN_AGENTS" >&2
+    exit 2
 }
 
-unregister_claude() {
-    have claude || { skip "claude (CLI not on PATH)"; return; }
-    if claude mcp remove -s user "$SERVER_NAME" >/dev/null 2>&1; then
-        ok "claude  (removed $SERVER_NAME)"
-    else
-        info "claude  ($SERVER_NAME not registered)"
-    fi
+# Walk the table applying <op> to each agent that matches AGENT_FILTER
+# (empty = all) and is present. Uses SERVER_NAME / LAUNCHER /
+# AGENT_FILTER / KIRO_AGENT from the caller.
+mcp_foreach() {
+    local op="$1" row agent cli scope style
+    for row in "${MCP_AGENTS[@]}"; do
+        read -r agent cli scope style <<<"$row"
+        [[ -n "$AGENT_FILTER" && "$AGENT_FILTER" != "$agent" ]] && continue
+        have "$cli" || { skip "$agent ($cli not on PATH)"; continue; }
+        # A per-agent CLI (kiro) can't be targeted without a named
+        # sub-agent — mAId never guesses which one to write into.
+        if [[ "$scope" == per-agent && -z "${KIRO_AGENT:-}" ]]; then
+            skip "$agent (no sub-agent named — pass '<agent> <sub-agent>' to target it)"
+            continue
+        fi
+        case "$op" in
+            install)   op_install "$agent" "$style" ;;
+            uninstall) op_uninstall "$agent" ;;
+            status)    op_status "$agent" ;;
+        esac
+    done
 }
 
-status_claude() {
-    have claude || { skip "claude (CLI not on PATH)"; return; }
-    if claude mcp get "$SERVER_NAME" >/dev/null 2>&1; then
-        ok "claude  ($SERVER_NAME registered)"
-    else
-        info "claude  ($SERVER_NAME not registered)"
+# A "; agent <name>" tail only for the per-agent CLI, so global
+# agents' messages don't sprout a meaningless sub-agent note.
+agent_note() { [[ "$1" == kiro ]] && printf ' (agent %s)' "$KIRO_AGENT"; }
+
+# Left-pad the agent name so multi-agent output stays column-aligned.
+label() { printf '%-6s' "$1"; }
+
+op_install() {
+    local agent="$1" style="$2" out
+    # readd agents error on a duplicate name; clear it first so a
+    # re-run refreshes rather than fails.
+    if [[ "$style" == readd ]]; then
+        mcp_remove "$agent" >/dev/null 2>&1 || true
     fi
-}
-
-# ── kiro ─────────────────────────────────────────────────────────
-
-# kiro registration is PER AGENT. $KIRO_AGENT (the named agent)
-# must be set; the caller skips kiro otherwise.
-
-register_kiro() {
-    have kiro-cli || { skip "kiro (CLI not on PATH)"; return; }
-    [[ -n "${KIRO_AGENT:-}" ]] || {
-        skip "kiro (no agent named — pass kiro_agent=<name> to target a kiro agent)"
-        return
-    }
-    # kiro's `mcp add` is add-or-replace — idempotent on its own.
-    local err
-    if err="$(kiro-cli mcp add --name "$SERVER_NAME" --agent "$KIRO_AGENT" \
-            --command "$LAUNCHER" 2>&1)"; then
-        ok "kiro    ($SERVER_NAME → $LAUNCHER; agent $KIRO_AGENT)"
+    if out="$(mcp_add "$agent" 2>&1)"; then
+        ok "$(label "$agent") ($SERVER_NAME → $LAUNCHER)$(agent_note "$agent")"
     else
-        # Surface kiro's own first line (e.g. "Agent X does not
+        # Surface the CLI's own first line (e.g. "Agent X does not
         # exist", "not logged in") so the skip is actionable.
-        skip "kiro (mcp add failed: $(printf '%s' "$err" | head -n1))"
+        skip "$(label "$agent") (mcp add failed: $(printf '%s' "$out" | head -n1))"
     fi
 }
 
-unregister_kiro() {
-    have kiro-cli || { skip "kiro (CLI not on PATH)"; return; }
-    [[ -n "${KIRO_AGENT:-}" ]] || {
-        skip "kiro (no agent named — pass kiro_agent=<name> to target a kiro agent)"
+op_uninstall() {
+    local agent="$1"
+    # codex's `mcp remove` exits 0 whether or not the server existed,
+    # so gate its "removed" claim on a prior registration check to
+    # avoid a misleading message on a clean machine. claude/kiro
+    # return nonzero when absent, so their branch is already honest.
+    if [[ "$agent" == codex ]] && ! mcp_get "$agent"; then
+        mcp_remove "$agent" >/dev/null 2>&1 || true
+        info "$(label "$agent") ($SERVER_NAME not registered)"
         return
-    }
-    if kiro-cli mcp remove --name "$SERVER_NAME" --agent "$KIRO_AGENT" >/dev/null 2>&1; then
-        ok "kiro    (removed $SERVER_NAME from agent $KIRO_AGENT)"
+    fi
+    if mcp_remove "$agent" >/dev/null 2>&1; then
+        ok "$(label "$agent") (removed $SERVER_NAME)$(agent_note "$agent")"
     else
-        info "kiro    ($SERVER_NAME not registered in agent $KIRO_AGENT)"
+        info "$(label "$agent") ($SERVER_NAME not registered)$(agent_note "$agent")"
     fi
 }
 
-status_kiro() {
-    have kiro-cli || { skip "kiro (CLI not on PATH)"; return; }
-    [[ -n "${KIRO_AGENT:-}" ]] || {
-        skip "kiro (no agent named — pass kiro_agent=<name> to check a kiro agent)"
-        return
-    }
-    # `kiro-cli mcp status` has no --agent flag, so parse the
-    # agent's block in `mcp list` for the server name. Note: kiro
-    # writes this listing to stderr (hence 2>&1), with ANSI colour
-    # codes (stripped before matching).
-    if kiro-cli mcp list 2>&1 \
-        | sed 's/\x1b\[[0-9;]*m//g' \
-        | awk -v a="$KIRO_AGENT" -v s="$SERVER_NAME" '
-            # Exact string compares (not regex) so agent/server
-            # names with metacharacters cannot mis-match. The block
-            # is the agent header line until the next "  <header>".
-            $0 == "  " a {inblk=1; next}
-            /^  [^ ]/ {inblk=0}
-            inblk && $2 == s {found=1}
-            END {exit !found}'; then
-        ok "kiro    ($SERVER_NAME registered in agent $KIRO_AGENT)"
+op_status() {
+    local agent="$1"
+    if mcp_get "$agent"; then
+        ok "$(label "$agent") ($SERVER_NAME registered)$(agent_note "$agent")"
     else
-        info "kiro    ($SERVER_NAME not registered in agent $KIRO_AGENT)"
+        info "$(label "$agent") ($SERVER_NAME not registered)$(agent_note "$agent")"
     fi
+}
+
+# ── leaf dispatchers: the only per-CLI-different code ─────────────
+
+mcp_add() {
+    case "$1" in
+        claude) claude   mcp add -s user "$SERVER_NAME" -- "$LAUNCHER" ;;
+        kiro)   kiro-cli mcp add --name "$SERVER_NAME" --agent "$KIRO_AGENT" --command "$LAUNCHER" ;;
+        codex)  codex    mcp add "$SERVER_NAME" -- "$LAUNCHER" ;;
+    esac
+}
+
+mcp_remove() {
+    case "$1" in
+        claude) claude   mcp remove -s user "$SERVER_NAME" ;;
+        kiro)   kiro-cli mcp remove --name "$SERVER_NAME" --agent "$KIRO_AGENT" ;;
+        codex)  codex    mcp remove "$SERVER_NAME" ;;
+    esac
+}
+
+# 0 = registered. claude/codex have a direct `mcp get`; kiro has no
+# per-agent status flag, so parse the agent's block in `mcp list`
+# (which kiro writes to stderr, hence 2>&1, with ANSI colour stripped).
+mcp_get() {
+    case "$1" in
+        claude) claude mcp get "$SERVER_NAME" >/dev/null 2>&1 ;;
+        codex)  codex  mcp get "$SERVER_NAME" >/dev/null 2>&1 ;;
+        kiro)
+            kiro-cli mcp list 2>&1 \
+                | sed 's/\x1b\[[0-9;]*m//g' \
+                | awk -v a="$KIRO_AGENT" -v s="$SERVER_NAME" '
+                    # Exact string compares (not regex) so agent/server
+                    # names with metacharacters cannot mis-match. The
+                    # block is the agent header line until the next
+                    # "  <header>".
+                    $0 == "  " a {inblk=1; next}
+                    /^  [^ ]/ {inblk=0}
+                    inblk && $2 == s {found=1}
+                    END {exit !found}'
+            ;;
+    esac
 }
 
 # ── subcommands ──────────────────────────────────────────────────
 
 cmd_install() {
     LAUNCHER="${1:?manage install: launcher path required}"
-    KIRO_AGENT="${2:-}"
+    AGENT_FILTER="${2:-}"
+    KIRO_AGENT="${3:-}"
+    validate_agent_filter "$AGENT_FILTER"
     # A non-executable launcher is a packaging bug, not an
     # environment gap — hard-fail to stderr, unlike the graceful
     # prereq skips below.
     [[ -x "$LAUNCHER" ]] || { printf 'manage: launcher not executable: %s\n' "$LAUNCHER" >&2; exit 1; }
 
     if ! chrome_present; then
-        skip "browser-mcp-install (no graphical Chrome found — desktop only)"
+        skip "install-browser-mcp (no graphical Chrome found — desktop only)"
         return 0
     fi
     # The MCP runtime (Node.js) comes from mAId's own flake — the
@@ -165,12 +223,11 @@ cmd_install() {
     # the user's PATH. `nix` itself is the prerequisite (the repo's
     # standing requirement). Check it for a clear up-front skip.
     if ! have nix; then
-        skip "browser-mcp-install (nix not on PATH — mAId provides the MCP runtime via its flake; nix is the repo prerequisite)"
+        skip "install-browser-mcp (nix not on PATH — mAId provides the MCP runtime via its flake; nix is the repo prerequisite)"
         return 0
     fi
 
-    register_claude
-    register_kiro
+    mcp_foreach install
 
     # Warm the flake now so the FIRST real browser-MCP connection
     # isn't stalled (and the MCP handshake doesn't time out) while
@@ -195,16 +252,18 @@ cmd_install() {
 }
 
 cmd_uninstall() {
-    KIRO_AGENT="${1:-}"
-    unregister_claude
-    unregister_kiro
+    AGENT_FILTER="${1:-}"
+    KIRO_AGENT="${2:-}"
+    validate_agent_filter "$AGENT_FILTER"
+    mcp_foreach uninstall
     info "allowlist left in place (user data): $ALLOWLIST"
 }
 
 cmd_status() {
-    KIRO_AGENT="${1:-}"
-    status_claude
-    status_kiro
+    AGENT_FILTER="${1:-}"
+    KIRO_AGENT="${2:-}"
+    validate_agent_filter "$AGENT_FILTER"
+    mcp_foreach status
     if [[ -s "$ALLOWLIST" ]]; then
         local n
         n="$(grep -cvE '^\s*(#|$)' "$ALLOWLIST" || true)"

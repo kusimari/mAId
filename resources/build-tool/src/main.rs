@@ -4,13 +4,16 @@
 //! into modules adds noise.
 //!
 //! Invoked via the project's Justfile:
-//!   just install     create the $HOME-facing symlinks (after content checks)
-//!   just uninstall   remove the managed symlinks
-//!   just status      report each managed symlink's current state
+//!   just resources::install-skills [agent]    create the $HOME-facing symlinks (after content checks)
+//!   just resources::uninstall-skills [agent]  remove the managed symlinks
+//!   just resources::status-skills [agent]     report each managed symlink's current state
+//! An optional `--agent <claude|kiro|codex>` scopes any of the three
+//! to one coding agent; the default is all of them.
 //!
-//! `just verify` is a separate verb that drives `claude --print`
-//! against the installed content; that lives in the Justfile and
-//! shells into `resources/tests/run`, not in this binary.
+//! `just resources::verify` is a separate verb that drives
+//! `claude --print` (and kiro/codex) against the installed content;
+//! that lives in the Justfile and shells into `resources/tests/run`,
+//! not in this binary.
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
@@ -41,7 +44,7 @@ use std::process::ExitCode;
 // global per-tool file.
 // ─────────────────────────────────────────────────────────────────
 
-type Entry = (&'static str, &'static str, Kind); // (home_subpath, source_subpath, kind)
+type Entry = (&'static str, &'static str, Kind, &'static str); // (home_subpath, source_subpath, kind, agent)
 
 /// A concrete symlink to manage, resolved from an entry: (home, source).
 type Link = (PathBuf, PathBuf);
@@ -52,15 +55,55 @@ enum Kind {
     FanOut,
 }
 
+/// The coding agents mAId deploys to. An install/uninstall/status can
+/// be scoped to one (`--agent`) or, by default, cover them all. This
+/// list is also the recognized universe used to validate `--agent`.
+const AGENTS: &[&str] = &["claude", "kiro", "codex"];
+
 const REGISTRY: &[Entry] = &[
-    (".claude/skills", "resources/content/skills", Kind::Link),
+    (
+        ".claude/skills",
+        "resources/content/skills",
+        Kind::Link,
+        "claude",
+    ),
     (
         ".kiro/steering/skills",
         "resources/content/skills",
         Kind::Link,
+        "kiro",
     ),
-    (".codex/skills", "resources/content/skills", Kind::FanOut),
+    (
+        ".codex/skills",
+        "resources/content/skills",
+        Kind::FanOut,
+        "codex",
+    ),
 ];
+
+/// Filter REGISTRY to the rows an `--agent` selection acts on: `None`
+/// = every row (the default), `Some(a)` = just that agent's rows. An
+/// unrecognized agent is rejected by the caller before this runs.
+fn selected_entries(agent: Option<&str>) -> Vec<Entry> {
+    REGISTRY
+        .iter()
+        .filter(|(.., a)| agent.is_none_or(|sel| sel == *a))
+        .copied()
+        .collect()
+}
+
+/// Validate an `--agent` value against the known set, returning it
+/// back for chaining. An unknown agent is a hard error listing the
+/// valid names, so a typo never silently installs nothing.
+fn validate_agent(agent: Option<&str>) -> Result<Option<&str>> {
+    match agent {
+        Some(a) if !AGENTS.contains(&a) => Err(anyhow!(
+            "unknown coding agent {a:?} (known: {})",
+            AGENTS.join(", ")
+        )),
+        other => Ok(other),
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────
 // 2. Content checks.
@@ -157,7 +200,7 @@ struct Plan {
 /// source is still reaped, not orphaned as a dangling link in a dir we
 /// don't own). Keyed by home path for dedupe + deterministic order.
 fn expand(entry: Entry, home_root: &Path, checkout: &Path) -> io::Result<Vec<Link>> {
-    let (home_sub, source_sub, kind) = entry;
+    let (home_sub, source_sub, kind, _agent) = entry;
     let home = home_root.join(home_sub);
     let source = checkout.join(source_sub);
     match kind {
@@ -247,6 +290,9 @@ enum Cmd {
         /// Replace symlinks that point elsewhere.
         #[arg(long)]
         force: bool,
+        /// Scope to one coding agent (claude|kiro|codex); default all.
+        #[arg(long)]
+        agent: Option<String>,
     },
     /// Remove install-managed symlinks.
     Uninstall {
@@ -257,9 +303,16 @@ enum Cmd {
         /// symlinks and non-symlinks.
         #[arg(long)]
         force: bool,
+        /// Scope to one coding agent (claude|kiro|codex); default all.
+        #[arg(long)]
+        agent: Option<String>,
     },
     /// Report each managed symlink's state.
-    Status,
+    Status {
+        /// Scope to one coding agent (claude|kiro|codex); default all.
+        #[arg(long)]
+        agent: Option<String>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -277,18 +330,33 @@ fn run(cli: Cli) -> Result<u8> {
     let root = repo_root()?;
     let home = home_dir()?;
     match cli.cmd {
-        Cmd::Install { dry_run, force } => cmd_install(&home, &root, dry_run, force),
-        Cmd::Uninstall { dry_run, force } => cmd_uninstall(&home, &root, dry_run, force),
-        Cmd::Status => cmd_status(&home, &root),
+        Cmd::Install {
+            dry_run,
+            force,
+            agent,
+        } => cmd_install(&home, &root, dry_run, force, agent.as_deref()),
+        Cmd::Uninstall {
+            dry_run,
+            force,
+            agent,
+        } => cmd_uninstall(&home, &root, dry_run, force, agent.as_deref()),
+        Cmd::Status { agent } => cmd_status(&home, &root, agent.as_deref()),
     }
 }
 
-fn cmd_install(home: &Path, checkout: &Path, dry_run: bool, force: bool) -> Result<u8> {
+fn cmd_install(
+    home: &Path,
+    checkout: &Path,
+    dry_run: bool,
+    force: bool,
+    agent: Option<&str>,
+) -> Result<u8> {
+    let agent = validate_agent(agent)?;
     let count = check_content(&checkout.join("resources").join("content"))
         .map_err(|errs| anyhow!("Content validation failed:\n{}", errs.join("\n")))?;
     eprintln!("validated {count} content file(s)");
 
-    let failures: usize = REGISTRY
+    let failures: usize = selected_entries(agent)
         .iter()
         .map(|e| expand(*e, home, checkout))
         .collect::<io::Result<Vec<_>>>()?
@@ -302,8 +370,15 @@ fn cmd_install(home: &Path, checkout: &Path, dry_run: bool, force: bool) -> Resu
     Ok(if failures > 0 { 1 } else { 0 })
 }
 
-fn cmd_uninstall(home: &Path, checkout: &Path, dry_run: bool, force: bool) -> Result<u8> {
-    let failures: usize = REGISTRY
+fn cmd_uninstall(
+    home: &Path,
+    checkout: &Path,
+    dry_run: bool,
+    force: bool,
+    agent: Option<&str>,
+) -> Result<u8> {
+    let agent = validate_agent(agent)?;
+    let failures: usize = selected_entries(agent)
         .iter()
         .map(|e| expand(*e, home, checkout))
         .collect::<io::Result<Vec<_>>>()?
@@ -317,9 +392,10 @@ fn cmd_uninstall(home: &Path, checkout: &Path, dry_run: bool, force: bool) -> Re
     Ok(if failures > 0 { 1 } else { 0 })
 }
 
-fn cmd_status(home: &Path, checkout: &Path) -> Result<u8> {
-    for entry in REGISTRY {
-        for (h, s) in expand(*entry, home, checkout)? {
+fn cmd_status(home: &Path, checkout: &Path, agent: Option<&str>) -> Result<u8> {
+    let agent = validate_agent(agent)?;
+    for entry in selected_entries(agent) {
+        for (h, s) in expand(entry, home, checkout)? {
             // Label by the home path relative to $HOME so fan-out
             // children read as `.codex/skills/<name>`.
             let label = h.strip_prefix(home).unwrap_or(&h).display().to_string();
@@ -642,7 +718,7 @@ mod tests {
     fn plan_one_match_after_install() {
         let checkout = make_checkout();
         let home = TempDir::new().unwrap();
-        cmd_install(home.path(), checkout.path(), false, false).unwrap();
+        cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
         let (h, s) = link0(home.path(), checkout.path());
         let p = plan_one(h, s).unwrap();
         assert_eq!(p.cmp, Comparison::Match);
@@ -676,7 +752,7 @@ mod tests {
     fn install_fresh_home_creates_every_entry() {
         let checkout = make_checkout_with_skills();
         let home = TempDir::new().unwrap();
-        let rc = cmd_install(home.path(), checkout.path(), false, false).unwrap();
+        let rc = cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
         assert_eq!(rc, 0);
         // Every managed symlink is the set of expanded links across all
         // entries (fan-out entries contribute one link per source child).
@@ -691,8 +767,8 @@ mod tests {
     fn install_second_run_is_idempotent() {
         let checkout = make_checkout();
         let home = TempDir::new().unwrap();
-        cmd_install(home.path(), checkout.path(), false, false).unwrap();
-        let rc = cmd_install(home.path(), checkout.path(), false, false).unwrap();
+        cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
+        let rc = cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
         assert_eq!(rc, 0);
     }
 
@@ -700,7 +776,7 @@ mod tests {
     fn install_dry_run_makes_no_changes() {
         let checkout = make_checkout();
         let home = TempDir::new().unwrap();
-        cmd_install(home.path(), checkout.path(), true, false).unwrap();
+        cmd_install(home.path(), checkout.path(), true, false, None).unwrap();
         assert!(!path_exists(&home.path().join(REGISTRY[0].0)));
     }
 
@@ -713,7 +789,7 @@ mod tests {
         ensure_parent(&target).unwrap();
         std::os::unix::fs::symlink("/nowhere", &target).unwrap();
 
-        let rc = cmd_install(home.path(), checkout.path(), false, false).unwrap();
+        let rc = cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
         assert_eq!(rc, 1);
         let cur = fs::read_link(&target).unwrap();
         assert_eq!(cur, PathBuf::from("/nowhere"));
@@ -728,7 +804,7 @@ mod tests {
         ensure_parent(&target).unwrap();
         std::os::unix::fs::symlink("/nowhere", &target).unwrap();
 
-        let rc = cmd_install(home.path(), checkout.path(), false, true).unwrap();
+        let rc = cmd_install(home.path(), checkout.path(), false, true, None).unwrap();
         assert_eq!(rc, 0);
         let cur = fs::read_link(&target).unwrap();
         assert_eq!(cur, checkout.path().join(entry.1));
@@ -743,7 +819,7 @@ mod tests {
         ensure_parent(&target).unwrap();
         write(&target, "user content");
 
-        let rc = cmd_install(home.path(), checkout.path(), false, false).unwrap();
+        let rc = cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
         assert_eq!(rc, 1);
         assert_eq!(fs::read_to_string(&target).unwrap(), "user content");
     }
@@ -755,7 +831,7 @@ mod tests {
         let checkout = make_checkout();
         let home = TempDir::new().unwrap();
         assert_eq!(
-            cmd_uninstall(home.path(), checkout.path(), false, false).unwrap(),
+            cmd_uninstall(home.path(), checkout.path(), false, false, None).unwrap(),
             0
         );
     }
@@ -764,9 +840,9 @@ mod tests {
     fn uninstall_removes_managed_symlinks() {
         let checkout = make_checkout();
         let home = TempDir::new().unwrap();
-        cmd_install(home.path(), checkout.path(), false, false).unwrap();
+        cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
 
-        let rc = cmd_uninstall(home.path(), checkout.path(), false, false).unwrap();
+        let rc = cmd_uninstall(home.path(), checkout.path(), false, false, None).unwrap();
         assert_eq!(rc, 0);
         for entry in REGISTRY {
             assert!(!path_exists(&home.path().join(entry.0)));
@@ -777,10 +853,10 @@ mod tests {
     fn uninstall_idempotent() {
         let checkout = make_checkout();
         let home = TempDir::new().unwrap();
-        cmd_install(home.path(), checkout.path(), false, false).unwrap();
-        cmd_uninstall(home.path(), checkout.path(), false, false).unwrap();
+        cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
+        cmd_uninstall(home.path(), checkout.path(), false, false, None).unwrap();
         assert_eq!(
-            cmd_uninstall(home.path(), checkout.path(), false, false).unwrap(),
+            cmd_uninstall(home.path(), checkout.path(), false, false, None).unwrap(),
             0
         );
     }
@@ -794,7 +870,7 @@ mod tests {
         ensure_parent(&target).unwrap();
         std::os::unix::fs::symlink("/nowhere", &target).unwrap();
 
-        let rc = cmd_uninstall(home.path(), checkout.path(), false, false).unwrap();
+        let rc = cmd_uninstall(home.path(), checkout.path(), false, false, None).unwrap();
         assert_eq!(rc, 1);
         assert!(path_exists(&target));
     }
@@ -808,7 +884,7 @@ mod tests {
         ensure_parent(&target).unwrap();
         std::os::unix::fs::symlink("/nowhere", &target).unwrap();
 
-        let rc = cmd_uninstall(home.path(), checkout.path(), false, true).unwrap();
+        let rc = cmd_uninstall(home.path(), checkout.path(), false, true, None).unwrap();
         assert_eq!(rc, 0);
         assert!(!path_exists(&target));
     }
@@ -822,7 +898,7 @@ mod tests {
         ensure_parent(&target).unwrap();
         write(&target, "user content");
 
-        let rc = cmd_uninstall(home.path(), checkout.path(), false, false).unwrap();
+        let rc = cmd_uninstall(home.path(), checkout.path(), false, false, None).unwrap();
         assert_eq!(rc, 1);
         assert_eq!(fs::read_to_string(&target).unwrap(), "user content");
     }
@@ -831,9 +907,9 @@ mod tests {
     fn uninstall_dry_run_makes_no_changes() {
         let checkout = make_checkout_with_skills();
         let home = TempDir::new().unwrap();
-        cmd_install(home.path(), checkout.path(), false, false).unwrap();
+        cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
 
-        cmd_uninstall(home.path(), checkout.path(), true, false).unwrap();
+        cmd_uninstall(home.path(), checkout.path(), true, false, None).unwrap();
         for entry in REGISTRY {
             for (h, _) in expand(*entry, home.path(), checkout.path()).unwrap() {
                 assert!(path_exists(&h));
@@ -847,8 +923,8 @@ mod tests {
     fn status_runs_clean_on_fresh_install() {
         let checkout = make_checkout();
         let home = TempDir::new().unwrap();
-        cmd_install(home.path(), checkout.path(), false, false).unwrap();
-        assert_eq!(cmd_status(home.path(), checkout.path()).unwrap(), 0);
+        cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
+        assert_eq!(cmd_status(home.path(), checkout.path(), None).unwrap(), 0);
     }
 
     // ── fan-out kind (codex-owned skills dir) ───────────────────
@@ -875,7 +951,7 @@ mod tests {
         let home = TempDir::new().unwrap();
         let codex_skills = REGISTRY
             .iter()
-            .find(|(h, _, k)| *k == Kind::FanOut && h.contains("codex"))
+            .find(|(h, _, k, _)| *k == Kind::FanOut && h.contains("codex"))
             .copied()
             .expect("a codex fan-out entry");
         let links = expand(codex_skills, home.path(), checkout.path()).unwrap();
@@ -894,7 +970,7 @@ mod tests {
         let system_marker = home.path().join(".codex/skills/.system/.marker");
         write(&system_marker, "codex-owned");
 
-        let rc = cmd_install(home.path(), checkout.path(), false, false).unwrap();
+        let rc = cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
         assert_eq!(rc, 0);
 
         // Each source skill is now a symlink child of ~/.codex/skills.
@@ -917,8 +993,8 @@ mod tests {
         let system_marker = home.path().join(".codex/skills/.system/.marker");
         write(&system_marker, "codex-owned");
 
-        cmd_install(home.path(), checkout.path(), false, false).unwrap();
-        let rc = cmd_uninstall(home.path(), checkout.path(), false, false).unwrap();
+        cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
+        let rc = cmd_uninstall(home.path(), checkout.path(), false, false, None).unwrap();
         assert_eq!(rc, 0);
 
         for name in ["kdevkit", "notes"] {
@@ -935,13 +1011,13 @@ mod tests {
         // rather than leaving a dangling link in codex's dir.
         let checkout = make_checkout_with_skills();
         let home = TempDir::new().unwrap();
-        cmd_install(home.path(), checkout.path(), false, false).unwrap();
+        cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
         // Drop "notes" from the source checkout.
         fs::remove_dir_all(checkout.path().join("resources/content/skills/notes")).unwrap();
 
         let codex = REGISTRY
             .iter()
-            .find(|(h, _, k)| *k == Kind::FanOut && h.contains("codex"))
+            .find(|(h, _, k, _)| *k == Kind::FanOut && h.contains("codex"))
             .copied()
             .unwrap();
         let homes: Vec<_> = expand(codex, home.path(), checkout.path())
@@ -953,7 +1029,7 @@ mod tests {
         assert!(homes.iter().any(|h| h.ends_with("notes")));
 
         // Uninstall reaps it — no dangling symlink left behind.
-        cmd_uninstall(home.path(), checkout.path(), false, false).unwrap();
+        cmd_uninstall(home.path(), checkout.path(), false, false, None).unwrap();
         assert!(!path_exists(&home.path().join(".codex/skills/notes")));
         assert!(!path_exists(&home.path().join(".codex/skills/kdevkit")));
     }
@@ -968,7 +1044,7 @@ mod tests {
         let collision = home.path().join(".codex/skills/kdevkit/OWNED.md");
         write(&collision, "codex-owned skill");
 
-        let rc = cmd_uninstall(home.path(), checkout.path(), false, true).unwrap();
+        let rc = cmd_uninstall(home.path(), checkout.path(), false, true, None).unwrap();
         assert_eq!(rc, 1); // soft-skip counts as a failure exit
         assert_eq!(fs::read_to_string(&collision).unwrap(), "codex-owned skill");
     }
@@ -980,7 +1056,7 @@ mod tests {
         let home = TempDir::new().unwrap();
         let codex_skills = REGISTRY
             .iter()
-            .find(|(h, _, k)| *k == Kind::FanOut && h.contains("codex"))
+            .find(|(h, _, k, _)| *k == Kind::FanOut && h.contains("codex"))
             .copied()
             .unwrap();
         assert!(expand(codex_skills, home.path(), checkout.path())
@@ -1004,7 +1080,7 @@ mod tests {
         let home = TempDir::new().unwrap();
 
         assert_eq!(
-            cmd_install(home.path(), checkout.path(), false, false).unwrap(),
+            cmd_install(home.path(), checkout.path(), false, false, None).unwrap(),
             0
         );
         for entry in REGISTRY {
@@ -1026,10 +1102,10 @@ mod tests {
             );
         }
 
-        assert_eq!(cmd_status(home.path(), checkout.path()).unwrap(), 0);
+        assert_eq!(cmd_status(home.path(), checkout.path(), None).unwrap(), 0);
 
         assert_eq!(
-            cmd_uninstall(home.path(), checkout.path(), false, false).unwrap(),
+            cmd_uninstall(home.path(), checkout.path(), false, false, None).unwrap(),
             0
         );
         for entry in REGISTRY {
@@ -1037,5 +1113,64 @@ mod tests {
                 assert!(!path_exists(&h), "still present: {}", h.display());
             }
         }
+    }
+
+    // ── agent selector (--agent) ─────────────────────────────────
+
+    #[test]
+    fn selected_entries_default_is_all() {
+        assert_eq!(selected_entries(None).len(), REGISTRY.len());
+    }
+
+    #[test]
+    fn selected_entries_scopes_to_one_agent() {
+        let codex = selected_entries(Some("codex"));
+        assert_eq!(codex.len(), 1);
+        assert_eq!(codex[0].3, "codex");
+    }
+
+    #[test]
+    fn validate_agent_rejects_unknown() {
+        assert!(validate_agent(Some("bogus")).is_err());
+        assert!(validate_agent(Some("claude")).is_ok());
+        assert!(validate_agent(None).is_ok());
+    }
+
+    #[test]
+    fn install_scoped_to_one_agent_touches_only_that_agent() {
+        // Install only codex; codex's skills dir is populated, the
+        // other agents' home paths stay absent.
+        let checkout = make_checkout_with_skills();
+        let home = TempDir::new().unwrap();
+        let rc = cmd_install(home.path(), checkout.path(), false, false, Some("codex")).unwrap();
+        assert_eq!(rc, 0);
+
+        // codex fan-out children exist…
+        assert!(path_exists(&home.path().join(".codex/skills/kdevkit")));
+        // …while claude and kiro whole-dir links were never made.
+        assert!(!path_exists(&home.path().join(".claude/skills")));
+        assert!(!path_exists(&home.path().join(".kiro/steering/skills")));
+    }
+
+    #[test]
+    fn uninstall_scoped_leaves_other_agents_installed() {
+        // Install all three, then uninstall only claude: claude's link
+        // is gone, kiro's and codex's survive.
+        let checkout = make_checkout_with_skills();
+        let home = TempDir::new().unwrap();
+        cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
+
+        let rc = cmd_uninstall(home.path(), checkout.path(), false, false, Some("claude")).unwrap();
+        assert_eq!(rc, 0);
+        assert!(!path_exists(&home.path().join(".claude/skills")));
+        assert!(path_exists(&home.path().join(".kiro/steering/skills")));
+        assert!(path_exists(&home.path().join(".codex/skills/kdevkit")));
+    }
+
+    #[test]
+    fn cmd_install_unknown_agent_errors() {
+        let checkout = make_checkout();
+        let home = TempDir::new().unwrap();
+        assert!(cmd_install(home.path(), checkout.path(), false, false, Some("bogus")).is_err());
     }
 }
