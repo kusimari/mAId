@@ -480,6 +480,18 @@ get symlinked*; the mechanic is still "create/remove a symlink."
   validates. All three dev slices + docs complete; ready for the
   closure cue.
 
+- 2026-07-22 · Closure. All three dev slices + docs shipped and
+  gate-passed. Reconcile: every Implementation Plan item ticked; no
+  open Decision Log questions. Persistent-layer verify: `project.md`
+  was already reconciled in the Docs slice (Architecture registry
+  tuple, Verbs, Tech Stack, Layout, Testing, Deployment) — no further
+  edit. Backlog: none of the 10 items relate to this feature; nothing
+  closed. Not part of an initiative. Skills functional verify
+  confirmed by the user; `verify-browser-mcp` (codex) is desktop-gated
+  and deferred (structurally wired + unit-tested; the launcher's
+  deny-by-default keeps registration safe). Squash-merged to `main`,
+  branch deleted.
+
 <!-- append: decision · rationale · alternatives rejected -->
 
 - **`<action>-<resource-kind>` verb pattern** (review steer,
