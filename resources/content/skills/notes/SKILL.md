@@ -193,17 +193,14 @@ section. Do not rewrite the file head.
 
 - **`[[topic]]`** — first-class topic pages. When a
   `[[topic]]` reference is written and `topics/<topic>.md`
-  doesn't exist, create a one-line stub:
-
-  ```markdown
-  ---
-  kind: topic
-  ---
-
-  # <topic>
-  ```
-
-  Never overwrite an existing topic stub.
+  doesn't exist, **do not create a stub.** Leave the link
+  dangling — Obsidian renders unresolved links as clickable
+  placeholders and still shows them in the graph. Create
+  `topics/<topic>.md` only when it accrues real substance:
+  a definition, links, or accumulated notes — more than
+  frontmatter plus a bare heading. A topic page exists because
+  someone had something to say, not as a side effect of
+  referencing it once. Never overwrite an existing topic page.
 
 - **`#tag`** — loose categorization in `tags:` frontmatter.
 

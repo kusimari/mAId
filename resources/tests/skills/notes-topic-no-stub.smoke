@@ -1,0 +1,37 @@
+prompt: Load the `notes` skill from ~/.claude/skills/notes/SKILL.md, ~/.kiro/steering/skills/notes/SKILL.md, or ~/.codex/skills/notes/SKILL.md — whichever path exists. The current directory is an Obsidian-shaped notes vault. Do this now (actually write the files, don't just describe): `add note in ./ for: insight: Wadler's prettier algorithm builds an immutable document tree [[wadler]] [[pretty-printing]]`. When done print [notes] applies.
+tools: claude,kiro,codex
+--- setup ---
+# A minimal Obsidian-shaped vault IS the scratch workdir, so the
+# skill's inline-path form (`in ./`) resolves to it with no env var —
+# setup and the agent run in separate shells, so an exported
+# NOTES_VAULT would not reach the agent.
+mkdir -p insights topics people reminders
+# One pre-existing topic page WITH substance. A bare [[pretty-printing]]
+# reference must leave this untouched — the fixture snapshots it to
+# prove the skill never overwrites an existing page.
+cat > topics/pretty-printing.md <<'MD'
+---
+kind: topic
+topics: [wadler, algebra]
+---
+
+# pretty-printing
+
+Wadler's algebra: documents compose via concatenation and
+alternation; the layout algorithm chooses line breaks greedily.
+See [[wadler]].
+MD
+cp topics/pretty-printing.md .seed-pretty-printing.md
+--- assert ---
+set -e
+# The insight itself landed — a do-nothing agent fails here.
+ls insights/*.md >/dev/null 2>&1
+grep -rqiE '^kind:[[:space:]]*insight' insights/
+# The [[wadler]] link is actually present in the note — proving it's a
+# *dangling* link, not one the agent silently dropped. Without this an
+# agent that omits the link entirely would pass the no-stub check below.
+grep -rqF -- '[[wadler]]' insights/
+# The novel [[wadler]] reference left the link dangling — NO stub minted.
+test ! -e topics/wadler.md
+# The pre-existing topic page was not overwritten or touched.
+diff -q topics/pretty-printing.md .seed-pretty-printing.md

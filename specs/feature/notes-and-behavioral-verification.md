@@ -164,14 +164,18 @@ references the old behavior and flips in lockstep.
 
 ## Implementation Plan
 
-- [ ] Slice 1 — invert the `## Linking` rule in `notes/SKILL.md`
+- [x] Slice 1 — invert the `## Linking` rule in `notes/SKILL.md`
       (no auto-stub; substance-gated creation; never overwrite),
       and write `notes-topic-no-stub.smoke` (behavioral, tri-tool:
       note lands + stub absent + existing topic untouched). These
       land in one commit — the behavior change and its test
       together.
-- [ ] Slice 2 — flip the `notes-add-note.smoke` judge narrative's
+- [x] Slice 2 — flip the `notes-add-note.smoke` judge narrative's
       stub clause to match the new rule (dangling link, no stub).
+      Pulled forward into Slice 1's commit — a Code Review Gate
+      finding flagged that leaving the contradictory narrative in
+      the same push is wrong (an agent following the new rule would
+      FAIL the stale fixture).
 - [ ] Slice 3 — reshape the remaining notes smokes toward
       behavioral where an artefact exists (`notes.smoke` converts;
       `notes-vault-selector` / `notes-git-commit` convert the
@@ -199,6 +203,14 @@ references the old behavior and flips in lockstep.
   notes recitation smokes; `writing-style` verification deferred
   back to backlog. Substance line = prose guidance. Stub fixture
   confirmed worth building → tri-tool.
+- 2026-07-24 · Slice 1 — inverted `## Linking` (no auto-stub) +
+  wrote `notes-topic-no-stub.smoke`. Quality + Test (`just test`,
+  53 pass) green. Code Review Gate found two issues: (a) sibling
+  `notes-add-note.smoke` still asserted the *old* stub behavior →
+  pulled Slice 2 forward and flipped it; (b) the new fixture didn't
+  prove the `[[wadler]]` link actually landed (a link-dropping agent
+  would pass) → added `grep -rqF -- '[[wadler]]' insights/`. Re-ran
+  gates green.
 
 ## Decision Log
 
@@ -218,3 +230,10 @@ references the old behavior and flips in lockstep.
   which resists a shell assert; it's a distinct design question
   (observable proxy vs. staying judge-mode) and doesn't belong in
   the notes slice. Returns to backlog at closure.
+- **`specs/feature/notes-skill.md` left describing stub creation.**
+  The Code Review Gate flagged it still documents auto-stubbing.
+  It's a *completed feature record* — the archived history of what
+  the notes skill did when it shipped, not a living source of truth
+  (SKILL.md is). Rewriting it to match a later behavior change would
+  falsify the record. Deliberately out of scope; SKILL.md is the
+  authority for current behavior.
