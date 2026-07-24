@@ -92,7 +92,7 @@ assertable, and impossible to fake with a recitation probe.
   seed the fixture needs? Does the `notes-git-commit` flow need a
   local bare repo standing in as the "remote"?
 - **Migration of existing stubs.** ~180 empty stubs already exist
-  in the Gorantls-store vault. One-shot cleanup (delete files that
+  in the personal vault. One-shot cleanup (delete files that
   are frontmatter + `# <title>` only), or leave them and only
   change go-forward behavior? Deleting turns their inbound links
   dangling — the desired end state, but a bulk vault mutation

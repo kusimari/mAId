@@ -292,7 +292,7 @@ writing anything.
 ## v1.1 refinements (2026-05-28)
 
 Three changes shipped in `feat/notes-v1-1`, driven by the
-first real migration target (`~/dabba/Gorantls-store/scrap.md`)
+first real migration target (`~/notes/personal-vault/scrap.md`)
 exposing v1.0 gaps:
 
 1. **Vault selection at invocation time.** Capture and
@@ -302,7 +302,7 @@ exposing v1.0 gaps:
    bare `add note for …` falls through to `$NOTES_VAULT` →
    `$HOME/notes`. Unset named-vault env var is an error, not
    a fall-through. Lets one user run e.g. a personal
-   `Gorantls-store` vault and a separate work vault from the
+   `personal-vault` vault and a separate work vault from the
    same skill.
 2. **Slug-only filenames.** Dropped the
    `<YYYY-MM-DD>-<slug>.md` template for reminders, insights,
@@ -629,7 +629,7 @@ a place to land notes for later merge.
   Promoted to shipped because real use exposes that one
   user runs personal + work vaults. Inline-path option
   (`in /path/to/vault`) added for ad-hoc one-shot writes
-  like the scrap.md migration into Gorantls-store.
+  like the scrap.md migration into personal-vault.
 - 2026-05-28 · **`source:` is optional.** v1.0 required
   `source: audio:<path>` for conversations, but real
   captures of customer voice and verbatim quotes have no
