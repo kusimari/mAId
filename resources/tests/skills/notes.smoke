@@ -1,3 +1,20 @@
-prompt: Load the `notes` skill from ~/.claude/skills/notes/SKILL.md or ~/.kiro/steering/skills/notes/SKILL.md — whichever path exists. Begin your response with the literal line `[notes] applies` on its own line, then in one short sentence: under which directory of the vault does an `Add note for: remind me to file my taxes by Friday` request land?
-expect_substr: [notes] applies
+prompt: Load the `notes` skill from ~/.claude/skills/notes/SKILL.md, ~/.kiro/steering/skills/notes/SKILL.md, or ~/.codex/skills/notes/SKILL.md — whichever path exists. The current directory is an Obsidian-shaped notes vault. Do this now (actually write the file, don't just describe): `add note in ./ for: remind me to file my taxes by Friday`. When done print [notes] applies.
 tools: claude,kiro,codex
+--- setup ---
+# The scratch workdir IS the vault; the inline-path form (`in ./`)
+# resolves to it without an env var (setup and the agent run in
+# separate shells, so an exported NOTES_VAULT wouldn't reach the agent).
+mkdir -p insights topics people reminders
+--- assert ---
+set -e
+# A reminder-shaped capture lands under reminders/ — not insights/,
+# people/, or conversations/. This is the classification artefact.
+ls reminders/*.md >/dev/null 2>&1
+# It carries reminder frontmatter, and the body captured the task.
+grep -rqiE '^kind:[[:space:]]*reminder' reminders/
+grep -rqi 'tax' reminders/
+# Filenames are slug-only — no date-prefixed reminder file.
+! ls reminders/ | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}-'
+# A reminder is an accumulating kind — no top-level date: field
+# (dates live in ## YYYY-MM-DD section headers instead).
+! grep -rqiE '^date:' reminders/

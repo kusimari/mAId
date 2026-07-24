@@ -176,11 +176,20 @@ references the old behavior and flips in lockstep.
       finding flagged that leaving the contradictory narrative in
       the same push is wrong (an agent following the new rule would
       FAIL the stale fixture).
-- [ ] Slice 3 — reshape the remaining notes smokes toward
+- [x] Slice 3 — reshape the remaining notes smokes toward
       behavioral where an artefact exists (`notes.smoke` converts;
       `notes-vault-selector` / `notes-git-commit` convert the
       artefact-observable parts, keep judge/substring for the
       error/flow assertions). Decide per fixture; log the calls.
+      Result: `notes.smoke` → behavioral (reminder lands under
+      `reminders/` with `kind: reminder`, slug-only, no top-level
+      `date:`). `notes-git-commit.smoke` → behavioral on the
+      load-bearing happy path (work-phase writes only; `close notes`
+      squashes to exactly one commit staged by scope), remote/push
+      and error paths dropped as non-artefact / tri-tool-flaky.
+      `notes-vault-selector.smoke` → **kept judge-mode**: its
+      load-bearing assertion is the error path (unset named vault
+      must stop, not fall through), which writes no artefact.
 
 - *Risk note:* the functional layer is user-driven and
   credit-costing — this session cannot green the behavioral
@@ -210,7 +219,20 @@ references the old behavior and flips in lockstep.
   pulled Slice 2 forward and flipped it; (b) the new fixture didn't
   prove the `[[wadler]]` link actually landed (a link-dropping agent
   would pass) → added `grep -rqF -- '[[wadler]]' insights/`. Re-ran
-  gates green.
+  gates green. Code Review Gate: 92/100 (threshold 70). Committed +
+  pushed `feat(notes): stop auto-creating empty topic stubs …`.
+- 2026-07-24 · Slice 3 — reshaped `notes.smoke` and
+  `notes-git-commit.smoke` to behavioral; kept `notes-vault-selector`
+  judge-mode (error-path, no artefact). Dry-ran both new asserts
+  against a simulated correct agent (pass) and a no-op/dirty tree
+  (fail) to confirm they're not vacuous. Quality + Test gates green.
+  Code Review Gate: 85 → 93/100. Finding: `notes-git-commit` claimed
+  to test "staged by scope / never `git add -A`" but the seed had
+  nothing outside the skill dirs, so a `git add -A` agent passed
+  identically. Fixed by seeding an out-of-scope `junk.txt` + asserting
+  it stays untracked/uncommitted; verified a `git add -A` agent now
+  fails. Hardened the clean-tree scope to all seven skill-owned dirs
+  so it mirrors the documented invariant, not just this prompt.
 
 ## Decision Log
 
@@ -237,3 +259,17 @@ references the old behavior and flips in lockstep.
   (SKILL.md is). Rewriting it to match a later behavior change would
   falsify the record. Deliberately out of scope; SKILL.md is the
   authority for current behavior.
+- **`notes-git-commit.smoke` scoped to the happy path.** The old
+  judge fixture covered ten behaviors including error paths (pull
+  divergence, push-failure warning, detached HEAD) and the remote
+  push. Behavioral conversion kept the load-bearing, artefact-
+  observable core (work-phase-writes-only + close-squashes-to-one-
+  commit-by-scope) and dropped the error/remote paths — they write
+  no inspectable artefact and a real `origin` remote would make the
+  fixture flaky across three agents. `git init` with no remote
+  exercises the pull/push-skip branch implicitly.
+- **`notes-vault-selector.smoke` stays judge-mode.** Its load-
+  bearing assertion is that an unset named vault *stops with an
+  error* rather than silently falling through — a refusal, not a
+  file. No artefact to inspect, so it's the intended judge-mode
+  carve-out from the verification push.
