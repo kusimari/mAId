@@ -231,6 +231,16 @@ the managed symlinks already deployed (run
 `just resources::install-skills` first). Gated behind a confirmation
 prompt in the Justfile.
 
+**Prefer behavioral where an artefact exists.** When a skill's
+correct behavior produces an inspectable change (a file written, a
+commit made), the fixture should be behavioral (setup/assert) and
+run tri-tool — a recitation probe only proves the agent *says* the
+right thing. Reserve substring/semantic for genuinely non-artefact
+behavior: error or absence paths (a refused action, a
+stop-with-error) where a compliant agent writes nothing. A
+behavioral assert must fail a no-op agent (pair a presence check
+with the absence check) or it proves nothing.
+
 The §8 Test Gate uses `just test` by default. SKILL.md
 prose revisions add `just resources::verify-skills` (judge mode)
 as their A/B evidence. The §9 close-out can run

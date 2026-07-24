@@ -221,6 +221,18 @@ references the old behavior and flips in lockstep.
   would pass) → added `grep -rqF -- '[[wadler]]' insights/`. Re-ran
   gates green. Code Review Gate: 92/100 (threshold 70). Committed +
   pushed `feat(notes): stop auto-creating empty topic stubs …`.
+- 2026-07-24 · Closure. Reconciled: all three slices ticked, no
+  unchecked boxes, open questions resolved at design time.
+  Persistent-layer verify → **Testing** touched: bubbled up the
+  "prefer behavioral where an artefact exists; reserve
+  substring/semantic for non-artefact error/absence paths; a
+  behavioral assert must fail a no-op agent" principle into
+  `project.md` Testing (binding rule for future skill verification).
+  No other section touched (no dep/layout/deploy/arch change).
+  Deferred work re-filed to backlog:
+  `writing-style-behavioral-verification` and
+  `notes-existing-stub-cleanup`. No backlog items to `git rm` (the
+  original spec was promoted, not duplicated).
 - 2026-07-24 · Slice 3 — reshaped `notes.smoke` and
   `notes-git-commit.smoke` to behavioral; kept `notes-vault-selector`
   judge-mode (error-path, no artefact). Dry-ran both new asserts
