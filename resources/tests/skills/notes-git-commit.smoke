@@ -1,4 +1,36 @@
-prompt: Load the `notes` skill from ~/.claude/skills/notes/SKILL.md or ~/.kiro/steering/skills/notes/SKILL.md — whichever path exists. Begin your response with the literal line `[notes] applies` on its own line. Then answer in 8–14 sentences. The vault `/tmp/vault` is a git repo with an `origin` remote. Walk through what the skill does for: (a) `add note in /tmp/vault for: insight: wadler immutable doc trees`, (b) immediately afterward in the same session, `add note in /tmp/vault for: remind me to file taxes by Friday`, (c) `close notes in /tmp/vault`. Then describe the skill's behaviour for: (d) the same verbs in a vault with no `.git` directory, (e) what happens if the open-phase `git pull` fails because the local branch has diverged from upstream, (f) what happens if `close notes` runs but no skill-owned files are dirty.
-expect_substr: [notes] applies
-expected_narrative: A correct answer covers ten behaviours. (1) Open — every notes verb runs `git pull --ff-only` in the vault BEFORE doing anything else; this applies to (a), (b), and (c). (2) Pull failure stops the verb — when pull fails for any reason (divergence, network, auth), the skill surfaces the git error verbatim and stops; it MUST NOT run the verb against stale or ambiguous state. (3) Work phase writes only — captures (a) and (b) write their files (`insights/wadler-immutable-doc-trees.md` for (a); appended section in `reminders/inbox.md` or similar for (b)) and return; the skill MUST NOT `git add` or `git commit` during the work phase. (4) Multiple work-phase verbs accumulate — after both (a) and (b) the working tree has two dirty files, no commits made. (5) Close pulls again then commits — `close notes in /tmp/vault` runs `git pull --ff-only` again (same fail-stop behaviour), then `git add` ONLY the dirty paths under skill-owned directories (`inbox/`, `reminders/`, `insights/`, `people/`, `conversations/`, `topics/`, `scratch/`); MUST NOT `git add -A` and MUST NOT `git add <vault>`. (6) Squash commit message is path-shaped — for the two-file close in this scenario, the subject is comma-joined paths like `insights/wadler-immutable-doc-trees.md, reminders/inbox.md`; a single-file close uses just that path; a single buffer-merge close uses `merge buffer (<N>)`; multi-file overflow past ~70 chars truncates with `…and K more`. (7) Close pushes with `GIT_TERMINAL_PROMPT=0` so credential prompts on a fresh machine fail fast; push failure surfaces a one-line `vault push failed: <stderr>` warning but the commit STAYS local and the verb returns success — no rollback. (8) Non-git vault (d) — when `.git` is absent, ALL git steps skip silently; verbs run as today (write the file, return). NO pull, NO commit, NO warning, NO `git init` offer. (9) Pull divergence on open (e) — the `--ff-only` pull fails, the skill surfaces the verbatim git error (something like "Not possible to fast-forward, aborting"), and stops the verb; the user resolves by hand (e.g. `git pull --rebase`) and reruns. (10) Empty close (f) — when nothing under the skill-owned directories is dirty, the skill says `nothing to close` and stops; it MUST NOT create an empty commit. Also: detached HEAD / mid-rebase / mid-merge → `vault git skipped: <reason>` and stop. Wrong answers to flag: per-verb commits during work phase; `git add -A` or `git add <vault>` at close; running the verb after the open-phase pull failed; pulling without `--ff-only` (e.g. plain `git pull` or `--rebase`); pushing without a commit; rolling back the commit on push failure; auto-`git init` on a non-git vault; creating an empty commit when close finds no dirty files; staging by tracked paths instead of by directory scope.
+prompt: Load the `notes` skill from ~/.claude/skills/notes/SKILL.md, ~/.kiro/steering/skills/notes/SKILL.md, or ~/.codex/skills/notes/SKILL.md — whichever path exists. The current directory is an Obsidian-shaped notes vault that is a git repo with no remote. Do these two things in order (actually run them, don't just describe): first `add note in ./ for: insight: wadler builds an immutable document tree`, then `close notes in ./`. When done print [notes] applies.
 tools: claude,kiro,codex
+--- setup ---
+# A git vault with NO remote: the close commit still happens locally,
+# pull/push skip. The scratch workdir is the vault; the inline-path
+# form (`in ./`) resolves to it without an env var (setup and the
+# agent run in separate shells).
+git init -q
+git config user.email t@t.t && git config user.name t
+mkdir -p inbox reminders insights people conversations topics scratch
+# A seed commit so "exactly one new commit" is countable via rev-list.
+touch .gitkeep && git add -A && git commit -q -m seed
+# A dirty file OUTSIDE the seven skill-owned dirs. `close notes` stages
+# by directory scope, so this must stay unstaged — the assert below
+# proves the skill uses a scoped `git add`, not `git add -A`.
+echo 'not a note' > junk.txt
+--- assert ---
+set -e
+# The insight landed (work phase writes the file)…
+ls insights/*.md >/dev/null 2>&1
+# …and `close notes` committed the skill-owned paths — nothing under the
+# skill dirs is left dirty after close (junk.txt is excluded; it's the
+# scope probe below). All seven skill-owned dirs are scoped so the check
+# mirrors the skill's documented directory invariant, not just this
+# prompt's insights/ touch.
+test -z "$(git status --porcelain -- inbox reminders insights people conversations topics scratch)"
+# Exactly one commit was added on top of the seed (close squashes into
+# one; work-phase verbs never committed on their own).
+test "$(git rev-list --count HEAD)" -eq 2
+# That commit actually contains the insight file (staged by scope, not
+# a stray empty commit).
+git show --name-only --pretty=format: HEAD | grep -qE '^insights/.*\.md$'
+# Staged BY SCOPE, not `git add -A`: the out-of-scope junk.txt is neither
+# in the commit nor staged — it stays an untracked working-tree file.
+! git show --name-only --pretty=format: HEAD | grep -qxF junk.txt
+git status --porcelain -- junk.txt | grep -q '^??'
