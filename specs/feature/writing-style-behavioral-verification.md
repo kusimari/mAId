@@ -174,3 +174,17 @@ rubric.
   user: judge-mode only, tri-tool, fixtures = sharpened load-check
   + formatter + learning-loop; strict-mode and behavioral
   learning-loop deferred.
+- 2026-07-27 · Built the three fixtures. Quality + Test gates
+  green. Code Review Gate (fresh-context reviewer, host-native):
+  first pass 76/100 with three findings — (1) load-check
+  non-discriminating (prompt quoted the marker + capabilities, so
+  a no-op agent passed), (2) formatter required "in order to" → "to"
+  which the current guide doesn't cover (it's the rule the
+  learning-loop fixture teaches), (3) learning-loop write guard too
+  weak. Applied all three: load-check no longer quotes the announce
+  line or capabilities; "in order to" removed from the formatter
+  passage + narrative; learning-loop prompt now forbids any
+  file-editing tool. Re-review 91/100, all resolved. Residual noted
+  by reviewer, out of scope: runner's no-workdir claude path runs
+  unsandboxed (`--dangerously-skip-permissions`) while codex gets
+  read-only — a `resources/tests/run` property, not a fixture one.
