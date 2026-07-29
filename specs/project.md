@@ -294,6 +294,20 @@ behavioral form for `enact` wherever the skill's correct action leaves
 an inspectable change; fall back to a judge narrative only when the
 output is irreducibly prose.
 
+**Triggers belong in `description:`, never only in the body.** A skill's
+`name` and `description` are the only fields an agent reads to decide
+whether the skill applies; the body loads *after* it triggers. So a
+"when to use this" section in the body cannot cause the skill to fire —
+it is only ever read by a skill that already fired. Lead the description
+with what the *user* asks for ("Use when… Typical triggers include
+'ship it', 'close it out'…"), then describe the machinery. This is not
+style preference: `kdevkit` kept its phase cues at lines 304/754/1004 of
+a 1120-line body and silently failed to self-trigger on codex — it did
+plain git work and never loaded — while `notes`, `writing-style`, and
+`browser`, which all lead with the user's action, triggered fine against
+60+ competing installed skills. A `discovery` failure for a skill that
+loads correctly when handed its path is almost always this.
+
 A fixture therefore carries only what is specific to it — never a path,
 never a load-the-skill preamble:
 
