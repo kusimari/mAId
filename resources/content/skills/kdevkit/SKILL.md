@@ -367,6 +367,24 @@ prompt shape and the feature file template body. After the
 four interviews, write the feature spec, then return here for
 the Plan-commit rule.
 
+**Answer the interviews yourself from the grounding, and write
+the file.** The interviews are *your* checklist for what the spec
+must cover, not a questionnaire to hand the user. Draft each
+answer from `project.md`, the backlog item, and the code you just
+read, then **write `$SPEC_ROOT/feature/<feature>.md` before you
+ask the user anything.** The spec on disk is what the user reacts
+to — a list of questions is not a reviewable artefact, and neither
+is a set of interview answers in chat.
+
+Ask only what you genuinely cannot infer, and ask it *in the
+spec*: record the open question in the Session Log or inline, and
+carry on. A single blocking question is warranted only when
+proceeding either way would waste the work (§5's ambiguity rule);
+"what should the flag be called" is not that. If the user's
+request already says to do the file work, treat any urge to
+open with clarifying questions as the ordering mistake the
+Plan-commit rule warns about.
+
 ### Requirements smell test (always-on)
 
 The spec's three top sections pair with the project's test
