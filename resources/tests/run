@@ -506,10 +506,13 @@ assert_response() {
         # "PASS — <one short sentence …>", so if an agent's transport ever
         # echoes the prompt back (codex `exec` did — see tool_invoke), the
         # template must not be mistaken for the answer.
+        # `\x1b\[?25l` (cursor-hide) is not matched by the [a-zA-Z]
+        # terminator class above, and kiro prefixes its reply with "> ",
+        # so both are stripped before anchoring or the verdict is missed.
         judge_clean="$(printf '%s' "$judge_out" \
-            | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\r//g; s/▸ Credits:.*$//' \
+            | sed -E 's/\x1b\[[?0-9;]*[a-zA-Z]//g; s/\r//g; s/▸ Credits:.*$//' \
             | grep -vF '<one short sentence' \
-            | sed -E 's/^[[:space:]]*//')"
+            | sed -E 's/^[[:space:]]*//; s/^>[[:space:]]*//')"
         verdict="$(grep -aoE '^(PASS|FAIL).*' <<<"$judge_clean" | head -n1 || true)"
         case "$verdict" in
             PASS*)
