@@ -329,6 +329,27 @@ Architecture entrypoints list.
 
 ## Decision Log
 
+- **The announce line is a per-skill contract, not a universal
+  (2026-07-29).** The runner first hardcoded "marker = proof the skill
+  fired" for every skill. The tri-tool sweep failed 5 tests on that
+  assumption and the assumption was what was wrong: `browser`, `notes`,
+  and `writing-style` each declare `You begin every response … with the
+  literal line [<skill>] applies`; `kdevkit` declares nothing.
+  That asymmetry is considered, not an oversight. The announce line
+  exists for the reader — it attributes a reply to a written contract
+  rather than to model judgement, which is what lets a human calibrate
+  trust, separate "the rules are wrong" from "the skill never fired",
+  and notice a broken install instead of silently receiving plausible
+  non-skill output. That payoff lands for skills whose output the user
+  inspects and trusts. `kdevkit` is a workflow skill whose evidence is
+  the artefacts it leaves (phase-prefixed commits, a feature spec,
+  gate-shaped PR bodies), so a per-turn stamp across a long session
+  would be ceremony rather than signal. So `skill_announces` reads the
+  contract from the installed `SKILL.md`, and a non-announcing skill's
+  activation/discovery skip with a pointer to what does prove it —
+  its `enact` / `integration` artefacts. No skill was edited to satisfy
+  a test.
+
 - **Taxonomy lives in the runner, not in fixture metadata
   (2026-07-29).** Supersedes the previous revision's per-fixture
   `class:` field. A fixture carries only skill + task + assertions; the
