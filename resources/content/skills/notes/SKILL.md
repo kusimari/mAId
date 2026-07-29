@@ -1,6 +1,6 @@
 ---
 name: notes
-description: Capture reminders, insights, 1:1 notes, and conversation transcripts into an Obsidian-shaped vault. Single verb "Add note [in <vault>] for X" classifies the kind, writes the file, and links topics. Disconnected-capture buffer for Obsidian-direct sessions; "merge buffer" routes its entries through the same classifier. When the vault is a git repo with a remote, every verb pulls on open; captures stay uncommitted; "close notes" squashes and pushes.
+description: Use when capturing something into my knowledge vault — a reminder, an insight, a 1:1 or meeting note, a conversation transcript — or when wrapping up a vault session. Triggers include "add note for X", "note this", "jot this down", "remember that …", "remind me to …", "capture this", "log this insight", "notes from my 1:1 with …", "merge buffer", and "close notes". Every response that uses this skill opens with the literal line `[notes] applies`. Captures into an Obsidian-shaped vault: the single verb "Add note [in <vault>] for X" classifies the kind, writes the file, and links topics. Disconnected-capture buffer for Obsidian-direct sessions; "merge buffer" routes its entries through the same classifier. When the vault is a git repo with a remote, every verb pulls on open; captures stay uncommitted; "close notes" squashes and pushes.
 version: 1.3.0
 tags: [notes, knowledge, obsidian, capture]
 ---

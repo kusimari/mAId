@@ -1,6 +1,6 @@
 ---
 name: browser
-description: Drive a real Chrome browser through the chrome-devtools-mcp server — open pages, navigate, fill and submit forms, read results — against the user's already-running, logged-in session. Teaches the snapshot→act→verify driving loop, the user-owned allowlist guardrail (the browser enforces which sites the agent may touch), and an attended-use-only safety posture given the live-credential blast radius. Pairs with the *-browser-mcp install verbs.
+description: Use when asked to do something in my browser against sites I am already logged into — open a page, navigate, fill or submit a form, click through a flow, or read a value back off a page. Triggers include "open <site>", "go to <url>", "log into …", "fill in this form", "click …", "check my dashboard", "grab the … off that page", "use my browser to …". Every response that uses this skill opens with the literal line `[browser] applies`. Drives a real Chrome browser through the chrome-devtools-mcp server against the user's already-running, logged-in session. Teaches the snapshot→act→verify driving loop, the user-owned allowlist guardrail (the browser enforces which sites the agent may touch), and an attended-use-only safety posture given the live-credential blast radius. Pairs with the *-browser-mcp install verbs.
 version: 1.0.0
 tags: [browser, chrome, mcp, automation, web, forms, navigation, safety]
 ---
