@@ -606,13 +606,28 @@ assert_behavioral() {
     local out
     out="$(tool_invoke "$tool" "$prompt" "$work")" || true
 
+    # Run the assert under `set -x` so a failure names the exact check that
+    # broke. Asserts are silent `test`/`grep -q` under `set -e`, so without
+    # the trace a failure reports "assert failed — " with nothing after it —
+    # which is what every behavioral failure looked like until now, making
+    # them undiagnosable without hand-reproducing the whole fixture.
     local alog
     alog="$(mktemp)"
-    if ( cd "$work" && bash -c "$assert" ) >"$alog" 2>&1; then
+    if ( cd "$work" && bash -c "set -x; $assert" ) >"$alog" 2>&1; then
         pass "$name (behavioral)"
     else
-        fail "$name (behavioral): assert failed — $(head -c 200 "$alog")"
-        info "agent output head: $(head -c 200 <<<"$out")..."
+        # The last traced command is the one that failed.
+        local culprit
+        culprit="$(grep -a '^+' "$alog" | tail -n1 | sed -E 's/^\++ ?//')"
+        fail "$name (behavioral): failed check: ${culprit:-<no trace>}"
+        # Keep the full trace and the agent's reply for a post-mortem; the
+        # workdir itself is about to be removed by the RETURN trap.
+        local dump="/tmp/verify-behavioral-${name//[^a-zA-Z0-9_-]/_}.log"
+        { printf '=== assert trace ===\n'; cat "$alog"
+          printf '\n=== agent reply ===\n'; printf '%s\n' "$out"
+          printf '\n=== workdir tree ===\n'; ( cd "$work" && find . -not -path '*/.git/*' | head -60 )
+        } >"$dump" 2>&1
+        info "trace + reply + tree → $dump"
     fi
     rm -f "$alog"
 }
