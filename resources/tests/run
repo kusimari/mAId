@@ -357,6 +357,26 @@ fi
 tool_requested() {
     [[ " $REQUIRED_TOOLS " == *" $1 "* ]]
 }
+
+# The agent that grades judged tests, whichever agent produced the answer.
+#
+# Judging used to run on the answering agent, so each one marked its own
+# homework — and the grader, not the skill, decided the result. Two false
+# failures in one sweep traced to this: codex failed its own notes answer
+# for "not saying the due date is inline" when the answer said exactly
+# that, and failed its own writing-style rewrite as "not first-person"
+# when it opened "I want to use the new pipeline". Claude passed both
+# answers verbatim. A per-agent grader also makes results incomparable
+# across agents, which defeats the point of running tri-tool.
+#
+# One fixed grader instead. Overridable because it must be on PATH; falls
+# back to the first available agent so a host without claude still runs.
+JUDGE_TOOL="${VERIFY_JUDGE:-claude}"
+if ! tool_available "$JUDGE_TOOL"; then
+    for _t in $ALL_TOOLS; do
+        if tool_available "$_t"; then JUDGE_TOOL="$_t"; break; fi
+    done
+fi
 tool_required() { tool_requested "$1"; }
 
 build_judge_prompt() {
@@ -490,7 +510,9 @@ assert_response() {
     if [[ -n "$expected_narrative" ]]; then
         local judge_prompt judge_out judge_clean verdict
         judge_prompt="$(build_judge_prompt "$prompt" "$out" "$expected_narrative")"
-        if ! judge_out="$(tool_invoke "$tool" "$judge_prompt")"; then
+        # Graded by JUDGE_TOOL, not by "$tool" — see its definition for why
+        # self-grading produced false verdicts.
+        if ! judge_out="$(tool_invoke "$JUDGE_TOOL" "$judge_prompt")"; then
             fail "$name (judge invocation failed): $judge_out"
             return
         fi
