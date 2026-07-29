@@ -308,6 +308,20 @@ plain git work and never loaded — while `notes`, `writing-style`, and
 60+ competing installed skills. A `discovery` failure for a skill that
 loads correctly when handed its path is almost always this.
 
+Two corollaries, both learned the hard way:
+
+- **List the paraphrases, not the formal verb.** `writing-style`
+  named only `"format this in my style"` and silently failed to fire
+  on "rewrite this so it sounds like me" — it did the styling
+  correctly once loaded, so only the marker revealed it. Enumerate
+  what a user actually types ("clean this up", "jot this down",
+  "ship it"), not the canonical spelling.
+- **If the skill has an announce line, state it in the
+  `description:` too.** All four skills declared theirs at body line
+  11, which an agent reads only *after* the skill has triggered — so
+  a skill can apply correctly and still omit its own marker. Naming
+  the line in the description makes it known before the body loads.
+
 A fixture therefore carries only what is specific to it — never a path,
 never a load-the-skill preamble:
 
