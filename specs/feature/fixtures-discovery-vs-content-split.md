@@ -431,3 +431,29 @@ Architecture entrypoints list.
   passing tests silently mutating version-controlled source. Stray
   commits dropped, files removed, filed as
   `test-runner-workdir-containment`.
+- 2026-07-29 · Code Review Gate: 42/100 HARD-STOP. Confirmed by direct
+  reproduction, not argument: judged tests passed unconditionally on
+  codex, and the announce marker was satisfiable without applying a
+  skill. Both were one root cause, and it was neither the tests nor the
+  skills — `codex exec` prints a transcript (prompt echo, tool output,
+  reply) and `tool_invoke` captured `2>&1` and grepped it as the reply.
+  So the judge's own template ("PASS — <one short …>", in every judge
+  prompt) matched instead of the verdict, and the marker matched `cat`'d
+  SKILL.md contents. The models were correct throughout; the runner
+  discarded their verdicts. Fixed with codex's `--output-last-message`.
+  Two adjacent defects surfaced while verifying: claude and kiro lacked
+  `</dev/null` (claude prepended a stdin warning into captured output),
+  and kiro prefixes replies with `\x1b[?25l> `, which the new anchored
+  grep missed until the escape class was widened. Also fixed the review's
+  leak finding: kdevkit-closure said "Run the kdevkit closure phase" and
+  kdevkit-planning "as a kdevkit feature spec" while the guard reported
+  "names no skill". Guard rewritten from a 7-form denylist to a
+  name-plus-invocation-verb check, which immediately caught three more
+  leaks it had missed (notes prompts pasting `add note in ./ for:` /
+  `close notes` — the skill's own API); those tasks now state intent.
+  Honest re-sweep: 85 pass, 4 fail, 6 skip. The previously reported
+  "91 pass / 5 fail" was inflated by the codex defect and is void.
+  Per-agent judge strictness recorded: claude strictest, codex laxest
+  (in a negative control inverting a real skill rule, codex graded
+  against ground truth and passed it; claude correctly failed).
+
