@@ -456,4 +456,47 @@ Architecture entrypoints list.
   Per-agent judge strictness recorded: claude strictest, codex laxest
   (in a negative control inverting a real skill rule, codex graded
   against ground truth and passed it; claude correctly failed).
+- 2026-07-29 · Worked the four sweep failures. Two were false verdicts, not
+  skill defects: judging ran on the *answering* agent, so each marked its
+  own homework. Codex failed its own notes answer for "not saying the due
+  date is inline" when the answer read `- file my taxes by Friday
+  (links: [[taxes]])`, and failed its own writing-style rewrite as "not
+  first-person" when it opened "I want to use the new pipeline"; claude
+  passed both verbatim. Judging is now pinned to one fixed grader
+  (`VERIFY_JUDGE`, default claude) so a verdict reflects the answer and
+  results are comparable across agents.
+  The third was the fixture: `kdevkit-closure` asserted reconcile ticks
+  both plan items but seeded a stub — `--due` declared without being
+  parsed, and `render_list` indexing `t['due']` unconditionally though the
+  Design calls the field nullable. Claude read the code, wrote both defects
+  into the spec and declined to close, citing §8.1 "not quietly done".
+  That was the skill reconciling honestly; kiro ticked and closed, so the
+  fixture rewarded the less careful reading. Seed now genuinely satisfies
+  both items, with tests, verified by running them.
+  The fourth was real and in the skill. `kdevkit` did not self-trigger on
+  codex: given a bare "Ship it" it did plain git work and never loaded the
+  skill. Ruled out install (SKILL.md present), comprehension (handed the
+  path it summarises the closure phase correctly) and enact (named, it
+  ticks the boxes and commits `close(...)`). Cause was *where the triggers
+  lived*: codex's own skill-creator guide states name and description are
+  the only fields read to decide when a skill is used, and "include all
+  when-to-use information here — Not in the body. The body is only loaded
+  AFTER the skill triggers." kdevkit's cues sat at lines 304/754/1004 of a
+  1120-line body, so the skill documented its triggers in the one place
+  that cannot trigger it, while its description opened with architecture.
+  Front-loaded a "Use when" clause with concrete trigger phrases, matching
+  the universal pattern in every ecosystem checked (all six OpenAI system
+  skills; Anthropic's official marketplace, whose template specifies
+  "description | Yes | Prose triggers | Use when... Typical triggers
+  include..."). Explicit invocation was considered and rejected: it makes a
+  skill silently no-op for anyone who does not know to name it — the exact
+  gap the discovery kind exists to catch. `kdevkit-closure integration` now
+  passes on all three agents, having never passed on codex before.
+  Also: prompts for the implicit kinds no longer describe the skill's own
+  method. `kdevkit-closure` used to say "reconcile the feature spec's
+  Implementation Plan, tick the boxes, make the closure commit" — that is
+  kdevkit's procedure, so the test measured instruction-following and left
+  discovery nothing to discover. Now they are work requests a user would
+  actually make: "Ship it", "Get it ready to work on", "Write that down
+  somewhere it'll stick", "Rewrite this so it sounds like me".
 
