@@ -247,28 +247,49 @@ implicit_prompt() { printf '%s\n' "$1"; }
 
 # ── tool plumbing ───────────────────────────────────────────────────
 
-# tool_invoke <tool> <prompt> [workdir] → echoes captured stdout/stderr.
+# tool_invoke <tool> <prompt> [workdir] → echoes the agent's REPLY.
 #
 # The single indirection point for driving a coding agent
 # non-interactively. Per-tool CLI flags change across versions; when
 # they do, this is the only function to touch. When <workdir> is given
 # the agent runs there with write access (tests that seed a scratch
 # repo); without it, agents run read-only for cheap reply checks.
+#
+# What this returns is load-bearing: the *reply*, not the session
+# transcript. Codex `exec` prints a transcript — the prompt echoed back,
+# then tool output, then the reply — so capturing `2>&1` and grepping it
+# silently breaks every reply-level assertion:
+#
+#   - the judge's own instruction template ("PASS — <one short …>")
+#     appears in the echoed prompt, so a first-match scan reads the
+#     template instead of the model's verdict and every judged test
+#     passes unconditionally;
+#   - a skill's announce marker appears in tool output whenever the agent
+#     `cat`s the SKILL.md, so the marker stops proving the skill applied
+#     and only proves the file was read.
+#
+# Codex's `--output-last-message` writes just the final message, which is
+# what we want. claude `--print` and kiro's non-interactive chat already
+# emit the reply alone (verified: both extract a correct judge verdict
+# where codex did not), so only codex needs the extra plumbing.
 tool_invoke() {
     local tool="$1" prompt="$2" workdir="${3:-}"
     case "$tool" in
         claude)
+            # stdin must be closed: otherwise claude waits ~3s for piped
+            # input and prepends a "no stdin data received" warning to the
+            # captured output, which then reads as part of the reply.
             if [[ -n "$workdir" ]]; then
-                (cd "$workdir" && claude --print --dangerously-skip-permissions "$prompt" 2>&1)
+                (cd "$workdir" && claude --print --dangerously-skip-permissions "$prompt" </dev/null 2>&1)
             else
-                claude --print --dangerously-skip-permissions "$prompt" 2>&1
+                claude --print --dangerously-skip-permissions "$prompt" </dev/null 2>&1
             fi
             ;;
         kiro)
             if [[ -n "$workdir" ]]; then
-                (cd "$workdir" && kiro-cli chat --no-interactive --trust-all-tools "$prompt" 2>&1)
+                (cd "$workdir" && kiro-cli chat --no-interactive --trust-all-tools "$prompt" </dev/null 2>&1)
             else
-                kiro-cli chat --no-interactive --trust-tools= "$prompt" 2>&1
+                kiro-cli chat --no-interactive --trust-tools= "$prompt" </dev/null 2>&1
             fi
             ;;
         codex)
@@ -276,13 +297,22 @@ tool_invoke() {
             # or it waits for more input. --skip-git-repo-check because a
             # seeded scratch repo may not be a git tree. read-only for
             # reply checks; workspace-write when a workdir is seeded.
+            # -o captures the final message; the transcript on stdout is
+            # discarded so it can't be mistaken for the reply (see above).
+            local last rc=0
+            last="$(mktemp)"
             if [[ -n "$workdir" ]]; then
                 codex exec --cd "$workdir" --sandbox workspace-write \
-                    --skip-git-repo-check "$prompt" </dev/null 2>&1
+                    --skip-git-repo-check -o "$last" "$prompt" \
+                    </dev/null >/dev/null 2>&1 || rc=$?
             else
                 codex exec --sandbox read-only \
-                    --skip-git-repo-check "$prompt" </dev/null 2>&1
+                    --skip-git-repo-check -o "$last" "$prompt" \
+                    </dev/null >/dev/null 2>&1 || rc=$?
             fi
+            cat "$last"
+            rm -f "$last"
+            return "$rc"
             ;;
         *)      echo "tool_invoke: unknown tool '$tool'"; return 1 ;;
     esac
@@ -366,25 +396,62 @@ check_explicit_prompt() {
     pass "$name (dry: carries $tool path)"
 }
 
-# An implicit prompt must not identify the skill. Checks the identifying
-# forms only — the marker, a SKILL.md path, an agent skills root, or the
-# phrase "<skill> skill" — not the bare word, since a task legitimately
-# says things like "an Obsidian-shaped notes vault".
+# An implicit prompt must not identify the skill it should trigger —
+# otherwise the test measures instruction-following, not discovery.
+#
+# The check is "does the skill's name appear at all", not a list of
+# phrasings. A denylist of specific forms ("`<skill>`", "<skill> skill")
+# looked thorough and missed the obvious: `Run the kdevkit closure phase`
+# named the skill outright and still reported "names no skill". Any
+# occurrence of the name is a leak.
+#
+# Two deliberate carve-outs, both about words that are ordinary English
+# as well as skill names:
+#   - a name that is a common noun ("notes", "browser") may appear as
+#     part of a longer domain phrase the task legitimately needs — an
+#     "Obsidian-shaped notes vault" is scene-setting, not a skill
+#     reference. So a bare common-noun name is allowed, but the skill's
+#     documented *invocation verb* is not: `add note in ./ for:` IS the
+#     skill's API, and pasting it in makes the prompt a call rather than
+#     a task.
+#   - `SKILL.md` and the per-agent skills roots are always leaks.
 check_implicit_prompt() {
-    local skill="$1" prompt="$2" name="$3" marker leak=""
+    local skill="$1" prompt="$2" name="$3" marker leak="" lc
     marker="$(marker_for "$skill")"
-    [[ "$prompt" == *"$marker"* ]]        && leak="the announce marker"
-    [[ "$prompt" == *"SKILL.md"* ]]       && leak="a SKILL.md path"
-    [[ "$prompt" == *"/.claude/"* ]]      && leak="a claude skills path"
-    [[ "$prompt" == *"/.kiro/"* ]]        && leak="a kiro skills path"
-    [[ "$prompt" == *"/.codex/"* ]]       && leak="a codex skills path"
-    [[ "$prompt" == *"$skill skill"* ]]   && leak="the phrase '$skill skill'"
-    [[ "$prompt" == *"\`$skill\`"* ]]     && leak="the skill name in backticks"
+    lc="$(tr '[:upper:]' '[:lower:]' <<<"$prompt")"
+    [[ "$prompt" == *"$marker"* ]]   && leak="the announce marker"
+    [[ "$prompt" == *"SKILL.md"* ]]  && leak="a SKILL.md path"
+    [[ "$prompt" == *"/.claude/"* ]] && leak="a claude skills path"
+    [[ "$prompt" == *"/.kiro/"* ]]   && leak="a kiro skills path"
+    [[ "$prompt" == *"/.codex/"* ]]  && leak="a codex skills path"
+    # A hyphenated or otherwise non-word skill name is never ordinary
+    # English, so any mention leaks. Common-noun names are judged by
+    # their invocation verbs instead (below).
+    case "$skill" in
+        *-*) [[ "$lc" == *"$skill"* ]] && leak="the skill name '$skill'" ;;
+        *)   [[ "$lc" == *"$skill skill"* ]] && leak="the phrase '$skill skill'" ;;
+    esac
+    # Documented invocation verbs: pasting a skill's own command syntax
+    # into an "implicit" prompt is the same leak as naming it.
+    local verb
+    for verb in $(skill_invocations "$skill"); do
+        [[ "$lc" == *"${verb//_/ }"* ]] && leak="the skill's invocation verb '${verb//_/ }'"
+    done
     if [[ -n "$leak" ]]; then
         fail "$name (dry): implicit prompt leaks $leak"
         return
     fi
     pass "$name (dry: names no skill)"
+}
+
+# The command syntax a skill documents as its entry point. Space-encoded
+# as underscores so the list survives word-splitting above. Empty for a
+# skill invoked by intent alone rather than a fixed verb.
+skill_invocations() {
+    case "$1" in
+        notes) printf '%s\n' 'add_note' 'close_notes' 'merge_buffer' ;;
+        *)     : ;;
+    esac
 }
 
 # ── assertions ──────────────────────────────────────────────────────
@@ -427,12 +494,23 @@ assert_response() {
             fail "$name (judge invocation failed): $judge_out"
             return
         fi
-        # Strip ANSI escape codes and control bytes, then look for
-        # the first PASS/FAIL token anywhere in the response.
+        # Strip ANSI escape codes, control bytes, and kiro's trailing
+        # `▸ Credits: … • Time: …` footer, then take the verdict off a
+        # line that *starts* with the token.
+        #
+        # Two guards, because a mis-read verdict fails silently in the
+        # passing direction. Line-anchoring keeps a mid-sentence "…would
+        # FAIL" in the judge's prose from being read as the verdict. And
+        # lines carrying the instruction template's placeholder are
+        # dropped: the judge prompt necessarily contains the literal
+        # "PASS — <one short sentence …>", so if an agent's transport ever
+        # echoes the prompt back (codex `exec` did — see tool_invoke), the
+        # template must not be mistaken for the answer.
         judge_clean="$(printf '%s' "$judge_out" \
-            | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\r//g' \
-            | tr '\n' ' ')"
-        verdict="$(grep -oE '(PASS|FAIL)[^|]+' <<<"$judge_clean" | head -n1 || true)"
+            | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\r//g; s/▸ Credits:.*$//' \
+            | grep -vF '<one short sentence' \
+            | sed -E 's/^[[:space:]]*//')"
+        verdict="$(grep -aoE '^(PASS|FAIL).*' <<<"$judge_clean" | head -n1 || true)"
         case "$verdict" in
             PASS*)
                 pass "$name (judge)"

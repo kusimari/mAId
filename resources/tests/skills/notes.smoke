@@ -1,7 +1,7 @@
 skill: notes
 tools: claude,kiro,codex
 --- enact ---
-task: The current directory is an Obsidian-shaped notes vault. Do this now (actually write the file, don't just describe): `add note in ./ for: remind me to file my taxes by Friday`.
+task: The current directory is an Obsidian-shaped notes vault — treat it as the vault to use. Actually write the file, don't just describe: I need to remember to file my taxes by Friday.
 --- setup ---
 # The scratch workdir IS the vault; the inline-path form (`in ./`)
 # resolves to it without an env var (setup and the agent run in

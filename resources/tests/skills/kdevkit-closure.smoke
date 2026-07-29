@@ -1,7 +1,7 @@
 skill: kdevkit
 tools: claude,kiro,codex
 --- enact ---
-task: You are on branch feat/add-due-dates. Both Implementation Plan items are already implemented in due.py (read it — the --due flag and the list-output rendering are both present and their commit is on this branch). The user says: "ship it". Run the kdevkit closure phase: reconcile the feature spec's Implementation Plan against the code that is present (the work is done — tick the boxes), then stage and make the closure commit. Do the git and file work now in this repo. (Do not squash-merge or push — just reconcile and make the close commit.)
+task: You are on branch feat/add-due-dates. Both Implementation Plan items are already implemented in due.py (read it — the --due flag and the list-output rendering are both present and their commit is on this branch). The user says: "ship it". Close the feature out: reconcile the feature spec's Implementation Plan against the code that is present (the work is done — tick the boxes), then stage and make the closure commit. Do the git and file work now in this repo. (Do not squash-merge or push — just reconcile and make the close commit.)
 --- setup ---
 git init -q
 git config user.email t@t.t && git config user.name t

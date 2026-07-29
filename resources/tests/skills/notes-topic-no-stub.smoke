@@ -1,7 +1,7 @@
 skill: notes
 tools: claude,kiro,codex
 --- enact ---
-task: The current directory is an Obsidian-shaped notes vault. Do this now (actually write the files, don't just describe): `add note in ./ for: insight: Wadler's prettier algorithm builds an immutable document tree [[wadler]] [[pretty-printing]]`.
+task: The current directory is an Obsidian-shaped notes vault — treat it as the vault to use. Actually write the files, don't just describe. Capture this realisation for me: Wadler's prettier algorithm builds an immutable document tree. Tie it to [[wadler]] and [[pretty-printing]].
 --- setup ---
 # A minimal Obsidian-shaped vault IS the scratch workdir, so the
 # skill's inline-path form (`in ./`) resolves to it with no env var —

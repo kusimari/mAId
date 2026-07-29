@@ -1,7 +1,7 @@
 skill: kdevkit
 tools: claude,kiro,codex
 --- enact ---
-task: This repo has specs/project.md and a backlog item specs/backlog/task-snooze.md. Start the feature "task-snooze": promote the backlog item and write specs/feature/task-snooze.md as a kdevkit feature spec grounded in project.md. Do the file work now (create the feature spec); this is the planning phase so do NOT start writing implementation code.
+task: This repo has specs/project.md and a backlog item specs/backlog/task-snooze.md. Start the feature "task-snooze": promote the backlog item and write specs/feature/task-snooze.md as a feature spec grounded in project.md, following whatever spec conventions this repo already uses. Do the file work now (create the feature spec); this is the planning phase so do NOT start writing implementation code.
 --- setup ---
 git init -q
 mkdir -p specs/backlog specs/feature
