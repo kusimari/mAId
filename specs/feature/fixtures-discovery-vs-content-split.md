@@ -412,3 +412,22 @@ Architecture entrypoints list.
   exist canonically in `build-tool`'s `REGISTRY`. Centralising path
   construction in the runner makes that class of drift
   unrepresentable.
+- 2026-07-29 · Dev loop. Built the runner (skill_path, explicit/implicit
+  envelopes, five run_<kind> functions, --kind, --dry-run), piloted
+  `writing-style` tri-tool (18/18 green, including discovery and
+  integration — the skill fired from a bare task with no name or path),
+  then swept all fixtures. shellcheck caught a real bug before any paid
+  run: SC2318, two `local` statements referencing variables assigned in
+  the same statement, which malformed the generated test names. Full
+  tri-tool sweep: 91 pass, 5 fail. All 5 were the same cause — kdevkit
+  activation/discovery asserting an announce marker kdevkit never
+  declares (see Decision Log); fixed by reading the contract from the
+  skill, re-verified with `--kind activation,discovery` (18 pass, 6
+  honest skip, 0 fail) rather than re-paying for all 96 tests.
+  Separately, the sweep exposed a containment defect: three
+  `notes-git-commit` runs wrote and *committed* insight files into the
+  mAId checkout instead of their scratch workdir, and two
+  `kdevkit-agents-md` runs left AGENTS.md/CLAUDE.md in the repo root —
+  passing tests silently mutating version-controlled source. Stray
+  commits dropped, files removed, filed as
+  `test-runner-workdir-containment`.
