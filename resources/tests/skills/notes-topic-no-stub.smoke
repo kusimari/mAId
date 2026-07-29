@@ -1,5 +1,7 @@
-prompt: Load the `notes` skill from ~/.claude/skills/notes/SKILL.md, ~/.kiro/steering/skills/notes/SKILL.md, or ~/.codex/skills/notes/SKILL.md — whichever path exists. The current directory is an Obsidian-shaped notes vault. Do this now (actually write the files, don't just describe): `add note in ./ for: insight: Wadler's prettier algorithm builds an immutable document tree [[wadler]] [[pretty-printing]]`. When done print [notes] applies.
+skill: notes
 tools: claude,kiro,codex
+--- enact ---
+task: The current directory is an Obsidian-shaped notes vault. Do this now (actually write the files, don't just describe): `add note in ./ for: insight: Wadler's prettier algorithm builds an immutable document tree [[wadler]] [[pretty-printing]]`.
 --- setup ---
 # A minimal Obsidian-shaped vault IS the scratch workdir, so the
 # skill's inline-path form (`in ./`) resolves to it with no env var —

@@ -1,5 +1,7 @@
-prompt: Load the kdevkit skill (from ~/.claude/skills/kdevkit/SKILL.md, ~/.kiro/steering/skills/kdevkit/SKILL.md, or ~/.codex/skills/kdevkit/SKILL.md — whichever exists). This repo keeps operational context in a repo-root AGENTS.md and project knowledge in specs/project.md. A feature just added a new lint step run with the command `just lint`. Record this durable operational change in the right context layer. Make the file edits now in this repo. When done print [kdevkit] applies.
+skill: kdevkit
 tools: claude,kiro,codex
+--- enact ---
+task: This repo keeps operational context in a repo-root AGENTS.md and project knowledge in specs/project.md. A feature just added a new lint step run with the command `just lint`. Record this durable operational change in the right context layer. Make the file edits now in this repo.
 --- setup ---
 git init -q
 mkdir -p specs

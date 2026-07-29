@@ -1,5 +1,7 @@
-prompt: Load the `notes` skill from ~/.claude/skills/notes/SKILL.md, ~/.kiro/steering/skills/notes/SKILL.md, or ~/.codex/skills/notes/SKILL.md — whichever path exists. The current directory is an Obsidian-shaped notes vault that is a git repo with no remote. Do these two things in order (actually run them, don't just describe): first `add note in ./ for: insight: wadler builds an immutable document tree`, then `close notes in ./`. When done print [notes] applies.
+skill: notes
 tools: claude,kiro,codex
+--- enact ---
+task: The current directory is an Obsidian-shaped notes vault that is a git repo with no remote. Do these two things in order (actually run them, don't just describe): first `add note in ./ for: insight: wadler builds an immutable document tree`, then `close notes in ./`.
 --- setup ---
 # A git vault with NO remote: the close commit still happens locally,
 # pull/push skip. The scratch workdir is the vault; the inline-path

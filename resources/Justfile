@@ -44,6 +44,26 @@ verify-skills agent="":
 verify-skills-one name agent="":
     resources/tests/run "{{ name }}" {{ if agent != "" { "--tools " + agent } else { "" } }}
 
+# Run one kind of skill test across every skill. The five kinds are two
+# axes composed — explicit/implicit reach x playback/enact verification:
+#   activation   does the skill load when named outright?
+#   discovery    does its own description trigger from a bare task?
+#   playback     does it state its own rules correctly?
+#   enact        loaded, does it actually do the thing?
+#   integration  end to end — does it fire AND do the thing?
+# e.g. `just resources::verify-skills-kind integration`
+[confirm("This costs API credits and takes minutes. Continue? (y/N)")]
+[no-cd]
+verify-skills-kind kind agent="":
+    resources/tests/run --kind "{{ kind }}" {{ if agent != "" { "--tools " + agent } else { "" } }}
+
+# Construct every prompt and check it structurally without calling an
+# agent — explicit prompts must carry that agent's own skill path,
+# implicit prompts must leak no skill name, path, or marker. Free.
+[no-cd]
+verify-skills-dry name="":
+    resources/tests/run {{ if name != "" { name } else { "" } }} --dry-run
+
 # ── browser-control MCP ──────────────────────────────────────────
 # Register Google's chrome-devtools-mcp with the installed agent
 # harnesses, launched via resources/browser/launch so the user's
