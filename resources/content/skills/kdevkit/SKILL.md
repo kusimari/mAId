@@ -14,7 +14,7 @@ project loop             ← project.md invariants. Cross-feature.
   initiative (optional)  ← groups multiple feature loops (§10).
     feature loop         ← one branch, three phases, one squash-merge.
       ├─ planning phase    plan(<feature>): commits + Review Gate
-      ├─ dev loop          feat/fix/...: Quality → Test → Code Review → Push → Review (§7)
+      ├─ dev loop          feat/fix/...: Quality → Test → Code Review → Push → [Briefing] → Review (§7)
       └─ closure phase     close(<feature>): reconcile + squash-merge (§8)
 ```
 
@@ -760,10 +760,19 @@ that plays the feature back and shows them where to look. The
 two are complements — the gate checks diff-vs-project, the
 briefing checks diff-vs-spec — and neither replaces the other.
 
+**Where this runs.** This gate is **step 0 of the Agent-dev
+Review Gate above**, not a separate phase: it fires after Push,
+and its output is the body that gate submits. Read it as
+"before opening or updating the PR/CR, get the briefing." The
+Agent-dev gate's **Refuse-on-fail** rule applies unchanged — a
+failed Quality / Test / Code Review gate means no briefing and
+no review, since there is nothing green to brief.
+
 **Opt-in.** Read `kdevkit.review_brief:` from `project.md`
 (§2). Absent or `enabled: false` → skip this gate entirely;
 kdevkit behaves as it always has. Only `enabled: true` fires
-it.
+it. **Inline-Read `setup.md`** for the block's full key schema
+and defaults.
 
 **Dispatch a role, not a product.** Ask for **an independent
 review-briefing tool** — do not hard-code which one. Resolve
@@ -785,10 +794,15 @@ Unlike the §7 gate it **is** given the spec, because
 reconciling spec-vs-diff is the point. It gets: the feature
 spec, the diff vs. base, `project.md` (+ `AGENTS.md` where
 one exists), the Decision / Session logs, and the Test Gate's
-report where one was produced. It reads the branch
-**read-only** — whole files, not just hunks — and writes
-nothing; prefer dispatching it with read-only tools where the
-host allows it.
+report where one was produced (the captured Test Gate output,
+or the Session Log entry recording it — where neither exists,
+say so and let the briefing report coverage as unverified).
+It reads the branch **read-only** — whole files, not just
+hunks — and **changes nothing that is already on the branch**:
+no edits, commits, pushes, or PR mutation. It may write only
+its own briefing artefact, and only where the dispatcher names
+a destination. Prefer dispatching it with read-only tools where
+the host allows it.
 
 **Returns** a human-facing briefing.
 
@@ -798,15 +812,15 @@ where the human reviews, so that is where the briefing belongs.
 Whenever a briefing tool is used, its output becomes the PR/CR
 **body**:
 
-1. Dispatch **after Push, before opening or updating the
-   PR/CR**, so the briefing is the body the human first sees
-   rather than an overwrite of an Approach-only body a moment
-   later.
-2. **No PR/CR yet** → create it with the briefing as the body.
-   **One already open** (a later slice on the same branch) →
-   **update the body in place** with the refreshed briefing.
-   One PR/CR per branch still holds (§9); the body is rewritten,
-   never appended to as a comment.
+1. Dispatch **after Push, before this gate submits the PR/CR
+   body**, so the briefing *is* that body rather than an
+   overwrite of an Approach-only body a moment later.
+2. The PR/CR normally already exists — §9 creates it at the
+   first gate, which is §6 Planning — so the usual action is
+   **rewrite the body in place** with the briefing. Where none
+   exists yet, create it with the briefing as the body. Either
+   way it stays one PR/CR per branch (§9); the body is
+   rewritten, never appended as a comment.
 3. The briefing's sections subsume §9's body shape — its
    playback carries **Why**/**Approach**, its focus map *is*
    **Reading order** — so it replaces that body rather than
@@ -821,6 +835,13 @@ Whenever a briefing tool is used, its output becomes the PR/CR
 Where a host's review surface genuinely cannot be written to,
 say so explicitly and put the briefing in front of the user
 some other way — never drop it silently.
+
+**At closure (§8.5), the briefing survives.** The Closure Review
+Gate rewrites the *title* and adds **Verification**; it does
+**not** replace a briefing body with an Approach-only one. Where
+the closing diff moved on materially from what was briefed,
+re-dispatch for a refreshed briefing rather than downgrading the
+body.
 
 The briefing informs the human's closure decision; it does
 **not** gate it. `"close it"` remains the only trigger for §8,
