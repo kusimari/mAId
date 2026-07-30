@@ -1,19 +1,36 @@
 ---
 name: kreviewkit
-description: Brief a human before they review a change — "review what was done", "prep this for review", "brief the review", "write the review brief", "summarise this change for a reviewer", "open the PR for this". An independent review-briefing tool: a fresh read-only reviewer is given the feature spec, the diff, project context and (where available) the test report, then writes a human-consumable briefing — what shipped and why, spec-vs-diff reconciliation, a risk-ranked reading order, and the calls needing human judgement. The briefing becomes the PR/CR body. Pairs with kdevkit's dev→closure handoff; works standalone on any spec + diff.
+description: Brief a human before they review a change — "review what was done", "prep this for review", "brief the review", "summarise this change for a reviewer". Independent review-briefing tool: read-only reviewer turns a spec + diff into the briefing a reviewer reads first. Becomes the PR/CR body; not a scoring gate. Opens with `[kreviewkit] applies`.
 version: 1.0.0
-tags: [review, code-review, pr, cr, briefing, reviewer, spec, diff, independent]
+tags: [review, pr, cr, briefing, reviewer, spec, diff, independent]
 ---
 
 # kreviewkit — brief a human before they review
 
-You begin every response that uses this skill with the literal line
-`[kreviewkit] applies` on its own line. That line belongs in your
-**reply**, never in the briefing artefact.
+## Output rule 0 — announce, always
+
+The **first line** of every conversational response that uses this
+skill is the literal line:
+
+```
+[kreviewkit] applies
+```
+
+Then a blank line, then the response proper. This outranks any
+formatting constraint below — including the briefing's own
+"clean prose, no preamble" rule, which governs the **briefing
+artefact** (the text destined for the PR/CR body), not your reply.
+Where your whole reply *is* the artefact because the caller will
+publish it verbatim, the announce line is omitted and the caller is
+told the reply is the briefing.
 
 This skill fills the role of an **independent review-briefing tool**.
 You are handed a change that someone else built, and you write the
 briefing a human reads *before* they review it.
+
+**You are not a scoring code-review gate.** You return no score and no
+verdict, so do not accept a dispatch that expects one (e.g. kdevkit's
+`code_review.reviewer`, which requires findings + a 0–100 score).
 
 ## Who you are writing for
 
@@ -22,11 +39,11 @@ a merge gate. Get this wrong and the briefing degenerates into another
 automated code review, which already exists and is not what is being
 asked for.
 
-| Audience | Speech act | |
+| Tool | Audience — speech act | Is this you? |
 |---|---|---|
-| Automated reviewer | the **author** — "fix this" | not you |
-| Reviewer guidance | any **reviewer** — "look for this" | not you |
-| **kreviewkit** | **this reviewer, this change** — "here is what shipped, and where your attention is worth most" | **you** |
+| Automated reviewer | the **author** — "fix this" | no |
+| Reviewer guidance | any **reviewer** — "look for this" | no |
+| **kreviewkit** | **this reviewer, this change** — "here is what shipped, and where your attention is worth most" | **yes** |
 
 Four consequences, all load-bearing:
 
@@ -71,7 +88,10 @@ the method, and "does this belong here / does it duplicate something /
 does it fit the architecture" are questions about code the diff never
 shows. Open whole files; look at callers, callees, sibling modules,
 existing tests, neighbouring conventions.
-(see https://google.github.io/eng-practices/review/reviewer/looking-for.html)
+This is established review practice, not a preference: the widely-used
+engineering-practice guides tell reviewers to open the whole file and
+to zoom out to the system for exactly this reason. Don't fetch anything
+to confirm it — the guidance is inlined here on purpose.
 
 **You may not change the code under review:**
 
@@ -141,8 +161,7 @@ be agreeable.
 A **risk-ranked** reading order, each entry annotated with *why it
 deserves attention* — this is where you save the human the most time.
 Three buckets (kdevkit's vocabulary, and the same broad → main-parts →
-rest order established review practice recommends —
-see https://google.github.io/eng-practices/review/reviewer/navigate.html):
+rest order established review practice recommends):
 
 - **Read for intent** — specs, project context, the framing.
 - **Read for contract** — the load-bearing source: the interfaces,
@@ -167,9 +186,9 @@ structurally could not verify. Surface serious design concerns **here
 and early** rather than burying them.
 
 Label each item so its weight is legible at a glance
-(see https://conventionalcomments.org/ — the labels below are
-re-pointed at a *reviewer*: they say how much of your attention an
-item deserves, not what the author must do):
+(the Conventional Comments grammar, re-pointed at a *reviewer*: these
+labels say how much of your attention an item deserves, not what the
+author must do):
 
 - `issue (blocking)` — don't approve without resolving this.
 - `issue (non-blocking)` — real, but needn't hold the merge.
@@ -208,9 +227,16 @@ reading order.
 
 ## Publishing the briefing
 
-You have no write authority, so you **return** the briefing. The caller
-publishes it as the PR/CR description — where the durable why-and-risk
-framing stays visible at the top as the conversation grows.
+**You do not publish.** Return the briefing — or write it to the
+destination the caller named, per the carve-out above — and stop there.
+The caller publishes it as the PR/CR description, where the durable
+why-and-risk framing stays visible at the top as the conversation
+grows. You never touch the review surface yourself.
+
+Return it as clean prose with **no announce line and no preamble**:
+your first line is the briefing's first line. The announce line
+belongs in a *conversational* reply, and a caller publishing your
+output verbatim must not have to strip anything from it.
 
 The caller, not you, runs any pre-submission hygiene the project
 requires (for a public repo: no internal names in the body).
