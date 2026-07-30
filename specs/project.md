@@ -321,6 +321,28 @@ Two corollaries, both learned the hard way:
   11, which an agent reads only *after* the skill has triggered — so
   a skill can apply correctly and still omit its own marker. Naming
   the line in the description makes it known before the body loads.
+- **Keep the description short — the budget is shared.** A host
+  exposes only name + description + path up front, and that listing
+  is capped (Codex: 2% of context, or 8,000 chars when unknown).
+  Over budget it *shortens descriptions first*, so a long
+  description loses its own trigger words and crowds out every
+  other skill's. With ~60 skills installed here, four descriptions
+  totalling 3,830 chars matched unreliably; at 815 they matched
+  3/3. Aim for one or two lines of trigger surface, not a summary
+  of the skill.
+- **State the announce line as output rule 0, and say it outranks
+  opening constraints.** A skill can be correctly loaded and
+  applied — citing its own section names — and still drop its
+  marker when the request carries several instructions, or when the
+  skill's own body constrains the opening ("rewritten passage
+  first, no preamble"). An agent reads that as license to skip the
+  line. Naming it *rule 0*, and saying user phrasings like "nothing
+  before it" bound the **body** rather than the marker, took
+  `writing-style` on codex from 1/4 to 5/5.
+- **Sample, don't single-shot.** Trigger and marker behavior is
+  probabilistic. A single passing run proves nothing — this was
+  mis-called "fixed" twice off one sample. Run 3–5 and record the
+  ratio.
 
 A fixture therefore carries only what is specific to it — never a path,
 never a load-the-skill preamble:
