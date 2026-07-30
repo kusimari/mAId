@@ -675,6 +675,57 @@ installed-role lookup above.
 
 <!-- append: date · what was done · decisions made -->
 
+- **2026-07-30** · **Three independent review rounds now applied; third
+  behavioral run PASS.** A blind §7 Code Review Gate scored **58/100**
+  and its findings partly *contradicted* the dogfood briefing — which is
+  itself the useful result: the two reviewers have different blind spots,
+  so running both was worth it. Verified each high finding before fixing.
+  Fixed: **(H1)** `setup.md` never learned `review_brief:`, so the verify
+  subagent would have reported drift on the very block this feature added
+  — the key schema now lives in `setup.md` (per kdevkit's own skill-file
+  placement rule) with SKILL.md pointing at it, and the subagent's
+  validation list gained a rule stating that an absent block is *not*
+  drift. **(H2)** the wider-branch assert accepted `util.py`, which
+  appears in SPEC.md and project.md — both *handed* to the reviewer — so
+  it was passable without opening an unchanged file; the seed no longer
+  names the file or function anywhere in the handed inputs and the grep
+  is `\bslugify\b` alone. **(H3/H4)** kdevkit said the tool "writes
+  nothing" while kreviewkit granted a briefing-artefact carve-out, and
+  kreviewkit *also* contradicted itself 130 lines later ("you have no
+  write authority"); all three now say the same thing. **(M7)** the
+  announce marker could have leaked into a published PR body — the skill
+  now returns the artefact with no announce line and Output rule 0
+  carries the carve-out. **(M9/L2)** the no-verdict assert banned the
+  bare word "approved", failing a briefing that says "don't approve
+  without resolving this"; now matched as a standalone verdict line.
+  **(M10)** `rev-list --count` missed `commit --amend` — reproduced it,
+  now a recorded `.base-sha` comparison. Also: Output rule 0 adopted per
+  the base branch's convention, description cut 634 → 361 chars (base
+  range 172–344), `code-review` tag dropped and an explicit "not a
+  scoring gate" line added (a project could otherwise have wired this as
+  `code_review.reviewer`, which needs a score it never returns), codex
+  added to the fixture's tools, §8-step-5 closure interaction specified,
+  and the dev-loop diagram now shows the briefing step.
+
+  **Then a third briefing on the fixed state found one more real defect**
+  — the assert I had "tightened" still matched `no test` *inside* "no
+  test report", which is boilerplate the skill **guarantees** whenever no
+  report is supplied, and the enact run supplies none. Reproduced,
+  narrowed, re-verified both directions. Same defect class as H2, one
+  round later: **a grep is only as good as what the reviewer was already
+  handed.** Behavioral test re-run after each round — three PASSes, the
+  last against the strictest assertions.
+
+  **Reversal worth recording:** the blind gate's L1 flagged the three
+  `see <url>` pointers as inconsistent with the skill's own no-network
+  rule, and I removed them — which silently contradicted the user's
+  explicit instruction to keep the reference so a later run can update
+  it, and deleted the spec's only mitigation for its own *Reference rot*
+  risk. Restored as `src: <host/path>` — provenance preserved, not
+  phrased as a fetch. **Lesson: a reviewer finding is not automatically
+  right, and a fix that satisfies a reviewer while violating a standing
+  user instruction is a regression.**
+
 - **2026-07-30** · **Behavioral test executed — PASS.** Ran the real
   `enact` fixture (not `--dry-run`): `resources/tests/run kreviewkit
   --kind enact --tools claude`. Scoped deliberately to one fixture, one
