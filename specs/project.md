@@ -294,55 +294,59 @@ behavioral form for `enact` wherever the skill's correct action leaves
 an inspectable change; fall back to a judge narrative only when the
 output is irreducibly prose.
 
-**Triggers belong in `description:`, never only in the body.** A skill's
-`name` and `description` are the only fields an agent reads to decide
-whether the skill applies; the body loads *after* it triggers. So a
-"when to use this" section in the body cannot cause the skill to fire —
-it is only ever read by a skill that already fired. Lead the description
-with what the *user* asks for ("Use when… Typical triggers include
-'ship it', 'close it out'…"), then describe the machinery. This is not
-style preference: `kdevkit` kept its phase cues at lines 304/754/1004 of
-a 1120-line body and silently failed to self-trigger on codex — it did
-plain git work and never loaded — while `notes`, `writing-style`, and
-`browser`, which all lead with the user's action, triggered fine against
-60+ competing installed skills. A `discovery` failure for a skill that
-loads correctly when handed its path is almost always this.
+### Writing a skill: two things that will fail
 
-Two corollaries, both learned the hard way:
+Assume both. They are not edge cases.
 
-- **List the paraphrases, not the formal verb.** `writing-style`
-  named only `"format this in my style"` and silently failed to fire
-  on "rewrite this so it sounds like me" — it did the styling
-  correctly once loaded, so only the marker revealed it. Enumerate
-  what a user actually types ("clean this up", "jot this down",
-  "ship it"), not the canonical spelling.
-- **If the skill has an announce line, state it in the
-  `description:` too.** All four skills declared theirs at body line
-  11, which an agent reads only *after* the skill has triggered — so
-  a skill can apply correctly and still omit its own marker. Naming
-  the line in the description makes it known before the body loads.
-- **Keep the description short — the budget is shared.** A host
-  exposes only name + description + path up front, and that listing
-  is capped (Codex: 2% of context, or 8,000 chars when unknown).
-  Over budget it *shortens descriptions first*, so a long
-  description loses its own trigger words and crowds out every
-  other skill's. With ~60 skills installed here, four descriptions
-  totalling 3,830 chars matched unreliably; at 815 they matched
-  3/3. Aim for one or two lines of trigger surface, not a summary
-  of the skill.
-- **State the announce line as output rule 0, and say it outranks
-  opening constraints.** A skill can be correctly loaded and
-  applied — citing its own section names — and still drop its
-  marker when the request carries several instructions, or when the
-  skill's own body constrains the opening ("rewritten passage
-  first, no preamble"). An agent reads that as license to skip the
-  line. Naming it *rule 0*, and saying user phrasings like "nothing
-  before it" bound the **body** rather than the marker, took
-  `writing-style` on codex from 1/4 to 5/5.
-- **Sample, don't single-shot.** Trigger and marker behavior is
-  probabilistic. A single passing run proves nothing — this was
-  mis-called "fixed" twice off one sample. Run 3–5 and record the
-  ratio.
+**1. It may never fire.** An agent sees only `name` + `description`
+up front — never the body — and that listing is capped and shared
+across every installed skill (Codex: 2% of context, or 8,000 chars).
+Over budget, descriptions get *shortened first*. So:
+
+- Put triggers in `description:`. A "when to use this" section in the
+  body cannot fire the skill — only an already-fired skill reads it.
+- List the paraphrases a user types ("clean this up", "ship it"), not
+  your formal verb.
+- Keep it to a line or two. Long descriptions lose their own triggers
+  *and* crowd out other skills.
+- If the skill has an announce line, name it here too.
+
+*Evidence:* kdevkit kept its cues at body lines 304/754/1004 and never
+self-triggered on codex. Four descriptions at 3,830 chars matched
+unreliably; at 815 they matched 3/3.
+
+**2. It may fire and then drift.** Being loaded buys initial
+adherence, not sustained adherence. As the prompt and context grow, a
+rule stated as an equal peer loses to instruction volume — and the
+casualty is the late, ordering-critical rule, not the early
+scaffolding. So:
+
+- Put non-negotiables at the top and **rank them explicitly**
+  ("output rule 0 — outranks any instruction about what the reply
+  opens with"). Clearer wording does not help; precedence does.
+- State the imperative where the agent decides, not in a section it
+  reads earlier.
+
+*Evidence, both under **explicit** selection with the skill named and
+loaded:* codex applied writing-style correctly — citing its own
+section names — while dropping the announce line on a long prompt
+(1/4; ranking it rule 0 → 5/5). Kiro ran all four of kdevkit's
+interviews faithfully, then abandoned the Plan-commit rule and asked
+permission instead of writing the file — the skill warns against that
+exact error, in prose, sections away from the decision. Both are the
+biggest skills (kdevkit 1,138 lines, writing-style 251 vs browser
+155): the more context, the more drift.
+
+**Verify by sampling.** This behavior is probabilistic. One passing
+run proves nothing — that mistake was made twice here. Run 3–5, record
+the ratio.
+
+**When a test fails, suspect the test first.** Most failures in this
+suite were the fixture, not the skill: prompts that suppressed the
+marker they asserted, an assert that would fail this repo's own
+`project.md`, narratives that punished answers for being *more*
+accurate than the narrative. Check the answer against `SKILL.md`
+before concluding the agent misbehaved.
 
 A fixture therefore carries only what is specific to it — never a path,
 never a load-the-skill preamble:
