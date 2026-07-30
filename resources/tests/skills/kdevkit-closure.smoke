@@ -1,5 +1,7 @@
-prompt: Load the kdevkit skill (from ~/.claude/skills/kdevkit/SKILL.md, ~/.kiro/steering/skills/kdevkit/SKILL.md, or ~/.codex/skills/kdevkit/SKILL.md — whichever exists). You are on branch feat/add-due-dates. Both Implementation Plan items are already implemented in due.py (read it — the --due flag and the list-output rendering are both present and their commit is on this branch). The user says: "ship it". Run the kdevkit closure phase: reconcile the feature spec's Implementation Plan against the code that is present (the work is done — tick the boxes), then stage and make the closure commit. Do the git and file work now in this repo. When done print [kdevkit] applies. (Do not squash-merge or push — just reconcile and make the close commit.)
+skill: kdevkit
 tools: claude,kiro,codex
+--- enact ---
+task: I'm on branch feat/add-due-dates and the work is done — the --due flag and the list-output rendering are both in due.py, committed on this branch. Read it and see. Ship it. Do the git and file work now, in this repo. Don't squash-merge or push — just get it closed out locally.
 --- setup ---
 git init -q
 git config user.email t@t.t && git config user.name t
@@ -25,20 +27,67 @@ A nullable due field on the record; a --due flag parses it.
 
 ## Decision Log
 MD
-# The implementation is visibly present, so reconcile can tick both
-# boxes without ambiguity — the fixture tests closure mechanics, not
-# whether the agent should second-guess done work.
+# Both plan items have to be GENUINELY done, not merely gestured at. The
+# assert expects reconcile to tick them, and a skill that reconciles
+# honestly refuses to tick work that isn't finished — so a stub here fails
+# the fixture for the right reason at the wrong time. An earlier version of
+# this seed declared `--due` without parsing it and indexed t['due']
+# unconditionally; claude read the code, found both defects, wrote them into
+# the spec and declined to close, citing §8.1 ("not quietly done"). That was
+# the skill working. The seed is what was wrong.
 cat > due.py <<'PY'
 import argparse
+from datetime import date
+
+
+def parse_due(value):
+    # plan item 1: parse the date, not just capture the string
+    return date.fromisoformat(value)
+
 
 def parse_args(argv):
-    p = argparse.ArgumentParser()
-    p.add_argument("--due")  # plan item 1: add --due flag and parse the date
+    p = argparse.ArgumentParser(prog="todo")
+    p.add_argument("--due", type=parse_due, default=None)
+    p.add_argument("name")
     return p.parse_args(argv)
 
+
 def render_list(tasks):
-    # plan item 2: render the due date in the list output
-    return "\n".join(f"{t['name']} (due {t['due']})" for t in tasks)
+    # plan item 2: render the due date, tolerating a to-do without one
+    # (Design calls the field nullable)
+    out = []
+    for t in tasks:
+        d = t.get("due")
+        out.append(f"{t['name']} (due {d.isoformat()})" if d else t["name"])
+    return "\n".join(out)
+
+
+def add(store, argv):
+    # a due date set on the command line reaches the record
+    ns = parse_args(argv)
+    store.append({"name": ns.name, "due": ns.due})
+    return store
+PY
+mkdir -p tests
+cat > tests/test_due.py <<'PY'
+from datetime import date
+import due
+
+
+def test_parses_due_into_a_date():
+    assert due.parse_args(["--due", "2026-08-01", "taxes"]).due == date(2026, 8, 1)
+
+
+def test_renders_the_due_date():
+    assert "due 2026-08-01" in due.render_list([{"name": "t", "due": date(2026, 8, 1)}])
+
+
+def test_todo_without_a_due_date_still_renders():
+    assert due.render_list([{"name": "milk"}]) == "milk"
+
+
+def test_due_date_from_the_cli_reaches_the_record():
+    assert due.add([], ["--due", "2026-08-01", "taxes"])[0]["due"] == date(2026, 8, 1)
 PY
 git add -A && git commit -q -m "feat: add due dates (--due flag + list rendering)"
 --- assert ---

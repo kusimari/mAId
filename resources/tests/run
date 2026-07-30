@@ -1,33 +1,76 @@
 #!/usr/bin/env bash
 # mAId/resources/tests/run — verify that installed skills actually make
-# the coding agents do the right thing. Runs each fixture against every
-# requested agent (claude/kiro/codex); a skill that drives all of them
-# to the same result is robust. `just resources::verify-skills` /
-# `just resources::verify-skills-one <name>`.
+# the coding agents do the right thing. Runs each test against every
+# requested agent (claude/kiro/codex); a skill that drives all of them to
+# the same result is robust. `just resources::verify-skills` /
+# `just resources::verify-skills-one <name>` /
+# `just resources::verify-skills-kind <kind>`.
 # Pre-condition: `just resources::install-skills` has deployed the symlinks (install
 # correctness itself is a `cargo test` concern, not this script's).
 #
-# Three ways a fixture verifies a skill (a fixture picks one):
-#   1. substring  — run a prompt, check the reply contains a string
-#                   (expect_substr:).
-#   2. semantic   — run a prompt, a judge call checks the reply carries
-#                   the meaning we expect (expected_narrative:).
-#   3. behavioral — run a prompt against a seeded test project, check the
-#                   agent made the right changes to it (--- setup --- /
-#                   --- assert --- shell blocks; a non-zero assert fails).
+# ── Two axes, five kinds of skill test ──────────────────────────────
 #
-# The kdevkit smokes cover the skill driving an agent through each phase
-# of working on a project: setting up context, planning a feature,
-# running the dev loop (code → quality/style → tests, looping), closing
-# the feature, and adapting when a phase has to revisit an earlier one.
+# How the skill is reached:
+#   explicit — the prompt names the skill and the path it lives at for
+#              the agent under test. Isolates content: a failure means
+#              the skill is wrong, not that it failed to load.
+#   implicit — the prompt states only the task. The agent must find and
+#              load the right skill itself, so a failure means the
+#              skill's own description/trigger is too weak.
 #
-# Fixture file (resources/tests/skills/<name>.smoke): a `prompt:` line, a
-# `tools:` line (comma-separated agents; default claude), and one of the
-# three verification styles above.
+# What is verified:
+#   playback — the skill plays back the contract it was designed for
+#              (recites its rules: guardrails, refusals, absence paths).
+#   enact    — the skill enacts that contract (actually does the thing).
+#
+# The kinds are those axes composed:
+#
+#   activation   explicit + announce  Is the skill reachable, parseable,
+#                                     and does it load when asked?
+#   discovery    implicit + announce  Does its own description trigger
+#                                     from a bare task?
+#   playback     explicit + recite    Does it state its rules correctly?
+#   enact        explicit + perform   Loaded, does it actually do it?
+#   integration  implicit + perform   End to end: fire AND do it.
+#
+# `playback + implicit` is deliberately empty — reciting rules is not a
+# task a user phrases implicitly, so the cell has no natural test.
+#
+# activation and discovery are GENERATED from a fixture's `skill:` field
+# — no fixture authors them, and no fixture writes a skill path. That is
+# what keeps the per-agent paths in one place (see skill_path) instead of
+# hand-copied into every prompt, where they had already drifted.
+#
+# ── Fixture format ─────────────────────────────────────────────────
+#
+# resources/tests/skills/<name>.smoke carries only what is specific to
+# it — never a path, never a "load the skill" preamble:
+#
+#   skill: <skill-name>          which skill is under test (required)
+#   tools: claude,kiro,codex     agents to run (default claude)
+#   --- playback ---             optional; explicit recitation test
+#   task: <the question>
+#   expect: <narrative the judge scores against>
+#   --- enact ---                optional; drives enact + integration
+#   task: <the imperative task, phrased as a user would>
+#   expect: <narrative>          for prose skills with no artefact
+#   expect_substr: <string>      optional extra literal check
+#   --- setup ---                optional; seeds a scratch workdir
+#   <shell>
+#   --- assert ---               optional; inspects the workdir after
+#   <shell>
+#
+# An `--- assert ---` block makes the enact test artefact-based (the
+# agent runs in a seeded scratch dir and the assert inspects what it
+# did); otherwise the enact test is judged on the reply. Both forms also
+# produce the implicit `integration` run from the same task.
 #
 # Usage:
-#   resources/tests/run                 Run every fixture.
-#   resources/tests/run <name>          Run only <name>'s fixture.
+#   resources/tests/run                 Run every test.
+#   resources/tests/run <name>          Only <name>'s fixture.
+#   resources/tests/run --kind <list>   Comma-separated kinds to run
+#                                       (activation, discovery, playback,
+#                                       enact, integration). Default: all.
 #   resources/tests/run --tools <list>  Comma-separated coding agents to
 #                                       test against (claude, kiro,
 #                                       codex). Default: all three, and
@@ -41,10 +84,17 @@
 #                                       tools: field with this list, and
 #                                       a requested tool missing from
 #                                       PATH is a failure, not a skip.
+#   resources/tests/run --dry-run       Construct every prompt and check
+#                                       it structurally without calling
+#                                       an agent: explicit prompts must
+#                                       carry that agent's own skill
+#                                       path, implicit prompts must leak
+#                                       no skill name, path, or marker.
+#                                       Costs no API credits.
 #   resources/tests/run --stressed      Prepend the shared
 #                                       conversational-stream prefix
-#                                       to each fixture's prompt to
-#                                       stress retention under load.
+#                                       to each prompt to stress
+#                                       retention under load.
 #   resources/tests/run --help
 
 set -euo pipefail
@@ -54,11 +104,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ── args ────────────────────────────────────────────────────────────
 
 STRESSED=0
+DRY_RUN=0
 SELECTOR=""
 # The coding agents to test against. Empty = the built-in default set
 # (all three); --tools narrows it. This is also the required set — a
 # requested tool that's absent fails rather than skips.
 TOOLS_OVERRIDE=""
+KINDS_OVERRIDE=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --tools)
@@ -66,6 +118,12 @@ while [[ $# -gt 0 ]]; do
             [[ $# -gt 0 ]] || { echo "--tools needs a comma-separated list" >&2; exit 2; }
             TOOLS_OVERRIDE="$1"; shift
             ;;
+        --kind|--kinds)
+            shift
+            [[ $# -gt 0 ]] || { echo "--kind needs a comma-separated list" >&2; exit 2; }
+            KINDS_OVERRIDE="$1"; shift
+            ;;
+        --dry-run) DRY_RUN=1; shift ;;
         --stressed) STRESSED=1; shift ;;
         --help|-h)
             awk '/^$/{exit} /^#/{sub(/^# ?/,""); print}' "${BASH_SOURCE[0]}"
@@ -85,6 +143,26 @@ if (( STRESSED )); then
     STRESS_PREFIX="$(cat "$HERE/conversational-stream.txt")"
 fi
 
+ALL_KINDS="activation discovery playback enact integration"
+REQUIRED_KINDS="$ALL_KINDS"
+if [[ -n "$KINDS_OVERRIDE" ]]; then
+    _rk=""
+    IFS=',' read -ra _ovk <<<"$KINDS_OVERRIDE"
+    for k in "${_ovk[@]}"; do
+        k="${k//[[:space:]]/}"
+        [[ -z "$k" ]] && continue
+        if [[ " $ALL_KINDS " != *" $k "* ]]; then
+            echo "--kind: unknown kind '$k' (known: $ALL_KINDS)" >&2
+            exit 2
+        fi
+        _rk="$_rk $k"
+    done
+    [[ -n "$_rk" ]] || { echo "--kind: no valid kinds in '$KINDS_OVERRIDE'" >&2; exit 2; }
+    REQUIRED_KINDS="${_rk# }"
+fi
+
+kind_requested() { [[ " $REQUIRED_KINDS " == *" $1 "* ]]; }
+
 # ── output ──────────────────────────────────────────────────────────
 
 pass() { printf '\033[32mPASS\033[0m %s\n' "$*"; }
@@ -94,45 +172,147 @@ info() { printf '  %s\n' "$*"; }
 
 FAILURES=0
 
+# ── skill locations ─────────────────────────────────────────────────
+
+# skill_path <tool> <skill> → where that agent reads the skill from.
+#
+# The one place these live. They mirror build-tool's REGISTRY
+# (.claude/skills, .kiro/steering/skills, .codex/skills); keeping them
+# here rather than in each fixture's prompt is what stops the three from
+# drifting apart per fixture.
+skill_path() {
+    local tool="$1" skill="$2"
+    case "$tool" in
+        claude) printf '%s/.claude/skills/%s/SKILL.md' "$HOME" "$skill" ;;
+        kiro)   printf '%s/.kiro/steering/skills/%s/SKILL.md' "$HOME" "$skill" ;;
+        codex)  printf '%s/.codex/skills/%s/SKILL.md' "$HOME" "$skill" ;;
+        *)      echo "skill_path: unknown tool '$tool'" >&2; return 1 ;;
+    esac
+}
+
+# Every skill's self-announce line, when it has one.
+#
+# The announce line exists for the reader, not for ceremony: it attributes
+# the reply to a written contract rather than to the model's general
+# judgement, which is what lets a human calibrate trust, tell "the rules
+# are wrong" apart from "the skill never fired", and notice a broken
+# install instead of silently getting plausible non-skill output.
+#
+# That payoff is real for skills whose output the user then inspects and
+# trusts (notes, writing-style, browser). A workflow skill like kdevkit
+# earns it differently — its evidence is the artefacts it leaves
+# (phase-prefixed commits, a feature spec, gate-shaped PR bodies), so
+# stamping every turn of a long session would be ceremony. Hence this is
+# read from the skill rather than assumed: a skill declares the line in
+# its own SKILL.md, and skills that don't are proven to have fired by
+# their artefacts instead (see skill_announces).
+marker_for() { printf '[%s] applies' "$1"; }
+
+# True when <skill> declares a self-announce line in its installed
+# SKILL.md — i.e. when the marker is a contract we may assert. Read from
+# the deployed content so the test tracks the skill, not a list here that
+# would drift from it.
+skill_announces() {
+    local skill="$1" src="$HERE/../content/skills/$1/SKILL.md"
+    [[ -r "$src" ]] || return 1
+    grep -qF -- "$(marker_for "$skill")" "$src"
+}
+
+# ── prompt envelopes ────────────────────────────────────────────────
+
+# explicit_prompt <tool> <skill> <task>
+#
+# Names the skill and the path it lives at for this agent, so the test
+# isolates the skill's content from whether it would have been found.
+# Deliberately does NOT quote the announce line: it tells the agent to
+# follow the skill's own instructions for opening a response, so an
+# agent that never read the file cannot emit the marker.
+explicit_prompt() {
+    local tool="$1" skill="$2" task="$3" path
+    path="$(skill_path "$tool" "$skill")"
+    cat <<EOF
+Load the \`$skill\` skill from $path and follow its instructions —
+including its instruction for how to open a response that uses it.
+
+Then do this:
+$task
+EOF
+}
+
+# implicit_prompt <task>
+#
+# The task alone. No skill name, no path, no marker — so the skill can
+# only apply if the agent recognised the task and loaded it unprompted.
+implicit_prompt() { printf '%s\n' "$1"; }
+
 # ── tool plumbing ───────────────────────────────────────────────────
 
-# tool_invoke <tool> <prompt> [workdir] → echoes captured stdout/stderr.
+# tool_invoke <tool> <prompt> [workdir] → echoes the agent's REPLY.
 #
 # The single indirection point for driving a coding agent
 # non-interactively. Per-tool CLI flags change across versions; when
 # they do, this is the only function to touch. When <workdir> is given
-# the agent runs there with write access (behavioral fixtures that seed
-# a scratch repo); without it, agents run read-only for cheap
-# load-checks.
+# the agent runs there with write access (tests that seed a scratch
+# repo); without it, agents run read-only for cheap reply checks.
+#
+# What this returns is load-bearing: the *reply*, not the session
+# transcript. Codex `exec` prints a transcript — the prompt echoed back,
+# then tool output, then the reply — so capturing `2>&1` and grepping it
+# silently breaks every reply-level assertion:
+#
+#   - the judge's own instruction template ("PASS — <one short …>")
+#     appears in the echoed prompt, so a first-match scan reads the
+#     template instead of the model's verdict and every judged test
+#     passes unconditionally;
+#   - a skill's announce marker appears in tool output whenever the agent
+#     `cat`s the SKILL.md, so the marker stops proving the skill applied
+#     and only proves the file was read.
+#
+# Codex's `--output-last-message` writes just the final message, which is
+# what we want. claude `--print` and kiro's non-interactive chat already
+# emit the reply alone (verified: both extract a correct judge verdict
+# where codex did not), so only codex needs the extra plumbing.
 tool_invoke() {
     local tool="$1" prompt="$2" workdir="${3:-}"
     case "$tool" in
         claude)
+            # stdin must be closed: otherwise claude waits ~3s for piped
+            # input and prepends a "no stdin data received" warning to the
+            # captured output, which then reads as part of the reply.
             if [[ -n "$workdir" ]]; then
-                (cd "$workdir" && claude --print --dangerously-skip-permissions "$prompt" 2>&1)
+                (cd "$workdir" && claude --print --dangerously-skip-permissions "$prompt" </dev/null 2>&1)
             else
-                claude --print --dangerously-skip-permissions "$prompt" 2>&1
+                claude --print --dangerously-skip-permissions "$prompt" </dev/null 2>&1
             fi
             ;;
         kiro)
             if [[ -n "$workdir" ]]; then
-                (cd "$workdir" && kiro-cli chat --no-interactive --trust-all-tools "$prompt" 2>&1)
+                (cd "$workdir" && kiro-cli chat --no-interactive --trust-all-tools "$prompt" </dev/null 2>&1)
             else
-                kiro-cli chat --no-interactive --trust-tools= "$prompt" 2>&1
+                kiro-cli chat --no-interactive --trust-tools= "$prompt" </dev/null 2>&1
             fi
             ;;
         codex)
             # `exec` is codex's non-interactive mode. stdin must be closed
             # or it waits for more input. --skip-git-repo-check because a
             # seeded scratch repo may not be a git tree. read-only for
-            # load-checks; workspace-write when a workdir is seeded.
+            # reply checks; workspace-write when a workdir is seeded.
+            # -o captures the final message; the transcript on stdout is
+            # discarded so it can't be mistaken for the reply (see above).
+            local last rc=0
+            last="$(mktemp)"
             if [[ -n "$workdir" ]]; then
                 codex exec --cd "$workdir" --sandbox workspace-write \
-                    --skip-git-repo-check "$prompt" </dev/null 2>&1
+                    --skip-git-repo-check -o "$last" "$prompt" \
+                    </dev/null >/dev/null 2>&1 || rc=$?
             else
                 codex exec --sandbox read-only \
-                    --skip-git-repo-check "$prompt" </dev/null 2>&1
+                    --skip-git-repo-check -o "$last" "$prompt" \
+                    </dev/null >/dev/null 2>&1 || rc=$?
             fi
+            cat "$last"
+            rm -f "$last"
+            return "$rc"
             ;;
         *)      echo "tool_invoke: unknown tool '$tool'"; return 1 ;;
     esac
@@ -147,9 +327,9 @@ tool_available() {
     esac
 }
 
-# The set of coding agents this run tests against — every fixture is
-# scoped to the intersection of its own tools: field with this set, and
-# a tool here that's absent from PATH is a hard failure, not a skip
+# The set of coding agents this run tests against — every test is
+# scoped to the intersection of its fixture's tools: field with this set,
+# and a tool here that's absent from PATH is a hard failure, not a skip
 # (the feature's "verify across the agents we asked for" goal). Defaults
 # to all three; --tools narrows it (e.g. to isolate one agent when
 # another's backend is slow). The default set is also the recognized
@@ -173,10 +353,30 @@ if [[ -n "$TOOLS_OVERRIDE" ]]; then
 fi
 
 # True when the tool is in this run's requested set — both "should this
-# fixture run it" and "is its absence a failure" derive from this.
+# test run it" and "is its absence a failure" derive from this.
 tool_requested() {
     [[ " $REQUIRED_TOOLS " == *" $1 "* ]]
 }
+
+# The agent that grades judged tests, whichever agent produced the answer.
+#
+# Judging used to run on the answering agent, so each one marked its own
+# homework — and the grader, not the skill, decided the result. Two false
+# failures in one sweep traced to this: codex failed its own notes answer
+# for "not saying the due date is inline" when the answer said exactly
+# that, and failed its own writing-style rewrite as "not first-person"
+# when it opened "I want to use the new pipeline". Claude passed both
+# answers verbatim. A per-agent grader also makes results incomparable
+# across agents, which defeats the point of running tri-tool.
+#
+# One fixed grader instead. Overridable because it must be on PATH; falls
+# back to the first available agent so a host without claude still runs.
+JUDGE_TOOL="${VERIFY_JUDGE:-claude}"
+if ! tool_available "$JUDGE_TOOL"; then
+    for _t in $ALL_TOOLS; do
+        if tool_available "$_t"; then JUDGE_TOOL="$_t"; break; fi
+    done
+fi
 tool_required() { tool_requested "$1"; }
 
 build_judge_prompt() {
@@ -199,6 +399,82 @@ or
 FAIL — <one short sentence describing what's missing or wrong>
 EOF
 }
+
+# ── dry-run prompt checks ───────────────────────────────────────────
+
+# Structural checks on a constructed prompt, run instead of calling an
+# agent under --dry-run. These are the assertions that used to be
+# impossible: when every fixture hand-wrote its own paths, nothing could
+# check that the codex run actually pointed at codex's skills root.
+check_explicit_prompt() {
+    local tool="$1" skill="$2" prompt="$3" name="$4" path
+    path="$(skill_path "$tool" "$skill")"
+    if [[ "$prompt" != *"$path"* ]]; then
+        fail "$name (dry): explicit prompt missing $tool's own path $path"
+        return
+    fi
+    pass "$name (dry: carries $tool path)"
+}
+
+# An implicit prompt must not identify the skill it should trigger —
+# otherwise the test measures instruction-following, not discovery.
+#
+# The check is "does the skill's name appear at all", not a list of
+# phrasings. A denylist of specific forms ("`<skill>`", "<skill> skill")
+# looked thorough and missed the obvious: `Run the kdevkit closure phase`
+# named the skill outright and still reported "names no skill". Any
+# occurrence of the name is a leak.
+#
+# Two deliberate carve-outs, both about words that are ordinary English
+# as well as skill names:
+#   - a name that is a common noun ("notes", "browser") may appear as
+#     part of a longer domain phrase the task legitimately needs — an
+#     "Obsidian-shaped notes vault" is scene-setting, not a skill
+#     reference. So a bare common-noun name is allowed, but the skill's
+#     documented *invocation verb* is not: `add note in ./ for:` IS the
+#     skill's API, and pasting it in makes the prompt a call rather than
+#     a task.
+#   - `SKILL.md` and the per-agent skills roots are always leaks.
+check_implicit_prompt() {
+    local skill="$1" prompt="$2" name="$3" marker leak="" lc
+    marker="$(marker_for "$skill")"
+    lc="$(tr '[:upper:]' '[:lower:]' <<<"$prompt")"
+    [[ "$prompt" == *"$marker"* ]]   && leak="the announce marker"
+    [[ "$prompt" == *"SKILL.md"* ]]  && leak="a SKILL.md path"
+    [[ "$prompt" == *"/.claude/"* ]] && leak="a claude skills path"
+    [[ "$prompt" == *"/.kiro/"* ]]   && leak="a kiro skills path"
+    [[ "$prompt" == *"/.codex/"* ]]  && leak="a codex skills path"
+    # A hyphenated or otherwise non-word skill name is never ordinary
+    # English, so any mention leaks. Common-noun names are judged by
+    # their invocation verbs instead (below).
+    case "$skill" in
+        *-*) [[ "$lc" == *"$skill"* ]] && leak="the skill name '$skill'" ;;
+        *)   [[ "$lc" == *"$skill skill"* ]] && leak="the phrase '$skill skill'" ;;
+    esac
+    # Documented invocation verbs: pasting a skill's own command syntax
+    # into an "implicit" prompt is the same leak as naming it.
+    local verb
+    for verb in $(skill_invocations "$skill"); do
+        [[ "$lc" == *"${verb//_/ }"* ]] && leak="the skill's invocation verb '${verb//_/ }'"
+    done
+    if [[ -n "$leak" ]]; then
+        fail "$name (dry): implicit prompt leaks $leak"
+        return
+    fi
+    pass "$name (dry: names no skill)"
+}
+
+# The command syntax a skill documents as its entry point. Space-encoded
+# as underscores so the list survives word-splitting above. Empty for a
+# skill invoked by intent alone rather than a fixed verb.
+skill_invocations() {
+    case "$1" in
+        notes) printf '%s\n' 'add_note' 'close_notes' 'merge_buffer' ;;
+        *)     : ;;
+    esac
+}
+
+# ── assertions ──────────────────────────────────────────────────────
 
 # assert_response <tool> <prompt> <expect-substr-or-empty>
 #                 <expected-narrative-or-empty> <check-name>
@@ -234,16 +510,32 @@ assert_response() {
     if [[ -n "$expected_narrative" ]]; then
         local judge_prompt judge_out judge_clean verdict
         judge_prompt="$(build_judge_prompt "$prompt" "$out" "$expected_narrative")"
-        if ! judge_out="$(tool_invoke "$tool" "$judge_prompt")"; then
+        # Graded by JUDGE_TOOL, not by "$tool" — see its definition for why
+        # self-grading produced false verdicts.
+        if ! judge_out="$(tool_invoke "$JUDGE_TOOL" "$judge_prompt")"; then
             fail "$name (judge invocation failed): $judge_out"
             return
         fi
-        # Strip ANSI escape codes and control bytes, then look for
-        # the first PASS/FAIL token anywhere in the response.
+        # Strip ANSI escape codes, control bytes, and kiro's trailing
+        # `▸ Credits: … • Time: …` footer, then take the verdict off a
+        # line that *starts* with the token.
+        #
+        # Two guards, because a mis-read verdict fails silently in the
+        # passing direction. Line-anchoring keeps a mid-sentence "…would
+        # FAIL" in the judge's prose from being read as the verdict. And
+        # lines carrying the instruction template's placeholder are
+        # dropped: the judge prompt necessarily contains the literal
+        # "PASS — <one short sentence …>", so if an agent's transport ever
+        # echoes the prompt back (codex `exec` did — see tool_invoke), the
+        # template must not be mistaken for the answer.
+        # `\x1b\[?25l` (cursor-hide) is not matched by the [a-zA-Z]
+        # terminator class above, and kiro prefixes its reply with "> ",
+        # so both are stripped before anchoring or the verdict is missed.
         judge_clean="$(printf '%s' "$judge_out" \
-            | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\r//g' \
-            | tr '\n' ' ')"
-        verdict="$(grep -oE '(PASS|FAIL)[^|]+' <<<"$judge_clean" | head -n1 || true)"
+            | sed -E 's/\x1b\[[?0-9;]*[a-zA-Z]//g; s/\r//g; s/▸ Credits:.*$//' \
+            | grep -vF '<one short sentence' \
+            | sed -E 's/^[[:space:]]*//; s/^>[[:space:]]*//')"
+        verdict="$(grep -aoE '^(PASS|FAIL).*' <<<"$judge_clean" | head -n1 || true)"
         case "$verdict" in
             PASS*)
                 pass "$name (judge)"
@@ -265,14 +557,22 @@ assert_response() {
 
 # extract_block <marker> <file> → the lines of a fenced block, where a
 # block is introduced by `--- <marker> ---` on its own line and runs to
-# the next `--- ... ---` fence or EOF. Used for the multi-line setup:
-# and assert: shell of behavioral fixtures.
+# the next `--- ... ---` fence or EOF. Used for the multi-line setup and
+# assert shell, and for the playback / enact sections.
 extract_block() {
     awk -v want="--- $1 ---" '
         $0 == want { grab = 1; next }
         /^--- .* ---$/ { grab = 0 }
         grab { print }
     ' "$2"
+}
+
+# block_field <field> <block-text> → the first `<field>:` value in a
+# section. Sections carry one key per line, matching the fixture
+# header's shape.
+block_field() {
+    local field="$1" text="$2"
+    grep "^$field:" <<<"$text" 2>/dev/null | sed "s/^$field:[[:space:]]*//" | head -n1 || true
 }
 
 # assert_behavioral <tool> <prompt> <setup> <assert> <check-name>
@@ -306,18 +606,170 @@ assert_behavioral() {
     local out
     out="$(tool_invoke "$tool" "$prompt" "$work")" || true
 
+    # Run the assert under `set -x` so a failure names the exact check that
+    # broke. Asserts are silent `test`/`grep -q` under `set -e`, so without
+    # the trace a failure reports "assert failed — " with nothing after it —
+    # which is what every behavioral failure looked like until now, making
+    # them undiagnosable without hand-reproducing the whole fixture.
     local alog
     alog="$(mktemp)"
-    if ( cd "$work" && bash -c "$assert" ) >"$alog" 2>&1; then
+    if ( cd "$work" && bash -c "set -x; $assert" ) >"$alog" 2>&1; then
         pass "$name (behavioral)"
     else
-        fail "$name (behavioral): assert failed — $(head -c 200 "$alog")"
-        info "agent output head: $(head -c 200 <<<"$out")..."
+        # The last traced command is the one that failed.
+        local culprit
+        culprit="$(grep -a '^+' "$alog" | tail -n1 | sed -E 's/^\++ ?//')"
+        fail "$name (behavioral): failed check: ${culprit:-<no trace>}"
+        # Keep the full trace and the agent's reply for a post-mortem; the
+        # workdir itself is about to be removed by the RETURN trap.
+        local dump="/tmp/verify-behavioral-${name//[^a-zA-Z0-9_-]/_}.log"
+        { printf '=== assert trace ===\n'; cat "$alog"
+          printf '\n=== agent reply ===\n'; printf '%s\n' "$out"
+          printf '\n=== workdir tree ===\n'; ( cd "$work" && find . -not -path '*/.git/*' | head -60 )
+        } >"$dump" 2>&1
+        info "trace + reply + tree → $dump"
     fi
     rm -f "$alog"
 }
 
+# Apply --stressed to a constructed prompt, right before it's used.
+stressed() {
+    if (( STRESSED )); then printf '%s\n%s' "$STRESS_PREFIX" "$1"; else printf '%s' "$1"; fi
+}
+
+# ── the five kinds ──────────────────────────────────────────────────
+#
+# Each takes the pieces a fixture supplied and composes an envelope with
+# an assertion. Reading these five functions is how a future author
+# learns what a skill test can be.
+
+# activation — explicit reach, announce only. Generated per skill.
+#
+# Only meaningful for a skill that declares an announce line: the marker
+# is the assertion. For a skill without one there is nothing to check in
+# a reply that a general-purpose answer wouldn't also satisfy, so the
+# skill's `enact` tests carry the proof instead.
+run_activation() {
+    local tool="$1" skill="$2"
+    local name="skill:$skill activation via $tool"
+    local task prompt
+    if ! skill_announces "$skill"; then
+        skip "$name (no announce contract — artefacts prove it; see enact)"
+        return
+    fi
+    task="In one short sentence, say what this skill lets me do."
+    prompt="$(explicit_prompt "$tool" "$skill" "$task")"
+    if (( DRY_RUN )); then check_explicit_prompt "$tool" "$skill" "$prompt" "$name"; return; fi
+    assert_response "$tool" "$(stressed "$prompt")" "$(marker_for "$skill")" "" "$name"
+}
+
+# discovery — implicit reach, announce only. Generated per skill from a
+# real task, so the trigger has something natural to fire on.
+#
+# Same constraint as activation: without an announce line a reply-level
+# check cannot distinguish "the skill fired" from "the model is capable",
+# so a non-announcing skill's discovery is proven by its `integration`
+# tests (same implicit reach, artefact-based assertion).
+run_discovery() {
+    local tool="$1" skill="$2" task="$3"
+    local name="skill:$skill discovery via $tool"
+    local prompt
+    if ! skill_announces "$skill"; then
+        skip "$name (no announce contract — proven by integration)"
+        return
+    fi
+    prompt="$(implicit_prompt "$task")"
+    if (( DRY_RUN )); then check_implicit_prompt "$skill" "$prompt" "$name"; return; fi
+    assert_response "$tool" "$(stressed "$prompt")" "$(marker_for "$skill")" "" "$name"
+}
+
+# playback — explicit reach, recites its contract. Judged on the reply.
+run_playback() {
+    local tool="$1" skill="$2" task="$3" narrative="$4" substr="$5" name="$6"
+    local prompt
+    prompt="$(explicit_prompt "$tool" "$skill" "$task")"
+    if (( DRY_RUN )); then check_explicit_prompt "$tool" "$skill" "$prompt" "$name"; return; fi
+    assert_response "$tool" "$(stressed "$prompt")" "$substr" "$narrative" "$name"
+}
+
+# enact — explicit reach, performs the contract. Artefact-based when the
+# fixture supplied an assert block, judged on the reply otherwise.
+run_enact() {
+    local tool="$1" skill="$2" task="$3" narrative="$4" substr="$5"
+    local setup="$6" assert="$7" name="$8"
+    local prompt
+    prompt="$(explicit_prompt "$tool" "$skill" "$task")"
+    if (( DRY_RUN )); then check_explicit_prompt "$tool" "$skill" "$prompt" "$name"; return; fi
+    if [[ -n "$assert" ]]; then
+        assert_behavioral "$tool" "$(stressed "$prompt")" "$setup" "$assert" "$name"
+    else
+        assert_response "$tool" "$(stressed "$prompt")" "$substr" "$narrative" "$name"
+    fi
+}
+
+# integration — implicit reach, performs the contract. The end-to-end
+# kind: the skill has to fire on its own AND do the right thing. For a
+# prose skill the marker is the discovery half of the proof, so it is
+# asserted alongside the judge; for an artefact skill the artefact is
+# the proof and the runner's behavioral path owns the check.
+run_integration() {
+    local tool="$1" skill="$2" task="$3" narrative="$4" substr="$5"
+    local setup="$6" assert="$7" name="$8"
+    local prompt
+    prompt="$(implicit_prompt "$task")"
+    if (( DRY_RUN )); then check_implicit_prompt "$skill" "$prompt" "$name"; return; fi
+    if [[ -n "$assert" ]]; then
+        assert_behavioral "$tool" "$(stressed "$prompt")" "$setup" "$assert" "$name"
+    else
+        # With no artefact, the marker is the discovery half of the proof —
+        # but only for a skill that promises one. Otherwise the judge
+        # narrative stands alone.
+        local want_substr="$substr"
+        if [[ -z "$want_substr" ]] && skill_announces "$skill"; then
+            want_substr="$(marker_for "$skill")"
+        fi
+        assert_response "$tool" "$(stressed "$prompt")" "$want_substr" "$narrative" "$name"
+    fi
+}
+
+# ── leak tripwire ────────────────────────────────────────────────────
+#
+# Behavioral tests seed a scratch workdir, but containment is by
+# convention: the agent keeps ambient filesystem authority, so a
+# differently-resolved relative path lands in this checkout instead.
+# It has happened repeatedly — `notes-git-commit` runs `close notes`,
+# which runs `git commit`, and twice committed insight files into the
+# repo while reporting PASS. Snapshot the checkout now and diff at exit
+# so a leak is reported by the suite instead of found later in git log.
+# See specs/backlog/test-runner-workdir-containment.md for the real fix.
+REPO_ROOT="$(cd "$HERE/../.." && pwd)"
+REPO_SNAPSHOT=""
+if git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+    REPO_SNAPSHOT="$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null || true)"
+fi
+
+# shellcheck disable=SC2329  # invoked via the EXIT trap below
+report_leak() {
+    [[ -n "$REPO_SNAPSHOT" || -d "$REPO_ROOT/.git" ]] || return 0
+    local now
+    now="$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null || true)"
+    [[ "$now" == "$REPO_SNAPSHOT" ]] && return 0
+    printf '\033[31mLEAK\033[0m a test wrote into the checkout (not its scratch workdir):\n' >&2
+    diff <(printf '%s\n' "$REPO_SNAPSHOT") <(printf '%s\n' "$now") \
+        | grep -E '^>' | sed 's/^> /  /' >&2
+    printf '  also check git log - a leaked close-notes verb can COMMIT these.\n' >&2
+    FAILURES=$((FAILURES+1))
+}
+trap report_leak EXIT
+
 # ── fixture loop ────────────────────────────────────────────────────
+
+# Skills seen this run, and the task each one's discovery test should
+# fire on (the first enact task encountered for that skill). activation
+# and discovery run once per skill, not once per fixture.
+SKILLS_SEEN=""
+declare -A DISCOVERY_TASK=()
+declare -A SKILL_TOOLS=()
 
 for fixture in "$HERE/skills"/*.smoke; do
     [[ -e "$fixture" ]] || continue
@@ -327,35 +779,59 @@ for fixture in "$HERE/skills"/*.smoke; do
     # All greps need `|| true`: under `set -e` a missing line exits
     # non-zero and would abort the whole suite before the malformed
     # guards below can fire (and before the tools: default applies).
-    prompt="$(grep '^prompt:' "$fixture" | sed 's/^prompt:[[:space:]]*//' || true)"
-    expect_substr="$(grep '^expect_substr:' "$fixture" | sed 's/^expect_substr:[[:space:]]*//' || true)"
-    expected_narrative="$(grep '^expected_narrative:' "$fixture" | sed 's/^expected_narrative:[[:space:]]*//' || true)"
+    skill="$(grep '^skill:' "$fixture" | sed 's/^skill:[[:space:]]*//' || true)"
     tools="$(grep '^tools:' "$fixture" | sed 's/^tools:[[:space:]]*//' || true)"
     : "${tools:=claude}"
 
-    # Behavioral fixtures carry fenced setup + assert shell blocks;
-    # judge/substr fixtures carry expect_substr / expected_narrative.
+    playback_block="$(extract_block playback "$fixture")"
+    enact_block="$(extract_block enact "$fixture")"
     setup_block="$(extract_block setup "$fixture")"
     assert_block="$(extract_block assert "$fixture")"
-    behavioral=0
-    [[ -n "$setup_block" || -n "$assert_block" ]] && behavioral=1
 
-    if [[ -z "$prompt" ]]; then
-        fail "fixture $fixture malformed (missing prompt:)"
+    if [[ -z "$skill" ]]; then
+        fail "fixture $fixture malformed (missing skill:)"
         continue
     fi
-    if (( STRESSED )); then
-        prompt="$STRESS_PREFIX"$'\n'"$prompt"
-    fi
-    if (( behavioral )); then
-        if [[ -z "$assert_block" ]]; then
-            fail "fixture $fixture malformed (behavioral needs an --- assert --- block)"
-            continue
-        fi
-    elif [[ -z "$expect_substr" && -z "$expected_narrative" ]]; then
-        fail "fixture $fixture malformed (needs expect_substr:, expected_narrative:, or an --- assert --- block)"
+    if [[ -z "$playback_block" && -z "$enact_block" ]]; then
+        fail "fixture $fixture malformed (needs a --- playback --- or --- enact --- section)"
         continue
     fi
+
+    playback_task="$(block_field task "$playback_block")"
+    playback_narr="$(block_field expect "$playback_block")"
+    playback_substr="$(block_field expect_substr "$playback_block")"
+    enact_task="$(block_field task "$enact_block")"
+    enact_narr="$(block_field expect "$enact_block")"
+    enact_substr="$(block_field expect_substr "$enact_block")"
+
+    if [[ -n "$playback_block" && -z "$playback_task" ]]; then
+        fail "fixture $fixture malformed (playback section needs a task:)"
+        continue
+    fi
+    if [[ -n "$playback_block" && -z "$playback_narr" && -z "$playback_substr" ]]; then
+        fail "fixture $fixture malformed (playback section needs expect: or expect_substr:)"
+        continue
+    fi
+    if [[ -n "$enact_block" && -z "$enact_task" ]]; then
+        fail "fixture $fixture malformed (enact section needs a task:)"
+        continue
+    fi
+    if [[ -n "$enact_block" && -z "$assert_block" && -z "$enact_narr" && -z "$enact_substr" ]]; then
+        fail "fixture $fixture malformed (enact section needs an --- assert --- block, expect:, or expect_substr:)"
+        continue
+    fi
+
+    # Register the skill once, and remember a task its discovery test can
+    # fire on. Only enact tasks qualify — a playback question ("what would
+    # you do if…") is not a task a user states implicitly.
+    if [[ " $SKILLS_SEEN " != *" $skill "* ]]; then
+        SKILLS_SEEN="$SKILLS_SEEN $skill"
+        SKILL_TOOLS[$skill]="$tools"
+    fi
+    if [[ -n "$enact_task" && -z "${DISCOVERY_TASK[$skill]:-}" ]]; then
+        DISCOVERY_TASK[$skill]="$enact_task"
+    fi
+
     IFS=',' read -ra _tool_list <<<"$tools"
     for tool in "${_tool_list[@]}"; do
         tool="${tool//[[:space:]]/}"
@@ -368,21 +844,47 @@ for fixture in "$HERE/skills"/*.smoke; do
         # narrowed by --tools). A fixture that names none of the
         # requested tools simply contributes nothing this run.
         tool_requested "$tool" || continue
-        if (( behavioral )); then
-            assert_behavioral "$tool" "$prompt" "$setup_block" \
-                "$assert_block" "skill:$name via $tool"
-        else
-            assert_response "$tool" "$prompt" "$expect_substr" \
-                "$expected_narrative" "skill:$name via $tool"
+
+        if [[ -n "$playback_block" ]] && kind_requested playback; then
+            run_playback "$tool" "$skill" "$playback_task" "$playback_narr" \
+                "$playback_substr" "$name playback via $tool"
+        fi
+        if [[ -n "$enact_block" ]] && kind_requested enact; then
+            run_enact "$tool" "$skill" "$enact_task" "$enact_narr" "$enact_substr" \
+                "$setup_block" "$assert_block" "$name enact via $tool"
+        fi
+        if [[ -n "$enact_block" ]] && kind_requested integration; then
+            run_integration "$tool" "$skill" "$enact_task" "$enact_narr" "$enact_substr" \
+                "$setup_block" "$assert_block" "$name integration via $tool"
+        fi
+    done
+done
+
+# ── generated per-skill tests ───────────────────────────────────────
+#
+# activation and discovery aren't authored by any fixture — they follow
+# from the skill's name plus (for discovery) one real task.
+
+for skill in $SKILLS_SEEN; do
+    IFS=',' read -ra _tool_list <<<"${SKILL_TOOLS[$skill]}"
+    for tool in "${_tool_list[@]}"; do
+        tool="${tool//[[:space:]]/}"
+        [[ -z "$tool" ]] && continue
+        tool_requested "$tool" || continue
+        if kind_requested activation; then
+            run_activation "$tool" "$skill"
+        fi
+        if kind_requested discovery && [[ -n "${DISCOVERY_TASK[$skill]:-}" ]]; then
+            run_discovery "$tool" "$skill" "${DISCOVERY_TASK[$skill]}"
         fi
     done
 done
 
 echo
 if (( FAILURES == 0 )); then
-    echo "all fixtures passed"
+    echo "all tests passed"
     exit 0
 else
-    echo "$FAILURES fixture(s) failed"
+    echo "$FAILURES test(s) failed"
     exit 1
 fi

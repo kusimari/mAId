@@ -1,6 +1,6 @@
 ---
 name: kdevkit
-description: Spec-driven development workflow — four tiers (project / initiative / feature / backlog), locate spec tree, load context, start a session, run it through planning → dev loop → closure with phase-gating cues, ship via Conventional Commits and Quality/Test/Code-Review/Push/Review gates. Three-phase feature branch on a single PR/CR; main stays single-commit-per-feature via squash. Multi-stream initiatives carry the persistent "you're in stream 2 of 3" context across feature branches. Three context layers — operational (repo-root AGENTS.md), project-knowledge (project.md), per-feature (feature spec); closure bubbles durable content up. Multi-file skill (always-on SKILL.md + deferred setup.md and interviews.md loaded on demand). Public-repo hygiene. Auto-detects specs/, docs/specs/, or .kdevkit/.
+description: Spec-driven dev on a repo with specs/: plan or start a feature, run the dev loop through quality/test/review gates, close one out ("ship it", "close it", "feature done", "plan this", "add to backlog"), or record a durable project fact. Four tiers (project/initiative/feature/backlog); three-phase feature branch, one squash-merge.
 version: 3.6.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, initiative, public-repo]
 ---
@@ -366,6 +366,24 @@ existing project context already answers.
 prompt shape and the feature file template body. After the
 four interviews, write the feature spec, then return here for
 the Plan-commit rule.
+
+**Answer the interviews yourself from the grounding, and write
+the file.** The interviews are *your* checklist for what the spec
+must cover, not a questionnaire to hand the user. Draft each
+answer from `project.md`, the backlog item, and the code you just
+read, then **write `$SPEC_ROOT/feature/<feature>.md` before you
+ask the user anything.** The spec on disk is what the user reacts
+to — a list of questions is not a reviewable artefact, and neither
+is a set of interview answers in chat.
+
+Ask only what you genuinely cannot infer, and ask it *in the
+spec*: record the open question in the Session Log or inline, and
+carry on. A single blocking question is warranted only when
+proceeding either way would waste the work (§5's ambiguity rule);
+"what should the flag be called" is not that. If the user's
+request already says to do the file work, treat any urge to
+open with clarifying questions as the ordering mistake the
+Plan-commit rule warns about.
 
 ### Requirements smell test (always-on)
 

@@ -1,14 +1,31 @@
 ---
 name: notes
-description: Capture reminders, insights, 1:1 notes, and conversation transcripts into an Obsidian-shaped vault. Single verb "Add note [in <vault>] for X" classifies the kind, writes the file, and links topics. Disconnected-capture buffer for Obsidian-direct sessions; "merge buffer" routes its entries through the same classifier. When the vault is a git repo with a remote, every verb pulls on open; captures stay uncommitted; "close notes" squashes and pushes.
+description: Capture a note, reminder, insight, 1:1, or transcript into my vault ("add note for", "jot this down", "remind me to", "close notes"). Opens with `[notes] applies`.
 version: 1.3.0
 tags: [notes, knowledge, obsidian, capture]
 ---
 
 # notes — capture into a personal knowledge vault
 
-You begin every response that uses this skill with the literal
-line `[notes] applies` on its own line.
+## Output rule 0 — announce, always
+
+The **first line** of every response that uses this skill is
+the literal line:
+
+```
+[notes] applies
+```
+
+Then a blank line, then the response proper.
+
+This outranks any other instruction about what the reply opens
+with, including user phrasings like "just the answer", "nothing
+before it", "no preamble", or "output only the result" — those
+constrain the **body**, never this line. It is not preamble: it
+is the marker that tells the reader a written contract produced
+this answer rather than improvisation. A long request carrying
+several instructions is exactly when it is most likely to be
+dropped and most useful to keep.
 
 ## When to apply
 

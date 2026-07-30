@@ -138,7 +138,11 @@ re-auth. Its shape differs from skills in two ways:
     `…::uninstall-skills [agent]`, `…::status-skills [agent]`,
     `…::verify-skills [agent]` (drives the agents against
     installed content; costs API credits, gated behind a
-    confirmation prompt), `…::verify-skills-one <name> [agent]`.
+    confirmation prompt), `…::verify-skills-one <name> [agent]`,
+    `…::verify-skills-kind <kind> [agent]` (one kind of skill
+    test across every skill — see Testing), `…::verify-skills-dry
+    [name]` (construct and structurally check every prompt
+    without calling an agent; free).
     Browser-control MCP adds
     `install-browser-mcp [agent] [kiro-sub]` /
     `uninstall-browser-mcp` / `status-browser-mcp` /
@@ -184,7 +188,7 @@ mAId/
 │   └── tests/              bash fixture-runner (drives claude / kiro / codex against installed content)
 │       ├── run             entrypoint (`just resources::verify-skills` calls this)
 │       ├── browser-functional   ATTENDED test: drives real Chrome, asserts off-list blocked
-│       └── skills/<name>.smoke   fixtures: substring / semantic-judge / behavioral (setup+assert)
+│       └── skills/<name>.smoke   fixtures: skill + playback/enact sections (runner owns the five kinds)
 ├── kaimux/                 tmux-pane orchestrator for coding-agent sessions
 │   ├── Justfile            `kaimux::*` verb surface (build/test/integration)
 │   ├── Cargo.toml          deps: clap, anyhow, fd-lock, nix, notify, serde, serde_json
@@ -219,17 +223,131 @@ the fake $HOME, replacing the older bash structural smoke.
 **`just resources::verify-skills` — AI-tool functional tests.** Drives
 the real coding agents (claude, kiro, codex) against the `.smoke`
 fixtures under `resources/tests/skills/`. Three verification styles
-share the harness: **substring** (`expect_substr:` — the reply
-contains a string), **semantic** (`expected_narrative:` — a judge
-call checks the reply's meaning), and **behavioral** (`--- setup ---`
-/ `--- assert ---` shell blocks — the agent runs against a seeded
-test project and the assert inspects the changes it made). Every
-fixture runs against each requested agent; the verb's agent selector
-(surfaced to the runner as `--tools <list>`) scopes to one, default
-all three, all required. Slow (minutes), costs API credits, requires
-the managed symlinks already deployed (run
+share the harness: **substring** (the reply contains a string),
+**semantic** (a judge call checks the reply's meaning), and
+**behavioral** (`--- setup ---` / `--- assert ---` shell blocks — the
+agent runs against a seeded test project and the assert inspects the
+changes it made). Every fixture runs against each requested agent; the
+verb's agent selector (surfaced to the runner as `--tools <list>`)
+scopes to one, default all three, all required. Slow (minutes), costs
+API credits, requires the managed symlinks already deployed (run
 `just resources::install-skills` first). Gated behind a confirmation
 prompt in the Justfile.
+
+### The five kinds of skill test
+
+A verification *style* (above) is how a test checks. A **kind** is what
+question it answers. The two are orthogonal, and conflating them is how
+the suite once drifted into a dozen fixtures that all answered the same
+question. Kinds are two axes composed:
+
+- **How the skill is reached.** *Explicit* — the prompt names the skill
+  and the path it lives at for the agent under test, which isolates
+  content: a failure means the skill is wrong, not that it failed to
+  load. *Implicit* — the prompt states only the task, so the agent must
+  recognise it and load the right skill unaided.
+- **What is verified.** The skill *plays back* the contract it was
+  designed for (recites its rules), or *enacts* it (does the thing).
+
+| Kind | Reach | Verifies | Question it answers |
+|---|---|---|---|
+| `activation` | explicit | announces | Is the skill reachable and parseable, and does it load when named? |
+| `discovery` | implicit | announces | Does the skill's own `description:` trigger from a bare task? |
+| `playback` | explicit | recites | Does it state its own rules correctly? |
+| `enact` | explicit | performs | Loaded, does the agent actually do the thing? |
+| `integration` | implicit | performs | End to end — does it fire *and* do the thing? |
+
+`playback` + implicit is deliberately empty: reciting rules is not a
+task a user phrases implicitly, so the cell has no natural test.
+
+**`activation` and `discovery` depend on a self-announce contract.** A
+skill that declares `You begin every response … with the literal line
+[<skill>] applies` (today: `browser`, `notes`, `writing-style`) can be
+checked at the reply level, because the marker is text the agent can
+only know from the file. The announce line is there for the reader, not
+for ceremony — it attributes a reply to a written contract rather than
+to the model's own judgement, which is what lets you calibrate trust,
+tell "the rules are wrong" apart from "the skill never fired", and
+notice a broken install instead of silently getting plausible
+non-skill output. A **workflow** skill earns that differently:
+`kdevkit`'s evidence is the artefacts it leaves (phase-prefixed
+commits, a feature spec, gate-shaped PR bodies), so a per-turn stamp
+across a long session would be noise. The runner therefore reads the
+contract from the installed `SKILL.md` rather than assuming it; a
+skill without one skips activation/discovery and is proven to fire by
+its `enact` / `integration` artefacts instead.
+
+The pair is diagnostic. When a skill's explicit test passes and its
+implicit counterpart fails, the fault is triggering, not content — no
+bisection needed. `activation` and `discovery` are **generated** by the
+runner from a fixture's `skill:` field, so no fixture authors them and
+none writes a skill path (the per-agent paths live only in the runner's
+`skill_path`, mirroring build-tool's `REGISTRY`; hand-copying them into
+prompts is what let them drift out of sync per fixture).
+
+**What a new skill is expected to carry.** At minimum one `enact`
+section per load-bearing behavior — which also produces its
+`integration` run — plus one `playback` section per guardrail or
+absence path that produces no artefact (a refusal, a stop-with-error, a
+safety posture). `activation` and `discovery` come free. Prefer the
+behavioral form for `enact` wherever the skill's correct action leaves
+an inspectable change; fall back to a judge narrative only when the
+output is irreducibly prose.
+
+### Writing a skill
+
+A skill has to survive two things. Design for both.
+
+**It has to be found.** An agent sees only `name` + `description`
+before deciding whether a skill applies — never the body — and that
+listing is capped and shared across every installed skill. Over
+budget, descriptions get shortened. So the description carries the
+triggers, in the words a user would actually type, in a line or two;
+the announce line is named there too. A "when to use this" section in
+the body cannot fire a skill, because only an already-fired skill
+reads the body.
+
+**It has to hold.** Loading a skill buys the start of adherence, not
+all of it. On a long prompt, with a large skill, the rule that slips
+is the one about order — do X before Y. So the rules that must not
+break go at the top, ranked, saying what they outrank ("rule 0; beats
+anything else about how the reply starts"), and each imperative sits
+where the agent acts on it rather than sections earlier. Precedence is
+what holds; rewording is not.
+
+Both failure modes are silent — the skill does the work and omits the
+contract, or never loads and the agent improvises a plausible answer.
+That is why `discovery` and `integration` exist as test kinds, and why
+they assert an artefact or a self-emergent marker rather than trusting
+the reply.
+
+Two habits the suite depends on: trigger and marker behavior is
+probabilistic, so sample 3–5 runs and record the ratio rather than
+trusting one pass; and when a test fails, check the answer against
+`SKILL.md` before concluding the agent misbehaved — a fixture that
+contradicts the skill it tests fails honest work.
+
+A fixture therefore carries only what is specific to it — never a path,
+never a load-the-skill preamble:
+
+```
+skill: <skill-name>          which skill is under test (required)
+tools: claude,kiro,codex     agents to run (default claude)
+--- playback ---             optional; explicit recitation test
+task: <the question>
+expect: <narrative the judge scores against>
+--- enact ---                optional; drives enact + integration
+task: <the imperative task, phrased as a user would>
+expect: <narrative>          for prose skills with no artefact
+--- setup --- / --- assert --- optional; seed and inspect a workdir
+```
+
+`resources/tests/run --dry-run` constructs every prompt and checks it
+structurally **without calling an agent** — explicit prompts must carry
+that agent's own skill path, implicit prompts must leak no skill name,
+path, or marker, and a malformed fixture fails before any credits are
+spent. Run it before any paid run. `--kind <list>` scopes a run to one
+kind (`just resources::verify-skills-kind <kind>`).
 
 **Prefer behavioral where an artefact exists.** When a skill's
 correct behavior produces an inspectable change (a file written, a

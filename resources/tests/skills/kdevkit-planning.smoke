@@ -1,5 +1,7 @@
-prompt: Load the kdevkit skill (from ~/.claude/skills/kdevkit/SKILL.md, ~/.kiro/steering/skills/kdevkit/SKILL.md, or ~/.codex/skills/kdevkit/SKILL.md — whichever exists). This repo has specs/project.md and a backlog item specs/backlog/task-snooze.md. Start the feature "task-snooze": promote the backlog item and write specs/feature/task-snooze.md as a kdevkit feature spec grounded in project.md. Do the file work now (create the feature spec); this is the planning phase so do NOT start writing implementation code. When done, print [kdevkit] applies.
+skill: kdevkit
 tools: claude,kiro,codex
+--- enact ---
+task: I want to add a feature to this repo: let a user snooze a to-do so it disappears until a chosen date. There's a note about it under specs/backlog/. Get it ready to work on — do the file work now, in this repo. Don't write the implementation yet; I only want it set up so we can start.
 --- setup ---
 git init -q
 mkdir -p specs/backlog specs/feature

@@ -46,6 +46,16 @@ The interviews are scaffolding — the actual spec layout
 adapts to what the feature needs. The skill's strictness
 lives in the gates (§6 / §7 / §8), not in heading shape.
 
+**These are your own checklist, not a questionnaire for the
+user.** Answer each from the grounding pass — `project.md`, the
+backlog item, the code you just read — and write the spec. Do
+not reply with the four interview answers in chat and stop for
+confirmation: the file on disk is the reviewable artefact, and
+an agent that asks "do these four read right to you?" before
+writing has produced nothing to review. Anything you truly
+cannot infer becomes an open question *recorded in the spec*,
+not a blocking prompt.
+
 After the four interviews, write the feature spec from the
 template below, then return to SKILL.md §6's Plan-commit rule
 (commit + push + open Planning Review Gate).
