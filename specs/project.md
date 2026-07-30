@@ -213,7 +213,7 @@ Two test layers, each scoped to what they verify.
 **`just test` — workspace unit tests.** Rust unit tests
 covering the content validator and the symlink state
 machine against a `tempfile`-fake `$HOME`, plus the kaimux
-crate's 54 unit tests against a tempdir `Store`. Fast
+crate's 53 unit tests against a tempdir `Store`. Fast
 (sub-second). No real `$HOME` side effects, no API credits.
 Load-bearing — this is the §8 Test Gate default. Includes
 a structural integration test (`structural_install_to_real_directory_layout`)
@@ -262,7 +262,8 @@ task a user phrases implicitly, so the cell has no natural test.
 
 **`activation` and `discovery` depend on a self-announce contract.** A
 skill that declares `You begin every response … with the literal line
-[<skill>] applies` (today: `browser`, `notes`, `writing-style`) can be
+[<skill>] applies` (today: `browser`, `notes`, `writing-style`,
+`kreviewkit`) can be
 checked at the reply level, because the marker is text the agent can
 only know from the file. The announce line is there for the reader, not
 for ceremony — it attributes a reply to a written contract rather than

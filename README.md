@@ -175,5 +175,6 @@ the registration but leaves your allowlist in place.
   [`resources/content/skills/kdevkit/SKILL.md`](./resources/content/skills/kdevkit/SKILL.md)
   (live siblings:
   [`notes/`](./resources/content/skills/notes/SKILL.md),
-  [`writing-style/`](./resources/content/skills/writing-style/SKILL.md)).
+  [`writing-style/`](./resources/content/skills/writing-style/SKILL.md),
+  [`kreviewkit/`](./resources/content/skills/kreviewkit/SKILL.md)).
 - Full verb list: `just --list`.
