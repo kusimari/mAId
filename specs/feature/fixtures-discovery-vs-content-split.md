@@ -499,4 +499,48 @@ Architecture entrypoints list.
   discovery nothing to discover. Now they are work requests a user would
   actually make: "Ship it", "Get it ready to work on", "Write that down
   somewhere it'll stick", "Rewrite this so it sounds like me".
+- 2026-07-30 · Findings behind the `project.md` "Writing a skill"
+  guidance, kept here because they are how we arrived at it rather than
+  what it says.
+
+  **Skills are not found reliably just by existing.** A host exposes
+  only name + description up front, on a budget shared with every
+  installed skill (Codex: 2% of context, or 8,000 chars) and shortens
+  descriptions first when over. With ~60 skills installed, ten local
+  ones alone consumed 6,050 chars. Our four descriptions at 3,830
+  chars matched unreliably; cut to 815 they matched 3/3. `kdevkit`
+  additionally kept its trigger cues at body lines 304/754/1004 of a
+  1,120-line file — a place only an already-triggered skill reads — and
+  never self-triggered on codex until they moved into `description:`.
+  `writing-style` named only its formal verb (`"format this in my
+  style"`) and missed the paraphrase a user typed.
+
+  **A loaded skill still drifts as context grows, under explicit
+  selection.** Two instances, both with the skill named and its path
+  given, so neither is a discovery failure. Codex applied
+  `writing-style` correctly — citing the skill's own section names —
+  while dropping the announce line on a long multi-instruction prompt:
+  1 of 4 runs kept it; ranking the line "rule 0, outranks any opening
+  instruction" took it to 5 of 5. Kiro ran all four of `kdevkit`'s
+  planning interviews faithfully (grounded in project.md, reached for
+  chrono per "reach for what exists") and then abandoned the
+  Plan-commit rule, asking "do those four read right to you?" instead
+  of writing the spec — an error the skill explicitly warns about, in
+  prose, sections away from the decision point. Both are the largest
+  skills (kdevkit 1,138 lines, writing-style 251, browser 155). In
+  both cases the wording was already clear; what fixed it was
+  precedence and placing the imperative at the decision.
+
+  **Most failures were the tests, not the skills.** Of the eight in
+  the first honest sweep, two were false judge verdicts from
+  self-grading (each agent judged its own answer), one prompt said
+  "nothing before it" and so suppressed the marker the same fixture
+  asserted, one said "tie it to [[wadler]]" and steered the agent into
+  minting the stub the assert forbids, one assert banned any mention of
+  `just lint` in project.md — which this repo's own project.md does six
+  times — and three narratives failed answers for being *more* precise
+  than the narrative (naming a conditional the skill has, describing a
+  documented section shape). Hence the two habits recorded in
+  `project.md`: sample rather than single-shot, and check the answer
+  against SKILL.md before blaming the agent.
 

@@ -294,68 +294,38 @@ behavioral form for `enact` wherever the skill's correct action leaves
 an inspectable change; fall back to a judge narrative only when the
 output is irreducibly prose.
 
-### Writing a skill: two things that will fail
+### Writing a skill
 
-Assume both. They are not edge cases.
+A skill has to survive two things. Design for both.
 
-**1. It may never fire.** An agent sees only `name` + `description`
-up front — never the body — and that listing is capped and shared
-across every installed skill (Codex: 2% of context, or 8,000 chars).
-Over budget, descriptions get *shortened first*. So:
+**It has to be found.** An agent sees only `name` + `description`
+before deciding whether a skill applies — never the body — and that
+listing is capped and shared across every installed skill. Over
+budget, descriptions get shortened. So the description carries the
+triggers, in the words a user would actually type, in a line or two;
+the announce line is named there too. A "when to use this" section in
+the body cannot fire a skill, because only an already-fired skill
+reads the body.
 
-- Put triggers in `description:`. A "when to use this" section in the
-  body cannot fire the skill — only an already-fired skill reads it.
-- List the paraphrases a user types ("clean this up", "ship it"), not
-  your formal verb.
-- Keep it to a line or two. Long descriptions lose their own triggers
-  *and* crowd out other skills.
-- If the skill has an announce line, name it here too.
+**It has to hold.** Loading a skill buys the start of adherence, not
+all of it. On a long prompt, with a large skill, the rule that slips
+is the one about order — do X before Y. So the rules that must not
+break go at the top, ranked, saying what they outrank ("rule 0; beats
+anything else about how the reply starts"), and each imperative sits
+where the agent acts on it rather than sections earlier. Precedence is
+what holds; rewording is not.
 
-*Evidence:* kdevkit kept its cues at body lines 304/754/1004 and never
-self-triggered on codex. Four descriptions at 3,830 chars matched
-unreliably; at 815 they matched 3/3.
+Both failure modes are silent — the skill does the work and omits the
+contract, or never loads and the agent improvises a plausible answer.
+That is why `discovery` and `integration` exist as test kinds, and why
+they assert an artefact or a self-emergent marker rather than trusting
+the reply.
 
-**2. It may fire and then forget.** The skill loads, the agent
-starts out following it, and then it slips. The longer the prompt and
-the bigger the skill, the more likely this is.
-
-What gets dropped is predictable. Early setup steps survive. The rule
-that slips is the one about *order* — do X before Y — because by the
-time the agent gets there, it has a lot of other instructions in hand
-and yours is just one more. So:
-
-- Put the must-not-break rules at the top and **say they win**. Not
-  "always announce yourself", but "this is rule 0; it beats anything
-  else about how the reply starts."
-- Put the instruction where the agent acts on it. A warning three
-  sections earlier does not reach the moment of the decision.
-- Rewording does not fix this. Ranking does.
-
-*Evidence — both with the skill named and loaded, so this is not a
-firing problem:*
-
-- Codex used writing-style correctly (it cited the skill's own
-  sections) but skipped the announce line on a long prompt — 1 of 4
-  runs kept it. Marking that line "rule 0, beats any opening
-  instruction" took it to 5 of 5.
-- Kiro ran all four of kdevkit's planning interviews properly, then
-  asked "do these look right?" instead of writing the spec file. The
-  skill warns about exactly that mistake — in prose, sections away
-  from where the choice happens.
-
-Both are the biggest skills (kdevkit 1,138 lines; writing-style 251;
-browser 155). More to hold, more that slips.
-
-**Verify by sampling.** This behavior is probabilistic. One passing
-run proves nothing — that mistake was made twice here. Run 3–5, record
-the ratio.
-
-**When a test fails, suspect the test first.** Most failures in this
-suite were the fixture, not the skill: prompts that suppressed the
-marker they asserted, an assert that would fail this repo's own
-`project.md`, narratives that punished answers for being *more*
-accurate than the narrative. Check the answer against `SKILL.md`
-before concluding the agent misbehaved.
+Two habits the suite depends on: trigger and marker behavior is
+probabilistic, so sample 3–5 runs and record the ratio rather than
+trusting one pass; and when a test fails, check the answer against
+`SKILL.md` before concluding the agent misbehaved — a fixture that
+contradicts the skill it tests fails honest work.
 
 A fixture therefore carries only what is specific to it — never a path,
 never a load-the-skill preamble:
