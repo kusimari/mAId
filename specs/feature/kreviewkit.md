@@ -675,6 +675,55 @@ installed-role lookup above.
 
 <!-- append: date · what was done · decisions made -->
 
+- **2026-07-30** · **Behavioral test executed — PASS.** Ran the real
+  `enact` fixture (not `--dry-run`): `resources/tests/run kreviewkit
+  --kind enact --tools claude`. Scoped deliberately to one fixture, one
+  kind, one tool — which also avoids the unsafe generated `discovery`
+  path (see the harness finding below). A live agent, given the seeded
+  scratch repo, satisfied all nine tightened assertions: it read the
+  unchanged `src/util.py` and named the duplication (proving
+  wider-branch reading), caught the spec's untrimmed-input requirement
+  and the absent unit tests, emitted a grouped
+  intent/contract/plumbing focus map, left the worktree and commit
+  count untouched (read-only), leaked no announce marker into the
+  artefact, issued no verdict, and produced labelled judgement items.
+  **Containment:** the run needed the skill readable at
+  `$HOME/.claude/skills/kreviewkit`, so that one symlink was
+  *temporarily* re-pointed at this worktree and **restored
+  immediately** after (verified byte-identical to the saved original);
+  the primary checkout was never written to and both checkouts are
+  clean. Also made the PR/CR publish step **mandatory** in kdevkit —
+  a briefing that stops at the terminal has not been delivered.
+
+- **2026-07-30** · Applied the dogfood briefing's findings. Two
+  **blocking** defects it found, both verified before fixing rather
+  than taken on faith: (1) the skill forbade writing *anything* while
+  the fixture required it to write `BRIEFING.md` — a compliant agent
+  would have refused and failed the test; fixed by scoping the
+  prohibition to "nothing already on the branch" and allowing the
+  briefing artefact itself. (2) The generated `discovery` test reuses
+  the first `enact` task with **no scratch workdir** —
+  `assert_response` takes no workdir parameter at all, so
+  `tool_invoke` runs in the runner's cwd (the checkout) with
+  permissions skipped; my file-writing task would have been aimed at
+  the repo. Pre-existing harness gap (`test-runner-workdir-containment`,
+  `test-runner-sandbox-asymmetry`), but this fixture newly pointed it
+  at a write task: task rephrased and `/BRIEFING.md` gitignored to
+  contain an escape. Sharpest catch: the reads-beyond-the-diff
+  assertion grepped for `util`, which appeared as a **diff context
+  line** (`from src.util import slugify`) — reproduced and confirmed,
+  so a diff-only reviewer could have passed the very assertion meant
+  to catch it; removed the import from the seed and narrowed the grep
+  to `slugify|util\.py`, tokens absent from the diff. Also added the
+  anti-rubber-stamp assertion the spec demanded three times and tested
+  nowhere, fixed §9's body contract to acknowledge the new gate,
+  moved dispatch to before PR-open, made role resolution ask rather
+  than proceed silently on zero-or-many, and cleared three
+  doc-staleness items. **Deferred, flagged:** `just test`'s 97 tests
+  never read the real `resources/content/` (all use `TempDir`), so
+  "green" means "nothing regressed", not "kreviewkit validates" —
+  pre-existing coverage shape, backlog item at closure.
+
 - **2026-07-30** · Dev phase. Authored `kreviewkit/SKILL.md` (v1.0.0)
   and the kdevkit §7 Review Briefing hook (v3.6.0 → 3.7.0).
   **Enforcement probe finding:** mechanism 1 (host-level read-only
