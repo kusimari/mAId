@@ -790,16 +790,37 @@ report where one was produced. It reads the branch
 nothing; prefer dispatching it with read-only tools where the
 host allows it.
 
-**Returns** a human-facing briefing. Dispatch it **after Push,
-before opening or updating the PR/CR**, so the briefing is the
-body the human first sees rather than an overwrite of an
-Approach-only body a moment later. Where the PR already exists
-(a later slice on the same branch), update the body in place.
-The briefing's sections subsume §9's shape — its playback
-carries **Why**/**Approach**, its focus map *is* **Reading
-order**. Apply §9's internal-marker grep before submission —
-the briefing is agent-authored prose entering a public
-surface.
+**Returns** a human-facing briefing.
+
+**The briefing MUST land on the PR/CR.** A briefing that stops
+at the terminal has not been delivered — the review surface is
+where the human reviews, so that is where the briefing belongs.
+Whenever a briefing tool is used, its output becomes the PR/CR
+**body**:
+
+1. Dispatch **after Push, before opening or updating the
+   PR/CR**, so the briefing is the body the human first sees
+   rather than an overwrite of an Approach-only body a moment
+   later.
+2. **No PR/CR yet** → create it with the briefing as the body.
+   **One already open** (a later slice on the same branch) →
+   **update the body in place** with the refreshed briefing.
+   One PR/CR per branch still holds (§9); the body is rewritten,
+   never appended to as a comment.
+3. The briefing's sections subsume §9's body shape — its
+   playback carries **Why**/**Approach**, its focus map *is*
+   **Reading order** — so it replaces that body rather than
+   sitting beside it.
+4. Apply §9's internal-marker grep to the briefing **before**
+   submission: it is agent-authored prose entering a public
+   surface, and it quotes freely from the spec and the diff.
+5. Report the PR/CR URL to the user as the last line of the
+   gate's output, and say the body is a review briefing so they
+   know what they are being handed.
+
+Where a host's review surface genuinely cannot be written to,
+say so explicitly and put the briefing in front of the user
+some other way — never drop it silently.
 
 The briefing informs the human's closure decision; it does
 **not** gate it. `"close it"` remains the only trigger for §8,
