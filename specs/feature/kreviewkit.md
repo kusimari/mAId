@@ -61,6 +61,41 @@ reads. Between them they close both axes kdevkit §9 names — the gate
 checks *diff-vs-project*; kreviewkit checks *diff-vs-spec* and hands
 the human a map.
 
+### Audience: the human about to review — not the author, not a gate
+
+The briefing is written **for the human reviewer, before they
+review**. That audience is what separates kreviewkit from everything
+in References, and the distinction has to survive into the skill's
+prose or it will drift back into being another automated reviewer:
+
+| | Audience | Speech act | Success looks like |
+|---|---|---|---|
+| **Automated reviewer** (Sourcery, CodeRabbit, kdevkit §7 gate) | the **author** | "fix this" — findings, severity, blocking status | defects caught before a human looks |
+| **Reviewer guidance** (Google eng-practices) | the **reviewer** | "look for this" — a standing checklist to apply | reviewers who review well, on any change |
+| **kreviewkit** | the **reviewer**, about this change | "here is what shipped, and where your attention is worth most" | a human who reviews *faster and better* than reading the diff cold |
+
+Consequences that bind the design:
+
+- **It orients; it does not adjudicate.** Its job is to hand over
+  understanding and a focus order, not a verdict. Where it has a
+  concern it says "this is worth your judgement, and here's why" —
+  not "this is a defect, fix it." Adjudicating is kdevkit's §7 gate's
+  job, and it already exists.
+- **The human stays the reviewer.** The briefing must never read as
+  "already reviewed, nothing to see." It makes the human's review
+  cheaper, never optional — a briefing that induces rubber-stamping is
+  a failure even if every statement in it is true.
+- **It is written to be read once, in order, then set aside.** Not a
+  standing checklist (Google's guide is that, and is referenced rather
+  than restated) and not a findings database (the §7 gate is that).
+- **Author-facing artefacts are borrowed with care.** Conventional
+  Comments' labels encode *author obligation* (`blocking` = "you must
+  fix before merge"). Re-pointed at a reviewer they mean *"how much of
+  your attention this deserves"*. The skill uses the grammar for its
+  legibility but restates the audience, so `issue (blocking)` reads as
+  "don't approve without resolving this", not as an instruction to the
+  author.
+
 ### What "spec" means here
 
 The **spec** is the feature's full statement, not merely a task list:
@@ -219,6 +254,7 @@ come free from the self-announce contract + `description:`.
 | Loaded when named, announces `[kreviewkit] applies` | generated | activation |
 | Bare "review what was done" task reaches it unaided (implicit fallback) | generated | discovery |
 | States its own contract: four sections, read-only-but-spec-aware, briefing = PR/CR body | `kreviewkit.smoke` `--- playback ---` | playback |
+| Knows its audience: briefs a human about to review; orients rather than adjudicates; never a verdict | `kreviewkit.smoke` `--- playback ---` | playback |
 | States the isolation model correctly: reads the wider branch, writes nothing, no implementer history | `kreviewkit.smoke` `--- playback ---` | playback |
 | Given a spec + diff, produces the four-section briefing with a risk-ranked reading map | `kreviewkit.smoke` `--- enact ---` | enact |
 | Reads beyond the diff — cites context from an unchanged file when the diff alone is misleading | `kreviewkit.smoke` `--- enact ---` (seeded) | enact |
@@ -251,6 +287,39 @@ come free from the self-announce contract + `description:`.
 - Prefer behavioral (`--- setup ---`/`--- assert ---`) where the
   briefing lands as an inspectable file; fall back to judge narrative
   for the irreducibly-prose independence/tone claims.
+
+### Dogfood run (real usage — complements the fixtures)
+
+The fixtures prove the contract in the small; the dogfood run proves
+the skill is *actually useful to a human*, which is the only success
+criterion that matters and the one no fixture can assert. **This
+feature's own PR body is produced by kreviewkit.**
+
+- **Setup:** once the skill is authored and installed, dispatch it
+  independently (fresh agent, read-only) on this very branch —
+  inputs: `specs/project.md`, `specs/feature/kreviewkit.md` (the
+  spec), the diff vs. base, and the `just test` report.
+- **The artefact:** the returned briefing replaces the PR body at the
+  Agent-dev Review Gate. The user reads it *as their review briefing*
+  for this feature.
+- **What it tests that fixtures can't:** whether the four sections
+  actually orient a human faster than reading the diff cold, whether
+  the focus map points at the right things, whether section 4 asks
+  for judgement on the genuinely contestable calls (role-resolution
+  discovery, read-only enforcement per host), and whether the prose
+  reads as a briefing rather than a verdict.
+- **Pass condition is the user's judgement, not a score:** the user
+  reports whether the briefing made reviewing this change easier. A
+  briefing that reads well but tells the user nothing they didn't
+  know is a fail; so is one that reads as "already reviewed."
+- **Honesty check built in:** the dogfooded briefing must be produced
+  by a genuine independent dispatch, not hand-authored by the
+  implementing session. If the dispatch can't be made to work, that
+  is a finding to surface, not something to paper over by writing the
+  briefing by hand.
+
+Findings from the dogfood run feed back as dev-loop slices before
+closure.
 
 Quality gate: `just fmt-check` + `just lint` + `just check` (or
 `just ci`) after each slice.
@@ -422,14 +491,25 @@ re-fetch and update. No caching machinery, no build-time fetch step —
 the URL is the provenance marker for a human or agent refreshing the
 content later.
 
-| Source | What we take from it |
-|---|---|
-| [Google eng-practices — What to look for in a code review](https://google.github.io/eng-practices/review/reviewer/looking-for.html) | The review dimensions; "look at every line"; **open the whole file / zoom out to the system** — the citation behind read-only-but-wider-than-the-diff. |
-| [Google eng-practices — Navigating a CL in review](https://google.github.io/eng-practices/review/reviewer/navigate.html) | Broad → main parts → the rest. Independent corroboration of the *Read for intent / contract / plumbing* ordering; also "surface serious design concerns immediately". |
-| [Conventional Comments](https://conventionalcomments.org/) | Label + decoration grammar for section 4 findings. |
-| [Sourcery — anatomy of a review / Reviewer's Guide](https://docs.sourcery.ai/reviews/anatomy-of-a-review/) | Prior art for the artefact: overview + file-level why-map ("where to focus") + diagrams only for non-trivial control flow; why/risk belongs in the PR *description*. |
-| [CodeRabbit — code review overview](https://docs.coderabbit.ai/guides/code-review-overview) | Prior art for the walkthrough: orientation before opening a file; a review-effort/risk signal; narrative kept separate from localized findings. |
-| [GitHub — about pull request reviews](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/reviewing-changes-in-pull-requests/about-pull-request-reviews) | Review states (comment / approve / request changes) and body-vs-line-comment split, for the output-binding step. |
+**Read these sources with the audience gap in mind.** Most were built
+for a *different* audience than ours (see "Audience" above): the
+automated-reviewer tools address the **author** with findings, and
+Google's guide addresses a **reviewer doing the review** with a
+standing checklist. kreviewkit addresses a **human about to review a
+specific change**. So they are mined selectively — for what to draw
+the human's attention *to* and how to order it — and their
+author-facing framing (verdicts, blocking status, fix-this
+imperatives) is deliberately **not** carried over. The `Taken as`
+column below states which side of that line each source sits on.
+
+| Source | Taken as | What we take from it |
+|---|---|---|
+| [Google eng-practices — What to look for in a code review](https://google.github.io/eng-practices/review/reviewer/looking-for.html) | reviewer-facing ✅ closest fit | The review dimensions (design, functionality, complexity, tests, naming, comments, style, consistency, docs) as the *attention agenda* the briefing points into; "open the whole file / zoom out to the system" — the citation behind read-only-but-wider-than-the-diff. |
+| [Google eng-practices — Navigating a CL in review](https://google.github.io/eng-practices/review/reviewer/navigate.html) | reviewer-facing ✅ closest fit | Broad → main parts → the rest. Independent corroboration of *Read for intent / contract / plumbing*; "surface serious design concerns immediately" maps onto putting section 4 in front of the human early. |
+| [Conventional Comments](https://conventionalcomments.org/) | author-facing ⚠️ re-pointed | Label + decoration grammar for section 4, **restated for a reviewer**: labels signal how much of the human's attention an item deserves, not an obligation on the author. |
+| [Sourcery — anatomy of a review / Reviewer's Guide](https://docs.sourcery.ai/reviews/anatomy-of-a-review/) | automated-reviewer ⚠️ artefact shape only | The artefact shape: overview + file-level why-map ("where to focus") + diagrams only for non-trivial control flow; why/risk belongs in the PR *description*. Its inline findings-and-fixes layer is **not** our model. |
+| [CodeRabbit — code review overview](https://docs.coderabbit.ai/guides/code-review-overview) | automated-reviewer ⚠️ artefact shape only | The walkthrough idea: orientation before opening a file, a review-effort/risk signal, narrative kept separate from localized findings. Its severity-ranked author-facing comments are **not** our model. |
+| [GitHub — about pull request reviews](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/reviewing-changes-in-pull-requests/about-pull-request-reviews) | platform mechanics | Review states (comment / approve / request changes) and body-vs-line-comment split, for the output-binding step. Note kreviewkit writes the **body** and does not submit a review state — the human owns approve/request-changes. |
 
 Each inlined block in `SKILL.md` carries a terse
 `see <url>` pointer — per project.md's comment convention, a pointer,
@@ -489,12 +569,15 @@ installed-role lookup above.
   terminology, bundle inputs + optional test report,
   explicit-primary / implicit-fallback triggers, reviewer isolation,
   role indirection.
-- [ ] Revise per feedback round 2: **read-only-not-sealed** isolation
+- [x] Revise per feedback round 2: **read-only-not-sealed** isolation
   model (reads the wider branch, writes nothing), enforcement by
   whatever mechanism the host makes cheap, and a **References**
   section that stands on existing review guidance instead of
-  re-deriving it. Push; update the PR body; wait for the planning →
-  dev cue.
+  re-deriving it.
+- [x] Revise per feedback round 3: **audience framing** — the
+  briefing serves a *human about to review*, which most references
+  were not built for; plus the dogfood run as a real-usage test.
+  Planning → dev cue given ("go ahead and build").
 
 ### Dev phase
 
@@ -524,11 +607,12 @@ installed-role lookup above.
   case, a reads-beyond-the-diff case, and the worktree-unchanged
   assert — and extend `kdevkit-dev-loop.smoke` for role-based
   dispatch. `--dry-run` before any paid run.
+- [ ] **Dogfood run.** Dispatch kreviewkit independently on this
+  branch and use the returned briefing as this PR's body (see Test
+  Strategy → Dogfood run). Hand it to the user as their review
+  briefing; fold any findings back as dev-loop slices.
 - [ ] **Quality + Test + Code Review + Push** for the branch; open /
-  update the Agent-dev Review Gate. (Self-applicable: this feature's
-  own PR body should itself be a kreviewkit briefing, produced by a
-  genuine independent read-only dispatch — not hand-authored by the
-  implementing session.)
+  update the Agent-dev Review Gate.
 
 ### Closure phase
 
@@ -625,6 +709,32 @@ installed-role lookup above.
 ## Decision Log
 
 <!-- append: decision · rationale · alternatives rejected -->
+
+- **2026-07-30 · The audience is the human about to review — and the
+  references mostly aren't.** Rationale: Sourcery, CodeRabbit and
+  kdevkit's own §7 gate are *automated reviewers speaking to the
+  author* ("fix this"); Google's guide is *standing advice to a
+  reviewer* ("look for this"); kreviewkit briefs *this* human on
+  *this* change ("here is what shipped and where your attention is
+  worth most"). Left implicit, that gap would pull the skill back into
+  being another findings-producing reviewer, which already exists.
+  Made explicit as an Audience subsection plus a `Taken as` column on
+  the References table marking which sources are reviewer-facing
+  (mineable directly) vs. author-facing (shape only, framing dropped).
+  Consequences: it orients rather than adjudicates; it must never read
+  as "already reviewed"; Conventional Comments labels are re-pointed
+  to mean *attention warranted* rather than *author obligation*; it
+  writes the PR body but never submits an approve/request-changes
+  state — the human owns the verdict.
+- **2026-07-30 · Dogfood the skill on its own PR as a first-class
+  test.** Rationale: fixtures can assert the contract but not
+  usefulness, which is the actual goal. This feature's own briefing is
+  produced by a genuine independent dispatch and handed to the user as
+  their review briefing; the pass condition is the user's judgement
+  that it made reviewing easier, not a score. A briefing that reads
+  well but conveys nothing new fails, as does one that induces
+  rubber-stamping. Alternative rejected: fixtures only — they'd all
+  pass on a briefing no human found useful.
 
 - **2026-07-30 · Reviewer is read-only, not sealed — it reads the
   wider branch and writes nothing.** *Supersedes the "sealed" entry
