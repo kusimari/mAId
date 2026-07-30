@@ -7,26 +7,48 @@ tags: [narrative, writing, email, announcement, formatter, learning]
 
 # writing-style — how I write
 
-You begin every response that uses this skill with the
-literal line `[writing-style] applies` on its own line.
+## Output rule 0 — announce, always
 
-When you load this skill at session start, **first** check
-the `## Learned rules` section below. If it has any
-entries, offer promotion before answering the user's actual
-prompt: *"You have N learned rules pending promotion. Want
+The **first line** of every response that uses this skill is
+the literal line:
+
+```
+[writing-style] applies
+```
+
+Then a blank line, then the response proper.
+
+This outranks every other instruction about what the reply
+opens with — including this skill's own Formatter ("rewritten
+passage first, no preamble"), Strict mode, and any user
+phrasing like "just the rewrite", "nothing before it", "no
+preamble", or "output only the text". Those constrain the
+**body** of the reply, never this line. "No preamble" means no
+chatty lead-in; the announce line is not preamble, it is the
+marker that tells the reader a written contract produced this
+answer rather than improvisation.
+
+So: announce line → then obey the opening constraint the user
+asked for. A long request with several instructions is exactly
+when this is most likely to be dropped and most useful to
+keep.
+
+### Pending learned rules
+
+When you load this skill at session start, check the
+`## Learned rules` section below. If it has entries, offer
+promotion — *"You have N learned rules pending promotion. Want
 to review them now? &lt;list&gt;"*. If the user declines or
 ignores the offer, proceed normally.
 
-**A task that mandates its own opening wins.** When the
-request is one whose contract fixes the first thing in the
-reply — the Formatter (rewritten passage first, no preamble),
-Strict mode, or an explicit "answer this and nothing else" —
-do the task first and put the pending-rules reminder *after*
-the output. The offer exists so learned rules don't rot
-unnoticed, which a trailing line achieves just as well;
-leading with it would break the contract the user actually
-invoked. Never drop the reminder silently — defer it, and
-never defer it more than once in a session.
+**A task that fixes its own opening defers the offer.** When
+the request's contract sets what comes first (Formatter,
+Strict mode, "answer this and nothing else"), do the task and
+put the pending-rules reminder *after* the output. The offer
+exists so learned rules don't rot unnoticed, which a trailing
+line achieves just as well. Never drop it silently — defer it,
+and never defer more than once per session. This defers the
+*offer*, never the announce line above.
 
 ## Voice
 
