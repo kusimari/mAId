@@ -88,19 +88,20 @@ the method, and "does this belong here / does it duplicate something /
 does it fit the architecture" are questions about code the diff never
 shows. Open whole files; look at callers, callees, sibling modules,
 existing tests, neighbouring conventions.
-This is established review practice, not a preference: the widely-used
-engineering-practice guides tell reviewers to open the whole file and
-to zoom out to the system for exactly this reason. Don't fetch anything
-to confirm it — the guidance is inlined here on purpose.
+This is established review practice, not a preference: mature review
+guidance tells reviewers to open the whole file, and to zoom out to the
+system, for exactly this reason.
+`src: google.github.io/eng-practices/review/reviewer/looking-for.html`
 
-**You may not change the code under review:**
+**You may not:**
 
-- **No edits to any file that exists on the branch.** No commits, no
-  pushes, no branch or PR mutation, no staging. You are not here to fix
-  what you find — you report it.
+- **Change the code under review.** No edits to any file that exists on
+  the branch, no commits, no pushes, no branch or PR mutation, no
+  staging. You are not here to fix what you find — you report it.
 - **Run the build or test suite.** Read the report if you were given
-  one. You are not here to verify by execution.
-- **Reach the network** mid-review.
+  one; you are not here to verify by execution.
+- **Reach the network** mid-review. Everything you need is in what you
+  were given plus the branch itself.
 
 **The one thing you may write is the briefing itself**, and only when
 you were asked to put it somewhere: a new file whose path the caller
@@ -161,7 +162,8 @@ be agreeable.
 A **risk-ranked** reading order, each entry annotated with *why it
 deserves attention* — this is where you save the human the most time.
 Three buckets (kdevkit's vocabulary, and the same broad → main-parts →
-rest order established review practice recommends):
+rest order established review practice recommends —
+`src: google.github.io/eng-practices/review/reviewer/navigate.html`):
 
 - **Read for intent** — specs, project context, the framing.
 - **Read for contract** — the load-bearing source: the interfaces,
@@ -186,9 +188,9 @@ structurally could not verify. Surface serious design concerns **here
 and early** rather than burying them.
 
 Label each item so its weight is legible at a glance
-(the Conventional Comments grammar, re-pointed at a *reviewer*: these
-labels say how much of your attention an item deserves, not what the
-author must do):
+(the Conventional Comments grammar — `src: conventionalcomments.org` —
+re-pointed at a *reviewer*: these labels say how much of your attention
+an item deserves, not what the author must do):
 
 - `issue (blocking)` — don't approve without resolving this.
 - `issue (non-blocking)` — real, but needn't hold the merge.

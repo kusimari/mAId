@@ -97,9 +97,12 @@ grep -qiE '\bslugify\b' BRIEFING.md
 # dropped it. "trim"/"whitespace" come from the SPEC, not the diff, so
 # they show the reviewer actually held spec against code.
 grep -qiE 'trim|whitespace' BRIEFING.md
-# The spec's required unit tests were never added. Phrases only — a bare
-# "test coverage" would also match a briefing saying coverage is fine.
-grep -qiE 'no unit test|missing test|absent test|no test|without test|untested|no coverage|lacks? test' BRIEFING.md
+# The spec's required unit tests were never added. Phrases only, and
+# note the absent alternatives: a bare "test coverage" would match a
+# briefing saying coverage is FINE, and "no test" (singular) is a
+# substring of "no test report" — boilerplate this skill *guarantees*
+# whenever no report is supplied, which the enact run never supplies.
+grep -qiE 'no unit test|missing test|absent test|untested|no coverage|lacks? test|no tests\b|added no test' BRIEFING.md
 # A GROUPED, RISK-RANKED FOCUS MAP — the bucket names themselves, not
 # merely the word "risk" somewhere in prose.
 grep -qiE 'read for intent|read for contract|read for plumbing' BRIEFING.md

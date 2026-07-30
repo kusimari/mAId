@@ -854,7 +854,7 @@ Where a host's review surface genuinely cannot be written to,
 say so explicitly and put the briefing in front of the user
 some other way — never drop it silently.
 
-**At closure (§8.5), the briefing survives.** The Closure Review
+**At closure (§8 step 5), the briefing survives.** The Closure Review
 Gate rewrites the *title* and adds **Verification**; it does
 **not** replace a briefing body with an Approach-only one. Where
 the closing diff moved on materially from what was briefed,
