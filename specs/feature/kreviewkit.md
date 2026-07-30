@@ -581,32 +581,45 @@ installed-role lookup above.
 
 ### Dev phase
 
-- [ ] **Probe the read-only enforcement options** before authoring, so
-  the prose commits to something real: check what each host makes
-  cheap (read-only tool restriction / detached read-only worktree /
-  prose-only). Record the finding in the Session Log; pick the
-  cheapest workable mechanism per host and let prose be the floor.
-- [ ] **kreviewkit SKILL.md.** Author the skill: description
-  (user-phrased triggers first, role advertised), self-announce
-  contract, the four-section briefing contract, the read-only reviewer
-  contract, standalone-vs-kdevkit modes, briefing-as-PR/CR-body
-  binding, and the inlined reference guidance with `see <url>`
-  pointers.
-- [ ] **Confirm no registry/validator change needed.** `just test`;
-  `just resources::install-skills` + `status-skills`; verify the
-  codex `FanOut` picks up the new dir. If the fan-out misses it,
-  that's a real registry slice — surface it.
-- [ ] **kdevkit role-based dispatch hook.** Additive §7→§8 hook +
-  `review_brief:` resolution (named ref → single installed role →
-  ask once and persist). Names the role, not kreviewkit.
-- [ ] **project.md docs.** Document `review_brief:` under
-  `## Agent Development > kdevkit`; declare mAId's own setting
-  (dogfood).
-- [ ] **Fixtures.** `kreviewkit.smoke` — playback incl. the
-  read-only isolation claim; enact incl. a seeded spec↔diff drift
-  case, a reads-beyond-the-diff case, and the worktree-unchanged
-  assert — and extend `kdevkit-dev-loop.smoke` for role-based
-  dispatch. `--dry-run` before any paid run.
+- [x] **Probe the read-only enforcement options.** Mechanism 1
+  (host-level tool restriction) is cheap on Claude Code — native
+  `--allowedTools` / `--disallowedTools` / `--tools` flags plus a
+  `tools:` field in agent definitions; no sandboxing needed. Prose
+  remains the portable floor for hosts without it. Recorded in the
+  Session Log.
+- [x] **kreviewkit SKILL.md.** Authored: description (user-phrased
+  triggers first, role advertised), self-announce contract, the
+  four-section briefing contract, the read-only reviewer contract,
+  audience framing, standalone-vs-kdevkit modes,
+  briefing-as-PR/CR-body binding, and inlined reference guidance with
+  `see <url>` pointers.
+- [x] **Confirmed no registry/validator change needed.** The
+  validator walks every skill dir generically and checks frontmatter
+  (`name` + `description` non-empty) — `kreviewkit` passes. The codex
+  `FanOut` **does** enumerate the new dir: `status-skills` reported
+  `.codex/skills/kreviewkit missing`, proving discovery from the
+  content dir with no registry edit. 97 unit tests green.
+- [x] **kdevkit role-based dispatch hook.** Added §7 "Review Briefing
+  (dev → closure hand-off)": opt-in via `review_brief:`, dispatches
+  the *role* with three-step resolution, contract (spec included,
+  read-only, fresh context), publishes as PR/CR body, explicitly
+  non-gating. Wired into §2 verify + §4/§7 preference loading.
+  Version 3.6.0 → 3.7.0. Verified: kdevkit never names kreviewkit.
+- [x] **project.md docs.** Documented `review_brief:` under
+  `## Agent Development > kdevkit` with mAId's own dogfood setting
+  (`enabled: true`, `reviewer:` omitted → role resolution).
+- [x] **Fixtures.** `kreviewkit.smoke` written: `playback` covers
+  audience + four sections + read-only isolation; `enact` is
+  behavioral, seeding a repo where the diff looks fine alone but
+  duplicates an unchanged `src/util.py` helper (only a
+  wider-branch reader catches it), declares a requirement the diff
+  doesn't deliver (trimming) and unit tests never added. Asserts:
+  briefing produced (no-op fails), worktree + commit count unchanged
+  (read-only), no marker leak into the artefact, duplication named,
+  reconciliation gap named, focus map present, no verdict.
+  `kdevkit-dev-loop.smoke` extended for role-based dispatch with
+  wrong-answer cues. `--dry-run`: all pass, `kreviewkit`
+  activation/discovery generate correctly for claude + kiro.
 - [ ] **Dogfood run.** Dispatch kreviewkit independently on this
   branch and use the returned briefing as this PR's body (see Test
   Strategy → Dogfood run). Hand it to the user as their review
@@ -661,6 +674,38 @@ installed-role lookup above.
 ## Session Log
 
 <!-- append: date · what was done · decisions made -->
+
+- **2026-07-30** · Dev phase. Authored `kreviewkit/SKILL.md` (v1.0.0)
+  and the kdevkit §7 Review Briefing hook (v3.6.0 → 3.7.0).
+  **Enforcement probe finding:** mechanism 1 (host-level read-only
+  tool restriction) is cheap on Claude Code — native
+  `--allowedTools` / `--disallowedTools` / `--tools` flags plus a
+  `tools:` field in agent definitions — so no sandboxing or
+  read-only-checkout machinery is needed there; prose stays the
+  portable floor for hosts lacking it. **Registry finding:** confirmed
+  no registry or validator change is needed — the validator walks
+  skill dirs generically, and `status-skills` reporting
+  `.codex/skills/kreviewkit missing` proved the codex `FanOut`
+  enumerates the new dir on its own. Gates: `fmt-check` + `lint` +
+  `check` + `test` green (97 unit tests); fixture `--dry-run` all
+  pass. Note: did **not** re-point the live `$HOME` symlinks at this
+  worktree — `status-skills` shows them bound to the primary checkout,
+  which is correct and left alone.
+
+- **2026-07-30** · Round-3 revision. User flagged that the References
+  were mostly built for a *different audience* — automated reviewers
+  addressing the **author**, or standing guidance for **any**
+  reviewer — whereas kreviewkit briefs *this human about this change*.
+  Added an **Audience** subsection (three-way table + four binding
+  consequences: orient don't adjudicate; the human stays the reviewer;
+  never submit a review state; read-once-then-set-aside) and a
+  `Taken as` column on the References table marking each source
+  reviewer-facing vs. author-facing-shape-only. Conventional Comments
+  labels explicitly re-pointed to mean *attention warranted* rather
+  than *author obligation*. Also added the **dogfood run** as a
+  first-class test: this feature's own PR body is produced by
+  kreviewkit via a genuine independent dispatch, with the user's
+  judgement as the pass condition.
 
 - **2026-07-30** · Round-2 revision. Two corrections from the user.
   (1) The "sealed" model was wrong: hardening isn't about file access.
