@@ -276,32 +276,36 @@ Architecture entrypoints list.
 
 ## Implementation Plan
 
-- [ ] Runner: add `skill_path <tool> <skill>` beside `tool_invoke`;
+- [x] Runner: add `skill_path <tool> <skill>` beside `tool_invoke`;
       add explicit/implicit prompt envelopes.
-- [ ] Runner: add `run_activation`, `run_discovery`, `run_playback`,
+- [x] Runner: add `run_activation`, `run_discovery`, `run_playback`,
       `run_enact`, `run_integration` over the existing
       `assert_response` / `assert_behavioral` primitives, with the two
       enact strategies (artefact vs. prose).
-- [ ] Runner: `--kind <name>` filter + unknown-kind rejection; update
+- [x] Runner: `--kind <name>` filter + unknown-kind rejection; update
       the header comment (`--help`) to narrate the axes and kinds.
-- [ ] Convert all 13 fixtures to the `skill:` + `task:` format:
+- [x] Convert the fixtures to the `skill:` + `task:` format (13 became
+      11: `writing-style`'s three consolidated into one, since its
+      activation fixture is now generated):
       delete the hand-written load preamble and per-agent paths, and
       delete the dead `print [<skill>] applies` lines from the six
       behavioral fixtures. Setup/assert blocks unchanged.
-- [ ] Add the two prose integration fixtures (`writing-style`,
+- [x] Add prose integration coverage (`writing-style`,
       `browser`): bare task, self-emergent marker, judge narrative.
       `browser` stays describe-only so no real Chrome is driven.
-- [ ] Credit-free verification: assert each agent's explicit prompt
+- [x] Credit-free verification: assert each agent's explicit prompt
       carries that agent's own path (catches the codex drift), each
       implicit prompt leaks no skill name / path / marker, malformed
       fixtures fail before an agent runs, and `--kind` selects
       correctly.
-- [ ] Justfile: `verify-skills-kind <kind> [agent]`.
-- [ ] `project.md`: narrate the taxonomy in Testing; register the new
+- [x] Justfile: `verify-skills-kind <kind> [agent]`.
+- [x] `project.md`: narrate the taxonomy in Testing; register the new
       verb in Architecture entrypoints.
-- [ ] Quality Gate (`just fmt-check` + `just lint` + `just check`) and
+- [x] Quality Gate (`just fmt-check` + `just lint` + `just check`) and
       Test Gate (`just test`) stay green.
-- [ ] Hand off / run the functional layer across all three agents;
+- [x] Ran the functional layer across all three agents (user-directed;
+      final sweep 88 pass / 2 fail / 6 skip, then both remaining
+      failures fixed and verified);
       treat an implicit-test failure as a trigger-strength finding to
       record, not a prompt to soften.
 
@@ -543,4 +547,21 @@ Architecture entrypoints list.
   documented section shape). Hence the two habits recorded in
   `project.md`: sample rather than single-shot, and check the answer
   against SKILL.md before blaming the agent.
+- 2026-07-30 · Closure. Reconciled the Implementation Plan (all ten items
+  verified present in the code before ticking; two reworded where scope
+  changed — 13 fixtures became 11 when `writing-style`'s three
+  consolidated, since its activation test is now generated). project.md
+  edits landed during the feature: Testing carries the five kinds and the
+  two skill-authoring failure modes, Architecture registers
+  `verify-skills-kind` / `verify-skills-dry`, Layout's fixture annotation
+  updated. Retired `writing-style-session-start-vs-formatter-precedence`
+  — this feature added exactly the precedence line it asked for, and the
+  codex playback test that had been failing on that collision now passes.
+  Filed `verify-runner-in-rust` on the way out: the runner reached 860
+  lines of bash owning prompt construction, five kinds and verdict
+  parsing, with no unit coverage — four of this feature's bugs were found
+  only by paid sweeps. Two known issues ship with the feature, both filed:
+  `test-runner-workdir-containment` (behavioral tests can write into the
+  checkout; a leak tripwire now fails the run, but does not prevent it)
+  and `test-runner-sandbox-asymmetry`.
 
