@@ -1,6 +1,6 @@
 ---
 name: writing-style
-description: Use whenever writing or reworking prose in my voice — any request to format, rewrite, clean up, tighten, reword, or edit a passage, or to draft an email, announcement, doc, or message as me. Triggers include "format this in my style", "rewrite this so it sounds like me", "make this sound like me", "clean this up", "in my voice", "my house style", plus "new rule: …" / "add rule: …" / "style rule: …" to teach a rule, and "strict mode on/off". Every response that uses this skill opens with the literal line `[writing-style] applies`. Voice, tone, and structure for my prose. Includes a formatter verb, an opt-in strict mode that flags style violations before sending, and an explicit-teach loop that captures new rules into the curated source.
+description: Rewrite, format, clean up, tighten, or reword prose in my voice; draft an email or doc as me; "new rule:" to teach a style rule. Opens with `[writing-style] applies`.
 version: 1.1.0
 tags: [narrative, writing, email, announcement, formatter, learning]
 ---

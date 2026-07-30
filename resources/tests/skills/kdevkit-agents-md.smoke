@@ -41,8 +41,19 @@ git add -A && git commit -q -m "seed" || true
 set -e
 # The operational command landed in AGENTS.md (the operational layer).
 grep -qF 'just lint' AGENTS.md
-# It was NOT duplicated into project.md (which holds knowledge, not commands).
-test -z "$(grep -F 'just lint' specs/project.md || true)"
+# project.md did not become the operational home for it. The rule is that
+# AGENTS.md owns the command and project.md Testing keeps "only the layer
+# semantics" — which permits a pointer like "commands live in AGENTS.md and
+# include `just lint`". A bare substring ban cannot tell a pointer from a
+# duplicate, and would fail this very repo's project.md, which names
+# `just lint` and `just test` six times. So check the thing that matters:
+# project.md must not carry a runnable command line or a commands section of
+# its own.
+test -z "$(grep -iE '^#+.*(commands|how to run|build & test)' specs/project.md || true)"
+# No fenced command block was added to project.md (a prose mention like
+# "verified by `just lint`" is layer semantics; a copy-pasteable block is
+# the operational content that belongs in AGENTS.md).
+test -z "$(awk '/^```/{f=!f;next} f && /^[[:space:]]*(just|cargo) /{print}' specs/project.md || true)"
 # AGENTS.md stays a lean, convention-clean file — no kdevkit scaffold
 # leaked in (no six-section headers, no HTML-comment prompts, no logs).
 test -z "$(grep -iE 'Session Log|Decision Log|Active initiatives|Feature Brief|Implementation Plan' AGENTS.md || true)"
