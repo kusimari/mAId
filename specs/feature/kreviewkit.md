@@ -15,19 +15,33 @@
 
 A new standalone skill, **`kreviewkit`**, that produces a
 **human-consumable review briefing** for a completed change. A
-sealed, independent reviewer is handed a **bundle** — project
-context, the feature **spec**, the diff, and (where available) the
-test run report — and writes a report that plays the feature back,
+fresh, independent, **read-only** reviewer is given project context,
+the feature **spec**, the diff, and (where available) the test run
+report — plus read access to the branch under review — and writes a
+report that plays the feature back,
 reconciles what the spec called for against what was built, and
 points the human at what most needs their judgement. The briefing
 **is** the pull-request / code-review body.
 
-**Sealed** is the load-bearing property: the reviewer gets *nothing*
-beyond the bundle it is handed — no filesystem, no repo, no network,
-no conversation history. This is deliberately the position of a human
-reviewer who receives only a PR. It cannot go and look something up,
-so what it sees is exactly what it was given, and its read is
-reproducible from the bundle alone.
+**Independent and read-only** is the load-bearing property. The
+reviewer is a fresh agent that never wrote the code, works from what
+it is given plus **read-only** access to the branch under review, and
+**cannot write anything** — no edits, no commits, no pushes, no
+network calls, no test execution. It reads; it reports. What it must
+not have is *insight it wasn't given*: no implementer conversation
+history, no session narrative, nothing that lets the change justify
+itself to its own reviewer.
+
+Read-only access to the **wider branch** is deliberate, not a
+loophole. A reviewer that can only see diff hunks cannot do the job:
+four added lines inside a fifty-line method are only judgeable by
+reading the method, and "does this belong here / does it duplicate
+something / does it fit the architecture" are all questions about
+code the diff never touched. Google's review guide is explicit that
+reviewers should open the whole file, and zoom out to the system, for
+exactly this reason (see References). So the reviewer may read the
+branch; it may not mutate it, and it may not import the implementer's
+reasoning.
 
 It fills the role of an **independent review-briefing tool**.
 `kdevkit` asks for that *role* at the dev → closure handoff — it
@@ -126,26 +140,30 @@ written as the PR/CR body.
    can ratify: risky areas, decisions the reviewer found contestable,
    and anything the automated gates structurally could not verify.
 
-- **Independent and sealed.** The briefing is written by a fresh
-  reviewer that is **not** the agent that produced the code, and that
-  reviewer sees only its bundle — no filesystem, no repo, no network,
-  no implementer conversation. Independence is a property of *who*
-  reviews and *how little* it can reach; it is not achieved by
-  withholding the spec (which §7's gate does for a different reason).
+- **Independent, read-only.** The briefing is written by a fresh
+  reviewer that is **not** the agent that produced the code. It may
+  **read** the branch under review — whole files, neighbouring code,
+  tests, history — and it may **write nothing**: no edits, commits,
+  pushes, network calls, or test runs. Independence is a property of
+  *who* reviews and of *not inheriting the implementer's reasoning*,
+  not of starving the reviewer of code context.
 - **Honest, not celebratory.** The briefing surfaces gaps, risks, and
   unmet spec items plainly; it is a reviewer's aid, not a marketing
   summary. A briefing that finds nothing to focus on for a
   non-trivial diff is itself a smell.
-- **Says what it was not given.** Missing spec, missing test report,
-  or a diff it could not fully interpret are stated in the briefing.
-  Because it cannot go looking, naming the gap is the honest move.
+- **Says what it was not given.** A missing or thin spec, an absent
+  test report, or a diff it could not interpret are stated plainly in
+  the briefing rather than papered over. Reading the branch resolves
+  *code* questions; it does not manufacture an intent the spec never
+  stated — that gap is a finding.
 
 ### Role-based integration experience (no hard coupling)
 
 - **The calling workflow asks for a role, not a product.** kdevkit
   says "dispatch an independent review-briefing tool to produce a
   briefing for human consumption"; it must not name kreviewkit. Any
-  tool that fills the role and honours the bundle contract can serve.
+  tool that fills the role and honours the reviewer contract (given
+  inputs + read-only, no write authority) can serve.
 - **kreviewkit advertises the role.** Its `description:` declares it
   is an independent review-briefing tool, which is what lets a
   calling workflow (or a bare user task) find it.
@@ -200,25 +218,34 @@ come free from the self-announce contract + `description:`.
 |---|---|---|
 | Loaded when named, announces `[kreviewkit] applies` | generated | activation |
 | Bare "review what was done" task reaches it unaided (implicit fallback) | generated | discovery |
-| States its own contract: four sections, sealed-but-spec-aware, briefing = PR/CR body | `kreviewkit.smoke` `--- playback ---` | playback |
-| Refuses to reach beyond the bundle — names the gap instead of reading the filesystem | `kreviewkit.smoke` `--- playback ---` | playback |
+| States its own contract: four sections, read-only-but-spec-aware, briefing = PR/CR body | `kreviewkit.smoke` `--- playback ---` | playback |
+| States the isolation model correctly: reads the wider branch, writes nothing, no implementer history | `kreviewkit.smoke` `--- playback ---` | playback |
 | Given a spec + diff, produces the four-section briefing with a risk-ranked reading map | `kreviewkit.smoke` `--- enact ---` | enact |
+| Reads beyond the diff — cites context from an unchanged file when the diff alone is misleading | `kreviewkit.smoke` `--- enact ---` (seeded) | enact |
+| Leaves the branch untouched — no edits/commits after a briefing run | `kreviewkit.smoke` `--- assert ---` | enact |
 | Catches spec↔diff drift — scope creep / unmet requirement / missing test coverage surfaces in section 2 | `kreviewkit.smoke` `--- enact ---` (seeded drift) | enact |
 | kdevkit dispatches *a role*, not kreviewkit by name, at dev→closure | `kdevkit-dev-loop.smoke` (extended) | functional |
 
-- The sealed-reviewer claim is verified two ways: a **playback**
-  fixture for the stated contract, and — where the host can restrict
-  tools — a behavioral `enact` run whose bundle references a file
-  that exists on disk but is *not* in the bundle; a compliant
-  briefing names the gap instead of quoting the file's contents.
+- The **read-only** property is the cheap, behaviorally-checkable one:
+  a `--- setup ---`/`--- assert ---` fixture snapshots the worktree
+  (`git status --porcelain` + rev) before and after a briefing run and
+  asserts nothing changed. Pair it with a presence check (the briefing
+  file *was* produced) so a no-op agent can't pass it.
+- The **reads-wider-context** property gets the mirror fixture: seed a
+  repo where the diff looks fine in isolation but is wrong given an
+  unchanged neighbouring file (e.g. it duplicates an existing helper).
+  A compliant briefing names the duplication; a diff-only reviewer
+  cannot.
 - **Wrong-answer cues** inline in each `expect:` narrative: acting as
-  the implementer instead of an independent reviewer; reading the
-  repo/filesystem instead of working from the bundle; rubber-stamping
-  (no focus items on a non-trivial diff); leaking `[kreviewkit]
-  applies` into the briefing artefact; a flat file list instead of a
-  risk-ranked intent/contract/plumbing map; treating the spec as
-  ground truth rather than a claim to reconcile against the diff;
-  kdevkit naming kreviewkit directly instead of asking for the role.
+  the implementer instead of an independent reviewer; *modifying* the
+  branch (fixing what it found) instead of reporting; claiming it may
+  not read unchanged files; running the test suite instead of reading
+  the report; rubber-stamping (no focus items on a non-trivial diff);
+  leaking `[kreviewkit] applies` into the briefing artefact; a flat
+  file list instead of a risk-ranked intent/contract/plumbing map;
+  treating the spec as ground truth rather than a claim to reconcile
+  against the diff; kdevkit naming kreviewkit directly instead of
+  asking for the role.
 - `tools: claude,kiro` for the judge fixtures (cross-tool evidence
   for a new skill), `claude` default elsewhere.
 - Prefer behavioral (`--- setup ---`/`--- assert ---`) where the
@@ -262,18 +289,22 @@ order:
 This keeps the two skills independently shippable and lets a project
 swap in a different briefing tool without touching kdevkit.
 
-### The bundle contract (sealed reviewer)
+### The reviewer contract — given inputs + read-only branch
 
 kreviewkit reuses kdevkit's **fresh-context agent call** primitive
 (the same one §2 verify and the §7 gate use), with two differences:
 the inputs are inverted (it *is* given the spec), and the reviewer is
-**sealed**.
+**read-only**.
 
-The **caller packages the bundle**; the reviewer only reads it. That
-split is what makes sealing enforceable — the reviewer never needs a
-path, so it never needs the filesystem.
+Two separate axes, which the first draft of this spec wrongly
+conflated into "no filesystem":
 
-Bundle contents (passed as content, not as paths):
+- **Context** — the reviewer needs *more* than the diff. Read access
+  to the branch is required, not merely tolerated.
+- **Authority** — the reviewer needs *none*. It may not change
+  anything, anywhere.
+
+**Given to it** (packaged by the caller, passed as content):
 
 - ✅ **Project context** — `project.md` and a repo-root `AGENTS.md`
   where one exists; whatever equivalent plays that part when kdevkit
@@ -281,7 +312,7 @@ Bundle contents (passed as content, not as paths):
 - ✅ **The feature spec** — the full statement (capability, test
   expectations, design-in-project-context, implementation plan). This
   is what §7's gate withholds and kreviewkit needs.
-- ✅ **The diff vs. base.**
+- ✅ **The diff vs. base**, plus the base ref so it can orient.
 - ✅ **Decision / Session logs** where the spec carries them (the
   "alternatives weighed" that Playback replays).
 - ⚪ **Test run report, where available** (optional). Lets section 2
@@ -289,42 +320,73 @@ Bundle contents (passed as content, not as paths):
   merely what exists in the diff. Absent → the briefing states
   coverage is unverified. Optional rather than required because not
   every invocation has one (a standalone PR review often won't), and
-  a hard requirement would block the standalone path.
+  requiring it would block the standalone path.
 
-Explicitly **out of the bundle** — the reviewer has no:
+**Allowed to reach, read-only** — the reviewer may:
 
-- ❌ **Filesystem or repo access.** It cannot open a file, walk the
-  tree, or check out the branch.
-- ❌ **Network access.** No fetching issues, docs, or CI results.
-- ❌ **Shell / build / test execution.** It does not run the suite;
-  it reads the report if given one.
-- ❌ **Implementer conversation history.** No inherited
-  justification.
+- ✅ **Read any file on the branch under review**, not just the
+  changed hunks: the whole file around a change, callers and
+  callees, sibling modules, existing tests, neighbouring conventions.
+- ✅ **Read git history / blame** on the branch to see whether a
+  pattern is established or newly introduced.
 
-Enforcement, best-effort by host: **prefer host-level tool
-restriction** (dispatch the reviewer with an empty or read-nothing
-toolset) and fall back to an explicit prohibition in the skill prose
-where a host cannot restrict tools. The prose states the rule
-unconditionally so a compliant agent honours it either way, and the
-briefing is required to *name gaps* rather than fill them — which is
-the observable signature of a sealed reviewer.
+**Denied** — the reviewer may not:
 
-Rationale: this is the human-reviewer analogy taken literally. A
-reviewer who can wander the repo can silently repair a thin bundle,
-which hides exactly the problem worth surfacing (an unreviewable
-change), and makes the read non-reproducible. Sealing turns "the
-briefing was thin" into evidence about the change rather than noise
-about the reviewer.
+- ❌ **Write anything.** No file edits, no commits, no pushes, no
+  branch or PR mutation. It returns prose; the caller acts on it.
+- ❌ **Execute the build or test suite.** It reads a test report if
+  given one; it does not run or "fix" anything. (Read-only also means
+  no side effects, and a reviewer that can run arbitrary commands is
+  not read-only.)
+- ❌ **Reach the network.** No fetching issues, CI results, or
+  external state mid-review. (Distinct from the *authoring* step:
+  reference material is fetched once and inlined into the skill — see
+  References.)
+- ❌ **See the implementer's conversation history or session
+  narrative.** This is the real isolation requirement: the change
+  must not get to justify itself to its own reviewer.
+
+Rationale for the correction: a diff-only reviewer cannot answer the
+questions that matter most — does this belong here, does it duplicate
+something, does it fit the architecture, is this four-line addition
+sitting inside a method that should have been split. Those are all
+questions about code the diff never shows. Google's review guide says
+so directly ("Review tools show only a few lines around each edit, so
+open the whole file when needed", and zoom out to the whole system);
+starving the reviewer to achieve "isolation" would trade review
+quality for a purity that was never the point. The property actually
+worth enforcing is **no write authority and no inherited
+justification**, which is cheap to enforce and doesn't degrade the
+read.
+
+**Enforcement, in order of preference** — and the guiding rule is
+*take the mechanism the host makes cheap*, not the most theoretically
+airtight one:
+
+1. **Host-level read-only tool restriction** where the host supports
+   it (dispatch the reviewer with read/search tools only, no
+   write/execute). Cheapest and strongest; preferred.
+2. **A read-only checkout** (e.g. a detached worktree the reviewer is
+   pointed at) where a host can't scope tools but can scope paths.
+3. **Prose prohibition** as the floor, stated unconditionally so a
+   compliant agent honours it on any host.
+
+Deliberately *not* required: sandboxes, container isolation, or a
+bespoke read-only filesystem layer. Those are the "lot of hoops" that
+would sink the feature; the dev-phase slice picks whichever of the
+three above the hosts actually make easy, and the spec commits to the
+*property* (no writes, no inherited context) rather than to a
+mechanism. If a host offers none of the three, the briefing still
+carries value — record the weaker guarantee in the Session Log rather
+than blocking.
 
 The contract is described abstractly in the skill prose (portable
 across Claude Code / Kiro / Codex), matching how §7 stays
-host-agnostic. No host-specific incantations in the body unless an
-empirical check proves the abstract contract unactionable (the same
-escape-hatch pattern §7 used).
+host-agnostic.
 
 ### Briefing generation
 
-The four sections map to bundle sources:
+The four sections map to sources:
 
 - **Playback** ← diff + Decision Log (decisions & alternatives) +
   the spec's capability/experience statement.
@@ -332,18 +394,53 @@ The four sections map to bundle sources:
   diff; §9 anti-pattern checklist applied retrospectively; V-model
   coverage = declared test expectations cross-checked against test
   changes in the diff and, where supplied, the test run report.
-- **Where to focus** ← risk read of the diff, bucketed into kdevkit's
+- **Where to focus** ← risk read of the diff *in the context of the
+  surrounding code the reviewer read*, bucketed into kdevkit's
   Read-for-intent / -contract / -plumbing groups; diagrams gated on
   non-trivial control flow.
 - **Needs your judgement** ← residue: contestable decisions, gate
-  blind spots, high-risk surfaces, and anything the bundle left
-  unverifiable.
+  blind spots, high-risk surfaces, and anything left unverifiable.
+
+**Don't re-derive established review dimensions — reference them.**
+The skill points at Google's engineering-practices reviewer guide for
+*what to look at* (design, functionality, complexity, tests, naming,
+comments, style, consistency, documentation) and for the
+broad-then-main-parts-then-rest navigation order, rather than
+inventing a parallel checklist. Its own additions are the parts that
+guide doesn't cover: the spec↔diff reconciliation and the
+briefing-as-PR/CR-body output. Section 4 uses **Conventional
+Comments** label grammar (`issue` / `question` / `suggestion` /
+`nitpick` / `praise` + `(blocking)` / `(non-blocking)`) so severity
+and expectation are explicit and greppable instead of ad-hoc.
+
+### References (fetch-and-inline, keep the link)
+
+Prior art exists; the skill should stand on it rather than reinvent
+it. Policy: **inline the distilled guidance so the skill works
+offline, and keep the source URL beside it** so a later run can
+re-fetch and update. No caching machinery, no build-time fetch step —
+the URL is the provenance marker for a human or agent refreshing the
+content later.
+
+| Source | What we take from it |
+|---|---|
+| [Google eng-practices — What to look for in a code review](https://google.github.io/eng-practices/review/reviewer/looking-for.html) | The review dimensions; "look at every line"; **open the whole file / zoom out to the system** — the citation behind read-only-but-wider-than-the-diff. |
+| [Google eng-practices — Navigating a CL in review](https://google.github.io/eng-practices/review/reviewer/navigate.html) | Broad → main parts → the rest. Independent corroboration of the *Read for intent / contract / plumbing* ordering; also "surface serious design concerns immediately". |
+| [Conventional Comments](https://conventionalcomments.org/) | Label + decoration grammar for section 4 findings. |
+| [Sourcery — anatomy of a review / Reviewer's Guide](https://docs.sourcery.ai/reviews/anatomy-of-a-review/) | Prior art for the artefact: overview + file-level why-map ("where to focus") + diagrams only for non-trivial control flow; why/risk belongs in the PR *description*. |
+| [CodeRabbit — code review overview](https://docs.coderabbit.ai/guides/code-review-overview) | Prior art for the walkthrough: orientation before opening a file; a review-effort/risk signal; narrative kept separate from localized findings. |
+| [GitHub — about pull request reviews](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/reviewing-changes-in-pull-requests/about-pull-request-reviews) | Review states (comment / approve / request changes) and body-vs-line-comment split, for the output-binding step. |
+
+Each inlined block in `SKILL.md` carries a terse
+`see <url>` pointer — per project.md's comment convention, a pointer,
+not a retelling.
 
 ### Output binding — the briefing is the PR/CR body
 
-The reviewer *returns* the briefing; the **caller** writes it as the
-PR/CR description (the reviewer can't — it has no network or fs).
-Rationale (Sourcery/CodeRabbit prior art): the durable why/risk
+The reviewer *returns* the briefing as prose; the **caller** publishes
+it as the PR/CR description — the reviewer has no write authority and
+no network, by design. Rationale (Sourcery/CodeRabbit prior art, see
+References): the durable why/risk
 framing belongs at the top of the review where it stays visible as
 the conversation grows. Single artefact, no separate file to drift
 (chosen over a `review-brief.md` + link, and over Sourcery's
@@ -388,18 +485,30 @@ installed-role lookup above.
 
 - [x] Land the spec as `plan(kreviewkit): initial spec`; push; open
   the Planning Review Gate (PR #35).
-- [ ] Revise per Planning Review Gate feedback: spec terminology,
-  bundle inputs + optional test report, explicit-primary /
-  implicit-fallback triggers, sealed reviewer, role indirection.
-  Push; update the PR body; wait for the planning → dev cue.
+- [x] Revise per Planning Review Gate feedback round 1: spec
+  terminology, bundle inputs + optional test report,
+  explicit-primary / implicit-fallback triggers, reviewer isolation,
+  role indirection.
+- [ ] Revise per feedback round 2: **read-only-not-sealed** isolation
+  model (reads the wider branch, writes nothing), enforcement by
+  whatever mechanism the host makes cheap, and a **References**
+  section that stands on existing review guidance instead of
+  re-deriving it. Push; update the PR body; wait for the planning →
+  dev cue.
 
 ### Dev phase
 
+- [ ] **Probe the read-only enforcement options** before authoring, so
+  the prose commits to something real: check what each host makes
+  cheap (read-only tool restriction / detached read-only worktree /
+  prose-only). Record the finding in the Session Log; pick the
+  cheapest workable mechanism per host and let prose be the floor.
 - [ ] **kreviewkit SKILL.md.** Author the skill: description
   (user-phrased triggers first, role advertised), self-announce
-  contract, the four-section briefing contract, the sealed-bundle
+  contract, the four-section briefing contract, the read-only reviewer
   contract, standalone-vs-kdevkit modes, briefing-as-PR/CR-body
-  binding.
+  binding, and the inlined reference guidance with `see <url>`
+  pointers.
 - [ ] **Confirm no registry/validator change needed.** `just test`;
   `just resources::install-skills` + `status-skills`; verify the
   codex `FanOut` picks up the new dir. If the fan-out misses it,
@@ -410,14 +519,16 @@ installed-role lookup above.
 - [ ] **project.md docs.** Document `review_brief:` under
   `## Agent Development > kdevkit`; declare mAId's own setting
   (dogfood).
-- [ ] **Fixtures.** `kreviewkit.smoke` (playback incl. the
-  sealed-reviewer claim + enact incl. a seeded spec↔diff drift case)
-  and extend `kdevkit-dev-loop.smoke` for role-based dispatch.
-  `--dry-run` before any paid run.
+- [ ] **Fixtures.** `kreviewkit.smoke` — playback incl. the
+  read-only isolation claim; enact incl. a seeded spec↔diff drift
+  case, a reads-beyond-the-diff case, and the worktree-unchanged
+  assert — and extend `kdevkit-dev-loop.smoke` for role-based
+  dispatch. `--dry-run` before any paid run.
 - [ ] **Quality + Test + Code Review + Push** for the branch; open /
   update the Agent-dev Review Gate. (Self-applicable: this feature's
   own PR body should itself be a kreviewkit briefing, produced by a
-  genuine sealed dispatch.)
+  genuine independent read-only dispatch — not hand-authored by the
+  implementing session.)
 
 ### Closure phase
 
@@ -431,15 +542,20 @@ installed-role lookup above.
   `feat/fixtures-discovery-vs-content-split`, not `main`. If that
   branch changes or lands first, rebase this one (§10 cross-stream
   rebase mechanics) before closure. Confirm merge order at closure.
-- *Sealing is only as good as the host.* Where a host can't restrict
-  the reviewer's toolset, sealing rests on prose compliance. The
-  bundle-references-an-unbundled-file fixture is the check that
-  catches a leaky reviewer; treat a failure there as a real finding,
-  not a fixture bug.
-- *Bundle packaging is now load-bearing.* Because the reviewer can't
-  fetch anything, a caller that packages a thin bundle produces a
-  thin briefing. The briefing naming its gaps is the mitigation —
-  verify that behaviour explicitly rather than assuming it.
+- *Read-only enforcement is only as good as the host.* Where a host
+  can't restrict tools or scope a checkout, it rests on prose
+  compliance. The worktree-unchanged fixture is the check; treat a
+  failure there as a real finding, not a fixture bug. Explicitly **do
+  not** build sandboxing/container machinery to close the gap —
+  that's the hoop-jumping this feature is avoiding.
+- *"Read the branch" invites scope drift.* A reviewer free to read
+  anything can wander into unrelated code and produce a sprawling
+  briefing. Mitigation: the four-section shape and the risk-ranked
+  focus map keep the *output* scoped even when the *reading* is broad;
+  watch for briefings that review the repo instead of the change.
+- *Reference rot.* Inlined guidance drifts from its source. Mitigation
+  is the retained URL, not machinery — a later run re-fetches. Accept
+  that the inlined copy may lag; it is a distillation, not a mirror.
 - *Editing kdevkit.* The dispatch hook touches a critical,
   well-tested skill. Keep it additive and behind the `enabled: false`
   default; re-read `kdevkit-dev-loop.smoke` after the edit so the
@@ -461,6 +577,26 @@ installed-role lookup above.
 ## Session Log
 
 <!-- append: date · what was done · decisions made -->
+
+- **2026-07-30** · Round-2 revision. Two corrections from the user.
+  (1) The "sealed" model was wrong: hardening isn't about file access.
+  A reviewer needs to read the **wider branch**, not just the diff —
+  four added lines inside a fifty-line method are only judgeable by
+  reading the method. Reframed to **read-only**: reads any file and
+  git history on the branch, writes nothing (no edits/commits/pushes/
+  network/test-execution), and never sees the implementer's
+  conversation. Google's reviewer guide corroborates directly ("open
+  the whole file when needed", zoom out to the system). Enforcement is
+  now "take whichever mechanism the host makes cheap" (read-only tool
+  restriction → read-only checkout → prose floor), with sandboxing
+  explicitly out of scope as the hoop-jumping to avoid. (2) Added a
+  **References** section — fetch-and-inline the distilled guidance,
+  keep the URL for later refresh. Verified six sources; Google
+  eng-practices (dimensions + navigation order) and Conventional
+  Comments (finding-label grammar) are load-bearing, so the skill
+  stands on existing review practice rather than re-deriving it. Two
+  fixture rows changed to match the new model (worktree-unchanged
+  assert; reads-beyond-the-diff seeded case).
 
 - **2026-07-30** · Revised from Planning Review Gate feedback (PR
   #35, four inline comments). Changes: (1) "plan" → **spec**
@@ -490,17 +626,45 @@ installed-role lookup above.
 
 <!-- append: decision · rationale · alternatives rejected -->
 
-- **2026-07-30 · Reviewer is sealed — no filesystem, repo, network,
-  shell, or implementer history.** Rationale: the human-reviewer
-  analogy taken literally (a reviewer receives a PR, not a machine).
-  A reviewer that can wander the repo silently repairs a thin bundle,
-  which hides the very problem worth surfacing and makes the read
-  non-reproducible. Sealing converts "the briefing was thin" into
-  evidence about the change. Enforcement prefers host-level tool
-  restriction, falling back to prose prohibition; the observable
-  signature is a briefing that *names* gaps. Alternative rejected: a
-  fresh-context-but-tool-enabled reviewer — convenient, but lets the
-  reviewer's own digging substitute for a reviewable change.
+- **2026-07-30 · Reviewer is read-only, not sealed — it reads the
+  wider branch and writes nothing.** *Supersedes the "sealed" entry
+  below.* Rationale: isolation and context are separate axes, and the
+  first draft conflated them. A diff-only reviewer can't answer the
+  questions that matter most (does this belong here, does it duplicate
+  an existing helper, is this addition sitting in a method that should
+  have been split) because those are questions about code the diff
+  never shows; Google's reviewer guide says to open the whole file and
+  zoom out to the system for exactly this reason. What's actually
+  worth enforcing is **no write authority and no inherited
+  justification** — cheap to enforce, and it doesn't degrade the read.
+  Alternative rejected: the sealed/bundle-only reviewer — trades real
+  review quality for a purity that was never the point.
+- **2026-07-30 · Enforcement takes whatever mechanism the host makes
+  cheap; no sandboxing.** Order of preference: host-level read-only
+  tool restriction → a read-only/detached checkout → prose prohibition
+  as the floor. Rationale: the property is what matters, not the
+  mechanism, and a spec that demands container or sandbox isolation
+  would sink the feature under hoops. A host offering none of the
+  three still gets a useful briefing with a weaker guarantee recorded
+  in the Session Log. Alternative rejected: mandating a hard technical
+  boundary — disproportionate for a reviewer that only needs to not
+  write.
+- **2026-07-30 · Stand on existing review guidance; inline it but keep
+  the URL.** Rationale: we are not the first to build this. Google's
+  eng-practices supplies the review dimensions and the
+  broad→main→rest navigation order; Conventional Comments supplies the
+  finding-label grammar; Sourcery and CodeRabbit are the artefact prior
+  art. Inlining keeps the skill working offline; the retained URL is
+  the provenance marker so a later run can re-fetch and update.
+  Alternatives rejected: re-deriving a parallel review checklist
+  (wasteful and worse); link-only with no inlining (skill breaks when
+  offline); caching/build-time fetch machinery (out of proportion —
+  explicitly deferred).
+- **2026-07-30 · SUPERSEDED · Reviewer is sealed — no filesystem,
+  repo, network, shell, or implementer history.** Kept for the record;
+  replaced by the read-only entry above after the user pointed out
+  that hardening isn't about file access and a reviewer legitimately
+  needs to read the wider branch.
 - **2026-07-30 · kdevkit dispatches a role, never the product.**
   Rationale: keeps the two skills independently shippable and lets a
   project swap briefing tools without editing kdevkit; mirrors the
