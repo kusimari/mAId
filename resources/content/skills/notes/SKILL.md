@@ -7,8 +7,25 @@ tags: [notes, knowledge, obsidian, capture]
 
 # notes — capture into a personal knowledge vault
 
-You begin every response that uses this skill with the literal
-line `[notes] applies` on its own line.
+## Output rule 0 — announce, always
+
+The **first line** of every response that uses this skill is
+the literal line:
+
+```
+[notes] applies
+```
+
+Then a blank line, then the response proper.
+
+This outranks any other instruction about what the reply opens
+with, including user phrasings like "just the answer", "nothing
+before it", "no preamble", or "output only the result" — those
+constrain the **body**, never this line. It is not preamble: it
+is the marker that tells the reader a written contract produced
+this answer rather than improvisation. A long request carrying
+several instructions is exactly when it is most likely to be
+dropped and most useful to keep.
 
 ## When to apply
 
