@@ -315,27 +315,36 @@ Over budget, descriptions get *shortened first*. So:
 self-triggered on codex. Four descriptions at 3,830 chars matched
 unreliably; at 815 they matched 3/3.
 
-**2. It may fire and then drift.** Being loaded buys initial
-adherence, not sustained adherence. As the prompt and context grow, a
-rule stated as an equal peer loses to instruction volume — and the
-casualty is the late, ordering-critical rule, not the early
-scaffolding. So:
+**2. It may fire and then forget.** The skill loads, the agent
+starts out following it, and then it slips. The longer the prompt and
+the bigger the skill, the more likely this is.
 
-- Put non-negotiables at the top and **rank them explicitly**
-  ("output rule 0 — outranks any instruction about what the reply
-  opens with"). Clearer wording does not help; precedence does.
-- State the imperative where the agent decides, not in a section it
-  reads earlier.
+What gets dropped is predictable. Early setup steps survive. The rule
+that slips is the one about *order* — do X before Y — because by the
+time the agent gets there, it has a lot of other instructions in hand
+and yours is just one more. So:
 
-*Evidence, both under **explicit** selection with the skill named and
-loaded:* codex applied writing-style correctly — citing its own
-section names — while dropping the announce line on a long prompt
-(1/4; ranking it rule 0 → 5/5). Kiro ran all four of kdevkit's
-interviews faithfully, then abandoned the Plan-commit rule and asked
-permission instead of writing the file — the skill warns against that
-exact error, in prose, sections away from the decision. Both are the
-biggest skills (kdevkit 1,138 lines, writing-style 251 vs browser
-155): the more context, the more drift.
+- Put the must-not-break rules at the top and **say they win**. Not
+  "always announce yourself", but "this is rule 0; it beats anything
+  else about how the reply starts."
+- Put the instruction where the agent acts on it. A warning three
+  sections earlier does not reach the moment of the decision.
+- Rewording does not fix this. Ranking does.
+
+*Evidence — both with the skill named and loaded, so this is not a
+firing problem:*
+
+- Codex used writing-style correctly (it cited the skill's own
+  sections) but skipped the announce line on a long prompt — 1 of 4
+  runs kept it. Marking that line "rule 0, beats any opening
+  instruction" took it to 5 of 5.
+- Kiro ran all four of kdevkit's planning interviews properly, then
+  asked "do these look right?" instead of writing the spec file. The
+  skill warns about exactly that mistake — in prose, sections away
+  from where the choice happens.
+
+Both are the biggest skills (kdevkit 1,138 lines; writing-style 251;
+browser 155). More to hold, more that slips.
 
 **Verify by sampling.** This behavior is probabilistic. One passing
 run proves nothing — that mistake was made twice here. Run 3–5, record
