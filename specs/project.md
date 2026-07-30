@@ -444,3 +444,16 @@ the experience is symmetric across resource kinds.
     equivalent). No project-specific reviewer skill yet; revisit
     once host-native review proves consistently weak across
     feature work in this repo.
+- `review_brief:`
+  - `enabled: true` — fire kdevkit's §7 Review Briefing at the
+    dev → closure hand-off, so a human gets a briefing (what
+    shipped, spec-vs-diff reconciliation, where to focus, what
+    needs their judgement) as the PR body before giving the
+    closure cue. Complements `code_review:` rather than
+    replacing it: that gate serves the agent (blind,
+    diff-vs-project, scored), this one serves the human
+    (spec-aware, diff-vs-spec, prose).
+  - `reviewer:` omitted — resolve the single installed tool
+    advertising the review-briefing role. kdevkit dispatches the
+    *role*, never a named product; this repo happens to ship one
+    (`resources/content/skills/kreviewkit/`), and dogfoods it.

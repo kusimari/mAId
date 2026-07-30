@@ -1,7 +1,7 @@
 ---
 name: kdevkit
 description: Use when doing development work on a repo that keeps specs — planning or starting a feature, implementing a slice through quality/test/review gates, or closing one out. Typical triggers include "start feature X", "plan this", "let's work on X", "get it ready to work on", "implement this", "run the dev loop", "ship it", "close it", "close it out", "merge it", "feature done", "add this to the backlog", "start initiative X", "stream 2 of 3", and requests to record a durable project fact or operational command in the right place. Also use when handed a backlog item to promote, or asked what phase a feature is in. Spec-driven development workflow — four tiers (project / initiative / feature / backlog), locate spec tree, load context, start a session, run it through planning → dev loop → closure with phase-gating cues, ship via Conventional Commits and Quality/Test/Code-Review/Push/Review gates. Three-phase feature branch on a single PR/CR; main stays single-commit-per-feature via squash. Multi-stream initiatives carry the persistent "you're in stream 2 of 3" context across feature branches. Three context layers — operational (repo-root AGENTS.md), project-knowledge (project.md), per-feature (feature spec); closure bubbles durable content up. Multi-file skill (always-on SKILL.md + deferred setup.md and interviews.md loaded on demand). Public-repo hygiene. Auto-detects specs/, docs/specs/, or .kdevkit/.
-version: 3.6.0
+version: 3.7.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, initiative, public-repo]
 ---
 
@@ -118,8 +118,8 @@ Main's inline checks:
 3. If a `## Active initiatives` index exists, every line
    matches an `$SPEC_ROOT/initiative/*.md` on disk and every
    on-disk initiative either has an index line or is archived.
-4. The `code_review:` block (if present) parses as YAML with
-   no unknown keys.
+4. The `code_review:` and `review_brief:` blocks (if present)
+   parse as YAML with no unknown keys.
 
 Clean → no further action. Any drift → dispatch a **fresh-
 context agent call** (the same primitive §7 Code Review Gate
@@ -270,8 +270,10 @@ One-time setup decisions on entry:
   `code_review: { reviewer: host-native }`.
 - **Other preferences load from the `kdevkit` block** — the
   full `code_review.*` block (`reviewer`, `threshold`,
-  `authority`, `retry_budget`), plus review CLI,
-  branch-cleanup, merge. Full resolution rule is in §7.
+  `authority`, `retry_budget`), the optional
+  `review_brief.*` block (`enabled`, `reviewer` — §7 Review
+  Briefing), plus review CLI, branch-cleanup, merge. Full
+  resolution rules are in §7.
 
 ## 5 · Run feature session
 
@@ -577,7 +579,8 @@ layer semantics and which suite is load-bearing; the command
 files don't duplicate them. The `kdevkit` block under `## Agent
 Development` overrides defaults below (the full `code_review.*`
 block — `reviewer`, `threshold`, `authority`, `retry_budget` —
-plus review CLI, branch-cleanup, merge).
+the optional `review_brief.*` block, plus review CLI,
+branch-cleanup, merge).
 
 **Resolve any specific command** (review CLI, branch-delete,
 merge, worktree ops) via implicit host knowledge → `kdevkit`
@@ -747,6 +750,56 @@ content: **Approach** (bullets covering the changes).
 **Refuse-on-fail.** A prior gate (Quality / Test / Code Review)
 failed or noted residual issues → no review. Surface failure;
 require explicit override.
+
+### Review Briefing (dev → closure hand-off)
+
+The §7 Code Review Gate serves the *agent*: it scores a diff
+against the project, blind to the spec. This gate serves the
+*human*: before they give the closure cue, they get a briefing
+that plays the feature back and shows them where to look. The
+two are complements — the gate checks diff-vs-project, the
+briefing checks diff-vs-spec — and neither replaces the other.
+
+**Opt-in.** Read `kdevkit.review_brief:` from `project.md`
+(§2). Absent or `enabled: false` → skip this gate entirely;
+kdevkit behaves as it always has. Only `enabled: true` fires
+it.
+
+**Dispatch a role, not a product.** Ask for **an independent
+review-briefing tool** — do not hard-code which one. Resolve
+in order:
+
+1. `review_brief.reviewer` names it (`<ref>` grammar as
+   §7's `code_review.reviewer`: `host-native` /
+   `skill:<name>` / `mcp:<server>.<tool>` / `agent:<name>`).
+2. Otherwise the single installed tool advertising that role.
+3. Several installed and none named → ask once, persist to
+   `project.md`. Never guess silently.
+
+**Contract.** The briefing tool runs in a **fresh-context
+agent call** — it must not have written the code, and must not
+see the implementer's conversation or session narrative.
+Unlike the §7 gate it **is** given the spec, because
+reconciling spec-vs-diff is the point. It gets: the feature
+spec, the diff vs. base, `project.md` (+ `AGENTS.md` where
+one exists), the Decision / Session logs, and the Test Gate's
+report where one was produced. It reads the branch
+**read-only** — whole files, not just hunks — and writes
+nothing; prefer dispatching it with read-only tools where the
+host allows it.
+
+**Returns** a human-facing briefing. kdevkit **publishes it as
+the PR/CR body** at this gate, replacing the Approach-only
+body: the briefing's sections subsume §9's shape (its playback
+carries **Why**/**Approach**; its focus map *is* **Reading
+order**). Apply §9's internal-marker grep before submission —
+the briefing is agent-authored prose entering a public
+surface.
+
+The briefing informs the human's closure decision; it does
+**not** gate it. `"close it"` remains the only trigger for §8,
+and the briefing never carries an approve/request-changes
+verdict — that is the human's call.
 
 ## 8 · Closure
 

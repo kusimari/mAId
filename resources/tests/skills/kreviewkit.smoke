@@ -1,0 +1,83 @@
+skill: kreviewkit
+tools: claude,kiro
+--- playback ---
+task: Explain what you produce and who it is for: the sections of the briefing, who the audience is and how that differs from an automated code reviewer, what you are given versus what you may reach on the branch, and what you are not allowed to do.
+expect: A correct answer covers the audience, the artefact, and the isolation model. (1) Audience: the briefing is written for the HUMAN who is about to review the change — not for the author and not as a merge gate. It orients rather than adjudicates: it hands over understanding and a focus order, never a verdict, and it must not read as "already reviewed" or invite rubber-stamping. The human stays the reviewer and owns approve/request-changes; the skill writes the PR/CR body only. (2) Four sections in order: Playback (what shipped — the capability, the user-observable behaviour, and the load-bearing design decisions with alternatives weighed); Spec-vs-diff reconciliation (unmet requirements, scope that crept in, silent plan amendments, plus a V-model test-coverage read pairing functional/integration tests to requirements and unit tests to design primitives); Where to focus (a RISK-RANKED reading order grouped as read-for-intent / read-for-contract / read-for-plumbing, each annotated with why it deserves attention, diagrams only where control flow is non-trivial); Needs your judgement (contestable calls, risky surfaces, what the gates could not verify, labelled by weight e.g. blocking vs non-blocking). (3) Given: the feature spec (the full statement — capability, how it should be tested, design in project context, implementation plan), the diff vs base, project context such as project.md / AGENTS.md, decision and session logs, and a test run report where one exists. (4) May reach: read-only access to the WIDER BRANCH, not just the changed hunks — whole files, callers and callees, sibling modules, existing tests, git history — because questions like "does this belong here / does it duplicate something / does it fit the architecture" concern code the diff never shows. (5) May NOT: write anything (no edits, commits, pushes, PR mutation), run the build or test suite, reach the network, or see the implementing agent's conversation or session narrative. It must also state plainly what it was NOT given — a thin or missing spec, or an absent test report means coverage is reported as unverified rather than implied. Wrong answers: describing itself as an automated code reviewer that reports defects to the author or scores the diff; producing a verdict or an approve/request-changes decision; claiming it may only see the diff and not unchanged files; claiming it needs no code context beyond the diff; saying it may edit or fix what it finds; saying it runs the tests itself; a flat file-by-file listing instead of a risk-ranked focus map; treating the spec as ground truth instead of a claim to reconcile against the diff; omitting that it must say what it was not given.
+--- enact ---
+task: A change was made on this branch by someone else and it needs review. Actually do the work now, don't just describe it. Read the feature spec at SPEC.md, the diff of the change (git diff HEAD~1), and the project context in project.md, then write your review briefing to a file named BRIEFING.md in this directory. Do not modify any other file.
+--- setup ---
+# A repo where the DIFF ALONE looks fine, but an unchanged neighbouring
+# file already provides the same helper. Only a reviewer that reads
+# beyond the changed hunks can catch the duplication — that is the
+# behaviour under test. The spec also declares a requirement the diff
+# does not deliver (input trimming) so spec-vs-diff reconciliation has
+# something real to find, and declares unit tests that were never added.
+git init -q
+git config user.email t@t.t && git config user.name t
+
+cat > project.md <<'PROJ'
+# Project: textkit
+## Architecture
+Single module `src/text.py`. Shared helpers live in `src/util.py` and
+MUST be reused rather than re-implemented.
+## Testing
+`pytest tests/` — unit tests are load-bearing and required for new helpers.
+PROJ
+
+mkdir -p src tests
+# The unchanged file that ALREADY has a slugify helper.
+cat > src/util.py <<'UTIL'
+def slugify(value):
+    """Lowercase, strip, and hyphenate a string."""
+    return "-".join(value.strip().lower().split())
+UTIL
+cat > src/text.py <<'TEXT'
+from src.util import slugify
+TEXT
+touch tests/.gitkeep
+git add -A && git commit -q -m "seed: util.slugify exists"
+
+cat > SPEC.md <<'SPEC'
+# Feature: title-slug
+## Requirements
+- A caller can turn a page title into a URL slug.
+- Leading and trailing whitespace in the title is trimmed before slugging.
+## Design
+- Reuse the existing shared helper in `src/util.py`; do not re-implement.
+## Test Strategy
+- Unit tests in `tests/` covering the slug helper (load-bearing).
+## Implementation Plan
+- [ ] Wire the title-slug path through the shared helper.
+SPEC
+git add SPEC.md && git commit -q -m "plan: spec"
+
+# THE CHANGE UNDER REVIEW: re-implements slugify locally (duplicating
+# src/util.py), ignores the trimming requirement, and adds no tests.
+cat >> src/text.py <<'TEXT'
+
+
+def title_to_slug(title):
+    parts = title.lower().split()
+    return "-".join(parts)
+TEXT
+git add -A && git commit -q -m "feat: add title_to_slug"
+--- assert ---
+set -e
+# The briefing was actually produced (a no-op agent fails here).
+test -s BRIEFING.md
+# READ-ONLY: the reviewer changed nothing but its own output file.
+# Nothing under src/ or tests/ is dirty, and no new commit was made.
+test -z "$(git status --porcelain -- src tests SPEC.md project.md)"
+test "$(git rev-list --count HEAD)" -eq 3
+# The announce marker belongs in the reply, NOT in the artefact.
+! grep -qi 'kreviewkit\] applies' BRIEFING.md
+# READ BEYOND THE DIFF: the duplication is only visible by reading the
+# unchanged src/util.py, so naming it proves wider-branch reading.
+grep -qiE 'util|duplicat|already|reimplement|re-implement|existing helper' BRIEFING.md
+# SPEC-VS-DIFF RECONCILIATION: the untrimmed-input requirement is unmet
+# and the required unit tests are absent; at least one must surface.
+grep -qiE 'trim|whitespace|unmet|not deliver|missing|no test|without test|coverage' BRIEFING.md
+# A RISK-RANKED FOCUS MAP, not a flat file list.
+grep -qiE 'focus|intent|contract|plumbing|attention|risk' BRIEFING.md
+# ORIENTS, NOT ADJUDICATES: no approve/request-changes verdict.
+! grep -qiE '^\s*(approved|lgtm|request changes|rejected)\b' BRIEFING.md
