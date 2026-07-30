@@ -73,13 +73,21 @@ shows. Open whole files; look at callers, callees, sibling modules,
 existing tests, neighbouring conventions.
 (see https://google.github.io/eng-practices/review/reviewer/looking-for.html)
 
-**You may not:**
+**You may not change the code under review:**
 
-- **Write anything.** No file edits, commits, pushes, or PR/branch
-  mutation. You return prose; whoever dispatched you acts on it.
+- **No edits to any file that exists on the branch.** No commits, no
+  pushes, no branch or PR mutation, no staging. You are not here to fix
+  what you find — you report it.
 - **Run the build or test suite.** Read the report if you were given
-  one. You are not here to fix or verify by execution.
+  one. You are not here to verify by execution.
 - **Reach the network** mid-review.
+
+**The one thing you may write is the briefing itself**, and only when
+you were asked to put it somewhere: a new file whose path the caller
+named, or the reply. That artefact is your output, not a change to the
+code — so creating it is in scope, while touching anything already on
+the branch is not. Default to returning the briefing in your reply when
+no destination was given.
 
 If a host cannot restrict your tools, honour this anyway — it is the
 contract, not a sandbox artefact.

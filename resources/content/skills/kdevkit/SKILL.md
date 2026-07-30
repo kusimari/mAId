@@ -773,8 +773,10 @@ in order:
    §7's `code_review.reviewer`: `host-native` /
    `skill:<name>` / `mcp:<server>.<tool>` / `agent:<name>`).
 2. Otherwise the single installed tool advertising that role.
-3. Several installed and none named → ask once, persist to
-   `project.md`. Never guess silently.
+3. Ambiguous or empty — several candidates, or none found →
+   **ask once and persist** to `project.md`. Never guess, and
+   never fall back to reviewing without the briefing silently:
+   say the role couldn't be resolved and let the user decide.
 
 **Contract.** The briefing tool runs in a **fresh-context
 agent call** — it must not have written the code, and must not
@@ -788,11 +790,14 @@ report where one was produced. It reads the branch
 nothing; prefer dispatching it with read-only tools where the
 host allows it.
 
-**Returns** a human-facing briefing. kdevkit **publishes it as
-the PR/CR body** at this gate, replacing the Approach-only
-body: the briefing's sections subsume §9's shape (its playback
-carries **Why**/**Approach**; its focus map *is* **Reading
-order**). Apply §9's internal-marker grep before submission —
+**Returns** a human-facing briefing. Dispatch it **after Push,
+before opening or updating the PR/CR**, so the briefing is the
+body the human first sees rather than an overwrite of an
+Approach-only body a moment later. Where the PR already exists
+(a later slice on the same branch), update the body in place.
+The briefing's sections subsume §9's shape — its playback
+carries **Why**/**Approach**, its focus map *is* **Reading
+order**. Apply §9's internal-marker grep before submission —
 the briefing is agent-authored prose entering a public
 surface.
 
@@ -993,6 +998,10 @@ phase-specific content section + any per-gate exception.
   *Read for contract:* … ; *Read for plumbing:* …).
   Optional: **Verification** (commands + results), **Pairs
   with** (cross-repo links).
+  *Exception:* where §7's Review Briefing gate is enabled, the
+  briefing it returns replaces this body at that gate — its
+  sections already carry Why/Approach and the Reading order.
+  The requirement is satisfied, not waived.
 - **One PR/CR per branch.** Open as a normal review, not
   draft. Create on the first gate; update title + body on
   subsequent gates. Return the URL as the last line of phase
