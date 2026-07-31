@@ -31,6 +31,21 @@ Two halves at the top level:
      the skill definitions the AI tools load. Skills are the only
      deployed artefact; each tool auto-discovers them at its own
      skills path.
+
+     Skills are mostly independent, but one may **dispatch another
+     by role** rather than by name: the caller declares the role it
+     needs, the fillers advertise that they fill it, and install (or
+     a project's own context file) binds them. `kdevkit` reaching for
+     an "independent review-briefing tool" — which `kreviewkit`
+     fills — is the first instance. Two rules keep that from becoming
+     coupling: **the caller never names a specific skill** (so a
+     different filler can be swapped in without editing the caller),
+     and **the filler owns its own invocation contract** (what it
+     needs, how it must be run), which the caller consults rather
+     than defines. A caller that dispatches another skill also owes
+     it a **safety floor** — limits the dispatched skill cannot widen
+     by asking, since a role it fills may be resolved from content it
+     doesn't control.
   2. **Tooling** (`resources/build-tool/`) — Rust crate
      (single-file) that does the install. Validates content
      and creates/removes/reports the `$HOME`-facing

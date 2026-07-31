@@ -655,18 +655,28 @@ with an entirely different input contract without touching kdevkit.
   `kdevkit-dev-loop.smoke` extended for role-based dispatch with
   wrong-answer cues. `--dry-run`: all pass, `kreviewkit`
   activation/discovery generate correctly for claude + kiro.
-- [ ] **Dogfood run.** Dispatch kreviewkit independently on this
-  branch and use the returned briefing as this PR's body (see Test
-  Strategy → Dogfood run). Hand it to the user as their review
-  briefing; fold any findings back as dev-loop slices.
-- [ ] **Quality + Test + Code Review + Push** for the branch; open /
-  update the Agent-dev Review Gate.
+- [x] **Dogfood run — ran four times, each on the then-current state,
+  each briefing published as the PR body.** Findings folded back as
+  dev-loop slices every round rather than shipped as caveats: round 1
+  found the write-authority contradiction and the diff-context leak in
+  the wider-branch assert; round 2 (a blind §7 Code Review Gate,
+  independent of the briefings, scoring 58/100) found the `setup.md`
+  schema gap and a three-way write-authority disagreement; round 3
+  found the `no test` substring false positive; round 4 found the
+  partially-applied `generator:` rename and the §7 section-ordering
+  mismatch. The dogfood earned its place — **none of these were caught
+  by the gates, the 97 unit tests, or `--dry-run`.**
+- [x] **Quality + Test + Code Review + Push.** `fmt-check` + `lint` +
+  `check` + `test` (97) + `--dry-run` green after every slice;
+  behavioral `enact` run green 6×; PR #36 open against `main` with a
+  kreviewkit briefing as its body. (PR #35 was auto-closed unmerged
+  when its base squash-merged — see the rebase Session Log entry.)
 
 ### Closure phase
 
-- [ ] Reconcile markers; soft `project.md` verify (Layout/Testing/
-  Agent-Development touched); backlog cleanup ask; `close(...)`
-  commits; Closure Review Gate; squash-merge; branch cleanup.
+- [x] Reconcile markers; soft `project.md` verify; backlog cleanup ask;
+  `close(...)` commits; Closure Review Gate; squash-merge; branch
+  cleanup.
 
 ### Risk notes
 
@@ -710,6 +720,29 @@ with an entirely different input contract without touching kdevkit.
 ## Session Log
 
 <!-- append: date · what was done · decisions made -->
+
+- **2026-07-31** · **Closure.** Reconciled three unchecked plan items —
+  all genuinely done (the dogfood ran four rounds, gates green after
+  each slice, closure in progress). **Persistent-layer verify:** three
+  `project.md` sections were touched. Testing's announce-contract list
+  and Agent Development's `review_brief:` block were already updated
+  in-flight; **Architecture** was the one durable gap and gained a note
+  on **role dispatch between skills** — the new architectural
+  relationship this feature introduces, with the two rules that keep it
+  from becoming coupling (caller never names a filler; filler owns its
+  invocation contract) plus the safety-floor obligation. That is the
+  binding constraint on *future* features, so it belongs in the
+  persistent layer rather than only in this feature's spec. Layout
+  needed no edit (its tree is generic over `skills/<name>/`).
+  **Backlog cleanup:** asked; answer is **none** — no item is resolved.
+  The two test-runner items this feature brushed against
+  (`test-runner-workdir-containment`, `test-runner-sandbox-asymmetry`)
+  stay open, since it added a `.gitignore` stopgap and explicitly did
+  not fix the containment gap; `pr-review-tui-across-hosts` is adjacent
+  but distinct (it wants a terminal review UI, not a briefing). Filed
+  one new item: `kdevkit-refactor-shrink-always-on-context`, prompted by
+  this feature adding ~90 lines to an already-1250-line always-on file
+  despite deliberately deferring everything it could.
 
 - **2026-07-31** · **Three corrections from reading the published PR.**
   (1) **Defect/judgement split.** The user asked why "needs your
