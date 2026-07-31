@@ -271,7 +271,7 @@ One-time setup decisions on entry:
 - **Other preferences load from the `kdevkit` block** — the
   full `code_review.*` block (`reviewer`, `threshold`,
   `authority`, `retry_budget`), the optional
-  `review_brief.*` block (`enabled`, `reviewer` — §7 Review
+  `review_brief.*` block (`enabled`, `generator` — §7 Review
   Briefing), plus review CLI, branch-cleanup, merge. Full
   resolution rules are in §7.
 
@@ -760,15 +760,6 @@ The §4 setup-prompt blurb mentions this convention so a human
 encountering kdevkit on a fresh project sees it at project
 genesis.
 
-### Agent-dev Review Gate
-
-Fires after Push. Apply §9 Review Gates. Phase-specific body
-content: **Approach** (bullets covering the changes).
-
-**Refuse-on-fail.** A prior gate (Quality / Test / Code Review)
-failed or noted residual issues → no review. Surface failure;
-require explicit override.
-
 ### Review Briefing
 
 Completing the dev loop produces a **review**, and the review
@@ -779,9 +770,16 @@ the generator's own contract. kdevkit's job is to resolve the
 generator, honour the contract it declares, and put the result
 on the PR/CR.
 
+**Runs after Push, before the Agent-dev Review Gate below** — the
+briefing is the body that gate submits, so it must exist first.
+The gate's **Refuse-on-fail** rule reaches back here too: a
+failed Quality / Test / Code Review gate means no briefing and no
+review, since there is nothing green to brief.
+
 **Opt-in.** Read `kdevkit.review_brief:` from `project.md` (§2).
-Absent or `enabled: false` → no briefing; the gate above behaves
-as it always has. **Inline-Read `setup.md`** for the key schema.
+Absent or `enabled: false` → no briefing; the Review Gate below
+behaves as it always has. **Inline-Read `setup.md`** for the key
+schema.
 
 **Resolve the generator** — a *role*, never a hard-coded product:
 
@@ -832,6 +830,15 @@ materially, regenerate rather than replace with a thinner body.
 
 The briefing informs the closure decision; it does not gate it.
 `"close it"` remains the only trigger for §8.
+
+### Agent-dev Review Gate
+
+Fires after Push. Apply §9 Review Gates. Phase-specific body
+content: **Approach** (bullets covering the changes).
+
+**Refuse-on-fail.** A prior gate (Quality / Test / Code Review)
+failed or noted residual issues → no review. Surface failure;
+require explicit override.
 
 ## 8 · Closure
 

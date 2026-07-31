@@ -153,11 +153,21 @@ handed, and says plainly when it was handed a thin one.
 The output is one report with four sections, in this order. It is
 written as the PR/CR body.
 
-1. **Playback — the feature as experience.** What the user can now
-   do, the salient user-observable behaviour, and the load-bearing
-   design decisions *with the alternatives that were weighed*. A
-   reviewer who reads only this section understands what shipped and
-   why it is shaped the way it is.
+**It must not restate its own inputs.** The reviewer already has the
+spec and the diff in the review; re-describing either is padding that
+buries the parts only the briefing can supply. The briefing's value is
+the **delta between intent and artefact** — so no spec recap, no
+file-by-file diff recitation, and citations of the spec only where the
+diff meets it, diverges from it, or leaves it unaddressed.
+
+1. **Playback — the shape of what landed.** Orientation only: enough
+   for a reviewer to hold the change in their head before opening a
+   file — what it does and where its risk concentrates. Then the
+   load-bearing design decisions, but **only those the diff reveals**
+   (a decision the code embodies, an alternative weighed, a choice a
+   reviewer would otherwise reverse-engineer). A decision the spec
+   states plainly and the diff merely implements is left to the spec;
+   restating it is reading, not briefing.
 2. **Spec ↔ diff reconciliation.** What the spec called for vs. what
    the diff delivers — unmet requirements, scope that crept in,
    silent amendments to the implementation plan, unrelated changes
@@ -350,7 +360,7 @@ it, exactly as its existing `code_review.reviewer` block dispatches
 to a reviewer reference rather than a hardcoded reviewer. Resolution
 order:
 
-1. The project's own context names the tool (`review_brief.reviewer`
+1. The project's own context names the tool (`review_brief.generator`
    in `project.md`'s `## Agent Development > kdevkit`, or an
    `AGENTS.md`-equivalent when kdevkit isn't in play).
 2. Otherwise, the single installed tool advertising the role is used
@@ -551,15 +561,20 @@ sync for no gain at this scale).
 ```yaml
 review_brief:
   enabled: true            # default: false — opt-in, non-disruptive
-  reviewer: <ref>          # optional; omit to auto-resolve the
+  generator: <ref>         # optional; omit to auto-resolve the
                            # single installed review-briefing tool
 ```
 
 `<ref>` reuses the grammar kdevkit's `code_review` block already
 defines (`host-native` / `skill:<name>` / `mcp:<server>.<tool>` /
-`agent:<name>`), so there is one reviewer-reference grammar, not two.
-Omitting `reviewer:` is the common case: resolution falls to the
+`agent:<name>`), so there is one reference grammar, not two.
+Omitting `generator:` is the common case: resolution falls to the
 installed-role lookup above.
+
+**No keys for inputs, isolation, or section shape** — those belong to
+the generator's own declared contract, which kdevkit consults rather
+than specifies. That is what lets a project configure a briefing tool
+with an entirely different input contract without touching kdevkit.
 
 ## Implementation Plan
 
@@ -679,6 +694,26 @@ installed-role lookup above.
 ## Session Log
 
 <!-- append: date · what was done · decisions made -->
+
+- **2026-07-31** · **Fourth briefing round; caught a
+  partially-applied rename.** The post-rebase briefing found that the
+  `reviewer:` → `generator:` rename had landed in `setup.md`, §7, and
+  `project.md` but **not** in kdevkit's §4 preference-loading list —
+  which pointed an agent at a key `setup.md`'s own schema check would
+  reject as unknown. Verified and fixed, along with two spec-side
+  instances (Design's resolution order, the Config shape block) that
+  documented a key which no longer exists. Also fixed: the spec's
+  Requirements §1 still demanded the capability-restating Playback the
+  refactor had just forbidden — a silent amendment by the spec's own §9
+  definition, now reconciled. Resolved the Output-rule-0 vs Publishing
+  tension (announce line vs "no preamble") by making the
+  verbatim-publish case an explicit exception that wins. And **moved
+  `### Review Briefing` physically before `### Agent-dev Review Gate`**:
+  the prose said "step 0 of the gate above" while sitting after it, so
+  layout now matches execution order (Push → Briefing → Review Gate)
+  instead of relying on prose to correct the reading order — this
+  project's own guidance is that ordering rules are what slip first.
+  Gates + behavioral run green after each change.
 
 - **2026-07-31** · **Rebased onto `main`; PR re-opened.** The stacked
   base landed while this branch was in flight: PR #34 squash-merged
