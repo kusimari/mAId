@@ -117,14 +117,23 @@ information; a missing input that looks like an oversight is not.
 
 ### Output — what comes back
 
-A briefing as prose (the four sections below). Where the caller names a
-destination, it may be written to that new file; otherwise it comes
-back in the reply. That artefact is the output, not a change to the
-code — creating it is in scope, touching anything already on the branch
-is not.
+**Two channels, and the caller must handle them differently:**
 
-**The caller publishes it.** This skill never touches the review
-surface itself.
+1. **The briefing** — prose in the four sections below, destined for
+   the review surface. Where the caller names a destination it may be
+   written to that new file; otherwise it comes back in the reply.
+2. **Defects, separately** — anything that should simply be *fixed*
+   before this is published. These are **not** part of the briefing;
+   they are a signal the dev loop is not complete. A caller that
+   receives defects should route them back into the loop and re-run
+   the briefing on the fixed work, rather than publishing a briefing
+   that documents its own unfinished state.
+
+Either output is the skill's own artefact, not a change to the code —
+creating it is in scope, touching anything already on the branch is not.
+
+**The caller publishes the briefing.** This skill never touches the
+review surface itself.
 
 **If a caller can't supply an input or arrange the run as described,
 say which guarantee is weaker and continue** — a briefing with a named
@@ -218,27 +227,55 @@ non-trivial**. Never as decoration.
 
 ### 4 · Needs your judgement
 
-The short list of calls only the human can ratify: contestable
-decisions, risky surfaces, and anything the automated gates
-structurally could not verify. Surface serious design concerns **here
-and early** rather than burying them.
+**Only genuine judgement calls belong here** — the trade-offs a human
+must ratify, which no amount of further work resolves:
 
-Label each item so its weight is legible at a glance
-(the Conventional Comments grammar — `src: conventionalcomments.org` —
-re-pointed at a *reviewer*: these labels say how much of your attention
-an item deserves, not what the author must do):
+- A design trade-off with defensible answers either way ("extensibility
+  bought at the cost of a schema — is that the trade you want?").
+- A risk to accept or reject ("this rests on prose compliance, not a
+  mechanism").
+- A cost/benefit call that is the human's to spend ("one paid run would
+  close this evidence gap").
+- Something contestable that you could not decide *because it is not
+  yours to decide*.
 
-- `issue (blocking)` — don't approve without resolving this.
-- `issue (non-blocking)` — real, but needn't hold the merge.
-- `question` — something you should decide; the reviewer could not.
-- `suggestion` — an improvement worth weighing.
-- `nitpick` — trivial; listed so it is not mistaken for more.
-- `praise` — genuinely good, and worth the human knowing.
+Label each so its weight is legible at a glance (the Conventional
+Comments grammar — `src: conventionalcomments.org` — re-pointed at a
+*reviewer*: these say how much of your attention an item deserves, not
+what the author must do): `question` · `suggestion` · `nitpick` ·
+`praise`.
 
-Keep this section short and honest. **If a non-trivial diff gives you
-nothing to focus on, that is a smell — say so rather than padding.**
-An empty section-4 on a substantial change usually means the review
-was shallow.
+**Defects do not belong here.** A bug, a stale reference, a
+contradiction, an unmet requirement, a wrong assertion, a missing
+test — these are not judgement calls. They mean the work is not
+finished, and a briefing is generated *at dev-loop completion*, so
+anything of that kind is a **signal the loop is not complete**. Route
+it, don't publish it. See below.
+
+### Defects → back to the loop, not into the PR
+
+When your review surfaces something that should simply be **fixed**,
+say so plainly to whoever dispatched you and **name it as a loop-back,
+not a briefing item**:
+
+1. **Report the defects to the caller** — clearly separated from the
+   briefing, as "these should be fixed before this is published."
+2. **Expect to be re-run** after they are fixed. The briefing that
+   reaches the review surface should describe finished work.
+3. **Do not smuggle a defect into section 4** by dressing it as a
+   `question`. "Is this stale key intentional?" is a defect with a
+   question mark on it.
+
+The dividing test: **would fixing it make the finding disappear?** If
+yes, it is a defect — route it back. If the finding survives the fix
+because it is a choice, it is judgement — publish it.
+
+This is why the section is often short, and legitimately sometimes
+empty: a change that is genuinely finished and carries no open
+trade-off has nothing to ratify. That is a different thing from a
+shallow review — **if you found nothing at all on a non-trivial diff,
+neither defects nor judgement calls, say so explicitly** so the reader
+can tell "clean" from "not looked at."
 
 ## How you are reached
 

@@ -185,9 +185,25 @@ diff meets it, diverges from it, or leaves it unaddressed.
    spend attention and where they can skim. Sequence or flow diagrams
    appear **only where control flow is non-trivial**, never as
    decoration.
-4. **Needs your judgement.** The short list of calls only a human
-   can ratify: risky areas, decisions the reviewer found contestable,
-   and anything the automated gates structurally could not verify.
+4. **Needs your judgement.** *Only* the calls a human must ratify —
+   design trade-offs with defensible answers either way, risks to
+   accept or reject, cost/benefit spends that are the human's to make.
+   Labelled `question` / `suggestion` / `nitpick` / `praise`.
+
+- **Defects route back to the loop, not into the briefing.** A bug, a
+  stale reference, a contradiction, an unmet requirement, a wrong
+  assertion, a missing test — none of these are judgement calls. The
+  briefing fires *at dev-loop completion*, so a defect means the loop
+  is not actually complete: it belongs in the agent session as the next
+  slice, not on the review surface. The generator reports defects to
+  its caller on a **separate channel** from the briefing, and the
+  caller re-runs the briefing on the fixed work. **The published
+  briefing describes finished work, not its own loose ends.** Dividing
+  test: *would fixing it make the finding disappear?* Yes → defect,
+  route it back. No, because it is a choice → judgement, publish it.
+  (This also means section 4 is legitimately sometimes empty; that is
+  distinct from a shallow review, so a briefing that found nothing at
+  all on a non-trivial diff must say so explicitly.)
 
 - **Independent, read-only.** The briefing is written by a fresh
   reviewer that is **not** the agent that produced the code. It may
@@ -695,6 +711,33 @@ with an entirely different input contract without touching kdevkit.
 
 <!-- append: date · what was done · decisions made -->
 
+- **2026-07-31** · **Three corrections from reading the published PR.**
+  (1) **Defect/judgement split.** The user asked why "needs your
+  judgement" was in the PR at all, since such items imply the dev loop
+  is incomplete — and if it is, why brief. Correct, and a design error:
+  section 4 was conflating defects (fix them; the loop isn't done) with
+  trade-offs (ratify them; no fix removes them). Every item across four
+  briefings had been the first kind. Section 4 is now judgement-only,
+  defects return on a separate channel, and kdevkit routes them as the
+  next slice. (2) **Safety floor** added to kdevkit per user direction —
+  no write authority, no implementer history, no credentials, no
+  unattended network/shell, binding regardless of what a generator's
+  contract asks for, so a malicious or misconfigured briefer can't
+  widen its own authority. (3) **Fixture rigour re-aimed.** The
+  missing-tests grep had been patched three rounds and stayed
+  defeatable; root cause was matching *vocabulary* rather than
+  *evidence*, so it now requires a coverage phrase **plus** a
+  seed-unique token. The behavioral run then **failed** — correctly:
+  the seeded change is all defects, so the new rule made the agent route
+  them back and leave section 4 to trade-offs, while the assert still
+  demanded labelled items. Rather than guess at wording a third time, I
+  ran the agent against a reproduced seed and **read the actual
+  briefing**: it had produced two genuine `**question —**` trade-offs
+  (each noting it survives any fix) and an explicit note that the three
+  defects went back to the dispatcher. The em-dash label shape was what
+  my pattern missed. Loosened that one assert deliberately and verified
+  all ten against the real output.
+
 - **2026-07-31** · **Fourth briefing round; caught a
   partially-applied rename.** The post-rebase briefing found that the
   `reviewer:` → `generator:` rename had landed in `setup.md`, §7, and
@@ -951,6 +994,45 @@ with an entirely different input contract without touching kdevkit.
 ## Decision Log
 
 <!-- append: decision · rationale · alternatives rejected -->
+
+- **2026-07-31 · Defects route back to the loop; only judgement calls
+  reach the PR.** Rationale (user observation on the published briefing):
+  a "needs your judgement" item that is really a defect implies the dev
+  loop *isn't* complete — and if the loop isn't complete, why generate a
+  briefing at all? The two are different kinds. Dividing test: *would
+  fixing it make the finding disappear?* Yes → defect, route back on a
+  separate channel and regenerate the briefing on fixed work; no,
+  because it's a choice → judgement, publish. The generator now returns
+  **two channels** and kdevkit treats defects as the next slice. This
+  also makes an empty section 4 legitimate rather than suspicious.
+  Alternative rejected: keeping one mixed list (what shipped) — it put
+  unfinished work on the review surface and made every briefing read as
+  a to-do list.
+- **2026-07-31 · kdevkit carries a safety floor a generator cannot
+  override.** Rationale (user direction): the contract-consulting design
+  means a generator declares how it wants to run, so without a floor a
+  misconfigured or malicious briefer could ask for write authority, the
+  implementer's history, credentials, or network reach — and
+  prompt-injected content in a diff must not be able to widen a
+  reviewer's authority. The floor is absolute: a generator's contract
+  governs *what it needs to read*, never *what it may do*; demanding any
+  of the four means refuse, report, don't run. Alternative rejected:
+  trusting the generator's declaration (the shipped version) — fine for
+  a tool you wrote, unsafe as a general contract.
+- **2026-07-31 · Fixture asserts anchor on seeded specifics, not review
+  vocabulary.** Rationale: the missing-tests assertion had been patched
+  three rounds running and stayed defeatable, because every fix widened
+  or narrowed a *word list* while the skill guarantees coverage language
+  whenever no test report is supplied. Root cause was matching
+  vocabulary, not evidence. Now two conditions — a coverage phrase **and**
+  a token from this seed (`title_to_slug` / `tests/`) that appears in no
+  boilerplate and no other assert. Conversely the anti-rubber-stamp
+  assert was made deliberately **loose**, because rigour there was
+  actively harmful: it failed a *correct* briefing whose labels used
+  `**question —**` rather than `question:`. Rigour belongs on the
+  specific findings; the loose assert only catches a clean bill of
+  health. Lesson recorded: **assert on what the seed uniquely produces,
+  and never guess an agent's phrasing — read a real output first.**
 
 - **2026-07-31 · The generator owns the contract; kdevkit only
   orchestrates.** kdevkit states that dev-loop completion produces a
