@@ -235,6 +235,14 @@ a structural integration test (`structural_install_to_real_directory_layout`)
 that runs a full install→status→uninstall round-trip in
 the fake $HOME, replacing the older bash structural smoke.
 
+One test deliberately breaks the fake-`$HOME` pattern:
+`shipped_content_validates` points the validator at the **real**
+`resources/content/`. Everything else here builds a synthetic tree, so
+without it the suite can be green while the content on disk is
+uninstallable — which is exactly what happened when two descriptions
+carried an unquoted `: ` (see "Writing a skill"). It reads only, so it
+keeps the no-side-effects property.
+
 **`just resources::verify-skills` — AI-tool functional tests.** Drives
 the real coding agents (claude, kiro, codex) against the `.smoke`
 fixtures under `resources/tests/skills/`. Three verification styles
