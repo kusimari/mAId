@@ -31,6 +31,21 @@ Two halves at the top level:
      the skill definitions the AI tools load. Skills are the only
      deployed artefact; each tool auto-discovers them at its own
      skills path.
+
+     Skills are mostly independent, but one may **dispatch another
+     by role** rather than by name: the caller declares the role it
+     needs, the fillers advertise that they fill it, and install (or
+     a project's own context file) binds them. `kdevkit` reaching for
+     an "independent review-briefing tool" — which `kreviewkit`
+     fills — is the first instance. Two rules keep that from becoming
+     coupling: **the caller never names a specific skill** (so a
+     different filler can be swapped in without editing the caller),
+     and **the filler owns its own invocation contract** (what it
+     needs, how it must be run), which the caller consults rather
+     than defines. A caller that dispatches another skill also owes
+     it a **safety floor** — limits the dispatched skill cannot widen
+     by asking, since a role it fills may be resolved from content it
+     doesn't control.
   2. **Tooling** (`resources/build-tool/`) — Rust crate
      (single-file) that does the install. Validates content
      and creates/removes/reports the `$HOME`-facing
@@ -213,7 +228,7 @@ Two test layers, each scoped to what they verify.
 **`just test` — workspace unit tests.** Rust unit tests
 covering the content validator and the symlink state
 machine against a `tempfile`-fake `$HOME`, plus the kaimux
-crate's 54 unit tests against a tempdir `Store`. Fast
+crate's 53 unit tests against a tempdir `Store`. Fast
 (sub-second). No real `$HOME` side effects, no API credits.
 Load-bearing — this is the §8 Test Gate default. Includes
 a structural integration test (`structural_install_to_real_directory_layout`)
@@ -262,7 +277,8 @@ task a user phrases implicitly, so the cell has no natural test.
 
 **`activation` and `discovery` depend on a self-announce contract.** A
 skill that declares `You begin every response … with the literal line
-[<skill>] applies` (today: `browser`, `notes`, `writing-style`) can be
+[<skill>] applies` (today: `browser`, `notes`, `writing-style`,
+`kreviewkit`) can be
 checked at the reply level, because the marker is text the agent can
 only know from the file. The announce line is there for the reader, not
 for ceremony — it attributes a reply to a written contract rather than
@@ -463,3 +479,15 @@ the experience is symmetric across resource kinds.
     equivalent). No project-specific reviewer skill yet; revisit
     once host-native review proves consistently weak across
     feature work in this repo.
+- `review_brief:`
+  - `enabled: true` — dev-loop completion generates a review
+    briefing and uses it as the PR body. Complements
+    `code_review:` rather than replacing it: that gate scores the
+    diff against the project blind to the spec; the briefing is
+    generated with the spec in hand.
+  - `generator:` omitted — resolve the single installed tool
+    advertising the review-briefing role. kdevkit dispatches the
+    *role*, never a named product; this repo happens to ship one
+    (`resources/content/skills/kreviewkit/`), and dogfoods it.
+    What the briefing contains and how the generator runs are
+    that generator's contract, not kdevkit's.

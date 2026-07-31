@@ -1,0 +1,136 @@
+skill: kreviewkit
+tools: claude,kiro,codex
+--- playback ---
+task: A workflow wants to hand you a change to brief. State your invocation contract — what inputs you need, how you require to be run, and what you return — then explain what the briefing contains and who it is for.
+expect: A correct answer states the contract as the skill's OWN requirement that a caller consults and honours, not as something the caller defines. (1) Inputs it asks for: required — the spec (the change's full statement of intent: capability, how it should be tested when done, design in project context, implementation plan) and the diff vs its base plus the base ref; wanted where they exist — project context (project.md / AGENTS.md or equivalent), decision/session logs, and a test run report. An input that does not exist must be NAMED AS ABSENT rather than silently omitted, and an absent test report means coverage is reported as unverified rather than assumed. (2) How it requires to be run: a FRESH CONTEXT agent that did not write the code and cannot see the implementer's conversation or session narrative, so the change cannot justify itself to its own reviewer; READ-ONLY on the branch but with WIDE read scope — reading beyond the changed hunks is required, not merely permitted, because "does this belong here / does it duplicate something / does it fit the architecture" are questions about code the diff never shows, so whole files, callers, callees, sibling modules, existing tests, and git history are all in scope; a read-only toolset preferred where the host can restrict tools, with the contract still binding where it cannot; and NO write authority beyond the briefing itself — no edits to existing files, commits, pushes, staging, PR mutation, build or test execution, or network access mid-review. (3) What it returns: the briefing as prose (or written to a destination the caller names), which the CALLER publishes — this skill never touches the review surface and never submits an approve/request-changes state. (4) Audience: the human about to review the change; it orients rather than adjudicates, and must not read as "already reviewed" or invite rubber-stamping. (5) It does NOT restate the inputs — the reviewer already has the spec and the diff, so re-describing them is padding; the value is the DELTA between intent and artefact. Sections: Playback (orientation to the shape and risk of what landed, plus design decisions the diff reveals — not a recap of the spec), Spec-vs-diff reconciliation (unmet, extra/scope creep, silent plan amendments, and a V-model coverage read pairing functional/integration tests to requirements and unit tests to design primitives), Where to focus (a risk-ranked reading order grouped read-for-intent / read-for-contract / read-for-plumbing with why each deserves attention), Needs your judgement (ONLY genuine judgement calls — trade-offs, risks to accept, cost/benefit spends the human must ratify, labelled question/suggestion/nitpick/praise). Crucially, DEFECTS DO NOT GO IN THE BRIEFING: a bug, stale reference, contradiction, unmet requirement, or missing test means the dev loop is not complete, and since the briefing is generated at dev-loop completion those are reported back to the caller as a loop-back and the briefing is regenerated on the fixed work. The dividing test is whether fixing it makes the finding disappear — if yes it is a defect, route it back; if it survives the fix because it is a choice, publish it. Wrong answers: saying the calling workflow decides its inputs, isolation, or section shape; describing itself as an automated code reviewer that reports defects to the author or returns a score; producing a verdict or approve/request-changes decision; claiming it may only read the diff and not unchanged files; saying it may edit or fix what it finds, or run the tests itself; restating or summarising the spec as the briefing's main content; a flat file-by-file listing instead of a risk-ranked focus map; treating the spec as ground truth instead of a claim to reconcile against the diff; omitting that absent inputs must be named; putting defects, bugs, or unmet requirements into the briefing's judgement section instead of routing them back to the loop; dressing a defect as a question to smuggle it into the briefing.
+--- enact ---
+task: A change was made by someone else and it needs review. Actually do the work now, don't just describe what you would do. The feature spec is SPEC.md, the change is the most recent commit, and the project context is project.md. Save your review briefing as a new file BRIEFING.md so I can read it, and leave everything else exactly as it is.
+--- setup ---
+# A repo where the DIFF ALONE looks fine, but an unchanged neighbouring
+# file already provides the same helper. Only a reviewer that reads
+# beyond the changed hunks can catch the duplication — that is the
+# behaviour under test. The spec also declares a requirement the diff
+# does not deliver (input trimming) so spec-vs-diff reconciliation has
+# something real to find, and declares unit tests that were never added.
+git init -q
+git config user.email t@t.t && git config user.name t
+# Record the tip so the assert can prove the reviewer made no commit AND
+# did not amend one away. Untracked, so it never dirties the porcelain
+# check below.
+
+# NOTE: neither project.md nor SPEC.md may name the helper file or the
+# function. If they did, a reviewer reading only its handed inputs could
+# satisfy the wider-branch assert without opening an unchanged file.
+cat > project.md <<'PROJ'
+# Project: textkit
+## Architecture
+Single module `src/text.py`, with shared helpers alongside it. Existing
+helpers MUST be reused rather than re-implemented.
+## Testing
+`pytest tests/` — unit tests are load-bearing and required for new helpers.
+PROJ
+
+mkdir -p src tests
+# The unchanged file that ALREADY has a slugify helper.
+cat > src/util.py <<'UTIL'
+def slugify(value):
+    """Lowercase, strip, and hyphenate a string."""
+    return "-".join(value.strip().lower().split())
+UTIL
+# NOTE: text.py deliberately does NOT import util here. If it did, the
+# import line would appear as diff context and a diff-only reviewer
+# could name "util" without ever reading the unchanged file — defeating
+# the assertion below that proves wider-branch reading.
+cat > src/text.py <<'TEXT'
+def page_title(raw):
+    return raw.title()
+TEXT
+touch tests/.gitkeep
+git add -A && git commit -q -m "seed: util.slugify exists"
+
+cat > SPEC.md <<'SPEC'
+# Feature: title-slug
+## Requirements
+- A caller can turn a page title into a URL slug.
+- Leading and trailing whitespace in the title is trimmed before slugging.
+## Design
+- Reuse the existing shared helper rather than writing a new one.
+## Test Strategy
+- Unit tests in `tests/` covering the slug helper (load-bearing).
+## Implementation Plan
+- [ ] Wire the title-slug path through the shared helper.
+SPEC
+git add SPEC.md && git commit -q -m "plan: spec"
+
+# THE CHANGE UNDER REVIEW: re-implements slugify locally (duplicating
+# src/util.py), ignores the trimming requirement, and adds no tests.
+cat >> src/text.py <<'TEXT'
+
+
+def title_to_slug(title):
+    parts = title.lower().split()
+    return "-".join(parts)
+TEXT
+git add -A && git commit -q -m "feat: add title_to_slug"
+git rev-parse HEAD > .base-sha
+--- assert ---
+set -e
+# The briefing was actually produced (a no-op agent fails here).
+test -s BRIEFING.md
+# READ-ONLY: the reviewer created only its own output. Nothing already
+# on the branch is dirty…
+test -z "$(git status --porcelain -- src tests SPEC.md project.md)"
+# …and the tip is the exact commit it started from — which a bare
+# rev-list count would miss, since `commit --amend` keeps the count at 3.
+test "$(git rev-parse HEAD)" = "$(cat .base-sha)"
+# The announce marker must not reach the artefact — it is destined for a
+# PR body the caller publishes verbatim.
+! grep -qi 'kreviewkit\] applies' BRIEFING.md
+# READ BEYOND THE DIFF. `slugify` appears ONLY inside the unchanged
+# src/util.py — not in the diff, not in SPEC.md, not in project.md — so
+# naming it is the one signal that proves the reviewer opened a file it
+# was never handed. (`util.py` is deliberately NOT accepted here: the
+# seed keeps it out of the handed inputs, but the filename is guessable
+# from the architecture note, whereas the function name is not.)
+grep -qiE '\bslugify\b' BRIEFING.md
+# SPEC-VS-DIFF RECONCILIATION: the spec requires trimming, the diff
+# dropped it. "trim"/"whitespace" come from the SPEC, not the diff, so
+# they show the reviewer actually held spec against code.
+grep -qiE 'trim|whitespace' BRIEFING.md
+# The spec's required unit tests were never added. TWO conditions, not
+# one: a coverage phrase AND a token from THIS seed. Patching the word
+# list alone failed three review rounds running — "test coverage" matches
+# a briefing saying coverage is fine, and "no test"/"untested"/"no
+# coverage" all match the boilerplate this skill *guarantees* whenever no
+# test report is supplied (which the enact run never supplies). So the
+# assert now demands the briefing name WHAT is untested. `title_to_slug`
+# and `tests/` are the seed's own; neither appears in that boilerplate,
+# and neither is claimed by another assert here.
+grep -qiE 'no unit test|missing test|absent test|untested|no coverage|lacks? test|no tests?|added no test|none were added|is (still )?empty|contains no test|never added|no accompanying test' BRIEFING.md
+grep -qiE 'title_to_slug|tests/' BRIEFING.md
+# A GROUPED, RISK-RANKED FOCUS MAP — the bucket names themselves, not
+# merely the word "risk" somewhere in prose.
+grep -qiE 'read for intent|read for contract|read for plumbing' BRIEFING.md
+# ORIENTS, NOT ADJUDICATES: no verdict. Matched as a standalone verdict
+# line/heading rather than a bare word, so a briefing that legitimately
+# says "don't approve without resolving this" still passes.
+! grep -qiE '^[[:space:]*_#>-]*(lgtm|approved?|i approve|request(ing|ed)? changes|changes requested|rejected)[[:space:].!]*$' BRIEFING.md
+# ANTI-RUBBER-STAMP. Deliberately loose, and here is why: the seeded
+# change is defect-heavy, and defects route BACK TO THE LOOP rather than
+# into the briefing, so section 4 may legitimately hold only trade-offs —
+# or nothing. Demanding labelled items would fail a correct briefing.
+# Matching an exact label shape is also unreliable: observed runs write
+# `**question — …**` (em-dash), not `question:`, and the phrasing of the
+# defect hand-off varies run to run. So this checks only the ONE thing
+# that must never happen — the briefing reading as a clean bill of
+# health. The three substantive findings are asserted individually above;
+# that is where rigour belongs, not here.
+grep -qiE '(question|suggestion|nitpick|praise|issue)[^a-z]|fix|resolve|address|defect|not (yet )?complete|back to|dispatcher|unmet|does not (yet )?satisfy' BRIEFING.md
+# DOESN'T RESTATE THE INPUTS. The reviewer already has SPEC.md, so a
+# briefing that recites it is padding. Proxy: the briefing must not
+# reproduce the spec's own section headings back at the reader.
+! grep -qiE '^#+[[:space:]]*(requirements|test strategy|implementation plan)[[:space:]]*$' BRIEFING.md
+# And it must stay shorter than a spec-recap would run. The seeded spec
+# is ~12 lines; a briefing over 200 lines for a 6-line diff is restating
+# its inputs, not briefing on them.
+test "$(wc -l < BRIEFING.md)" -lt 200

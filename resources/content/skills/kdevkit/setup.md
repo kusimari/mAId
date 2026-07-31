@@ -109,6 +109,44 @@ organised by skill. Keys under `kdevkit`:
   prompt below. Once written (even with all defaults), the
   block sticks — the question doesn't re-fire next session.
 
+- `review_brief:` — nested block naming the briefing generator
+  for §7's Review Briefing. All keys optional; the block itself
+  is optional and **absent means off**, so unlike `code_review:`
+  it fires no setup prompt.
+
+  ```yaml
+  review_brief:
+    enabled: false              # default; true opts the briefing in
+    generator: <ref>            # optional; omit to auto-resolve the
+                                # installed review-briefing role
+  ```
+
+  - **`enabled`** — `false` (default) means no briefing; the dev
+    loop is exactly as it was. `true` generates one and uses it as
+    the PR/CR body.
+  - **`generator`** — *which* tool fills the review-briefing role,
+    using the same prefix-tagged `<ref>` grammar as
+    `code_review.reviewer` above. Omit it in the common case:
+    kdevkit resolves the single installed tool advertising the
+    role, and asks once (persisting the answer here) when that is
+    ambiguous or finds nothing. This key is the only place a
+    specific briefing tool is ever named — kdevkit itself
+    dispatches a role.
+
+  **What the generator needs, how it runs, and what a briefing
+  contains are the generator's contract, not kdevkit's** — so
+  there are no keys here for inputs, context isolation, or
+  section shape. kdevkit reads the generator's own definition and
+  honours what it asks for, which is what lets a project swap in a
+  briefing tool with an entirely different contract without
+  touching kdevkit.
+
+  Note the asymmetry with `code_review:`: a missing `code_review:`
+  block means "not yet decided" (prompt the user), whereas a
+  missing `review_brief:` block means "not wanted" (stay silent).
+  A step that costs an extra agent call should be opted into, not
+  prompted for.
+
 ## Code-review setup prompt
 
 When `kdevkit.code_review:` is missing from `project.md`,
@@ -189,7 +227,11 @@ Validation rules the subagent applies, in order:
    present** with at least the `reviewer:` key, OR the block is
    entirely absent (in which case main fires the Code-review
    setup prompt). Block present-but-malformed → `drift`.
-3. **`## Active initiatives` index, if present, matches
+3. **`review_brief:` block, if present, parses with no unknown
+   keys** — only `enabled` and `generator` are recognized. The
+   block is optional and its absence is **not** drift (absent
+   means the gate is off; no setup prompt fires for it).
+4. **`## Active initiatives` index, if present, matches
    `$SPEC_ROOT/initiative/`** — every line in the index has a
    matching `initiative/<name>.md` on disk; every on-disk
    initiative either has an index line or is archived. Drift

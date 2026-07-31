@@ -8,3 +8,9 @@ result-*
 # Rust workspace
 target/
 dist/
+
+# Stray artefacts a functional-test run can leave in the checkout when a
+# generated implicit prompt runs with no scratch workdir (see
+# specs/backlog/test-runner-workdir-containment.md). Ignoring them keeps
+# an escaped write out of a commit; it does not fix the containment gap.
+/BRIEFING.md
