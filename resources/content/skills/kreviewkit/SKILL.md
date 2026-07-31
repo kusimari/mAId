@@ -59,59 +59,72 @@ Four consequences, all load-bearing:
 - **Read once, in order, then set aside.** Not a standing checklist,
   not a findings database.
 
-## What you are given, and what you may reach
+## Invocation contract
 
-You are a **fresh** agent: you did not write this code, and you do not
-see the implementer's conversation or session narrative. The change
-does not get to justify itself to its own reviewer.
+**This section is what a caller reads to learn how to invoke this
+skill.** A workflow that dispatches a briefing generator (kdevkit does)
+consults this and supplies what it asks for. Everything here is this
+skill's own requirement — the caller owns none of it.
 
-**Given to you:**
+### Inputs — what to hand over
 
-- **The feature spec** — the full statement: the capability, how it
-  should be tested when done, the details and design considered
-  against the overall project, and the implementation plan. Under
-  kdevkit that is `specs/feature/<feature>.md`; standalone it is
-  whatever plays that part (a linked issue, a design doc, a pasted
-  intent).
-- **The diff** vs. its base, and the base ref.
-- **Project context** — `project.md`, a repo-root `AGENTS.md`, or
-  whatever equivalent the project keeps.
-- **Decision / Session logs** where the spec carries them.
-- **A test run report** where one exists (often absent — that is fine,
-  see below).
+Required:
 
-**You may read freely, read-only:** any file on the branch under
-review — not just the changed hunks — plus git history and blame.
-Reading the surrounding code is *required*, not merely permitted: four
-added lines inside a fifty-line method are only judgeable by reading
-the method, and "does this belong here / does it duplicate something /
-does it fit the architecture" are questions about code the diff never
-shows. Open whole files; look at callers, callees, sibling modules,
-existing tests, neighbouring conventions.
-This is established review practice, not a preference: mature review
-guidance tells reviewers to open the whole file, and to zoom out to the
-system, for exactly this reason.
-`src: google.github.io/eng-practices/review/reviewer/looking-for.html`
+- **The spec** — the change's full statement of intent: the capability,
+  how it should be tested when done, the design considered against the
+  project, and the implementation plan. Under kdevkit that is
+  `specs/feature/<feature>.md`; standalone, whatever plays that part
+  (a linked issue, a design doc, a pasted intent).
+- **The diff** vs. its base, plus the base ref.
 
-**You may not:**
+Wanted where they exist:
 
-- **Change the code under review.** No edits to any file that exists on
-  the branch, no commits, no pushes, no branch or PR mutation, no
-  staging. You are not here to fix what you find — you report it.
-- **Run the build or test suite.** Read the report if you were given
-  one; you are not here to verify by execution.
-- **Reach the network** mid-review. Everything you need is in what you
-  were given plus the branch itself.
+- **Project context** — `project.md`, a repo-root `AGENTS.md`, or the
+  project's equivalent.
+- **Decision / Session logs**, where the spec carries them — the
+  alternatives that were weighed.
+- **A test run report.** Often absent; that is fine, and coverage is
+  then reported as unverified rather than assumed.
 
-**The one thing you may write is the briefing itself**, and only when
-you were asked to put it somewhere: a new file whose path the caller
-named, or the reply. That artefact is your output, not a change to the
-code — so creating it is in scope, while touching anything already on
-the branch is not. Default to returning the briefing in your reply when
-no destination was given.
+Any of these that doesn't exist should be **named as absent** by the
+caller rather than silently omitted — "there is no test report" is
+information; a missing input that looks like an oversight is not.
 
-If a host cannot restrict your tools, honour this anyway — it is the
-contract, not a sandbox artefact.
+### How to run this
+
+- **Fresh context, not the implementer.** The agent producing the
+  briefing must not have written the code and must not see the
+  implementer's conversation or session narrative. The change does not
+  get to justify itself to its own reviewer.
+- **Read-only on the branch, with wide read scope.** Reading beyond
+  the changed hunks is *required*, not merely permitted: four added
+  lines inside a fifty-line method are only judgeable by reading the
+  method, and "does this belong here / does it duplicate something /
+  does it fit the architecture" are questions about code the diff never
+  shows. Whole files, callers, callees, sibling modules, existing
+  tests, git history and blame are all in scope.
+  `src: google.github.io/eng-practices/review/reviewer/looking-for.html`
+- **Prefer a read-only toolset** where the host can restrict tools.
+  Where it can't, this contract still binds — it is a contract, not a
+  sandbox artefact.
+- **No write authority beyond the briefing.** No edits to files that
+  exist on the branch, no commits, pushes, staging, or PR mutation, no
+  build or test execution, no network mid-review.
+
+### Output — what comes back
+
+A briefing as prose (the four sections below). Where the caller names a
+destination, it may be written to that new file; otherwise it comes
+back in the reply. That artefact is the output, not a change to the
+code — creating it is in scope, touching anything already on the branch
+is not.
+
+**The caller publishes it.** This skill never touches the review
+surface itself.
+
+**If a caller can't supply an input or arrange the run as described,
+say which guarantee is weaker and continue** — a briefing with a named
+gap beats no briefing. But never paper over the gap.
 
 **Say what you were not given.** A thin or missing spec, an absent
 test report, a diff you could not interpret: state it plainly in the
@@ -124,17 +137,36 @@ finding the human needs.
 Four sections, in this order. This is the PR/CR body — clean prose, no
 `[kreviewkit] applies` marker, no meta-commentary about being an AI.
 
-### 1 · Playback — what shipped
+### Don't restate the inputs
 
-What the user can now do, the salient user-observable behaviour, and
-the load-bearing design decisions **with the alternatives that were
-weighed** (mine the Decision Log where one exists). A reviewer who
-reads only this section should understand what shipped and why it is
-shaped the way it is.
+**The reviewer has the spec and the diff.** Both are in the review.
+Re-describing what the spec already says is wasted words that pad the
+briefing and bury the parts only you can supply.
 
-Lead with the change's purpose and where the risk is. Keep it to what
-a reviewer needs to hold in their head — not a file-by-file recitation;
-the diff is authoritative for *what*.
+Your value is the **delta between intent and artefact** — what can only
+be learned by holding the spec, the diff, and the surrounding code
+against each other. Everything below is either that delta, or the
+minimum orientation needed to make the delta legible.
+
+So: no section-by-section recap of the spec, no file-by-file recitation
+of the diff, no restatement of requirements the reviewer can read. Cite
+the spec only where the diff meets it, diverges from it, or leaves it
+unaddressed.
+
+### 1 · Playback — the shape of what landed
+
+Orientation only: enough for a reviewer to hold the change in their
+head before they open a file. A few sentences on **what the change
+does** and **where its risk concentrates** — not a summary of the spec's
+capability statement, which they already have.
+
+Then the **load-bearing design decisions** — but only those the diff
+*reveals*: a decision the code embodies, an alternative that was
+weighed (mine the Decision Log), a choice a reviewer would otherwise
+have to reverse-engineer. Skip any decision the spec already states
+plainly and the diff simply implements; that is reading, not briefing.
+
+If this section runs long, it is almost certainly restating the spec.
 
 ### 2 · Spec ↔ diff reconciliation
 
@@ -219,13 +251,13 @@ kdevkit, no spec tree needed. When there is no real spec, say so and
 reconstruct intent from commits and the PR description — flagging that
 you did — rather than pretending you were handed one.
 
-**Under a workflow (e.g. kdevkit).** A workflow dispatches the *role*,
-not this skill by name, at the hand-off from development to closure:
-implementation is pushed, gates are green, and the human is about to
-decide whether to close it out. Your briefing becomes the PR/CR body
-they review before giving that cue. Its four sections subsume the
-usual body shape — Playback carries the Why, section 3 *is* the
-reading order.
+**Dispatched by a workflow.** A workflow that reaches for a briefing
+generator resolves the *role*, reads the Invocation contract above, and
+supplies what it asks for; the briefing it gets back becomes the PR/CR
+body. The workflow owns *when* to ask and *what to do with the result* —
+this skill owns what a briefing is and how it must be produced. Under
+kdevkit that hand-off is dev-loop completion, where the four sections
+also satisfy the usual body shape (section 3 *is* the reading order).
 
 ## Publishing the briefing
 

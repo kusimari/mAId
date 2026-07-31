@@ -675,6 +675,36 @@ installed-role lookup above.
 
 <!-- append: date · what was done · decisions made -->
 
+- **2026-07-31** · **Contract inverted, duplication removed** — two
+  corrections from reading the published briefing.
+  **(1) The briefing was restating the spec.** If the spec is in the
+  review anyway, re-elaborating it is padding that buries the parts only
+  the briefing can supply. Added a "Don't restate the inputs" rule: the
+  value is the **delta between intent and artefact**, so no spec recap,
+  no file-by-file diff recitation. Playback narrowed from "what shipped
+  (capability + behaviour + decisions)" to *orientation to shape and
+  risk* plus only those design decisions **the diff reveals** — a
+  decision the spec states and the diff merely implements is reading,
+  not briefing. Two new fixture asserts, since the rule was otherwise
+  untested prose: the briefing must not reproduce the spec's own section
+  headings, and must stay under 200 lines for a 6-line diff.
+  **(2) The contract belonged in the wrong skill.** kdevkit was
+  specifying what the briefing tool receives, that it runs fresh-context
+  and read-only, and that the output is human-facing — all of which is
+  the *generator's* business. Inverted: kdevkit now says only that
+  dev-loop completion produces a review whose briefing comes from a
+  configured generator, that it **consults the generator's declared
+  contract** for inputs and invocation and honours it, and how to use
+  the result on the PR/CR. kreviewkit gained an explicit **Invocation
+  contract** section (inputs required/wanted, how to run, what comes
+  back) written as *its own* requirement for a caller to read. Config
+  key `reviewer:` → `generator:` to match. Two wins, as the user framed
+  it: another briefer with a different input contract can be configured
+  without touching kdevkit, and kdevkit stays simple — kdevkit's section
+  dropped from ~110 to 65 lines (−40%) while kreviewkit, which is loaded
+  only when a briefing is actually wanted, carries the detail.
+  Behavioral test re-run: PASS.
+
 - **2026-07-30** · **Three independent review rounds now applied; third
   behavioral run PASS.** A blind §7 Code Review Gate scored **58/100**
   and its findings partly *contradicted* the dogfood briefing — which is
@@ -854,6 +884,31 @@ installed-role lookup above.
 ## Decision Log
 
 <!-- append: decision · rationale · alternatives rejected -->
+
+- **2026-07-31 · The generator owns the contract; kdevkit only
+  orchestrates.** kdevkit states that dev-loop completion produces a
+  review whose briefing comes from a configured generator, consults that
+  generator's own declared contract for what it needs and how it wants to
+  run, supplies it, and uses the returned briefing on the PR/CR. It
+  defines *nothing* about briefing content, audience, isolation, or
+  inputs. Rationale: those are properties of the briefing tool, not of
+  the workflow, and putting them in kdevkit both bloated an always-loaded
+  critical skill and hard-wired one tool's contract as if it were
+  universal. Inverting gives two things — a different briefer with a
+  different input contract can be configured without editing kdevkit,
+  and kdevkit stays simple, with the detail living in a skill that loads
+  only when a briefing is wanted. Alternative rejected: kdevkit
+  specifying the dispatch contract (the shipped version) — simpler to
+  write, but it makes every future briefer conform to kreviewkit's shape.
+- **2026-07-31 · The briefing must not restate its inputs.** The
+  reviewer already has the spec and the diff in the review, so recapping
+  either is padding that buries the delta. Playback is now orientation
+  plus only the design decisions the diff *reveals*; a decision the spec
+  states and the diff merely implements is left to the spec. Enforced by
+  fixture asserts (no spec section headings echoed back; length bounded)
+  because an untested prose rule drifts. Alternative rejected: keeping
+  the fuller playback for readers who skip the spec — it optimises for
+  someone not doing the review, at the cost of everyone who is.
 
 - **2026-07-30 · The audience is the human about to review — and the
   references mostly aren't.** Rationale: Sourcery, CodeRabbit and
