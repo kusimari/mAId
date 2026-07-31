@@ -323,6 +323,17 @@ the announce line is named there too. A "when to use this" section in
 the body cannot fire a skill, because only an already-fired skill
 reads the body.
 
+**It also has to parse.** Frontmatter is YAML, so a `: ` anywhere
+inside a `description:` value reads as a nested mapping and the whole
+skill fails validation — `install-skills` then refuses to deploy *any*
+skill, not just the broken one. Descriptions naturally attract it
+(`specs/: plan or start`, `briefing tool: read-only`). **Single-quote
+the value** whenever it contains a colon; the values already use `"`
+freely, so `'…'` avoids escaping. `shipped_content_validates` in
+build-tool is the test that catches this — every other validator test
+builds a synthetic `TempDir` tree, so before it existed the suite could
+be green while the real content was uninstallable.
+
 **It has to hold.** Loading a skill buys the start of adherence, not
 all of it. On a long prompt, with a large skill, the rule that slips
 is the one about order — do X before Y. So the rules that must not
