@@ -3,10 +3,14 @@
 ## Git Setup
 
 - Branch: `feat/kreviewkit` (pre-created worktree).
-- Base: `feat/fixtures-discovery-vs-content-split` (`588b06c`) —
-  stacked on an in-flight feature branch at user direction, not
-  `main`. Closure merge order depends on the base branch landing
-  first (stream-like ordering; see Risk notes).
+- Base: **`main`** (rebased 2026-07-31). Originally stacked on
+  `feat/fixtures-discovery-vs-content-split` (`588b06c`) at user
+  direction; that branch squash-merged to `main` as PR #34 and was
+  deleted, which auto-closed PR #35 (closed, not merged — no
+  kreviewkit work reached `main`). The 12 kreviewkit commits were
+  rebased `--onto main`, dropping the 15 base-branch commits already
+  in `main` under the squash SHA. The stacked-base risk note called
+  this; §10's cross-stream rebase mechanics is the rule that applied.
 
 ## Feature Brief
 
@@ -635,10 +639,11 @@ installed-role lookup above.
 
 ### Risk notes
 
-- *Stacked base.* Branched off
-  `feat/fixtures-discovery-vs-content-split`, not `main`. If that
-  branch changes or lands first, rebase this one (§10 cross-stream
-  rebase mechanics) before closure. Confirm merge order at closure.
+- *Stacked base.* **Resolved 2026-07-31** — the base landed first
+  (squash-merged as PR #34, branch deleted, which auto-closed PR #35),
+  and this branch was rebased `--onto main` per §10's cross-stream
+  rebase mechanics. The risk fired exactly as written; the mitigation
+  was the one named. Now based on `main`, so it no longer applies.
 - *Read-only enforcement is only as good as the host.* Where a host
   can't restrict tools or scope a checkout, it rests on prose
   compliance. The worktree-unchanged fixture is the check; treat a
@@ -674,6 +679,33 @@ installed-role lookup above.
 ## Session Log
 
 <!-- append: date · what was done · decisions made -->
+
+- **2026-07-31** · **Rebased onto `main`; PR re-opened.** The stacked
+  base landed while this branch was in flight: PR #34 squash-merged
+  `feat/fixtures-discovery-vs-content-split` into `main` and deleting
+  that branch **auto-closed PR #35** (closed, not merged). Measured
+  both recovery options before acting rather than assuming: leaving it
+  alone showed **27 commits / 27 files / +2987** in a PR against `main`
+  (a stale merge-base re-presenting 15 commits `main` already had under
+  the squash SHA); merging `main` in gave 15 files and **9 conflicted
+  files**, several in files this branch never touched plus an add/add on
+  another feature's spec; rebasing `--onto main` gave **12 commits / 9
+  files / +1576** and only **2 conflicts**. Rebase won on the axis that
+  mattered — "the PR shows only what we changed" — and on conflict count,
+  because dropping the already-merged commits stops git reconciling
+  against re-written history. Both conflicts were prose in files #34 also
+  edited (`kdevkit/SKILL.md` frontmatter, `kdevkit-dev-loop.smoke`
+  narrative); resolved by **combining both intents** — `main`'s shortened
+  description and its two judge-narrative improvements (the
+  narrower-re-run precision clause and the "an answer more precise than
+  this narrative is correct" instruction) kept alongside this feature's
+  version bump and briefing clause, rather than picking a side. All gates
+  re-run on the rebased tree (97 unit tests, `--dry-run`, and the
+  behavioral `enact` run) since a rebase invalidates prior green.
+  **Process note:** an earlier attempt to "dry-run" the rebase actually
+  mutated the branch and left it mid-conflict — a rebase is not a dry
+  run. Aborted, restored to match origin, then measured with
+  `git merge-tree` and a throwaway branch instead.
 
 - **2026-07-31** · **Contract inverted, duplication removed** — two
   corrections from reading the published briefing.
