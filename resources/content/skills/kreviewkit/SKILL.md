@@ -1,6 +1,6 @@
 ---
 name: kreviewkit
-description: Brief a human before they review a change — "review what was done", "prep this for review", "brief the review", "summarise this change for a reviewer". Independent review-briefing tool: read-only reviewer turns a spec + diff into the briefing a reviewer reads first. Becomes the PR/CR body; not a scoring gate. Opens with `[kreviewkit] applies`.
+description: 'Brief a human before they review a change — "review what was done", "prep this for review", "brief the review", "summarise this change for a reviewer". Independent review-briefing tool: read-only reviewer turns a spec + diff into the briefing a reviewer reads first. Becomes the PR/CR body; not a scoring gate. Opens with `[kreviewkit] applies`.'
 version: 1.0.0
 tags: [review, pr, cr, briefing, reviewer, spec, diff, independent]
 ---

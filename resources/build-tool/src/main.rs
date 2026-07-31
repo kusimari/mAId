@@ -604,6 +604,32 @@ mod tests {
         assert!(errs.iter().any(|e| e.contains("description")));
     }
 
+    /// The shipped content must pass its own validator.
+    ///
+    /// Every other test here builds a synthetic tree in a `TempDir`, so
+    /// none of them look at what actually deploys — which is how two
+    /// skills reached `main` with a `description:` that YAML read as a
+    /// nested mapping (an unquoted `": "` inside the value). The suite
+    /// was green; `install-skills` refused to run. This closes that gap:
+    /// if content in the repo can't be installed, `just test` says so.
+    #[test]
+    fn shipped_content_validates() {
+        let content = repo_root()
+            .expect("repo root resolves under cargo test")
+            .join("resources/content");
+        match check_content(&content) {
+            Ok(n) => assert!(
+                n > 0,
+                "no skills found under {} — the walk is broken",
+                content.display()
+            ),
+            Err(errs) => panic!(
+                "shipped content is not installable:\n  {}",
+                errs.join("\n  ")
+            ),
+        }
+    }
+
     #[test]
     fn check_content_collects_multiple_errors() {
         // Two bad skills — caller sees ALL problems, not just the first.

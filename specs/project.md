@@ -235,6 +235,14 @@ a structural integration test (`structural_install_to_real_directory_layout`)
 that runs a full install→status→uninstall round-trip in
 the fake $HOME, replacing the older bash structural smoke.
 
+One test deliberately breaks the fake-`$HOME` pattern:
+`shipped_content_validates` points the validator at the **real**
+`resources/content/`. Everything else here builds a synthetic tree, so
+without it the suite can be green while the content on disk is
+uninstallable — which is exactly what happened when two descriptions
+carried an unquoted `: ` (see "Writing a skill"). It reads only, so it
+keeps the no-side-effects property.
+
 **`just resources::verify-skills` — AI-tool functional tests.** Drives
 the real coding agents (claude, kiro, codex) against the `.smoke`
 fixtures under `resources/tests/skills/`. Three verification styles
@@ -322,6 +330,17 @@ triggers, in the words a user would actually type, in a line or two;
 the announce line is named there too. A "when to use this" section in
 the body cannot fire a skill, because only an already-fired skill
 reads the body.
+
+**It also has to parse.** Frontmatter is YAML, so a `: ` anywhere
+inside a `description:` value reads as a nested mapping and the whole
+skill fails validation — `install-skills` then refuses to deploy *any*
+skill, not just the broken one. Descriptions naturally attract it
+(`specs/: plan or start`, `briefing tool: read-only`). **Single-quote
+the value** whenever it contains a colon; the values already use `"`
+freely, so `'…'` avoids escaping. `shipped_content_validates` in
+build-tool is the test that catches this — every other validator test
+builds a synthetic `TempDir` tree, so before it existed the suite could
+be green while the real content was uninstallable.
 
 **It has to hold.** Loading a skill buys the start of adherence, not
 all of it. On a long prompt, with a large skill, the rule that slips
