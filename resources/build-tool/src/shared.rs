@@ -5,7 +5,7 @@
 //! order (`stages` → `harness` → `shared`).
 
 use anyhow::{anyhow, Context, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // ─────────────────────────────────────────────────────────────────
 // Registry — the deployment manifest.
@@ -91,6 +91,82 @@ pub fn validate_agent(agent: Option<&str>) -> Result<Option<&str>> {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// Agent — one coding agent, and where it reads skills from.
+//
+// Every stage needs some version of "where does agent X keep skills":
+// install writes the tree, smoke reads a skill out of the installed
+// tree, and check reads the same skill out of the checkout instead.
+// That knowledge is derived from REGISTRY here rather than restated —
+// the bash runner kept its own copy of the three home paths, and it
+// drifted from the registry, which is the bug this type exists to make
+// impossible.
+// ─────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Agent {
+    Claude,
+    Kiro,
+    Codex,
+}
+
+impl Agent {
+    /// Every agent, in registry order.
+    pub const ALL: &'static [Agent] = &[Agent::Claude, Agent::Kiro, Agent::Codex];
+
+    /// The registry-facing name — the same token `--agent` accepts.
+    pub fn name(self) -> &'static str {
+        match self {
+            Agent::Claude => "claude",
+            Agent::Kiro => "kiro",
+            Agent::Codex => "codex",
+        }
+    }
+
+    /// Parse an `--agent` token. `None` means "every agent", which is
+    /// the default for every verb that takes the selector.
+    pub fn parse(token: &str) -> Result<Agent> {
+        Agent::ALL
+            .iter()
+            .copied()
+            .find(|a| a.name() == token)
+            .ok_or_else(|| {
+                anyhow!(
+                    "unknown coding agent {token:?} (known: {})",
+                    AGENTS.join(", ")
+                )
+            })
+    }
+
+    /// The agent's skills root under `$HOME`, from its REGISTRY row.
+    ///
+    /// Panics only if REGISTRY loses a row for a variant — an
+    /// unrepresentable state the `agents_have_registry_rows` test pins.
+    pub fn skills_root(self, home: &Path) -> PathBuf {
+        let (home_sub, ..) = REGISTRY
+            .iter()
+            .find(|(.., agent)| *agent == self.name())
+            .expect("every Agent variant has a REGISTRY row");
+        home.join(home_sub)
+    }
+
+    /// Where this agent reads `<skill>`'s SKILL.md once installed.
+    /// The post-install (smoke) source: what the deployment exposes.
+    pub fn installed_skill(self, home: &Path, skill: &str) -> PathBuf {
+        self.skills_root(home).join(skill).join("SKILL.md")
+    }
+}
+
+/// Where `<skill>`'s SKILL.md lives in the checkout — the pre-install
+/// (check) source. Agent-independent by design: before install there is
+/// only one copy, which is why the three explicit kinds need no deploy.
+pub fn checkout_skill(checkout: &Path, skill: &str) -> PathBuf {
+    checkout
+        .join("resources/content/skills")
+        .join(skill)
+        .join("SKILL.md")
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Roots.
 // ─────────────────────────────────────────────────────────────────
 
@@ -150,5 +226,73 @@ mod tests {
         assert!(validate_agent(Some("bogus")).is_err());
         assert!(validate_agent(Some("claude")).is_ok());
         assert!(validate_agent(None).is_ok());
+    }
+
+    // ── Agent · skill sources ────────────────────────────────────
+
+    #[test]
+    fn agent_parse_round_trips_every_name() {
+        for agent in Agent::ALL {
+            assert_eq!(Agent::parse(agent.name()).unwrap(), *agent);
+        }
+        assert!(Agent::parse("bogus").is_err());
+    }
+
+    /// `skills_root` reads REGISTRY, so a variant without a row would
+    /// panic at runtime. Pin that here rather than in a caller.
+    #[test]
+    fn agents_have_registry_rows() {
+        let home = Path::new("/home/u");
+        for agent in Agent::ALL {
+            assert!(agent.skills_root(home).starts_with(home));
+        }
+        assert_eq!(Agent::ALL.len(), AGENTS.len());
+    }
+
+    /// The three deployed roots, spelled out. This is the assertion the
+    /// bash runner could not make: it hand-copied these paths, they
+    /// drifted from REGISTRY, and nothing caught it.
+    #[test]
+    fn installed_skill_matches_each_agents_deployed_layout() {
+        let home = Path::new("/home/u");
+        assert_eq!(
+            Agent::Claude.installed_skill(home, "notes"),
+            Path::new("/home/u/.claude/skills/notes/SKILL.md")
+        );
+        assert_eq!(
+            Agent::Kiro.installed_skill(home, "notes"),
+            Path::new("/home/u/.kiro/steering/skills/notes/SKILL.md")
+        );
+        assert_eq!(
+            Agent::Codex.installed_skill(home, "notes"),
+            Path::new("/home/u/.codex/skills/notes/SKILL.md")
+        );
+    }
+
+    /// Pre-install there is one copy of a skill, not three — which is
+    /// why the explicit kinds need no deploy.
+    #[test]
+    fn checkout_skill_is_agent_independent() {
+        let checkout = Path::new("/repo");
+        assert_eq!(
+            checkout_skill(checkout, "notes"),
+            Path::new("/repo/resources/content/skills/notes/SKILL.md")
+        );
+    }
+
+    /// The two sources must never collide: check reads the checkout,
+    /// smoke reads $HOME, and conflating them is the inconsistency the
+    /// bash runner shipped (announce read from one, prompts from the
+    /// other).
+    #[test]
+    fn checkout_and_installed_sources_are_distinct() {
+        let home = Path::new("/home/u");
+        let checkout = Path::new("/repo");
+        for agent in Agent::ALL {
+            assert_ne!(
+                agent.installed_skill(home, "notes"),
+                checkout_skill(checkout, "notes")
+            );
+        }
     }
 }
