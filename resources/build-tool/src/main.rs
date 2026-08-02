@@ -1,7 +1,6 @@
-//! build-tool — mAId's tooling for installing checked-in markdown
-//! resources into the AI tools that consume them. Single-file
-//! Rust crate; the whole job is small enough that splitting it
-//! into modules adds noise.
+//! build-tool — the binary shim. Parses the CLI and dispatches into the
+//! pipeline; see `lib.rs` for the crate's shape and the dependency
+//! order.
 //!
 //! Invoked via the project's Justfile:
 //!   just resources::install-skills [agent]    create the $HOME-facing symlinks (after content checks)
@@ -9,101 +8,16 @@
 //!   just resources::status-skills [agent]     report each managed symlink's current state
 //! An optional `--agent <claude|kiro|codex>` scopes any of the three
 //! to one coding agent; the default is all of them.
-//!
-//! `just resources::verify` is a separate verb that drives
-//! `claude --print` (and kiro/codex) against the installed content;
-//! that lives in the Justfile and shells into `resources/tests/run`,
-//! not in this binary.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
+use build_tool::shared::{
+    home_dir, repo_root, selected_entries, validate_agent, Entry, Kind, Link,
+};
 use clap::{Parser, Subcommand};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-
-// ─────────────────────────────────────────────────────────────────
-// 1. Registry — the deployment manifest.
-//
-// The job: mAId keeps skills in the checkout; each coding agent expects
-// them under its own home dir and discovers them there natively (claude
-// ~/.claude/skills, kiro ~/.kiro/steering, codex ~/.codex/skills — all
-// verified to load skills with no extra preamble). The registry maps
-// checkout source → agent home, one row per target, in one of two
-// shapes (`Kind`):
-//
-//   Link   — the agent's home layout matches the checkout, so symlink
-//            the home path straight at the source dir. mAId owns it.
-//   FanOut — the agent owns the home dir and puts its own entries
-//            there, so we can't replace it; mirror each source child in
-//            as its own symlink and leave the rest alone.
-//
-// Skills are all that's installed. There is no global instruction
-// preamble: loading a project's AGENTS.md / project.md is kdevkit's
-// work-time instruction, and AGENTS.md is a repo-root convention, not a
-// global per-tool file.
-// ─────────────────────────────────────────────────────────────────
-
-type Entry = (&'static str, &'static str, Kind, &'static str); // (home_subpath, source_subpath, kind, agent)
-
-/// A concrete symlink to manage, resolved from an entry: (home, source).
-type Link = (PathBuf, PathBuf);
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Kind {
-    Link,
-    FanOut,
-}
-
-/// The coding agents mAId deploys to. An install/uninstall/status can
-/// be scoped to one (`--agent`) or, by default, cover them all. This
-/// list is also the recognized universe used to validate `--agent`.
-const AGENTS: &[&str] = &["claude", "kiro", "codex"];
-
-const REGISTRY: &[Entry] = &[
-    (
-        ".claude/skills",
-        "resources/content/skills",
-        Kind::Link,
-        "claude",
-    ),
-    (
-        ".kiro/steering/skills",
-        "resources/content/skills",
-        Kind::Link,
-        "kiro",
-    ),
-    (
-        ".codex/skills",
-        "resources/content/skills",
-        Kind::FanOut,
-        "codex",
-    ),
-];
-
-/// Filter REGISTRY to the rows an `--agent` selection acts on: `None`
-/// = every row (the default), `Some(a)` = just that agent's rows. An
-/// unrecognized agent is rejected by the caller before this runs.
-fn selected_entries(agent: Option<&str>) -> Vec<Entry> {
-    REGISTRY
-        .iter()
-        .filter(|(.., a)| agent.is_none_or(|sel| sel == *a))
-        .copied()
-        .collect()
-}
-
-/// Validate an `--agent` value against the known set, returning it
-/// back for chaining. An unknown agent is a hard error listing the
-/// valid names, so a typo never silently installs nothing.
-fn validate_agent(agent: Option<&str>) -> Result<Option<&str>> {
-    match agent {
-        Some(a) if !AGENTS.contains(&a) => Err(anyhow!(
-            "unknown coding agent {a:?} (known: {})",
-            AGENTS.join(", ")
-        )),
-        other => Ok(other),
-    }
-}
 
 // ─────────────────────────────────────────────────────────────────
 // 2. Content checks.
@@ -527,45 +441,13 @@ fn uninstall_one(home: PathBuf, source: PathBuf, dry_run: bool, force: bool) -> 
 }
 
 // ─────────────────────────────────────────────────────────────────
-// 5. Roots.
-// ─────────────────────────────────────────────────────────────────
-
-fn repo_root() -> Result<PathBuf> {
-    // CARGO_MANIFEST_DIR points at <checkout>/resources/build-tool/.
-    // Walk up two levels to the workspace root, then sentinel-check
-    // that we landed at a recognizable workspace.
-    let manifest = std::env::var("CARGO_MANIFEST_DIR")
-        .context("CARGO_MANIFEST_DIR not set — invoke via `cargo run -p build-tool ...`")?;
-    let root = PathBuf::from(manifest)
-        .parent()
-        .context("expected resources/build-tool/ to have a parent (resources/)")?
-        .parent()
-        .context("expected resources/ to have a parent (workspace root)")?
-        .to_path_buf();
-    if !root.join("Cargo.toml").is_file() || !root.join("resources").is_dir() {
-        return Err(anyhow!(
-            "expected workspace root at {} (Cargo.toml + resources/ both required)",
-            root.display()
-        ));
-    }
-    Ok(root)
-}
-
-fn home_dir() -> Result<PathBuf> {
-    let raw = std::env::var("HOME").context("HOME is not set")?;
-    let home = PathBuf::from(&raw);
-    (!raw.is_empty() && home.is_absolute())
-        .then_some(home)
-        .ok_or_else(|| anyhow!("HOME must be a non-empty absolute path (got {raw:?})"))
-}
-
-// ─────────────────────────────────────────────────────────────────
 // 6. Tests.
 // ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use build_tool::shared::REGISTRY;
     use tempfile::TempDir;
 
     fn write(p: &Path, s: &str) {
@@ -1142,25 +1024,9 @@ mod tests {
     }
 
     // ── agent selector (--agent) ─────────────────────────────────
-
-    #[test]
-    fn selected_entries_default_is_all() {
-        assert_eq!(selected_entries(None).len(), REGISTRY.len());
-    }
-
-    #[test]
-    fn selected_entries_scopes_to_one_agent() {
-        let codex = selected_entries(Some("codex"));
-        assert_eq!(codex.len(), 1);
-        assert_eq!(codex[0].3, "codex");
-    }
-
-    #[test]
-    fn validate_agent_rejects_unknown() {
-        assert!(validate_agent(Some("bogus")).is_err());
-        assert!(validate_agent(Some("claude")).is_ok());
-        assert!(validate_agent(None).is_ok());
-    }
+    //
+    // The selector's own unit tests live with the type in shared.rs;
+    // these two check that a scoped selection reaches the filesystem.
 
     #[test]
     fn install_scoped_to_one_agent_touches_only_that_agent() {
