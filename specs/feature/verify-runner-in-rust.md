@@ -26,8 +26,8 @@ verification into the **two stages it was always conflating**: the
 three kinds that need no install (so a content change is provable
 before it goes live) and the two that can only be tested once deployed,
 competing for a shared description budget against every installed
-skill. Each module's tests sit beside the code they test. The verb
-surface
+skill. Four files carry it — shim, shared vocabulary, agent-driving
+harness, stages — each with its own tests. The verb surface
 (`just resources::verify-skills` and its three siblings) keeps its
 names, flags, and output shape; only what sits behind them changes.
 
@@ -213,7 +213,7 @@ the runner — they are shell by design.
 feature's evidence: unit tests are the gate, and the paid sweep is
 handed off.
 
-### The refactor's own evidence (slices 1–4)
+### The refactor's own evidence (slices 1–3)
 
 The module split and test redistribution change no behavior, so their
 success criterion is that **nothing moves except location**: `just ci`
@@ -222,7 +222,7 @@ a case was dropped, merged, or invented during the move. The two
 cross-module tests keep their names in `tests/integration.rs` so the
 relocation is greppable.
 
-Note when checking that count: splitting into modules plus a `tests/`
+Note when checking that count: adding a `lib.rs` and a `tests/`
 directory makes cargo report **several test binaries** rather than one
 `test result:` line, so the tripwire is the sum across targets, not a
 single number. Verified against the repo toolchain while planning.
@@ -415,12 +415,11 @@ Modelling it properly buys three things beyond tidiness:
   no deployed state, so it can run anywhere. The post-install stage
   inherently cannot.
 
-### Structure: shim · shared · harness · stages
+### Structure: four files, one per category
 
-Yes — the top level should make exactly that distinction evident, and
-the four categories are: the **shim** (dispatch only), the **shared
-vocabulary**, the **harness** that drives agents, and the **stages** in
-pipeline order.
+The top level should make the shim / shared / harness / stages
+distinction evident — and **one file per category does that**, not one
+directory per category. Four categories, four files:
 
 ```
 resources/content/ ─▶ a valid skill ─▶ checked in isolation ─▶ $HOME ─▶ smoke-tested deployed
@@ -429,48 +428,75 @@ resources/content/ ─▶ a valid skill ─▶ checked in isolation ─▶ $HOME
 
 ```
 resources/build-tool/src/
-├── main.rs              the shim: clap Cli/Cmd + dispatch. Nothing else.
-├── lib.rs               module wiring + the pipeline doc comment
-│
-├── shared/              vocabulary every stage speaks
-│   ├── mod.rs
-│   ├── agent.rs         Agent (claude|kiro|codex): selector parsing,
-│   │                    skills_root, skill_path — derived from REGISTRY
-│   ├── registry.rs      REGISTRY + Kind — the manifest, pure data
-│   └── paths.rs         repo_root, home_dir
-│
-├── harness/             driving a coding agent + scoring the reply.
-│   ├── mod.rs           Used by stages 2 and 4; owned by neither.
-│   ├── fixture.rs       .smoke parsing → sections, fields, and which
-│   │                    kinds those sections imply
-│   ├── kind.rs          the five kinds; reach + verification axes
-│   ├── prompt.rs        explicit/implicit envelopes + leak checks
-│   ├── invoke.rs        per-agent driving + reply normalisation
-│   ├── judge.rs         grader selection, judge prompt, Verdict
-│   └── assertion.rs     the two paths: judged reply, behavioral shell
-│
-└── stages/              the pipeline, in order
-    ├── mod.rs
-    ├── content.rs       1 · resources → a valid, typed Skill
-    ├── check.rs         2 · pre-install: explicit reach, skill read
-    │                        from the CHECKOUT. No $HOME, no install.
-    ├── install/         3 · skill → $HOME symlinks
-    │   ├── mod.rs
-    │   ├── plan.rs      Comparison + Plan + expand. Pure.
-    │   └── apply.rs     the mutations: symlink, remove, force
-    └── smoke.rs         4 · post-install: implicit reach, agent must
-                             discover it among everything installed.
+├── main.rs      the shim: clap Cli/Cmd + dispatch. Nothing else.
+├── lib.rs       module wiring + the pipeline doc comment
+├── shared.rs    vocabulary every stage speaks:
+│                  Agent (selector parsing, skills_root, skill_path)
+│                  REGISTRY + Kind — the manifest, pure data
+│                  repo_root, home_dir
+├── harness.rs   driving a coding agent + scoring the reply. Used by
+│                stages 2 and 4, owned by neither:
+│                  .smoke parsing → sections, fields, implied kinds
+│                  the five kinds: reach, verification, owning stage
+│                  explicit/implicit envelopes + leak checks
+│                  per-agent invocation + reply normalisation
+│                  judge selection, judge prompt, Verdict
+│                  the two assertion paths: judged reply, behavioral shell
+└── stages.rs    the pipeline, in order, one § per stage:
+                   1 content — resources → a valid, typed Skill
+                   2 check   — pre-install, explicit reach, CHECKOUT source
+                   3 install — plan (pure) then apply (effectful)
+                   4 smoke   — post-install, implicit reach, installed source
 ```
 
-**Why `harness/` is a peer rather than living under `shared/`.**
-`shared/` holds small vocabulary types every stage needs. The harness
-is substantial machinery needed by exactly two stages — and critically,
-it is the thing that makes stages 2 and 4 *the same test mechanism
-pointed at two different skill sources*. Collapsing it into either
-stage would make one the owner and the other a client, implying a
-hierarchy that isn't there. Considered putting it under `shared/`;
-rejected because "vocabulary" and "machinery" are different kinds of
-thing and flattening them is what made the earlier draft read wrong.
+**Why files and not directories.** The repo's own precedent is large
+cohesive single files — `kaimux/src/main.rs` is 2404 lines, today's
+`build-tool/src/main.rs` is 1202 — and this tool is *typed bash*: a
+program whose job is to shell out in a well-typed way. Estimating from
+the current sources (build-tool carries ~407 lines of logic across its
+five sections; the bash runner ~489 of code), one file per category
+lands at roughly:
+
+| file | code | + comments | + tests | total |
+|---|---|---|---|---|
+| `main.rs` | ~60 | ~90 | — | **~90** |
+| `shared.rs` | ~85 | ~130 | ~100 | **~230** |
+| `harness.rs` | ~400 | ~650 | ~350 | **~1000** |
+| `stages.rs` | ~350 | ~500 | ~450 | **~950** |
+
+None exceeds what `kaimux` already carries in one file. Split further —
+the 15-file draft this replaces — and each file averages ~150 lines,
+which is where `mod` declarations, `use` lines, and cross-file
+navigation cost more than the boundary buys. **Section comments carry
+the internal structure**, exactly as both current sources already do
+(`// ── skill locations ──`, `// 3. Compare ──`); that is the idiom this
+codebase reads in, and it survived 1202 and 2404 lines respectively.
+
+The two seams the earlier draft made into directories become sections
+instead, and lose nothing that matters:
+
+- **install's pure/effectful seam** — `plan` (what is at the home path)
+  versus `apply` (the mutations) stay separate *functions* with
+  separate tests, which is what makes force/dry-run correctness
+  testable. The seam is in the types and the test cases; a file
+  boundary added nothing to it.
+- **harness's internal pipeline** — fixture → prompt → invoke → judge →
+  assert is a linear flow read top-to-bottom in one file, which is
+  arguably clearer than six files whose order you have to reconstruct.
+
+**Why `harness.rs` is a peer of `stages.rs`, not part of it.** It is
+the thing that makes stages 2 and 4 *the same mechanism pointed at two
+different skill sources*. Folding it into either stage would make one
+the owner and the other a client, implying a hierarchy that isn't
+there. And not inside `shared.rs`: vocabulary and machinery are
+different kinds of thing, which is the distinction the four-way split
+exists to state.
+
+**The revisit trigger, stated rather than pre-empted.** If `harness.rs`
+runs past ~1200 lines in practice, the one seam worth extracting is the
+`.smoke` parser — a self-contained grammar with no dependency on the
+rest of the harness. Do that when the size is real, not in advance;
+pre-splitting on a projection is how the 15-file draft happened.
 
 **What the two verify stages actually differ by** — and it is only
 this, which is why they share the harness:
@@ -498,29 +524,29 @@ then approach 2500 lines is the half job to avoid.
 But "split it into modules" is not a design. Three properties make the
 shape above the right one:
 
-**Dependencies run strictly one direction.** `shared/` depends on
-nothing. `harness/` depends on `shared/`. Each stage depends on
-`shared/`, on `harness/` if it drives an agent, and on the *output
-type* of the stage before it — never on a stage's internals, and never
-forward. Building the stages in that order (see the plan) is how the
-claim gets checked rather than asserted.
+**Dependencies run strictly one direction.** `shared` depends on
+nothing. `harness` depends on `shared`. Each stage depends on `shared`,
+on `harness` if it drives an agent, and on the *output type* of the
+stage before it — never forward. Four files make this easy to verify by
+reading the `use` lines at the top of each: `stages.rs` imports from
+`harness` and `shared`, `harness.rs` imports from `shared`, `shared.rs`
+imports from neither. Building the stages in that order (see the plan)
+is how the claim gets checked rather than asserted.
 
-**The four categories answer four different questions.** "How is it
-invoked" → `main.rs`. "What do all stages speak" → `shared/`. "How do
-we drive an agent" → `harness/`. "What are the steps" → `stages/`.
-Anyone can find the one they came for without reading the others; the
-earlier flat draft forced you to read the whole listing to work out
-which files were vocabulary and which were work.
+**The four files answer four different questions.** "How is it invoked"
+→ `main.rs`. "What do all stages speak" → `shared.rs`. "How do we drive
+an agent" → `harness.rs`. "What are the steps" → `stages.rs`. One file
+each, so finding the right one is a single decision rather than a walk
+through nested directories.
 
-**The duplication the backlog flagged has one home.**
-`shared/agent.rs` owns `Agent::skill_path(skill)` derived from
-`REGISTRY`. Install asks "where is agent X's skills tree"; smoke asks
-"where does agent X read skill Y from"; check needs neither but wants
-the same `Agent` type for `--agent`. One definition, three consumers —
-that hand-copy drifting from the registry is exactly the bug the
-backlog names.
+**The duplication the backlog flagged has one home.** `shared.rs` owns
+`Agent::skill_path(skill)` derived from `REGISTRY`. Install asks "where
+is agent X's skills tree"; smoke asks "where does agent X read skill Y
+from"; check needs neither but wants the same `Agent` type for
+`--agent`. One definition, three consumers — that hand-copy drifting
+from the registry is exactly the bug the backlog names.
 
-Three specific placements this settles:
+Two specific placements this settles:
 
 - **Stage 1 returns a typed `Skill`, not a bool.** Content validation
   answers yes/no today, while the runner separately greps the same
@@ -533,43 +559,35 @@ Three specific placements this settles:
   `playback` section implies playback, an `enact` section implies enact
   *and* integration, and the `skill:` field alone implies the two
   generated kinds. That mapping is fixture knowledge, so it is a method
-  on the parsed fixture in `harness/fixture.rs`, not a rule spread
-  through a run loop as bash had it. `harness/kind.rs` then holds the
-  kind as a type — including which stage owns it, which is the new
-  fact this design adds.
-- **Directories only where there is an internal seam.** `install/`
-  splits pure planning from effectful mutation, where the force /
-  dry-run correctness lives and where most existing tests point.
-  `harness/` has genuinely distinct concerns. `content.rs`,
-  `check.rs`, `smoke.rs`, and the three `shared/` modules are each one
-  cohesive thing — a directory apiece would be the ceremony the
-  original doc comment warned about. This is the guard against
-  over-splitting, not just under-splitting.
+  on the parsed fixture rather than a rule spread through a run loop as
+  bash had it. The kind type carries its reach, its verification, and
+  **which stage owns it** — the new fact this design adds.
 
-What this rules out, explicitly: a single `verify/` module (it would
-straddle install, which is the conflation this whole section exists to
-undo), and `harness/` living under `shared/` (vocabulary and machinery
-are different kinds of thing).
+What this rules out, explicitly: a single `verify` module (it would
+straddle install, the conflation this whole section exists to undo);
+`harness` inside `stages` (it belongs to two stages, neither of which
+owns it); and a directory-per-category layout (the repo's own 1202- and
+2404-line single files are the precedent, and section comments already
+carry internal structure at that scale).
 
-**Tests follow the same axis.** The 636-line `mod tests` splits into a
-`#[cfg(test)] mod tests` per module — idiomatic Rust placement, and the
-answer to "incorporate tests in the right way": a reader opening
-`stages/install/plan.rs` sees the comparison logic and its cases
-together instead of scrolling past unrelated concerns. The existing 45
-bodies move **verbatim** — no rewording, no consolidation — so the
-redistribution is reviewable as a pure relocation with the count as
-proof.
+**Tests follow the same split.** The single 636-line `mod tests` becomes
+one `#[cfg(test)] mod tests` per file — idiomatic Rust placement, and
+the answer to "incorporate tests in the right way": each file's cases
+sit with the code they cover rather than all four concerns' cases piling
+up at the foot of one file. The existing 45 bodies move **verbatim** —
+no rewording, no consolidation — so the redistribution is reviewable as
+a pure relocation with the count as proof.
 
 Where each group lands, which is also a check on the boundaries (a test
-that won't sit cleanly in one module means the seam is wrong):
+that won't sit cleanly in one file means the seam is wrong):
 
 | today's group | lands in |
 |---|---|
-| frontmatter + `check_content` cases | `stages/content.rs` |
-| `plan_one`, `expand`, fan-out expansion | `stages/install/plan.rs` |
-| install / uninstall / force / dry-run | `stages/install/apply.rs` |
-| `selected_entries`, `validate_agent` | `shared/agent.rs` |
-| `cmd_*` dispatch-level cases | `stages/install/mod.rs` |
+| frontmatter + `check_content` cases | `stages.rs` (content §) |
+| `plan_one`, `expand`, fan-out expansion | `stages.rs` (install § — plan) |
+| install / uninstall / force / dry-run | `stages.rs` (install § — apply) |
+| `selected_entries`, `validate_agent` | `shared.rs` |
+| `cmd_*` dispatch-level cases | `stages.rs` (install §) |
 
 Two tests resist co-location, because they are genuinely cross-stage
 rather than unit:
@@ -654,54 +672,48 @@ They are the record of failures already paid for.
 The pipeline is built stage by stage in dependency order — shared
 vocabulary, then stage 1, then stage 2, then the tests redistributed —
 so the runner arrives into a package already shaped to receive it.
-Slices 1–4 are a pure refactor with **no behavior change and no
+Slices 1–3 are a pure refactor with **no behavior change and no
 test-body edits**; the 45 tests passing unchanged is the proof.
 Building the stages in order also means each slice compiles against
 only what precedes it, which is the check that the one-directional
 dependency claim in Design actually holds.
 
-- [ ] **Extract `shared/`.** `agent.rs` (the `Agent` type, selector
-      parsing, `skills_root`, `skill_path`), `registry.rs` (`REGISTRY`
-      + `Kind` as pure data), `paths.rs` (roots); add `lib.rs`.
-      Existing agent-selection tests move here verbatim.
-- [ ] **Extract stage 1 — `stages/content.rs`.** Frontmatter
-      validation, plus returning a typed `Skill` carrying the announce
-      contract so both verify stages consume it rather than re-reading
-      the file. Cases move verbatim; the announce accessor is the one
-      new test.
-- [ ] **Extract stage 3 — `stages/install/`.** `plan.rs` (pure:
-      `Comparison`, `Plan`, `expand`) and `apply.rs` (mutations, force
-      / dry-run); `mod.rs` keeps the three verbs. `main.rs` drops to
-      clap + dispatch. Logic verbatim.
-- [ ] **Redistribute the remaining tests** per the table above, bodies
-      verbatim, and move the two cross-stage tests to
-      `tests/integration.rs`. Count still 45 summed across targets —
-      the number is the relocation's proof. Slices 1–4 land green with
-      no behavior change and no harness code yet.
-- [ ] **Build `harness/fixture.rs` + `kind.rs`.** Parse `.smoke`
+- [ ] **Extract `shared.rs` + `lib.rs`.** The `Agent` type (selector
+      parsing, `skills_root`, `skill_path` from `REGISTRY`), `REGISTRY`
+      + `Kind` as pure data, and the roots. Existing agent-selection
+      tests move here verbatim; `main.rs` keeps compiling against it.
+- [ ] **Extract `stages.rs` — content and install.** Content § gains
+      the typed `Skill` carrying the announce contract (so both verify
+      stages consume it rather than re-reading the file); install §
+      keeps plan (pure) and apply (effectful) as separate functions.
+      `main.rs` drops to clap + dispatch. Logic verbatim.
+- [ ] **Redistribute the tests** per the table above, bodies verbatim,
+      with the two cross-stage tests moving to `tests/integration.rs`.
+      Count still 45 summed across targets — the number is the
+      relocation's proof. Slices 1–3 land green with no behavior change
+      and no harness code yet.
+- [ ] **Build `harness.rs` — fixtures and kinds.** Parse `.smoke`
       sections and fields; derive which kinds each section implies;
       model each kind's reach, verification, and **owning stage**;
       reject every malformed shape with today's messages (`tools:`
       defaults to claude). Unit-tested.
-- [ ] **Build `harness/prompt.rs`.** Explicit/implicit envelopes
+- [ ] **Build `harness.rs` — prompts.** Explicit/implicit envelopes
       parameterised by skill source, every implicit-leak class, the
-      common-noun carve-out. Unit-tested — including that `check`
+      common-noun carve-out. Unit-tested, including that `check`
       resolves to the checkout and `smoke` to the installed root.
-- [ ] **Build `harness/judge.rs`.** Grader selection, judge prompt, and
-      `Verdict` extraction — table-driven over recorded output for the
-      four shipped bugs.
-- [ ] **Build `harness/invoke.rs` + `assertion.rs`.** Per-agent
-      driving, availability checks, reply normalisation, read-only
-      versus workdir shapes; both assertion paths (judged reply,
-      behavioral shell) and the leak tripwire.
-- [ ] **Add stage 2 — `stages/check.rs`** and the `check` subcommand:
-      the three no-install kinds against checkout-sourced skills.
-      Mutates nothing, requires no deployment, and errors on a
-      smoke-only `--kind`.
-- [ ] **Add stage 4 — `stages/smoke.rs`** and the `smoke` subcommand:
-      the two implicit kinds against installed skills, with a clear
-      stop when the symlinks are absent. Wire the `verify` convenience
-      verb as check-then-smoke.
+- [ ] **Build `harness.rs` — judging and invocation.** Grader
+      selection, judge prompt, `Verdict` extraction (table-driven over
+      recorded output for the four shipped bugs), then per-agent
+      driving, availability checks, reply normalisation, and the
+      read-only versus workdir shapes.
+- [ ] **Build `harness.rs` — assertions.** Both paths (judged reply,
+      behavioral shell) plus the leak tripwire.
+- [ ] **Add stage 2 (`check`) and stage 4 (`smoke`)** to `stages.rs`,
+      with their two subcommands: check runs the three no-install kinds
+      against checkout-sourced skills, mutating nothing and erroring on
+      a smoke-only `--kind`; smoke runs the two implicit kinds against
+      installed skills with a clear stop when the symlinks are absent.
+      Wire `verify` as the check-then-smoke convenience.
 - [ ] **Rewire and document.** Point the four existing Just verbs at
       the new binary, add `check-skills` / `smoke-skills`, delete
       `resources/tests/run`, and update `README.md` + `project.md` —
@@ -724,7 +736,7 @@ dependency claim in Design actually holds.
   the refactor. A 45-test count that changes is the tripwire.
 - *Risk note:* a large mechanical diff is where a real change hides
   best. The Code Review Gate sees the diff without the spec, so the
-  commit messages for slices 1–4 must say "relocation only" for the
+  commit messages for slices 1–3 must say "relocation only" for the
   reviewer to check against.
 - *Risk note:* `--help` output changes shape. It is the one
   user-facing regression in the port and is called out rather than
@@ -768,6 +780,17 @@ dependency claim in Design actually holds.
   module split and moves the 636-line test module next to the code it
   tests, sequenced *first* so the runner lands into a package already
   shaped for it.
+- **2026-08-02** · Fifth amendment: file granularity. Reviewer asked
+  what value the `shared/` `harness/` `stages/` directories add over
+  one file each, noting "we are still using rust as a better typed
+  bash." Measured instead of guessing — the repo's own precedent is
+  2404- and 1202-line single files with section comments, and
+  projecting current sizes puts the largest new file near ~1000
+  lines. Collapsed 15 files to four. The two seams the directories
+  existed for survive as functions with their own tests (install's
+  pure/effectful split) and as a linear top-to-bottom flow
+  (harness's fixture → prompt → invoke → judge → assert), neither of
+  which needed a file boundary. Slices dropped 11 → 9.
 - **2026-08-02** · Fourth amendment, same review round, and the one
   that changed the feature rather than the layout. Reviewer asked for a
   step back — a fresh look at the design, not bash-to-Rust — and made
@@ -854,8 +877,26 @@ dependency claim in Design actually holds.
   message. `verify` survives as a check-then-smoke convenience so no
   existing habit breaks. A kind selector that contradicts its stage is
   an error, not a silent empty pass.
-- **`harness/` is a peer of `stages/`, not part of it or of
-  `shared/`.** It is the same mechanism — fixtures, prompts,
+- **One file per category, not one directory.** Four files —
+  `main.rs` (shim), `shared.rs`, `harness.rs`, `stages.rs` — with
+  section comments carrying internal structure. Grounded in two
+  measurements rather than taste: the repo's own precedent is
+  `kaimux/src/main.rs` at 2404 lines and `build-tool/src/main.rs` at
+  1202, both single files with `// ── section ──` headers; and
+  projecting from current sizes (build-tool ~407 code lines,
+  the bash runner ~489) puts the largest new file near ~1000 including
+  comments and tests — under what kaimux already carries. **Superseded
+  my own 15-file draft**, which averaged ~150 lines per file: at that
+  size `mod` declarations, `use` lines, and cross-file navigation cost
+  more than the boundaries buy. The tool is *typed bash* — a program
+  whose job is to shell out in a well-typed way — so the types and the
+  test cases carry the design, not the directory tree. Revisit trigger,
+  stated rather than pre-empted: if `harness.rs` passes ~1200 lines,
+  extract the `.smoke` parser (a self-contained grammar with no
+  dependency on the rest of the harness) — when the size is real, not
+  on a projection.
+- **`harness` is a peer of `stages`, not part of it or of
+  `shared`.** It is the same mechanism — fixtures, prompts,
   invocation, judging — pointed at two different skill sources, so
   putting it inside either verify stage would make one the owner and
   the other a client, implying a hierarchy that isn't there. Rejected
