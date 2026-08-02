@@ -1,6 +1,6 @@
 ---
 name: verify-runner-in-rust
-description: Move the skill-verification runner from bash to Rust as a second binary in the build-tool package, sharing one library target, so the fixture format, five test kinds, prompt construction and verdict extraction become unit-testable instead of only provable by spending API credits.
+description: Fold the skill-verification runner into build-tool as its fourth verb alongside install/uninstall/status, splitting the 1202-line main.rs into modules with tests beside the code they test, so the fixture format, five test kinds, prompt construction and verdict extraction become unit-testable instead of only provable by spending API credits.
 metadata:
   type: feature
 ---
@@ -14,13 +14,14 @@ metadata:
 
 ## Feature Brief
 
-The skill-verification runner becomes a Rust binary instead of an
-890-line bash script — a second bin in the existing `build-tool`
-package, sharing a library target with the installer — so the logic it
-has accumulated (a fixture format, five test kinds, per-agent prompt
-construction, and per-agent verdict extraction) is covered by
-`just test` in milliseconds rather than only by paid tri-tool sweeps.
-The verb surface
+Skill verification becomes `build-tool`'s fourth verb — peer to
+install, uninstall, and status — instead of an 890-line bash script
+referenced from the Justfile, so the logic it has accumulated (a
+fixture format, five test kinds, per-agent prompt construction, and
+per-agent verdict extraction) is covered by `just test` in
+milliseconds rather than only by paid tri-tool sweeps. The binary is
+reorganised into modules to receive it, with each module's tests beside
+the code they test. The verb surface
 (`just resources::verify-skills` and its three siblings) keeps its
 names, flags, and output shape; only what sits behind them changes.
 
@@ -32,12 +33,12 @@ construction, the five test kinds, judge invocation and verdict
 extraction, behavioral setup/assert execution, and the `--kind` /
 `--tools` / `--dry-run` surface.
 
-Move it into Rust alongside `resources/build-tool` — a second bin in
-that package over a shared library target, reusing the deps already
-present (`anyhow`, `clap`) and the manifest its `skill_path` currently
-hand-copies. The Justfile verbs (`verify-skills`, `…-one`, `…-kind`,
-`…-dry`) keep their names and behavior; only what sits behind them
-changes.
+Move it into `resources/build-tool` as a fourth subcommand, reusing
+the deps already present (`anyhow`, `clap`) and the `REGISTRY` its
+`skill_path` currently hand-copies. Split the binary into modules on
+the way in, since a 1202-line `main.rs` cannot absorb it honestly. The
+Justfile verbs (`verify-skills`, `…-one`, `…-kind`, `…-dry`) keep their
+names and behavior; only what sits behind them changes.
 
 Keep in bash only what is genuinely shell: the fixtures'
 `--- setup ---` / `--- assert ---` blocks are shell by design and
@@ -97,10 +98,18 @@ Both are contracts this feature preserves.
   every skill, still `[confirm]`-gated.
 - `just resources::verify-skills-dry [name]` — free structural check.
 
-Every flag the runner accepts today still works and means the same
-thing: a positional fixture selector, `--tools <list>`, `--kind
-<list>` (with `--kinds` as an accepted alias), `--dry-run`,
+Every capability the runner accepts today survives: a positional
+fixture selector, agent scoping, kind scoping, `--dry-run`,
 `--stressed`, and `--help`.
+
+**One deliberate change at the flag layer.** The runner's `--tools
+<list>` becomes the `--agent` selector the other three verbs already
+use. It is the last place in the repo where selecting a coding agent
+has its own vocabulary, and the Just verbs pass their selector
+positionally, so the four `verify-skills*` verbs are invoked exactly as
+before — the rename is invisible to anyone using Just, and visible only
+when calling the binary directly. `--kinds` is dropped as an alias for
+`--kind`; nothing in the repo uses it.
 
 ### Fixture files — unchanged
 
@@ -138,6 +147,14 @@ the runner — they are shell by design.
 - `--help` now prints a generated usage summary rather than the
   script's header comment. The information stays, the rendering
   changes.
+- **The tool now reads as one surface.** `build-tool --help` lists
+  four peer actions — install, uninstall, status, verify — instead of
+  three plus a bash script referenced from the Justfile.
+- **Tests sit beside the code they test.** Opening any module shows
+  its logic and its cases together, rather than one 636-line test
+  module at the foot of a 1200-line file. Cross-module tests (real
+  shipped content, the install round-trip) live in
+  `tests/integration.rs`.
 
 ### Out of scope
 
@@ -158,14 +175,29 @@ the runner — they are shell by design.
 feature's evidence: unit tests are the gate, and the paid sweep is
 handed off.
 
+### The refactor's own evidence (slices 1–2)
+
+The module split and test redistribution change no behavior, so their
+success criterion is that **nothing moves except location**: `just ci`
+green, and the test count still exactly 45. A count that drifts means
+a case was dropped, merged, or invented during the move. The two
+cross-module tests keep their names in `tests/integration.rs` so the
+relocation is greppable.
+
+Note when checking that count: splitting into modules plus a `tests/`
+directory makes cargo report **several test binaries** rather than one
+`test result:` line, so the tripwire is the sum across targets, not a
+single number. Verified against the repo toolchain while planning.
+
 ### Unit tests (the gate — `just test`)
 
 These are the point of the feature. Each bullet is a case the bash
 version could not express.
 
 - **Skill-path resolution.** Each agent resolves to its own skills
-  root; an unknown agent is an error. One case asserting the three
-  paths match the deployment manifest.
+  root, derived from `REGISTRY` rather than restated; an unknown agent
+  is an error. This is the case that would have caught the drift the
+  backlog flagged.
 - **Fixture parsing.** A section-delimited fixture parses into its
   sections and fields. Malformed fixtures are rejected with today's
   messages: missing `skill:`, neither section present, a section
@@ -225,61 +257,111 @@ just resources::verify-skills                      # full sweep
 
 ## Design
 
-### Where the runner lives: a second bin in the build-tool package
+### Verify is the missing fourth action, not a second tool
 
-The backlog left this open — new crate, or a `build-tool` subcommand?
-Neither, quite: **a second binary target in the existing `build-tool`
-package, over a shared library target.**
+Start from the verb surface `project.md` already declares — every verb
+reads `<action>-<resource-kind>`:
+
+| action | skills | browser-mcp |
+|---|---|---|
+| install | `build-tool install` | `browser/manage install` |
+| uninstall | `build-tool uninstall` | `browser/manage uninstall` |
+| status | `build-tool status` | `browser/manage status` |
+| **verify** | **`resources/tests/run`** ← the hole | `tests/browser-functional` |
+
+Read that way, verify is not a new tool looking for a home. It is the
+**one missing action in a four-action surface whose other three the
+binary already implements** — and the only one that fell out of the
+binary, into bash, purely because it was written before the taxonomy
+existed. `build-tool` is the right name and the right owner: "build" in
+its ordinary sense already spans compiling, testing, and packaging, so
+a build tool that validates content and installs it but cannot verify
+it is the anomaly.
+
+So: **a fourth subcommand on the existing binary**, peer to its three
+siblings in the same `Cmd` enum, sharing one `--agent` selector
+convention.
 
 ```
-resources/build-tool/
-├── Cargo.toml          default-run = "build-tool"; two [[bin]] targets
-└── src/
-    ├── lib.rs          shared: REGISTRY, skill-path resolution, roots
-    ├── main.rs         bin "build-tool"  — install / uninstall / status
-    └── bin/verify.rs   bin "verify-tool" — the five kinds, fixtures, judging
+build-tool install   [--agent A] [--dry-run] [--force]
+build-tool uninstall [--agent A] [--dry-run] [--force]
+build-tool status    [--agent A]
+build-tool verify    [--agent A] [<fixture>] [--kind K] [--dry-run] [--stressed]
 ```
 
-**Why one package.** The two binaries need the same three things —
-`REGISTRY` (where each agent reads skills from), `repo_root()`, and
-`home_dir()`. The runner's `skill_path` is today a hand-copy of the
-registry, and the backlog names that duplication as how the two drifted
-apart before. A shared `lib.rs` makes it one definition, and cargo's
-own answer to "two programs, shared code" is multiple bin targets over
-a lib in one package — not two packages with a dependency edge between
-them. Reaching for a second package would mean a third manifest,
-re-declared `anyhow` / `clap` / `tempfile`, a cross-crate public API to
-keep stable, and generalising `repo_root()` (which walks up from
-`resources/build-tool/`) for a second caller — for no isolation cargo
-wasn't already giving us within one package.
+`--dry-run` already means "plan without acting" on install and
+uninstall; on verify it means "construct prompts without calling an
+agent." Same word, same promise, so the runner's existing
+`--dry-run` needs no rename. Today's `--tools <list>` collapses into
+the established `--agent` selector rather than introducing a second
+name for the same concept — the last remaining place in the repo where
+agent selection has its own vocabulary.
 
-**What isolation does *not* buy.** An earlier draft of this spec argued
-a separate crate would keep verify's agent-driving, scratch-seeding
-surface away from the one tool that can replace files in `$HOME`.
-That argument doesn't hold: code paths don't leak into each other, clap
-dispatch is exhaustive, and `install --force` is reachable only through
-`install --force` no matter what else lives in the package. The real
-property worth protecting is that the *install logic* changes rarely,
-and that is untouched by where the runner's code sits. The genuine
-risk here is a careless edit to shared code, which the existing 45
-tests already guard and which a package boundary would not.
+One binary means one `cargo run -p build-tool` with no ambiguity, so
+the `default-run` workaround the two-bin draft required disappears.
 
-**Keeping today's invocations true.** Two bins make a bare
-`cargo run -p build-tool` ambiguous, which would break all three
-install verbs and every doc reference. `default-run = "build-tool"`
-resolves it: the existing invocations keep working untouched, and the
-runner is reached with `--bin verify-tool`. Verified against the
-repo's own toolchain before committing to the shape.
+### Revisiting build-tool: module split with co-located tests
+
+`main.rs` is 1202 lines — 566 of logic, 636 in a single `mod tests` at
+the bottom. Its own doc comment justifies that: *"the whole job is
+small enough that splitting it into modules adds noise."* Adding the
+runner **falsifies that premise.** Patching the runner into a file
+that would then approach 2500 lines is the half job to avoid; the
+holistic change is to give the package the module structure its size
+now warrants, and this feature is the moment the cost of not doing so
+turns real.
+
+The split follows the numbered sections the file already documents —
+they are latent module boundaries:
+
+```
+resources/build-tool/src/
+├── main.rs        clap Cli/Cmd + dispatch; thin
+├── registry.rs    REGISTRY, Kind, AGENTS, agent selection, skill paths
+├── content.rs     SKILL.md frontmatter validation
+├── links.rs       the symlink state machine (plan/install/uninstall/status)
+├── roots.rs       repo_root, home_dir
+└── verify/
+    ├── mod.rs     the five kinds; run/report/exit-code contract
+    ├── fixture.rs the .smoke format: sections, fields, malformed guards
+    ├── prompt.rs  explicit/implicit construction + dry-run leak checks
+    ├── agent.rs   per-agent invocation and reply normalisation, behind one trait
+    └── verdict.rs Pass | Fail(reason) | Unparseable
+```
+
+`registry.rs` is where the duplication the backlog flagged is resolved:
+the runner's per-agent `skill_path` becomes a function over `REGISTRY`
+rather than a hand-copied restatement of it. That is the whole reason
+this belongs in one package — two copies of "where does kiro read
+skills from" is how they drifted apart before.
+
+**Tests move next to what they test.** The 636-line `mod tests` splits
+into a `#[cfg(test)] mod tests` per module, which is idiomatic Rust
+unit-test placement and the answer to "incorporate tests in the right
+way": a reader opening `links.rs` sees the symlink state machine and
+its cases together, instead of scrolling past four unrelated concerns
+to find them. The 45 existing test bodies move **verbatim** — no
+rewording, no consolidation — so the redistribution is reviewable as a
+pure relocation and the count is the proof.
+
+Two tests resist co-location and get an explicit home. Both are
+genuinely cross-module rather than unit:
+
+- `shipped_content_validates` — points the validator at the *real*
+  `resources/content/`, not a synthetic tree.
+- `structural_install_to_real_directory_layout` — a full
+  install → status → uninstall round-trip.
+
+These become `tests/integration.rs`, cargo's own convention for tests
+that exercise the crate from outside. That also requires the package to
+expose a library target (`lib.rs`) beside the binary — which the
+runner's modules want regardless, and which is what makes unit-testing
+the verify internals possible at all.
 
 Fixtures stay at `resources/tests/skills/`, and
-`resources/tests/browser-functional` stays put. `resources/tests/run`
-is deleted.
-
-The package keeps its `build-tool` name. It is now two verbs over one
-manifest rather than one, and a rename would churn the Justfile,
-README, `project.md`, and `repo_root()`'s sentinel check for no gain —
-but it is worth a look at closure if the name reads wrong once the
-second bin exists.
+`resources/tests/browser-functional` stays put — an attended test that
+drives real Chrome, out of scope here. `resources/tests/run` is
+deleted.
 
 ### What each library earns its place for
 
@@ -343,28 +425,44 @@ They are the record of failures already paid for.
 
 ## Implementation Plan
 
-- [ ] Extract the shared core (`REGISTRY`, skill-path resolution,
-      roots) into a `build-tool` library target, leaving the install
-      bin a thin caller with its 45 tests unchanged; add the second
-      `verify-tool` bin and `default-run`, with unit tests asserting
-      the three agent roots resolve from the one manifest.
-- [ ] Port the fixture format: parse sections and fields, reject every
-      malformed shape with today's messages, default `tools:` to
-      claude. Unit-tested.
-- [ ] Port prompt construction and the two dry-run structural checks,
-      including every implicit-leak class and the common-noun
-      carve-out. Unit-tested.
-- [ ] Port verdict extraction behind a per-agent normalisation trait,
-      table-driven over recorded output for the four shipped bugs.
-- [ ] Port agent invocation, availability checks, and judge
-      resolution, preserving the read-only and workdir invocation
-      shapes each agent needs.
-- [ ] Port the five kinds, the response and behavioral assertion
-      paths, the leak tripwire, and the reporting and exit-code
-      contract.
-- [ ] Rewire the four Just verbs to the new binary, delete
-      `resources/tests/run`, and update `README.md` and `project.md`
-      for the new layout and the `just test` coverage.
+The split comes first and lands green on its own, so the runner arrives
+into a package already shaped to receive it. Slices 1–2 are a pure
+refactor with **no behavior change and no test-body edits** — the 45
+tests passing unchanged is the proof.
+
+- [ ] **Split `main.rs` into modules** along the sections it already
+      documents (`registry` / `content` / `links` / `roots`), add the
+      `lib.rs` target, leave `main.rs` as clap + dispatch. Logic moves
+      verbatim; all 45 tests still pass.
+- [ ] **Redistribute the test module.** Each module gets its own
+      `#[cfg(test)] mod tests` holding its cases, bodies moved
+      verbatim; the two cross-module tests move to
+      `tests/integration.rs`. Count unchanged at 45 — the number is
+      the relocation's proof.
+- [ ] **Resolve skill paths from `REGISTRY`** in `registry.rs`,
+      replacing what the runner hand-copies, with unit tests asserting
+      the three agent roots derive from the one manifest.
+- [ ] **Add the `verify` subcommand** as a fourth peer in `Cmd`,
+      sharing the `--agent` selector, with the fixture-format parser
+      (`verify/fixture.rs`): sections, fields, every malformed-shape
+      guard carrying today's messages, `tools:` defaulting to claude.
+      Unit-tested.
+- [ ] **Port prompt construction and the dry-run checks**
+      (`verify/prompt.rs`): explicit/implicit envelopes, every
+      implicit-leak class, and the common-noun carve-out. Unit-tested.
+- [ ] **Port verdict extraction** (`verify/verdict.rs`) behind the
+      per-agent normalisation trait (`verify/agent.rs`), table-driven
+      over recorded output for the four shipped bugs.
+- [ ] **Port agent invocation** — availability checks, judge
+      resolution, and the read-only versus workdir invocation shapes
+      each agent needs — behind the same trait.
+- [ ] **Port the five kinds** (`verify/mod.rs`): the response and
+      behavioral assertion paths, the leak tripwire, and the reporting
+      and exit-code contract.
+- [ ] **Rewire and document.** Point the four Just verbs at
+      `build-tool verify`, delete `resources/tests/run`, and update
+      `README.md` + `project.md` for the module layout, the fourth
+      verb, and the widened `just test` coverage.
 
 - *Risk note:* the paid sweep is the only end-to-end proof and it is
   user-driven, so the free `--dry-run` parity check against the
@@ -374,11 +472,16 @@ They are the record of failures already paid for.
   scratch workdir. It is also the path with a known containment leak
   that this feature deliberately does not fix. Porting the tripwire
   faithfully matters more than tidying it.
-- *Risk note:* extracting the shared core touches `build-tool`, the one
-  binary that mutates `$HOME`. The move must be a pure relocation —
-  its 45 existing tests unchanged and still passing — and the first
-  slice must confirm `cargo run -p build-tool` still resolves to the
-  install bin before anything depends on it.
+- *Risk note:* the module split touches every line of the one binary
+  that mutates `$HOME`, so it is the riskiest slice by diff size while
+  being the least risky by behavior — provided it stays a pure
+  relocation. Logic and test bodies move verbatim; anything that wants
+  rewording during the move is a separate commit, not smuggled into
+  the refactor. A 45-test count that changes is the tripwire.
+- *Risk note:* a large mechanical diff is where a real change hides
+  best. The Code Review Gate sees the diff without the spec, so the
+  commit messages for slices 1–2 must say "relocation only" for the
+  reviewer to check against.
 - *Risk note:* `--help` output changes shape. It is the one
   user-facing regression in the port and is called out rather than
   hidden.
@@ -398,37 +501,82 @@ They are the record of failures already paid for.
   the slice that needs it.
 - **2026-08-02** · Plan amended before any dev work, on review
   feedback: the runner moves into the existing `build-tool` package
-  as a second bin over a shared lib, not a separate
-  `resources/verify-tool/` crate. Reviewer's point — model it as
-  another Rust source in build-tool and share what's needed. The
-  separate-crate rationale in the first draft did not survive
-  scrutiny; see the Decision Log. Slice 1 and the third risk note
-  were rewritten to match. Proved the packaging out first (two bins
-  + `default-run` over a shared lib, `--bin verify-tool` for the
-  second) so the shape rests on a verified result rather than an
-  assumption about cargo.
+  rather than a separate `resources/verify-tool/` crate. Reviewer's
+  point — model it as another Rust source in build-tool and share
+  what's needed. The separate-crate rationale in the first draft did
+  not survive scrutiny; see the Decision Log. Proved the packaging
+  out against the repo toolchain first rather than assuming cargo's
+  behavior.
+- **2026-08-02** · Amended again, same review round, on two further
+  points. (1) `build-tool` is the right name — "build" already
+  connotes compiling, testing, and packaging, so verification is a
+  job a build tool is expected to have, not a foreign tenant. (2) The
+  two-bin shape was an unjustified asymmetry: retrospecting the verb
+  surface against `project.md`'s `<action>-<resource-kind>` rule
+  shows install / uninstall / status / **verify** as four peer
+  actions, three already in the binary — verify is the one that fell
+  out into bash before the taxonomy existed. It becomes a fourth
+  subcommand, and `--tools` collapses into the established `--agent`
+  selector. (3) Patching the runner into a 1202-line `main.rs` would
+  be the half job the reviewer named: the file's own doc comment
+  justifies being single-file on the grounds that the job is small,
+  which adding the runner falsifies. So the feature now includes the
+  module split and moves the 636-line test module next to the code it
+  tests, sequenced *first* so the runner lands into a package already
+  shaped for it.
 
 ## Decision Log
 
-- **Second bin in the `build-tool` package, over a shared lib.**
-  Not a separate crate and not a subcommand of the installer.
-  Rejected a separate `resources/verify-tool/` package: it buys no
-  isolation cargo wasn't already providing within one package, and
-  costs a third manifest, re-declared deps, a cross-crate API to keep
-  stable, and generalising `repo_root()` for a second caller.
-  Rejected duplicating the skills roots: that drift is exactly what
-  the backlog item flags. Rejected a subcommand of the install bin:
-  it would put verify's flag surface inside the installer's CLI, and
-  the two verbs have nothing in common at the command layer.
-  `default-run = "build-tool"` keeps every existing
-  `cargo run -p build-tool` invocation working; verified against the
-  repo toolchain before the shape was committed to.
-  **Superseded an earlier draft of this spec** that argued for a
-  separate crate on blast-radius grounds. That reasoning was wrong —
-  code paths don't leak into each other, so a package boundary
-  protects nothing that clap's exhaustive dispatch doesn't already.
-  What the decision record actually prizes is that install logic
-  changes rarely, which is independent of where the runner lives.
+- **Verify is a fourth subcommand on `build-tool`.** Derived from
+  `project.md`'s `<action>-<resource-kind>` verb rule rather than from
+  where the code happens to sit today: install / uninstall / status /
+  verify are four peer actions on the same resource kind, and the
+  binary already implements three. Verify is in bash only because it
+  predates the taxonomy. Two rejected alternatives, both mine from
+  earlier drafts of this spec:
+  - *A separate `resources/verify-tool/` crate* — argued on the
+    grounds that it would keep verify's agent-driving surface away
+    from the one binary that mutates `$HOME`. Wrong: code paths don't
+    leak into each other and clap dispatch is exhaustive, so a
+    package boundary protects nothing. It would have cost a third
+    manifest, re-declared deps, a cross-crate API, and generalising
+    `repo_root()` for a second caller.
+  - *A second bin in the same package* — no better. Two bins for four
+    peer actions on one resource kind is an asymmetry with nothing
+    behind it, and it needed a `default-run` workaround to keep
+    `cargo run -p build-tool` unambiguous. One binary, four
+    subcommands, no workaround.
+  Also rejected duplicating the skills roots in the runner: that
+  drift is exactly what the backlog item flags.
+- **`build-tool` keeps its name.** "Build" in ordinary use already
+  spans compiling, testing, and packaging, so a build tool that
+  validates and installs content but cannot verify it is the anomaly —
+  the fourth verb makes the name more accurate, not less. Considered
+  renaming to something resource-neutral; rejected as churn across the
+  Justfile, README, `project.md`, and `repo_root()`'s sentinel check
+  for no gain.
+- **The module split is in scope, and lands first.** `main.rs` is 1202
+  lines and its doc comment justifies being single-file because "the
+  whole job is small enough that splitting it into modules adds
+  noise" — a premise adding the runner falsifies. Patching the runner
+  into it would leave a ~2500-line file and the stated rationale
+  false. Splitting along the numbered sections the file already
+  documents, and moving the 636-line `mod tests` into per-module test
+  modules, is the holistic version of this change. Sequenced before
+  the runner so it is reviewable as a pure relocation with the 45-test
+  count as its proof, rather than tangled with new logic.
+- **Cross-module tests go to `tests/integration.rs`.**
+  `shipped_content_validates` (validates the real shipped content) and
+  `structural_install_to_real_directory_layout` (full install round
+  trip) don't belong to any single module. Cargo's `tests/` directory
+  is the idiomatic home, and exercising the crate from outside
+  requires the `lib.rs` target the runner's modules want anyway.
+- **`--tools` becomes `--agent`.** The runner is the last place in the
+  repo where selecting a coding agent has its own vocabulary. The Just
+  verbs pass their selector positionally, so all four `verify-skills*`
+  verbs are invoked exactly as before; the rename is visible only when
+  calling the binary directly. `--kinds` is dropped as an alias for
+  `--kind` — nothing uses it.
 - **Straight port, fixture format frozen.** No `.smoke` file is
   edited. Considered redesigning the format at the same time;
   rejected because the current suite's results are the only
