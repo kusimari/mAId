@@ -143,12 +143,9 @@ pub fn validate_agent(agent: Option<&str>) -> Result<Option<Agent>> {
 
 /// The one source tree skills are authored in, per REGISTRY. Every row
 /// shares it — `registry_rows_share_one_content_source` pins that — so
-/// any row answers.
+/// the first row answers. REGISTRY is a non-empty const.
 fn content_source() -> &'static str {
-    REGISTRY
-        .first()
-        .map(|(_, source_sub, ..)| *source_sub)
-        .unwrap_or("resources/content/skills")
+    REGISTRY[0].1
 }
 
 /// Where `<skill>`'s SKILL.md lives in the checkout — the pre-install
@@ -228,6 +225,16 @@ mod tests {
             assert_eq!(Agent::parse(agent.name()).unwrap(), *agent);
         }
         assert!(Agent::parse("bogus").is_err());
+    }
+
+    /// The tokens the Justfile and project.md promise, spelled out — a
+    /// name-derived test would round-trip a typo, but `install-skills
+    /// kiro` would then reject the very token it documents.
+    #[test]
+    fn agent_names_are_the_documented_tokens() {
+        assert_eq!(Agent::Claude.name(), "claude");
+        assert_eq!(Agent::Kiro.name(), "kiro");
+        assert_eq!(Agent::Codex.name(), "codex");
     }
 
     /// `ALL` is hand-written while REGISTRY is the manifest, so this
