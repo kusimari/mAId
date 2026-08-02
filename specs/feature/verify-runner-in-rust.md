@@ -300,63 +300,141 @@ agent selection has its own vocabulary.
 One binary means one `cargo run -p build-tool` with no ambiguity, so
 the `default-run` workaround the two-bin draft required disappears.
 
-### Revisiting build-tool: module split with co-located tests
+### Revisiting build-tool: a pipeline, not a pile of modules
 
 `main.rs` is 1202 lines — 566 of logic, 636 in a single `mod tests` at
 the bottom. Its own doc comment justifies that: *"the whole job is
 small enough that splitting it into modules adds noise."* Adding the
 runner **falsifies that premise.** Patching the runner into a file
-that would then approach 2500 lines is the half job to avoid; the
-holistic change is to give the package the module structure its size
-now warrants, and this feature is the moment the cost of not doing so
-turns real.
+that would then approach 2500 lines is the half job to avoid.
 
-The split follows the numbered sections the file already documents —
-they are latent module boundaries:
+But "split it into modules" is not yet a design. The organising
+question is what the tool *does*, and read that way it is a **pipeline
+over one resource**, with a shared vocabulary underneath:
+
+```
+resources/content/  ──authored──▶  a valid skill  ──installed──▶  $HOME symlinks  ──verified──▶  agent behavior
+                     (content)                      (install)                       (verify)
+```
+
+Three stages, each consuming the previous stage's output, plus the
+vocabulary all three speak (which agents exist, where each expects
+skills, where the roots are). That gives one axis for the top level —
+*stage* — instead of the two my earlier draft mixed (data shapes flat
+beside a stage directory, which is why it read wrong).
 
 ```
 resources/build-tool/src/
-├── main.rs        clap Cli/Cmd + dispatch; thin
-├── registry.rs    REGISTRY, Kind, AGENTS, agent selection, skill paths
-├── content.rs     SKILL.md frontmatter validation
-├── links.rs       the symlink state machine (plan/install/uninstall/status)
-├── roots.rs       repo_root, home_dir
+├── main.rs              clap Cli/Cmd; dispatch into the stages. Thin.
+├── lib.rs               module wiring + the crate's doc comment
+│
+│   ── shared vocabulary: what all three stages speak ──
+├── agent.rs             Agent (claude|kiro|codex): parse/validate the
+│                        --agent selector; skills_root; skill_path(skill)
+├── registry.rs          REGISTRY + Kind — the deployment manifest, pure data
+├── paths.rs             repo_root, home_dir
+│
+│   ── stage 1 · resources → a valid skill ──
+├── content.rs           parse + validate SKILL.md into a typed Skill
+│                        (name, description, announce contract)
+│
+│   ── stage 2 · skill → $HOME ──
+├── install/
+│   ├── mod.rs           the install / uninstall / status verbs
+│   ├── plan.rs          Comparison + Plan + expand: what is at the home
+│   │                    path, and what links an entry resolves to. Pure.
+│   └── apply.rs         the mutations: symlink, remove, force semantics
+│
+│   ── stage 3 · installed skill → agent behavior ──
 └── verify/
-    ├── mod.rs     the five kinds; run/report/exit-code contract
-    ├── fixture.rs the .smoke format: sections, fields, malformed guards
-    ├── prompt.rs  explicit/implicit construction + dry-run leak checks
-    ├── agent.rs   per-agent invocation and reply normalisation, behind one trait
-    └── verdict.rs Pass | Fail(reason) | Unparseable
+    ├── mod.rs           orchestration: fixtures × kinds × agents;
+    │                    reporting, exit code, leak tripwire
+    ├── fixture.rs       .smoke parsing → sections, fields, and which
+    │                    kinds the sections imply
+    ├── kind.rs          the five kinds as the two composed axes
+    ├── prompt.rs        explicit/implicit envelopes + dry-run leak checks
+    ├── invoke.rs        per-agent driving + reply normalisation, one impl each
+    ├── judge.rs         grader selection, judge prompt, Verdict + extraction
+    └── assertion.rs     the two assertion paths: judged reply, behavioral shell
 ```
 
-`registry.rs` is where the duplication the backlog flagged is resolved:
-the runner's per-agent `skill_path` becomes a function over `REGISTRY`
-rather than a hand-copied restatement of it. That is the whole reason
-this belongs in one package — two copies of "where does kiro read
-skills from" is how they drifted apart before.
+**Why this beats a flat split.** Dependencies now run strictly one
+direction — `verify` reads `content`'s `Skill` and the shared
+vocabulary; `install` reads `content` and `registry`; `content` depends
+on nothing but `paths`. No stage reaches sideways into another's
+internals, so the layout states the architecture rather than just
+subdividing a file. Anyone asking "where does verification live" reads
+one directory, and anyone asking "what do these three have in common"
+reads three files at the root.
 
-**Tests move next to what they test.** The 636-line `mod tests` splits
-into a `#[cfg(test)] mod tests` per module, which is idiomatic Rust
-unit-test placement and the answer to "incorporate tests in the right
-way": a reader opening `links.rs` sees the symlink state machine and
-its cases together, instead of scrolling past four unrelated concerns
-to find them. The 45 existing test bodies move **verbatim** — no
-rewording, no consolidation — so the redistribution is reviewable as a
-pure relocation and the count is the proof.
+**The vocabulary is where the flagged duplication dies.** `agent.rs`
+owns `Agent::skill_path(skill)`, derived from `REGISTRY`. Install needs
+"where does agent X's skills tree live"; verify needs "where does agent
+X read skill Y from" — the same knowledge, which is why the runner's
+hand-copied `skill_path` drifted from the registry before. One
+definition, one place, and the shared `Agent` type also means
+`--agent` parses identically for all four verbs instead of once per
+verb.
 
-Two tests resist co-location and get an explicit home. Both are
-genuinely cross-module rather than unit:
+**Stage 1 grows a return value.** Today content validation answers
+only yes/no. Verify separately greps each `SKILL.md` for the announce
+marker to decide whether the two announce-only kinds can assert
+anything. Both are reading the same file for the same reason, so
+`content.rs` returns a typed `Skill` carrying its announce contract,
+and verify consumes it — the pipeline's output feeding the next stage
+instead of a second reader of the same bytes.
+
+**`install/` and `verify/` earn directories; the rest don't.** Install
+splits along a real seam — pure comparison and planning versus the
+effectful mutations, which is where the force/dry-run correctness lives
+and where the bulk of the existing tests point. Verify is the largest
+surface and has the most distinct concerns. `content`, `agent`,
+`registry`, and `paths` are each one small cohesive thing, so a
+directory apiece would be the ceremony the original doc comment warned
+about — the guard against over-splitting, not just under-splitting.
+
+**Kinds live with the fixture that implies them.** Your point that the
+kinds are part of each smoke is the reason `kind.rs` holds the five
+kinds as *types* while `fixture.rs` owns the derivation: a `playback`
+section implies the playback kind, an `enact` section implies enact
+*and* integration, and the `skill:` field alone implies the two
+generated kinds. That mapping is fixture knowledge, so it lives in
+`fixture.rs` as a method on the parsed fixture rather than as a
+free-floating rule in the run loop — which is where the bash version
+kept it, spread across the loop body.
+
+**Tests follow the same axis.** The 636-line `mod tests` splits into a
+`#[cfg(test)] mod tests` per module — idiomatic Rust placement, and the
+answer to "incorporate tests in the right way": a reader opening
+`install/plan.rs` sees the comparison logic and its cases together
+instead of scrolling past three unrelated concerns. The existing 45
+bodies move **verbatim** — no rewording, no consolidation — so the
+redistribution is reviewable as a pure relocation with the count as
+proof.
+
+Where each group lands, which is also a check on the boundaries (a test
+that won't sit cleanly in one module means the seam is wrong):
+
+| today's group | lands in |
+|---|---|
+| frontmatter + `check_content` cases | `content.rs` |
+| `plan_one`, `expand`, fan-out expansion | `install/plan.rs` |
+| install / uninstall / force / dry-run | `install/apply.rs` |
+| `selected_entries`, `validate_agent` | `agent.rs` |
+| `cmd_*` dispatch-level cases | `install/mod.rs` |
+
+Two tests resist co-location, because they are genuinely cross-stage
+rather than unit:
 
 - `shipped_content_validates` — points the validator at the *real*
   `resources/content/`, not a synthetic tree.
 - `structural_install_to_real_directory_layout` — a full
   install → status → uninstall round-trip.
 
-These become `tests/integration.rs`, cargo's own convention for tests
-that exercise the crate from outside. That also requires the package to
-expose a library target (`lib.rs`) beside the binary — which the
-runner's modules want regardless, and which is what makes unit-testing
-the verify internals possible at all.
+These become `tests/integration.rs`, cargo's convention for exercising
+the crate from outside. That needs the package to expose `lib.rs`
+beside the binary — which the pipeline's modules want regardless, and
+which is what makes unit-testing verify's internals possible at all.
 
 Fixtures stay at `resources/tests/skills/`, and
 `resources/tests/browser-functional` stays put — an attended test that
@@ -425,43 +503,53 @@ They are the record of failures already paid for.
 
 ## Implementation Plan
 
-The split comes first and lands green on its own, so the runner arrives
-into a package already shaped to receive it. Slices 1–2 are a pure
-refactor with **no behavior change and no test-body edits** — the 45
-tests passing unchanged is the proof.
+The pipeline is built stage by stage in dependency order — shared
+vocabulary, then stage 1, then stage 2, then the tests redistributed —
+so the runner arrives into a package already shaped to receive it.
+Slices 1–4 are a pure refactor with **no behavior change and no
+test-body edits**; the 45 tests passing unchanged is the proof.
+Building the stages in order also means each slice compiles against
+only what precedes it, which is the check that the one-directional
+dependency claim in Design actually holds.
 
-- [ ] **Split `main.rs` into modules** along the sections it already
-      documents (`registry` / `content` / `links` / `roots`), add the
-      `lib.rs` target, leave `main.rs` as clap + dispatch. Logic moves
-      verbatim; all 45 tests still pass.
-- [ ] **Redistribute the test module.** Each module gets its own
-      `#[cfg(test)] mod tests` holding its cases, bodies moved
-      verbatim; the two cross-module tests move to
-      `tests/integration.rs`. Count unchanged at 45 — the number is
-      the relocation's proof.
-- [ ] **Resolve skill paths from `REGISTRY`** in `registry.rs`,
-      replacing what the runner hand-copies, with unit tests asserting
-      the three agent roots derive from the one manifest.
-- [ ] **Add the `verify` subcommand** as a fourth peer in `Cmd`,
-      sharing the `--agent` selector, with the fixture-format parser
-      (`verify/fixture.rs`): sections, fields, every malformed-shape
-      guard carrying today's messages, `tools:` defaulting to claude.
+- [ ] **Extract the shared vocabulary.** `agent.rs` (the `Agent` type,
+      selector parsing, `skills_root`, `skill_path`), `registry.rs`
+      (`REGISTRY` + `Kind` as pure data), `paths.rs` (roots); add
+      `lib.rs`. Existing agent-selection tests move here verbatim.
+- [ ] **Extract stage 1 — `content.rs`.** Frontmatter validation, plus
+      returning a typed `Skill` carrying the announce contract so stage
+      3 consumes it rather than re-reading the file. Its cases move
+      verbatim; the announce-contract accessor is the one new test.
+- [ ] **Extract stage 2 — `install/`.** `plan.rs` (pure: `Comparison`,
+      `Plan`, `expand`) and `apply.rs` (the mutations and force /
+      dry-run semantics); `mod.rs` keeps the three verbs. `main.rs`
+      drops to clap + dispatch. Logic verbatim.
+- [ ] **Redistribute the remaining tests** per the table above, bodies
+      verbatim, and move the two cross-stage tests to
+      `tests/integration.rs`. Count still 45 summed across targets —
+      the number is the relocation's proof. Slices 1–4 land green with
+      no behavior change before any runner code exists.
+- [ ] **Add the `verify` subcommand** as a fourth peer in `Cmd` sharing
+      the `--agent` selector, with `verify/fixture.rs` and
+      `verify/kind.rs`: parse `.smoke` sections and fields, derive
+      which kinds each section implies, and reject every malformed
+      shape with today's messages (`tools:` defaults to claude).
       Unit-tested.
 - [ ] **Port prompt construction and the dry-run checks**
       (`verify/prompt.rs`): explicit/implicit envelopes, every
-      implicit-leak class, and the common-noun carve-out. Unit-tested.
-- [ ] **Port verdict extraction** (`verify/verdict.rs`) behind the
-      per-agent normalisation trait (`verify/agent.rs`), table-driven
-      over recorded output for the four shipped bugs.
-- [ ] **Port agent invocation** — availability checks, judge
-      resolution, and the read-only versus workdir invocation shapes
-      each agent needs — behind the same trait.
-- [ ] **Port the five kinds** (`verify/mod.rs`): the response and
-      behavioral assertion paths, the leak tripwire, and the reporting
-      and exit-code contract.
+      implicit-leak class, the common-noun carve-out. Unit-tested.
+- [ ] **Port judging** (`verify/judge.rs`): grader selection, the judge
+      prompt, and `Verdict` extraction — table-driven over recorded
+      output for the four shipped bugs.
+- [ ] **Port invocation** (`verify/invoke.rs`): per-agent driving,
+      availability checks, reply normalisation, and the read-only
+      versus workdir shapes each agent needs, one impl per agent.
+- [ ] **Port orchestration** (`verify/mod.rs` + `assertion.rs`): the
+      fixtures × kinds × agents loop, both assertion paths, the leak
+      tripwire, reporting and the exit-code contract.
 - [ ] **Rewire and document.** Point the four Just verbs at
       `build-tool verify`, delete `resources/tests/run`, and update
-      `README.md` + `project.md` for the module layout, the fourth
+      `README.md` + `project.md` for the pipeline layout, the fourth
       verb, and the widened `just test` coverage.
 
 - *Risk note:* the paid sweep is the only end-to-end proof and it is
@@ -524,6 +612,21 @@ tests passing unchanged is the proof.
   module split and moves the 636-line test module next to the code it
   tests, sequenced *first* so the runner lands into a package already
   shaped for it.
+- **2026-08-02** · Amended a third time, same review round: the layout
+  itself was questioned. Reviewer's framing — common things at the
+  root, then authoring skills from resources, then installing them,
+  then verifying them (with kinds belonging to each smoke) — is a
+  **pipeline**, and my flat split wasn't one: it mixed data-shape
+  modules with a stage directory. Reorganised the top level onto that
+  single axis: shared vocabulary (`agent` / `registry` / `paths`) +
+  one module per stage (`content`, `install/`, `verify/`), dependencies
+  one-directional. Two consequences fell out that the earlier layout
+  had hidden — stage 1 should return a typed `Skill` carrying the
+  announce contract instead of a bool (verify currently re-greps the
+  same file for it), and kind derivation belongs on the parsed fixture
+  rather than in the run loop. Slices resequenced to build the stages
+  in dependency order, which is also how the one-direction claim gets
+  checked: each slice compiles against only what precedes it.
 
 ## Decision Log
 
@@ -555,16 +658,47 @@ tests passing unchanged is the proof.
   renaming to something resource-neutral; rejected as churn across the
   Justfile, README, `project.md`, and `repo_root()`'s sentinel check
   for no gain.
-- **The module split is in scope, and lands first.** `main.rs` is 1202
-  lines and its doc comment justifies being single-file because "the
-  whole job is small enough that splitting it into modules adds
-  noise" — a premise adding the runner falsifies. Patching the runner
-  into it would leave a ~2500-line file and the stated rationale
-  false. Splitting along the numbered sections the file already
-  documents, and moving the 636-line `mod tests` into per-module test
-  modules, is the holistic version of this change. Sequenced before
-  the runner so it is reviewable as a pure relocation with the 45-test
-  count as its proof, rather than tangled with new logic.
+- **The split is in scope, and lands first.** `main.rs` is 1202 lines
+  and its doc comment justifies being single-file because "the whole
+  job is small enough that splitting it into modules adds noise" — a
+  premise adding the runner falsifies. Patching the runner into it
+  would leave a ~2500-line file and the stated rationale false.
+  Sequenced before the runner so it is reviewable as a pure relocation
+  with the 45-test count as its proof, rather than tangled with new
+  logic.
+- **The layout axis is the pipeline, not the file's existing
+  sections.** `resources → skill → $HOME → verified behavior` is three
+  stages over one resource, plus the vocabulary all three speak. So the
+  top level is: three small shared modules (`agent`, `registry`,
+  `paths`) + one module per stage (`content`, `install/`, `verify/`),
+  with dependencies running strictly one direction. **Superseded my own
+  earlier draft** that split flatly along the file's numbered sections
+  — that mixed two axes, putting data shapes (`registry`, `content`,
+  `roots`) flat beside a stage directory (`verify/`), which is why it
+  read as subdividing a file rather than stating an architecture.
+  Directories only where there is a real internal seam (`install/`
+  splits pure planning from effectful mutation; `verify/` is the
+  largest surface); a directory per small module would be the ceremony
+  the original doc comment warned about.
+- **`Agent` is a shared type, not a per-stage string.** Install asks
+  "where is agent X's skills tree", verify asks "where does agent X
+  read skill Y from" — the same knowledge, which is precisely why the
+  runner's hand-copied `skill_path` drifted from `REGISTRY`. One type
+  in `agent.rs` derived from the manifest, so `--agent` also parses
+  identically across all four verbs.
+- **Stage 1 returns a typed `Skill`, not a bool.** Content validation
+  answers yes/no today, and verify separately greps the same
+  `SKILL.md` for the announce marker to decide whether the two
+  announce-only kinds can assert anything. Two readers of the same
+  bytes for the same reason; folding the announce contract into stage
+  1's output makes it the pipeline's data flow instead.
+- **Kind derivation belongs to the fixture.** The five kinds are types
+  (`verify/kind.rs`), but *which* kinds a fixture yields is fixture
+  knowledge — a playback section implies playback, an enact section
+  implies enact and integration, the `skill:` field alone implies the
+  two generated kinds. So it is a method on the parsed fixture rather
+  than a rule spread through the run loop, which is where the bash
+  version kept it.
 - **Cross-module tests go to `tests/integration.rs`.**
   `shipped_content_validates` (validates the real shipped content) and
   `structural_install_to_real_directory_layout` (full install round
