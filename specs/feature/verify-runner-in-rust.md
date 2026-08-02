@@ -1,6 +1,6 @@
 ---
 name: verify-runner-in-rust
-description: Fold the skill-verification runner into build-tool as its fourth verb alongside install/uninstall/status, splitting the 1202-line main.rs into modules with tests beside the code they test, so the fixture format, five test kinds, prompt construction and verdict extraction become unit-testable instead of only provable by spending API credits.
+description: Restructure build-tool as the pipeline it is — author, check, install, smoke — folding skill verification in as first-class verbs and splitting it at the install boundary, so the three kinds needing no deployment run pre-install and unit tests replace paid sweeps as the gate.
 metadata:
   type: feature
 ---
@@ -14,14 +14,20 @@ metadata:
 
 ## Feature Brief
 
-Skill verification becomes `build-tool`'s fourth verb — peer to
-install, uninstall, and status — instead of an 890-line bash script
-referenced from the Justfile, so the logic it has accumulated (a
-fixture format, five test kinds, per-agent prompt construction, and
-per-agent verdict extraction) is covered by `just test` in
-milliseconds rather than only by paid tri-tool sweeps. The binary is
-reorganised into modules to receive it, with each module's tests beside
-the code they test. The verb surface
+Skill verification moves into `build-tool` as first-class verbs, so the
+logic it has accumulated (a fixture format, five test kinds, per-agent
+prompt construction, per-agent verdict extraction) is covered by
+`just test` in milliseconds rather than only by paid tri-tool sweeps.
+
+Taking the tool as a whole rather than porting a script, the binary is
+reorganised as the pipeline it actually is — author a skill, check it
+in isolation, install it, smoke-test it deployed — which splits
+verification into the **two stages it was always conflating**: the
+three kinds that need no install (so a content change is provable
+before it goes live) and the two that can only be tested once deployed,
+competing for a shared description budget against every installed
+skill. Each module's tests sit beside the code they test. The verb
+surface
 (`just resources::verify-skills` and its three siblings) keeps its
 names, flags, and output shape; only what sits behind them changes.
 
@@ -33,12 +39,13 @@ construction, the five test kinds, judge invocation and verdict
 extraction, behavioral setup/assert execution, and the `--kind` /
 `--tools` / `--dry-run` surface.
 
-Move it into `resources/build-tool` as a fourth subcommand, reusing
-the deps already present (`anyhow`, `clap`) and the `REGISTRY` its
-`skill_path` currently hand-copies. Split the binary into modules on
-the way in, since a 1202-line `main.rs` cannot absorb it honestly. The
-Justfile verbs (`verify-skills`, `…-one`, `…-kind`, `…-dry`) keep their
-names and behavior; only what sits behind them changes.
+Move it into `resources/build-tool` as first-class verbs, reusing the
+deps already present (`anyhow`, `clap`) and the `REGISTRY` its
+`skill_path` currently hand-copies. Restructure the binary on the way
+in — a 1202-line `main.rs` cannot absorb it honestly, and the runner's
+own stages don't all belong on the same side of install. The Justfile
+verbs (`verify-skills`, `…-one`, `…-kind`, `…-dry`) keep their names
+and behavior; two new verbs expose the boundary.
 
 Keep in bash only what is genuinely shell: the fixtures'
 `--- setup ---` / `--- assert ---` blocks are shell by design and
@@ -89,10 +96,12 @@ structure, hand-rolled today as substring matching.
 The user-facing surface is the four Just verbs and the fixture files.
 Both are contracts this feature preserves.
 
-### Verb surface — unchanged
+### Verb surface — every existing verb keeps working, two are added
 
-- `just resources::verify-skills [agent]` — full sweep, still
-  `[confirm]`-gated.
+The four verbs keep their names, gating, and behavior:
+
+- `just resources::verify-skills [agent]` — full sweep (check then
+  smoke), still `[confirm]`-gated.
 - `just resources::verify-skills-one <name> [agent]` — single fixture.
 - `just resources::verify-skills-kind <kind> [agent]` — one kind across
   every skill, still `[confirm]`-gated.
@@ -102,14 +111,35 @@ Every capability the runner accepts today survives: a positional
 fixture selector, agent scoping, kind scoping, `--dry-run`,
 `--stressed`, and `--help`.
 
+**Two verbs are added, exposing the install boundary the runner already
+straddles:**
+
+- `just resources::check-skills [agent]` — the three kinds that need no
+  install (`activation`, `playback`, `enact`), reading each skill from
+  the checkout. No deployed state required, nothing in `$HOME` touched
+  or read. Still costs API credits, so still `[confirm]`-gated.
+- `just resources::smoke-skills [agent]` — the two kinds that can only
+  be tested deployed (`discovery`, `integration`). Requires
+  `install-skills` to have run; says so and stops if the symlinks are
+  absent, rather than failing every test obscurely.
+
+Both follow the established `<action>-<resource-kind>` naming.
+`verify-skills` remains the both-stages sweep, so no existing habit or
+documentation reference breaks.
+
 **One deliberate change at the flag layer.** The runner's `--tools
-<list>` becomes the `--agent` selector the other three verbs already
-use. It is the last place in the repo where selecting a coding agent
-has its own vocabulary, and the Just verbs pass their selector
-positionally, so the four `verify-skills*` verbs are invoked exactly as
-before — the rename is invisible to anyone using Just, and visible only
-when calling the binary directly. `--kinds` is dropped as an alias for
-`--kind`; nothing in the repo uses it.
+<list>` becomes the `--agent` selector the other verbs already use. The
+Just verbs pass their selector positionally, so every `verify-skills*`
+verb is invoked exactly as before — the rename is invisible through
+Just and visible only when calling the binary directly. `--kinds` is
+dropped as an alias for `--kind`; nothing in the repo uses it.
+
+**A kind selector that contradicts the stage is an error, not a silent
+no-op.** `check --kind discovery` fails with a message naming why
+(discovery needs the deployed listing to compete in), instead of
+running zero tests and reporting success. `verify-skills-kind <kind>`
+routes to whichever stage owns that kind, so the existing verb needs no
+knowledge of the split.
 
 ### Fixture files — unchanged
 
@@ -147,9 +177,17 @@ the runner — they are shell by design.
 - `--help` now prints a generated usage summary rather than the
   script's header comment. The information stays, the rendering
   changes.
-- **The tool now reads as one surface.** `build-tool --help` lists
-  four peer actions — install, uninstall, status, verify — instead of
-  three plus a bash script referenced from the Justfile.
+- **The tool now reads as one surface.** `build-tool --help` lists the
+  pipeline — check, install, uninstall, status, smoke — instead of
+  three verbs plus a bash script referenced from the Justfile.
+- **A content change can be checked before it goes live.**
+  `check-skills` runs against the working tree, so a `SKILL.md` edit is
+  verifiable without first installing it — which today means making it
+  live for every other session on the machine.
+- **A failure says which side of install it is on.** Pre-install
+  failure = the content is wrong. Post-install failure with check
+  passing = deployment or description-budget competition. Today both
+  read as "verify failed."
 - **Tests sit beside the code they test.** Opening any module shows
   its logic and its cases together, rather than one 636-line test
   module at the foot of a 1200-line file. Cross-module tests (real
@@ -175,7 +213,7 @@ the runner — they are shell by design.
 feature's evidence: unit tests are the gate, and the paid sweep is
 handed off.
 
-### The refactor's own evidence (slices 1–2)
+### The refactor's own evidence (slices 1–4)
 
 The module split and test redistribution change no behavior, so their
 success criterion is that **nothing moves except location**: `just ci`
@@ -229,9 +267,20 @@ version could not express.
 - **Announce-contract detection.** A skill declaring its announce line
   is detected from the deployed content; one that does not is reported
   as skippable for the two announce-only kinds.
-- **Kind and tool selection.** `--kind` and `--tools` reject unknown
+- **Kind and agent selection.** `--kind` and `--agent` reject unknown
   values; the requested set is also the required set, so a requested
-  tool absent from PATH is a failure and an unrequested one is a skip.
+  agent absent from PATH is a failure and an unrequested one is a skip.
+- **Stage ownership of kinds.** Each kind maps to exactly one stage,
+  and the mapping is total — every kind is owned, none twice. Asking
+  `check` for a smoke-only kind is an error naming why, not an empty
+  successful run; `verify-skills-kind <kind>` routes to the owning
+  stage.
+- **Skill source per stage.** `check` resolves a skill to its checkout
+  path and `smoke` to the agent's installed root, both from the same
+  `Agent` type — the case that pins the two stages as one mechanism
+  over two sources, and that would have caught today's inconsistency
+  (announce read from the checkout, explicit prompts pointed at
+  `$HOME`).
 
 ### Free structural A/B (the port's parity evidence)
 
@@ -244,20 +293,28 @@ both structural checks across every fixture, kind, and agent.
 
 ### User-driven paid sweep (handed off, not run)
 
-A full `just resources::verify-skills` is the only proof that agent
-invocation, judging, and the behavioral path still work end to end.
-Per `project.md`, an agentic session stops at `just test` and names
-the command. This feature hands off:
+Only a real run proves agent invocation, judging, and the behavioral
+path still work end to end. Per `project.md`, an agentic session stops
+at `just test` and names the command. This feature hands off, in the
+order the new split makes useful:
 
 ```
-just resources::verify-skills-dry                  # free; must match the captured baseline
-just resources::verify-skills-one notes-git-commit  # one behavioral fixture, tri-tool
-just resources::verify-skills                      # full sweep
+just resources::verify-skills-dry                   # free; must match the captured baseline
+just resources::check-skills                        # pre-install: content correct, no $HOME touched
+just resources::install-skills                      # then deploy
+just resources::smoke-skills                        # post-install: discovery competes for real
+just resources::verify-skills-one notes-git-commit   # one behavioral fixture, tri-tool
+just resources::verify-skills                       # both stages, full sweep
 ```
+
+The first three lines are the new capability: content can be proven
+correct *before* it is made live for every session on the machine, and
+if `check` passes while `smoke` fails, the fault is deployment or
+description-budget competition rather than the skill's content.
 
 ## Design
 
-### Verify is the missing fourth action, not a second tool
+### Verification is a missing action, not a second tool
 
 Start from the verb surface `project.md` already declares — every verb
 reads `<action>-<resource-kind>`:
@@ -278,136 +335,227 @@ its ordinary sense already spans compiling, testing, and packaging, so
 a build tool that validates content and installs it but cannot verify
 it is the anomaly.
 
-So: **a fourth subcommand on the existing binary**, peer to its three
-siblings in the same `Cmd` enum, sharing one `--agent` selector
-convention.
+So: **subcommands on the existing binary**, peers in the same `Cmd`
+enum, sharing one `--agent` selector convention. But once verification
+splits across the install boundary (next section), "verify" is not one
+verb — it is two, and naming them separately is what makes the boundary
+visible at the surface rather than buried in a flag:
 
 ```
+build-tool check     [--agent A] [<fixture>] [--kind K] [--dry-run] [--stressed]
 build-tool install   [--agent A] [--dry-run] [--force]
 build-tool uninstall [--agent A] [--dry-run] [--force]
 build-tool status    [--agent A]
-build-tool verify    [--agent A] [<fixture>] [--kind K] [--dry-run] [--stressed]
+build-tool smoke     [--agent A] [<fixture>] [--kind K] [--dry-run] [--stressed]
 ```
 
-`--dry-run` already means "plan without acting" on install and
-uninstall; on verify it means "construct prompts without calling an
-agent." Same word, same promise, so the runner's existing
-`--dry-run` needs no rename. Today's `--tools <list>` collapses into
-the established `--agent` selector rather than introducing a second
-name for the same concept — the last remaining place in the repo where
-agent selection has its own vocabulary.
+Listed in pipeline order, which is also the order a contributor runs
+them: `check` needs no install and mutates nothing; `smoke` requires
+the deployment to exist. A bare `verify` remains available as a
+convenience meaning "check then smoke", so the existing habit still
+works and the full sweep is still one command.
+
+`--dry-run` keeps its meaning across all five — "plan without acting"
+for install/uninstall, "construct prompts without calling an agent" for
+check/smoke. Today's `--tools <list>` collapses into the established
+`--agent` selector, the last place in the repo where agent selection
+has its own vocabulary.
 
 One binary means one `cargo run -p build-tool` with no ambiguity, so
 the `default-run` workaround the two-bin draft required disappears.
 
-### Revisiting build-tool: a pipeline, not a pile of modules
+### Verification is two stages, on opposite sides of install
+
+The five kinds compose two axes — explicit/implicit reach × announce /
+recite / perform. Reading them against the install boundary shows the
+reach axis *is* that boundary:
+
+| kind | reach | needs install? | why |
+|---|---|---|---|
+| `activation` | explicit | **no** | the prompt names the path — it can name the checkout |
+| `playback` | explicit | **no** | same |
+| `enact` | explicit | **no** | same |
+| `discovery` | implicit | **yes** | the agent must find it among *every installed skill* |
+| `integration` | implicit | **yes** | same |
+
+An explicit prompt says "load the skill at `<path>` and follow it," so
+the path can point straight into `resources/content/`. Nothing needs
+deploying: the skill is tested **in isolation**, and a failure means
+the content is wrong. That is a unit/integration test in the ordinary
+sense — run in the project's own context, before anything is deployed.
+
+An implicit prompt states only the task, so the skill has to win
+discovery unaided — against every other installed skill, out of a
+description listing `project.md` records as *capped and shared*. That
+can only be exercised where the deployment actually is. It is a smoke
+test in the ordinary sense: run against the real environment, after
+the project's effects are pushed there.
+
+**Today's runner already straddles this boundary, inconsistently and by
+accident.** `skill_announces()` reads the announce contract from the
+checkout (`../content/skills/<name>/SKILL.md`), while `skill_path()`
+points every explicit prompt at `$HOME`. Same script, both sides, no
+model of the distinction — which is also why `project.md` states
+"requires the managed symlinks already deployed" as a precondition for
+*all* of verify, over-constraining the three kinds that need no install
+at all.
+
+Modelling it properly buys three things beyond tidiness:
+
+- **A fast, free-standing feedback loop.** The explicit kinds become
+  runnable against the working tree with no install and no `$HOME`
+  mutation — so a content change can be checked *before* it is made
+  live for every other session on the machine.
+- **An honest failure signal.** A pre-install failure is a content
+  defect. A post-install failure, given pre-install passed, is a
+  *deployment or competition* defect — a description that lost the
+  budget, a broken symlink, a collision with another skill. Today both
+  land as "verify failed."
+- **CI-eligibility.** The pre-install stage mutates nothing and needs
+  no deployed state, so it can run anywhere. The post-install stage
+  inherently cannot.
+
+### Structure: shim · shared · harness · stages
+
+Yes — the top level should make exactly that distinction evident, and
+the four categories are: the **shim** (dispatch only), the **shared
+vocabulary**, the **harness** that drives agents, and the **stages** in
+pipeline order.
+
+```
+resources/content/ ─▶ a valid skill ─▶ checked in isolation ─▶ $HOME ─▶ smoke-tested deployed
+                      (1 content)      (2 check · pre-install)  (3 install)  (4 smoke · post-install)
+```
+
+```
+resources/build-tool/src/
+├── main.rs              the shim: clap Cli/Cmd + dispatch. Nothing else.
+├── lib.rs               module wiring + the pipeline doc comment
+│
+├── shared/              vocabulary every stage speaks
+│   ├── mod.rs
+│   ├── agent.rs         Agent (claude|kiro|codex): selector parsing,
+│   │                    skills_root, skill_path — derived from REGISTRY
+│   ├── registry.rs      REGISTRY + Kind — the manifest, pure data
+│   └── paths.rs         repo_root, home_dir
+│
+├── harness/             driving a coding agent + scoring the reply.
+│   ├── mod.rs           Used by stages 2 and 4; owned by neither.
+│   ├── fixture.rs       .smoke parsing → sections, fields, and which
+│   │                    kinds those sections imply
+│   ├── kind.rs          the five kinds; reach + verification axes
+│   ├── prompt.rs        explicit/implicit envelopes + leak checks
+│   ├── invoke.rs        per-agent driving + reply normalisation
+│   ├── judge.rs         grader selection, judge prompt, Verdict
+│   └── assertion.rs     the two paths: judged reply, behavioral shell
+│
+└── stages/              the pipeline, in order
+    ├── mod.rs
+    ├── content.rs       1 · resources → a valid, typed Skill
+    ├── check.rs         2 · pre-install: explicit reach, skill read
+    │                        from the CHECKOUT. No $HOME, no install.
+    ├── install/         3 · skill → $HOME symlinks
+    │   ├── mod.rs
+    │   ├── plan.rs      Comparison + Plan + expand. Pure.
+    │   └── apply.rs     the mutations: symlink, remove, force
+    └── smoke.rs         4 · post-install: implicit reach, agent must
+                             discover it among everything installed.
+```
+
+**Why `harness/` is a peer rather than living under `shared/`.**
+`shared/` holds small vocabulary types every stage needs. The harness
+is substantial machinery needed by exactly two stages — and critically,
+it is the thing that makes stages 2 and 4 *the same test mechanism
+pointed at two different skill sources*. Collapsing it into either
+stage would make one the owner and the other a client, implying a
+hierarchy that isn't there. Considered putting it under `shared/`;
+rejected because "vocabulary" and "machinery" are different kinds of
+thing and flattening them is what made the earlier draft read wrong.
+
+**What the two verify stages actually differ by** — and it is only
+this, which is why they share the harness:
+
+| | stage 2 · check | stage 4 · smoke |
+|---|---|---|
+| skill source | `resources/content/` | agent's installed skills root |
+| reach | explicit (path named) | implicit (task only) |
+| kinds | activation, playback, enact | discovery, integration |
+| precondition | none | `install` has run |
+| mutates `$HOME` | no | no (but reads it) |
+
+`shared/agent.rs` is what makes that a parameter rather than a fork:
+`Agent::skill_path(skill)` for the deployed path, and the checkout path
+for pre-install — one type answering both, from one manifest.
+
+### Why this shape, and what it rules out
 
 `main.rs` is 1202 lines — 566 of logic, 636 in a single `mod tests` at
 the bottom. Its own doc comment justifies that: *"the whole job is
 small enough that splitting it into modules adds noise."* Adding the
-runner **falsifies that premise.** Patching the runner into a file
-that would then approach 2500 lines is the half job to avoid.
+runner **falsifies that premise**; patching it into a file that would
+then approach 2500 lines is the half job to avoid.
 
-But "split it into modules" is not yet a design. The organising
-question is what the tool *does*, and read that way it is a **pipeline
-over one resource**, with a shared vocabulary underneath:
+But "split it into modules" is not a design. Three properties make the
+shape above the right one:
 
-```
-resources/content/  ──authored──▶  a valid skill  ──installed──▶  $HOME symlinks  ──verified──▶  agent behavior
-                     (content)                      (install)                       (verify)
-```
+**Dependencies run strictly one direction.** `shared/` depends on
+nothing. `harness/` depends on `shared/`. Each stage depends on
+`shared/`, on `harness/` if it drives an agent, and on the *output
+type* of the stage before it — never on a stage's internals, and never
+forward. Building the stages in that order (see the plan) is how the
+claim gets checked rather than asserted.
 
-Three stages, each consuming the previous stage's output, plus the
-vocabulary all three speak (which agents exist, where each expects
-skills, where the roots are). That gives one axis for the top level —
-*stage* — instead of the two my earlier draft mixed (data shapes flat
-beside a stage directory, which is why it read wrong).
+**The four categories answer four different questions.** "How is it
+invoked" → `main.rs`. "What do all stages speak" → `shared/`. "How do
+we drive an agent" → `harness/`. "What are the steps" → `stages/`.
+Anyone can find the one they came for without reading the others; the
+earlier flat draft forced you to read the whole listing to work out
+which files were vocabulary and which were work.
 
-```
-resources/build-tool/src/
-├── main.rs              clap Cli/Cmd; dispatch into the stages. Thin.
-├── lib.rs               module wiring + the crate's doc comment
-│
-│   ── shared vocabulary: what all three stages speak ──
-├── agent.rs             Agent (claude|kiro|codex): parse/validate the
-│                        --agent selector; skills_root; skill_path(skill)
-├── registry.rs          REGISTRY + Kind — the deployment manifest, pure data
-├── paths.rs             repo_root, home_dir
-│
-│   ── stage 1 · resources → a valid skill ──
-├── content.rs           parse + validate SKILL.md into a typed Skill
-│                        (name, description, announce contract)
-│
-│   ── stage 2 · skill → $HOME ──
-├── install/
-│   ├── mod.rs           the install / uninstall / status verbs
-│   ├── plan.rs          Comparison + Plan + expand: what is at the home
-│   │                    path, and what links an entry resolves to. Pure.
-│   └── apply.rs         the mutations: symlink, remove, force semantics
-│
-│   ── stage 3 · installed skill → agent behavior ──
-└── verify/
-    ├── mod.rs           orchestration: fixtures × kinds × agents;
-    │                    reporting, exit code, leak tripwire
-    ├── fixture.rs       .smoke parsing → sections, fields, and which
-    │                    kinds the sections imply
-    ├── kind.rs          the five kinds as the two composed axes
-    ├── prompt.rs        explicit/implicit envelopes + dry-run leak checks
-    ├── invoke.rs        per-agent driving + reply normalisation, one impl each
-    ├── judge.rs         grader selection, judge prompt, Verdict + extraction
-    └── assertion.rs     the two assertion paths: judged reply, behavioral shell
-```
+**The duplication the backlog flagged has one home.**
+`shared/agent.rs` owns `Agent::skill_path(skill)` derived from
+`REGISTRY`. Install asks "where is agent X's skills tree"; smoke asks
+"where does agent X read skill Y from"; check needs neither but wants
+the same `Agent` type for `--agent`. One definition, three consumers —
+that hand-copy drifting from the registry is exactly the bug the
+backlog names.
 
-**Why this beats a flat split.** Dependencies now run strictly one
-direction — `verify` reads `content`'s `Skill` and the shared
-vocabulary; `install` reads `content` and `registry`; `content` depends
-on nothing but `paths`. No stage reaches sideways into another's
-internals, so the layout states the architecture rather than just
-subdividing a file. Anyone asking "where does verification live" reads
-one directory, and anyone asking "what do these three have in common"
-reads three files at the root.
+Three specific placements this settles:
 
-**The vocabulary is where the flagged duplication dies.** `agent.rs`
-owns `Agent::skill_path(skill)`, derived from `REGISTRY`. Install needs
-"where does agent X's skills tree live"; verify needs "where does agent
-X read skill Y from" — the same knowledge, which is why the runner's
-hand-copied `skill_path` drifted from the registry before. One
-definition, one place, and the shared `Agent` type also means
-`--agent` parses identically for all four verbs instead of once per
-verb.
+- **Stage 1 returns a typed `Skill`, not a bool.** Content validation
+  answers yes/no today, while the runner separately greps the same
+  `SKILL.md` for the announce marker to decide whether the two
+  announce-only kinds can assert anything. Two readers of the same
+  bytes for the same reason. `Skill` carries the announce contract, and
+  both verify stages consume it — stage 1's output feeding downstream
+  rather than being re-derived.
+- **Kinds are types; kind *derivation* belongs to the fixture.** A
+  `playback` section implies playback, an `enact` section implies enact
+  *and* integration, and the `skill:` field alone implies the two
+  generated kinds. That mapping is fixture knowledge, so it is a method
+  on the parsed fixture in `harness/fixture.rs`, not a rule spread
+  through a run loop as bash had it. `harness/kind.rs` then holds the
+  kind as a type — including which stage owns it, which is the new
+  fact this design adds.
+- **Directories only where there is an internal seam.** `install/`
+  splits pure planning from effectful mutation, where the force /
+  dry-run correctness lives and where most existing tests point.
+  `harness/` has genuinely distinct concerns. `content.rs`,
+  `check.rs`, `smoke.rs`, and the three `shared/` modules are each one
+  cohesive thing — a directory apiece would be the ceremony the
+  original doc comment warned about. This is the guard against
+  over-splitting, not just under-splitting.
 
-**Stage 1 grows a return value.** Today content validation answers
-only yes/no. Verify separately greps each `SKILL.md` for the announce
-marker to decide whether the two announce-only kinds can assert
-anything. Both are reading the same file for the same reason, so
-`content.rs` returns a typed `Skill` carrying its announce contract,
-and verify consumes it — the pipeline's output feeding the next stage
-instead of a second reader of the same bytes.
-
-**`install/` and `verify/` earn directories; the rest don't.** Install
-splits along a real seam — pure comparison and planning versus the
-effectful mutations, which is where the force/dry-run correctness lives
-and where the bulk of the existing tests point. Verify is the largest
-surface and has the most distinct concerns. `content`, `agent`,
-`registry`, and `paths` are each one small cohesive thing, so a
-directory apiece would be the ceremony the original doc comment warned
-about — the guard against over-splitting, not just under-splitting.
-
-**Kinds live with the fixture that implies them.** Your point that the
-kinds are part of each smoke is the reason `kind.rs` holds the five
-kinds as *types* while `fixture.rs` owns the derivation: a `playback`
-section implies the playback kind, an `enact` section implies enact
-*and* integration, and the `skill:` field alone implies the two
-generated kinds. That mapping is fixture knowledge, so it lives in
-`fixture.rs` as a method on the parsed fixture rather than as a
-free-floating rule in the run loop — which is where the bash version
-kept it, spread across the loop body.
+What this rules out, explicitly: a single `verify/` module (it would
+straddle install, which is the conflation this whole section exists to
+undo), and `harness/` living under `shared/` (vocabulary and machinery
+are different kinds of thing).
 
 **Tests follow the same axis.** The 636-line `mod tests` splits into a
 `#[cfg(test)] mod tests` per module — idiomatic Rust placement, and the
 answer to "incorporate tests in the right way": a reader opening
-`install/plan.rs` sees the comparison logic and its cases together
-instead of scrolling past three unrelated concerns. The existing 45
+`stages/install/plan.rs` sees the comparison logic and its cases
+together instead of scrolling past unrelated concerns. The existing 45
 bodies move **verbatim** — no rewording, no consolidation — so the
 redistribution is reviewable as a pure relocation with the count as
 proof.
@@ -417,11 +565,11 @@ that won't sit cleanly in one module means the seam is wrong):
 
 | today's group | lands in |
 |---|---|
-| frontmatter + `check_content` cases | `content.rs` |
-| `plan_one`, `expand`, fan-out expansion | `install/plan.rs` |
-| install / uninstall / force / dry-run | `install/apply.rs` |
-| `selected_entries`, `validate_agent` | `agent.rs` |
-| `cmd_*` dispatch-level cases | `install/mod.rs` |
+| frontmatter + `check_content` cases | `stages/content.rs` |
+| `plan_one`, `expand`, fan-out expansion | `stages/install/plan.rs` |
+| install / uninstall / force / dry-run | `stages/install/apply.rs` |
+| `selected_entries`, `validate_agent` | `shared/agent.rs` |
+| `cmd_*` dispatch-level cases | `stages/install/mod.rs` |
 
 Two tests resist co-location, because they are genuinely cross-stage
 rather than unit:
@@ -471,10 +619,10 @@ deleted.
 Types where the bash version had strings flowing through
 `grep`/`sed`/`awk`:
 
-- `Tool` and `Kind` as closed enums, so the `--tools` / `--kind`
-  validation and the "requested set is the required set" rule are
-  exhaustive matches rather than substring tests against a
-  space-padded string.
+- `Agent` and `Kind` as closed enums, so the `--agent` / `--kind`
+  validation, the "requested set is the required set" rule, and each
+  kind's owning stage are exhaustive matches rather than substring
+  tests against a space-padded string.
 - `Fixture` as a parsed document — the `skill`, the tool list, and
   optional playback / enact / setup / assert sections — with the
   malformed-fixture guards as parse errors carrying today's messages.
@@ -512,45 +660,53 @@ Building the stages in order also means each slice compiles against
 only what precedes it, which is the check that the one-directional
 dependency claim in Design actually holds.
 
-- [ ] **Extract the shared vocabulary.** `agent.rs` (the `Agent` type,
-      selector parsing, `skills_root`, `skill_path`), `registry.rs`
-      (`REGISTRY` + `Kind` as pure data), `paths.rs` (roots); add
-      `lib.rs`. Existing agent-selection tests move here verbatim.
-- [ ] **Extract stage 1 — `content.rs`.** Frontmatter validation, plus
-      returning a typed `Skill` carrying the announce contract so stage
-      3 consumes it rather than re-reading the file. Its cases move
-      verbatim; the announce-contract accessor is the one new test.
-- [ ] **Extract stage 2 — `install/`.** `plan.rs` (pure: `Comparison`,
-      `Plan`, `expand`) and `apply.rs` (the mutations and force /
-      dry-run semantics); `mod.rs` keeps the three verbs. `main.rs`
-      drops to clap + dispatch. Logic verbatim.
+- [ ] **Extract `shared/`.** `agent.rs` (the `Agent` type, selector
+      parsing, `skills_root`, `skill_path`), `registry.rs` (`REGISTRY`
+      + `Kind` as pure data), `paths.rs` (roots); add `lib.rs`.
+      Existing agent-selection tests move here verbatim.
+- [ ] **Extract stage 1 — `stages/content.rs`.** Frontmatter
+      validation, plus returning a typed `Skill` carrying the announce
+      contract so both verify stages consume it rather than re-reading
+      the file. Cases move verbatim; the announce accessor is the one
+      new test.
+- [ ] **Extract stage 3 — `stages/install/`.** `plan.rs` (pure:
+      `Comparison`, `Plan`, `expand`) and `apply.rs` (mutations, force
+      / dry-run); `mod.rs` keeps the three verbs. `main.rs` drops to
+      clap + dispatch. Logic verbatim.
 - [ ] **Redistribute the remaining tests** per the table above, bodies
       verbatim, and move the two cross-stage tests to
       `tests/integration.rs`. Count still 45 summed across targets —
       the number is the relocation's proof. Slices 1–4 land green with
-      no behavior change before any runner code exists.
-- [ ] **Add the `verify` subcommand** as a fourth peer in `Cmd` sharing
-      the `--agent` selector, with `verify/fixture.rs` and
-      `verify/kind.rs`: parse `.smoke` sections and fields, derive
-      which kinds each section implies, and reject every malformed
-      shape with today's messages (`tools:` defaults to claude).
-      Unit-tested.
-- [ ] **Port prompt construction and the dry-run checks**
-      (`verify/prompt.rs`): explicit/implicit envelopes, every
-      implicit-leak class, the common-noun carve-out. Unit-tested.
-- [ ] **Port judging** (`verify/judge.rs`): grader selection, the judge
-      prompt, and `Verdict` extraction — table-driven over recorded
-      output for the four shipped bugs.
-- [ ] **Port invocation** (`verify/invoke.rs`): per-agent driving,
-      availability checks, reply normalisation, and the read-only
-      versus workdir shapes each agent needs, one impl per agent.
-- [ ] **Port orchestration** (`verify/mod.rs` + `assertion.rs`): the
-      fixtures × kinds × agents loop, both assertion paths, the leak
-      tripwire, reporting and the exit-code contract.
-- [ ] **Rewire and document.** Point the four Just verbs at
-      `build-tool verify`, delete `resources/tests/run`, and update
-      `README.md` + `project.md` for the pipeline layout, the fourth
-      verb, and the widened `just test` coverage.
+      no behavior change and no harness code yet.
+- [ ] **Build `harness/fixture.rs` + `kind.rs`.** Parse `.smoke`
+      sections and fields; derive which kinds each section implies;
+      model each kind's reach, verification, and **owning stage**;
+      reject every malformed shape with today's messages (`tools:`
+      defaults to claude). Unit-tested.
+- [ ] **Build `harness/prompt.rs`.** Explicit/implicit envelopes
+      parameterised by skill source, every implicit-leak class, the
+      common-noun carve-out. Unit-tested — including that `check`
+      resolves to the checkout and `smoke` to the installed root.
+- [ ] **Build `harness/judge.rs`.** Grader selection, judge prompt, and
+      `Verdict` extraction — table-driven over recorded output for the
+      four shipped bugs.
+- [ ] **Build `harness/invoke.rs` + `assertion.rs`.** Per-agent
+      driving, availability checks, reply normalisation, read-only
+      versus workdir shapes; both assertion paths (judged reply,
+      behavioral shell) and the leak tripwire.
+- [ ] **Add stage 2 — `stages/check.rs`** and the `check` subcommand:
+      the three no-install kinds against checkout-sourced skills.
+      Mutates nothing, requires no deployment, and errors on a
+      smoke-only `--kind`.
+- [ ] **Add stage 4 — `stages/smoke.rs`** and the `smoke` subcommand:
+      the two implicit kinds against installed skills, with a clear
+      stop when the symlinks are absent. Wire the `verify` convenience
+      verb as check-then-smoke.
+- [ ] **Rewire and document.** Point the four existing Just verbs at
+      the new binary, add `check-skills` / `smoke-skills`, delete
+      `resources/tests/run`, and update `README.md` + `project.md` —
+      including correcting the "requires the managed symlinks already
+      deployed" line, which is true only of the smoke stage.
 
 - *Risk note:* the paid sweep is the only end-to-end proof and it is
   user-driven, so the free `--dry-run` parity check against the
@@ -568,7 +724,7 @@ dependency claim in Design actually holds.
   the refactor. A 45-test count that changes is the tripwire.
 - *Risk note:* a large mechanical diff is where a real change hides
   best. The Code Review Gate sees the diff without the spec, so the
-  commit messages for slices 1–2 must say "relocation only" for the
+  commit messages for slices 1–4 must say "relocation only" for the
   reviewer to check against.
 - *Risk note:* `--help` output changes shape. It is the one
   user-facing regression in the port and is called out rather than
@@ -612,6 +768,25 @@ dependency claim in Design actually holds.
   module split and moves the 636-line test module next to the code it
   tests, sequenced *first* so the runner lands into a package already
   shaped for it.
+- **2026-08-02** · Fourth amendment, same review round, and the one
+  that changed the feature rather than the layout. Reviewer asked for a
+  step back — a fresh look at the design, not bash-to-Rust — and made
+  three observations: some kinds need no install (call the agent,
+  point it at the skill, check it functions); the install-dependent
+  kinds are "at the mercy of all other skills"; and projects normally
+  run unit/integration before deploy and smoke after. That maps the
+  reach axis onto the install boundary: explicit → pre-install,
+  implicit → post-install. Verification is therefore **two stages, not
+  one**, and today's bash already straddles the boundary by accident
+  (`skill_announces` reads the checkout while `skill_path` points at
+  `$HOME`) — which is also why `project.md`'s "requires the managed
+  symlinks already deployed" over-constrains three of five kinds.
+  Restructured to shim / shared / harness / stages so the boundary is
+  evident, split `verify` into `check` and `smoke` verbs, and added
+  stage-ownership of kinds as a modelled fact. New capability that
+  falls out: content is provable before it is made live for every
+  session on the machine, and a check-passes/smoke-fails result now
+  localises the fault to deployment or description-budget competition.
 - **2026-08-02** · Amended a third time, same review round: the layout
   itself was questioned. Reviewer's framing — common things at the
   root, then authoring skills from resources, then installing them,
@@ -630,13 +805,12 @@ dependency claim in Design actually holds.
 
 ## Decision Log
 
-- **Verify is a fourth subcommand on `build-tool`.** Derived from
-  `project.md`'s `<action>-<resource-kind>` verb rule rather than from
-  where the code happens to sit today: install / uninstall / status /
-  verify are four peer actions on the same resource kind, and the
-  binary already implements three. Verify is in bash only because it
-  predates the taxonomy. Two rejected alternatives, both mine from
-  earlier drafts of this spec:
+- **Verification belongs in `build-tool`, as verbs on one binary.**
+  Derived from `project.md`'s `<action>-<resource-kind>` verb rule
+  rather than from where the code happens to sit today: the actions on
+  a skill are peers, and the binary already implements three of them.
+  Verification is in bash only because it predates the taxonomy. Three
+  rejected alternatives, all mine from earlier drafts of this spec:
   - *A separate `resources/verify-tool/` crate* — argued on the
     grounds that it would keep verify's agent-driving surface away
     from the one binary that mutates `$HOME`. Wrong: code paths don't
@@ -644,20 +818,22 @@ dependency claim in Design actually holds.
     package boundary protects nothing. It would have cost a third
     manifest, re-declared deps, a cross-crate API, and generalising
     `repo_root()` for a second caller.
-  - *A second bin in the same package* — no better. Two bins for four
-    peer actions on one resource kind is an asymmetry with nothing
-    behind it, and it needed a `default-run` workaround to keep
-    `cargo run -p build-tool` unambiguous. One binary, four
-    subcommands, no workaround.
+  - *A second bin in the same package* — no better. Two bins for peer
+    actions on one resource kind is an asymmetry with nothing behind
+    it, and it needed a `default-run` workaround to keep
+    `cargo run -p build-tool` unambiguous.
+  - *One `verify` verb* — the shape three drafts assumed. It hides the
+    install boundary the runner already straddles; see the split
+    decision below.
   Also rejected duplicating the skills roots in the runner: that
   drift is exactly what the backlog item flags.
 - **`build-tool` keeps its name.** "Build" in ordinary use already
   spans compiling, testing, and packaging, so a build tool that
-  validates and installs content but cannot verify it is the anomaly —
-  the fourth verb makes the name more accurate, not less. Considered
-  renaming to something resource-neutral; rejected as churn across the
-  Justfile, README, `project.md`, and `repo_root()`'s sentinel check
-  for no gain.
+  validates and installs content but cannot check or smoke-test it is
+  the anomaly — the added verbs make the name more accurate, not less.
+  Considered renaming to something resource-neutral; rejected as churn
+  across the Justfile, README, `project.md`, and `repo_root()`'s
+  sentinel check for no gain.
 - **The split is in scope, and lands first.** `main.rs` is 1202 lines
   and its doc comment justifies being single-file because "the whole
   job is small enough that splitting it into modules adds noise" — a
@@ -666,6 +842,25 @@ dependency claim in Design actually holds.
   Sequenced before the runner so it is reviewable as a pure relocation
   with the 45-test count as its proof, rather than tangled with new
   logic.
+- **Verification splits at the install boundary.** The reach axis
+  (explicit/implicit) *is* the install boundary, so the five kinds
+  divide into three that need no deployment and two that require it.
+  Modelled as two stages with two verbs (`check`, `smoke`) rather than
+  one `verify` with a flag, because a flag would leave the boundary
+  invisible at the surface — and the boundary is the point. Rejected
+  keeping one `verify` stage: it forces the three isolation kinds to
+  wait on an install that makes the content live for every session on
+  the machine, and it flattens two different failure meanings into one
+  message. `verify` survives as a check-then-smoke convenience so no
+  existing habit breaks. A kind selector that contradicts its stage is
+  an error, not a silent empty pass.
+- **`harness/` is a peer of `stages/`, not part of it or of
+  `shared/`.** It is the same mechanism — fixtures, prompts,
+  invocation, judging — pointed at two different skill sources, so
+  putting it inside either verify stage would make one the owner and
+  the other a client, implying a hierarchy that isn't there. Rejected
+  `shared/harness/`: vocabulary and machinery are different kinds of
+  thing, and flattening them is what made an earlier draft read wrong.
 - **The layout axis is the pipeline, not the file's existing
   sections.** `resources → skill → $HOME → verified behavior` is three
   stages over one resource, plus the vocabulary all three speak. So the
@@ -684,16 +879,17 @@ dependency claim in Design actually holds.
   "where is agent X's skills tree", verify asks "where does agent X
   read skill Y from" — the same knowledge, which is precisely why the
   runner's hand-copied `skill_path` drifted from `REGISTRY`. One type
-  in `agent.rs` derived from the manifest, so `--agent` also parses
-  identically across all four verbs.
+  in `shared/agent.rs` derived from the manifest, so `--agent` parses
+  identically across every verb, and the two verify stages differ only
+  in which path they ask it for.
 - **Stage 1 returns a typed `Skill`, not a bool.** Content validation
-  answers yes/no today, and verify separately greps the same
+  answers yes/no today, and the runner separately greps the same
   `SKILL.md` for the announce marker to decide whether the two
   announce-only kinds can assert anything. Two readers of the same
   bytes for the same reason; folding the announce contract into stage
   1's output makes it the pipeline's data flow instead.
 - **Kind derivation belongs to the fixture.** The five kinds are types
-  (`verify/kind.rs`), but *which* kinds a fixture yields is fixture
+  (`harness/kind.rs`), but *which* kinds a fixture yields is fixture
   knowledge — a playback section implies playback, an enact section
   implies enact and integration, the `skill:` field alone implies the
   two generated kinds. So it is a method on the parsed fixture rather
