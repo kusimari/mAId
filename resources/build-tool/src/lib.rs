@@ -4,23 +4,22 @@
 //!
 //! ```text
 //! resources/content/ ─▶ a valid skill ─▶ checked in isolation ─▶ $HOME ─▶ smoke-tested deployed
-//!                       (1 content)      (2 check · pre-install)  (3 install)  (4 smoke · post-install)
+//!                       (content)        (check · pre-install)   (install)  (smoke · post-install)
 //! ```
 //!
-//! Four files, one per category, each carrying its internal structure in
-//! section comments rather than a directory:
+//! One file per category, each carrying its internal structure in
+//! section comments rather than a directory. In place today:
 //!
-//!   main.rs     the shim: clap Cli/Cmd + dispatch, nothing else
+//!   main.rs     the CLI surface, and the install / uninstall / status
+//!               verbs pending their move into the install stage
 //!   shared.rs   vocabulary every stage speaks (agents, registry, roots)
-//!   harness.rs  driving a coding agent + scoring the reply; used by
-//!               stages 2 and 4, owned by neither
-//!   stages.rs   the pipeline, one section per stage
 //!
-//! Dependencies run strictly one direction — `stages` → `harness` →
-//! `shared` → nothing — which is readable off the `use` block at the top
-//! of each file.
+//! Dependencies run one direction — later stages may read earlier ones
+//! and the shared vocabulary, never the reverse — which is readable off
+//! the `use` block at the top of each file.
 //!
-//! The library target exists so the stages are unit-testable and so
-//! cross-stage tests in `tests/` can exercise the crate from outside.
+//! The library target exists so this vocabulary is unit-testable
+//! independently of the binary, and so cross-stage tests under `tests/`
+//! can exercise the crate from outside.
 
 pub mod shared;

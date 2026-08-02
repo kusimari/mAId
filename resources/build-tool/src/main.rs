@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 // ─────────────────────────────────────────────────────────────────
-// 2. Content checks.
+// 1. Content checks.
 //
 // Only skills are deployed. Each resources/content/skills/<name>/
 // SKILL.md needs YAML frontmatter with a non-empty name + description.
@@ -79,7 +79,7 @@ fn check_skill_frontmatter(content: &str) -> Result<(), String> {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// 3. Compare — the shared core for install / uninstall / status.
+// 2. Compare — the shared core for install / uninstall / status.
 //
 // Each verb walks REGISTRY and asks `plan_one()` what it sees at the
 // home path. The verb decides the action.
@@ -181,7 +181,7 @@ fn ensure_parent(p: &Path) -> io::Result<()> {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// 4. CLI dispatch.
+// 3. CLI dispatch.
 // ─────────────────────────────────────────────────────────────────
 
 #[derive(Parser)]
@@ -441,7 +441,7 @@ fn uninstall_one(home: PathBuf, source: PathBuf, dry_run: bool, force: bool) -> 
 }
 
 // ─────────────────────────────────────────────────────────────────
-// 6. Tests.
+// 4. Tests.
 // ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

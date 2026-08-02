@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 // global per-tool file.
 // ─────────────────────────────────────────────────────────────────
 
-pub type Entry = (&'static str, &'static str, Kind, &'static str); // (home_subpath, source_subpath, kind, agent)
+pub type Entry = (&'static str, &'static str, Kind, Agent); // (home_subpath, source_subpath, kind, agent)
 
 /// A concrete symlink to manage, resolved from an entry: (home, source).
 pub type Link = (PathBuf, PathBuf);
@@ -40,68 +40,9 @@ pub enum Kind {
     FanOut,
 }
 
-/// The coding agents mAId deploys to. An install/uninstall/status can
-/// be scoped to one (`--agent`) or, by default, cover them all. This
-/// list is also the recognized universe used to validate `--agent`.
-pub const AGENTS: &[&str] = &["claude", "kiro", "codex"];
-
-pub const REGISTRY: &[Entry] = &[
-    (
-        ".claude/skills",
-        "resources/content/skills",
-        Kind::Link,
-        "claude",
-    ),
-    (
-        ".kiro/steering/skills",
-        "resources/content/skills",
-        Kind::Link,
-        "kiro",
-    ),
-    (
-        ".codex/skills",
-        "resources/content/skills",
-        Kind::FanOut,
-        "codex",
-    ),
-];
-
-/// Filter REGISTRY to the rows an `--agent` selection acts on: `None`
-/// = every row (the default), `Some(a)` = just that agent's rows. An
-/// unrecognized agent is rejected by the caller before this runs.
-pub fn selected_entries(agent: Option<&str>) -> Vec<Entry> {
-    REGISTRY
-        .iter()
-        .filter(|(.., a)| agent.is_none_or(|sel| sel == *a))
-        .copied()
-        .collect()
-}
-
-/// Validate an `--agent` value against the known set, returning it
-/// back for chaining. An unknown agent is a hard error listing the
-/// valid names, so a typo never silently installs nothing.
-pub fn validate_agent(agent: Option<&str>) -> Result<Option<&str>> {
-    match agent {
-        Some(a) if !AGENTS.contains(&a) => Err(anyhow!(
-            "unknown coding agent {a:?} (known: {})",
-            AGENTS.join(", ")
-        )),
-        other => Ok(other),
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────
-// Agent — one coding agent, and where it reads skills from.
-//
-// Every stage needs some version of "where does agent X keep skills":
-// install writes the tree, smoke reads a skill out of the installed
-// tree, and check reads the same skill out of the checkout instead.
-// That knowledge is derived from REGISTRY here rather than restated —
-// the bash runner kept its own copy of the three home paths, and it
-// drifted from the registry, which is the bug this type exists to make
-// impossible.
-// ─────────────────────────────────────────────────────────────────
-
+/// One coding agent mAId deploys to. Rows below are keyed by this, so
+/// the variant — not a string — is what identifies an agent; the only
+/// place a name is spelled is `Agent::name`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Agent {
     Claude,
@@ -109,11 +50,33 @@ pub enum Agent {
     Codex,
 }
 
+pub const REGISTRY: &[Entry] = &[
+    (
+        ".claude/skills",
+        "resources/content/skills",
+        Kind::Link,
+        Agent::Claude,
+    ),
+    (
+        ".kiro/steering/skills",
+        "resources/content/skills",
+        Kind::Link,
+        Agent::Kiro,
+    ),
+    (
+        ".codex/skills",
+        "resources/content/skills",
+        Kind::FanOut,
+        Agent::Codex,
+    ),
+];
+
 impl Agent {
-    /// Every agent, in registry order.
+    /// Every agent, in registry order. `registry_rows_cover_every_agent`
+    /// holds this in step with REGISTRY.
     pub const ALL: &'static [Agent] = &[Agent::Claude, Agent::Kiro, Agent::Codex];
 
-    /// The registry-facing name — the same token `--agent` accepts.
+    /// The token `--agent` accepts. The one place a name is spelled.
     pub fn name(self) -> &'static str {
         match self {
             Agent::Claude => "claude",
@@ -122,8 +85,8 @@ impl Agent {
         }
     }
 
-    /// Parse an `--agent` token. `None` means "every agent", which is
-    /// the default for every verb that takes the selector.
+    /// Parse an `--agent` token; an unknown one lists the valid names,
+    /// so a typo never silently installs nothing.
     pub fn parse(token: &str) -> Result<Agent> {
         Agent::ALL
             .iter()
@@ -132,38 +95,67 @@ impl Agent {
             .ok_or_else(|| {
                 anyhow!(
                     "unknown coding agent {token:?} (known: {})",
-                    AGENTS.join(", ")
+                    Agent::ALL
+                        .iter()
+                        .map(|a| a.name())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 )
             })
     }
 
-    /// The agent's skills root under `$HOME`, from its REGISTRY row.
-    ///
-    /// Panics only if REGISTRY loses a row for a variant — an
-    /// unrepresentable state the `agents_have_registry_rows` test pins.
-    pub fn skills_root(self, home: &Path) -> PathBuf {
-        let (home_sub, ..) = REGISTRY
-            .iter()
-            .find(|(.., agent)| *agent == self.name())
-            .expect("every Agent variant has a REGISTRY row");
-        home.join(home_sub)
+    /// This agent's REGISTRY row.
+    fn entry(self) -> Option<&'static Entry> {
+        REGISTRY.iter().find(|(.., agent)| *agent == self)
     }
 
-    /// Where this agent reads `<skill>`'s SKILL.md once installed.
-    /// The post-install (smoke) source: what the deployment exposes.
-    pub fn installed_skill(self, home: &Path, skill: &str) -> PathBuf {
-        self.skills_root(home).join(skill).join("SKILL.md")
+    /// The agent's skills root under `$HOME`. `None` when REGISTRY
+    /// carries no row for it — an agent mAId knows but doesn't deploy
+    /// to, which the registry is entitled to express.
+    pub fn skills_root(self, home: &Path) -> Option<PathBuf> {
+        self.entry().map(|(home_sub, ..)| home.join(home_sub))
+    }
+
+    /// Where this agent reads `<skill>`'s SKILL.md once installed — the
+    /// post-install source, i.e. what the deployment exposes.
+    pub fn installed_skill(self, home: &Path, skill: &str) -> Option<PathBuf> {
+        self.skills_root(home)
+            .map(|root| root.join(skill).join("SKILL.md"))
     }
 }
 
+/// Filter REGISTRY to the rows an `--agent` selection acts on: `None`
+/// = every row (the default), `Some(a)` = just that agent's rows.
+pub fn selected_entries(agent: Option<Agent>) -> Vec<Entry> {
+    REGISTRY
+        .iter()
+        .filter(|(.., a)| agent.is_none_or(|sel| sel == *a))
+        .copied()
+        .collect()
+}
+
+/// Resolve an optional `--agent` token to the agent it selects, `None`
+/// meaning all of them. The CLI boundary: clap hands over a string,
+/// everything downstream works in `Agent`.
+pub fn validate_agent(agent: Option<&str>) -> Result<Option<Agent>> {
+    agent.map(Agent::parse).transpose()
+}
+
+/// The one source tree skills are authored in, per REGISTRY. Every row
+/// shares it — `registry_rows_share_one_content_source` pins that — so
+/// any row answers.
+fn content_source() -> &'static str {
+    REGISTRY
+        .first()
+        .map(|(_, source_sub, ..)| *source_sub)
+        .unwrap_or("resources/content/skills")
+}
+
 /// Where `<skill>`'s SKILL.md lives in the checkout — the pre-install
-/// (check) source. Agent-independent by design: before install there is
-/// only one copy, which is why the three explicit kinds need no deploy.
+/// source. Agent-independent by design: before install there is only
+/// one copy, which is why the explicit test kinds need no deploy.
 pub fn checkout_skill(checkout: &Path, skill: &str) -> PathBuf {
-    checkout
-        .join("resources/content/skills")
-        .join(skill)
-        .join("SKILL.md")
+    checkout.join(content_source()).join(skill).join("SKILL.md")
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -216,9 +208,9 @@ mod tests {
 
     #[test]
     fn selected_entries_scopes_to_one_agent() {
-        let codex = selected_entries(Some("codex"));
+        let codex = selected_entries(Some(Agent::Codex));
         assert_eq!(codex.len(), 1);
-        assert_eq!(codex[0].3, "codex");
+        assert_eq!(codex[0].3, Agent::Codex);
     }
 
     #[test]
@@ -238,61 +230,87 @@ mod tests {
         assert!(Agent::parse("bogus").is_err());
     }
 
-    /// `skills_root` reads REGISTRY, so a variant without a row would
-    /// panic at runtime. Pin that here rather than in a caller.
+    /// `ALL` is hand-written while REGISTRY is the manifest, so this
+    /// asserts set equality both ways — an agent missing from either
+    /// side fails. Length-only comparison would miss a substitution.
     #[test]
-    fn agents_have_registry_rows() {
-        let home = Path::new("/home/u");
+    fn registry_rows_cover_every_agent() {
+        let tagged: Vec<Agent> = REGISTRY.iter().map(|(.., agent)| *agent).collect();
         for agent in Agent::ALL {
-            assert!(agent.skills_root(home).starts_with(home));
+            assert!(
+                tagged.contains(agent),
+                "{} has no REGISTRY row",
+                agent.name()
+            );
         }
-        assert_eq!(Agent::ALL.len(), AGENTS.len());
+        for agent in &tagged {
+            assert!(
+                Agent::ALL.contains(agent),
+                "REGISTRY tags {} which Agent::ALL omits",
+                agent.name()
+            );
+        }
     }
 
-    /// The three deployed roots, spelled out. This is the assertion the
-    /// bash runner could not make: it hand-copied these paths, they
-    /// drifted from REGISTRY, and nothing caught it.
+    /// A selector that parses but matches no row installs nothing while
+    /// reporting success, so parsing alone is not enough to assert.
+    #[test]
+    fn every_agent_name_selects_exactly_its_own_rows() {
+        for agent in Agent::ALL {
+            let rows = selected_entries(Some(validate_agent(Some(agent.name())).unwrap().unwrap()));
+            assert!(
+                !rows.is_empty(),
+                "--agent {} selected nothing",
+                agent.name()
+            );
+            assert!(rows.iter().all(|(.., a)| a == agent));
+        }
+    }
+
+    /// The three deployed roots, spelled out literally: a REGISTRY row
+    /// edited to the wrong home path is otherwise invisible here, since
+    /// every other assertion derives from the same rows.
     #[test]
     fn installed_skill_matches_each_agents_deployed_layout() {
         let home = Path::new("/home/u");
-        assert_eq!(
-            Agent::Claude.installed_skill(home, "notes"),
-            Path::new("/home/u/.claude/skills/notes/SKILL.md")
-        );
-        assert_eq!(
-            Agent::Kiro.installed_skill(home, "notes"),
-            Path::new("/home/u/.kiro/steering/skills/notes/SKILL.md")
-        );
-        assert_eq!(
-            Agent::Codex.installed_skill(home, "notes"),
-            Path::new("/home/u/.codex/skills/notes/SKILL.md")
-        );
+        for (agent, want) in [
+            (Agent::Claude, "/home/u/.claude/skills/notes/SKILL.md"),
+            (Agent::Kiro, "/home/u/.kiro/steering/skills/notes/SKILL.md"),
+            (Agent::Codex, "/home/u/.codex/skills/notes/SKILL.md"),
+        ] {
+            assert_eq!(
+                agent.installed_skill(home, "notes").unwrap(),
+                Path::new(want)
+            );
+        }
     }
 
-    /// Pre-install there is one copy of a skill, not three — which is
-    /// why the explicit kinds need no deploy.
     #[test]
     fn checkout_skill_is_agent_independent() {
-        let checkout = Path::new("/repo");
         assert_eq!(
-            checkout_skill(checkout, "notes"),
+            checkout_skill(Path::new("/repo"), "notes"),
             Path::new("/repo/resources/content/skills/notes/SKILL.md")
         );
     }
 
-    /// The two sources must never collide: check reads the checkout,
-    /// smoke reads $HOME, and conflating them is the inconsistency the
-    /// bash runner shipped (announce read from one, prompts from the
-    /// other).
+    /// `checkout_skill` reads the source path off a single row, so a row
+    /// pointing somewhere else would make the pre-install source depend
+    /// on which row answered.
     #[test]
-    fn checkout_and_installed_sources_are_distinct() {
-        let home = Path::new("/home/u");
-        let checkout = Path::new("/repo");
+    fn registry_rows_share_one_content_source() {
+        let sources: Vec<&str> = REGISTRY.iter().map(|(_, s, ..)| *s).collect();
+        assert!(sources.windows(2).all(|w| w[0] == w[1]), "{sources:?}");
+    }
+
+    /// Compared against a *shared* root, so the two resolvers must differ
+    /// by their own construction rather than by the caller's roots
+    /// happening to be disjoint.
+    #[test]
+    fn checkout_and_installed_sources_never_collide() {
+        let root = Path::new("/same");
+        let from_checkout = checkout_skill(root, "notes");
         for agent in Agent::ALL {
-            assert_ne!(
-                agent.installed_skill(home, "notes"),
-                checkout_skill(checkout, "notes")
-            );
+            assert_ne!(agent.installed_skill(root, "notes").unwrap(), from_checkout);
         }
     }
 }
