@@ -1,6 +1,6 @@
 ---
 name: verify-runner-in-rust
-description: Move the skill-verification runner from bash to Rust as a workspace member beside build-tool, so the fixture format, five test kinds, prompt construction and verdict extraction become unit-testable instead of only provable by spending API credits.
+description: Move the skill-verification runner from bash to Rust as a second binary in the build-tool package, sharing one library target, so the fixture format, five test kinds, prompt construction and verdict extraction become unit-testable instead of only provable by spending API credits.
 metadata:
   type: feature
 ---
@@ -14,11 +14,13 @@ metadata:
 
 ## Feature Brief
 
-The skill-verification runner becomes a Rust workspace member instead
-of an 890-line bash script, so the logic it has accumulated — a fixture
-format, five test kinds, per-agent prompt construction, and per-agent
-verdict extraction — is covered by `just test` in milliseconds rather
-than only by paid tri-tool sweeps. The verb surface
+The skill-verification runner becomes a Rust binary instead of an
+890-line bash script — a second bin in the existing `build-tool`
+package, sharing a library target with the installer — so the logic it
+has accumulated (a fixture format, five test kinds, per-agent prompt
+construction, and per-agent verdict extraction) is covered by
+`just test` in milliseconds rather than only by paid tri-tool sweeps.
+The verb surface
 (`just resources::verify-skills` and its three siblings) keeps its
 names, flags, and output shape; only what sits behind them changes.
 
@@ -30,9 +32,10 @@ construction, the five test kinds, judge invocation and verdict
 extraction, behavioral setup/assert execution, and the `--kind` /
 `--tools` / `--dry-run` surface.
 
-Move it to a Rust crate — a workspace member beside
-`resources/build-tool`, reusing the deps already present (`anyhow`,
-`clap`). The Justfile verbs (`verify-skills`, `…-one`, `…-kind`,
+Move it into Rust alongside `resources/build-tool` — a second bin in
+that package over a shared library target, reusing the deps already
+present (`anyhow`, `clap`) and the manifest its `skill_path` currently
+hand-copies. The Justfile verbs (`verify-skills`, `…-one`, `…-kind`,
 `…-dry`) keep their names and behavior; only what sits behind them
 changes.
 
@@ -222,34 +225,61 @@ just resources::verify-skills                      # full sweep
 
 ## Design
 
-### Why a second crate rather than a build-tool subcommand
+### Where the runner lives: a second bin in the build-tool package
 
-The backlog left this open. Two things decide it.
+The backlog left this open — new crate, or a `build-tool` subcommand?
+Neither, quite: **a second binary target in the existing `build-tool`
+package, over a shared library target.**
 
-Against folding it into `build-tool`: that crate is a
-`$HOME`-mutating symlink state machine, and
-`specs/backlog/build-tool-language-rust-vs-python.md` rests its
-keep-it-in-Rust verdict on exactly that narrowness. Giving the
-installer a surface that drives coding agents, seeds scratch
-directories, and executes fixture shell widens the blast radius of the
-one tool in the repo that can replace files in `$HOME`.
+```
+resources/build-tool/
+├── Cargo.toml          default-run = "build-tool"; two [[bin]] targets
+└── src/
+    ├── lib.rs          shared: REGISTRY, skill-path resolution, roots
+    ├── main.rs         bin "build-tool"  — install / uninstall / status
+    └── bin/verify.rs   bin "verify-tool" — the five kinds, fixtures, judging
+```
 
-For sharing something: the runner's per-agent skill paths are a
-restatement of the deployment manifest, and the backlog names that
-duplication directly. Two copies of "where does kiro read skills from"
-is how they drifted before.
+**Why one package.** The two binaries need the same three things —
+`REGISTRY` (where each agent reads skills from), `repo_root()`, and
+`home_dir()`. The runner's `skill_path` is today a hand-copy of the
+registry, and the backlog names that duplication as how the two drifted
+apart before. A shared `lib.rs` makes it one definition, and cargo's
+own answer to "two programs, shared code" is multiple bin targets over
+a lib in one package — not two packages with a dependency edge between
+them. Reaching for a second package would mean a third manifest,
+re-declared `anyhow` / `clap` / `tempfile`, a cross-crate public API to
+keep stable, and generalising `repo_root()` (which walks up from
+`resources/build-tool/`) for a second caller — for no isolation cargo
+wasn't already giving us within one package.
 
-So: **a new binary crate `resources/verify-tool/`, and the skills-root
-knowledge moves into a library target inside the existing `build-tool`
-package** (`src/lib.rs` alongside `src/main.rs`), which the new crate
-depends on. That keeps the manifest single-source, keeps the installer
-binary pure-symlink, and adds no third package. `verify-tool` mirrors
-`build-tool` in name and shape: one job, one crate, invoked through
-Just.
+**What isolation does *not* buy.** An earlier draft of this spec argued
+a separate crate would keep verify's agent-driving, scratch-seeding
+surface away from the one tool that can replace files in `$HOME`.
+That argument doesn't hold: code paths don't leak into each other, clap
+dispatch is exhaustive, and `install --force` is reachable only through
+`install --force` no matter what else lives in the package. The real
+property worth protecting is that the *install logic* changes rarely,
+and that is untouched by where the runner's code sits. The genuine
+risk here is a careless edit to shared code, which the existing 45
+tests already guard and which a package boundary would not.
+
+**Keeping today's invocations true.** Two bins make a bare
+`cargo run -p build-tool` ambiguous, which would break all three
+install verbs and every doc reference. `default-run = "build-tool"`
+resolves it: the existing invocations keep working untouched, and the
+runner is reached with `--bin verify-tool`. Verified against the
+repo's own toolchain before committing to the shape.
 
 Fixtures stay at `resources/tests/skills/`, and
 `resources/tests/browser-functional` stays put. `resources/tests/run`
 is deleted.
+
+The package keeps its `build-tool` name. It is now two verbs over one
+manifest rather than one, and a rename would churn the Justfile,
+README, `project.md`, and `repo_root()`'s sentinel check for no gain —
+but it is worth a look at closure if the name reads wrong once the
+second bin exists.
 
 ### What each library earns its place for
 
@@ -313,10 +343,11 @@ They are the record of failures already paid for.
 
 ## Implementation Plan
 
-- [ ] Scaffold `resources/verify-tool/` as a workspace member; extract
-      the skills-root manifest into a `build-tool` library target and
-      resolve skill paths through it, with unit tests asserting the
-      three agent roots.
+- [ ] Extract the shared core (`REGISTRY`, skill-path resolution,
+      roots) into a `build-tool` library target, leaving the install
+      bin a thin caller with its 45 tests unchanged; add the second
+      `verify-tool` bin and `default-run`, with unit tests asserting
+      the three agent roots resolve from the one manifest.
 - [ ] Port the fixture format: parse sections and fields, reject every
       malformed shape with today's messages, default `tools:` to
       claude. Unit-tested.
@@ -343,9 +374,11 @@ They are the record of failures already paid for.
   scratch workdir. It is also the path with a known containment leak
   that this feature deliberately does not fix. Porting the tripwire
   faithfully matters more than tidying it.
-- *Risk note:* moving the registry into a library target touches
-  `build-tool`, the one crate that mutates `$HOME`. The move must be a
-  pure relocation with its existing tests unchanged and still passing.
+- *Risk note:* extracting the shared core touches `build-tool`, the one
+  binary that mutates `$HOME`. The move must be a pure relocation —
+  its 45 existing tests unchanged and still passing — and the first
+  slice must confirm `cargo run -p build-tool` still resolves to the
+  install bin before anything depends on it.
 - *Risk note:* `--help` output changes shape. It is the one
   user-facing regression in the port and is called out rather than
   hidden.
@@ -363,18 +396,39 @@ They are the record of failures already paid for.
   closure, or whether the port must hand-roll escape stripping. The
   Design records both paths; the answer lands in the Decision Log at
   the slice that needs it.
+- **2026-08-02** · Plan amended before any dev work, on review
+  feedback: the runner moves into the existing `build-tool` package
+  as a second bin over a shared lib, not a separate
+  `resources/verify-tool/` crate. Reviewer's point — model it as
+  another Rust source in build-tool and share what's needed. The
+  separate-crate rationale in the first draft did not survive
+  scrutiny; see the Decision Log. Slice 1 and the third risk note
+  were rewritten to match. Proved the packaging out first (two bins
+  + `default-run` over a shared lib, `--bin verify-tool` for the
+  second) so the shape rests on a verified result rather than an
+  assumption about cargo.
 
 ## Decision Log
 
-- **New crate, shared manifest.** `resources/verify-tool/` as a
-  second binary crate rather than a `build-tool` subcommand — keeps
-  the `$HOME`-mutating installer narrow, which is the premise the
-  Rust-vs-Python decision record rests on. Considered a single crate
-  (rejected: widens the installer's blast radius) and full
-  duplication of the skills roots (rejected: that drift is what the
-  backlog item flags). The manifest moves to a library target in the
-  `build-tool` package so there is one source of truth and no third
-  package.
+- **Second bin in the `build-tool` package, over a shared lib.**
+  Not a separate crate and not a subcommand of the installer.
+  Rejected a separate `resources/verify-tool/` package: it buys no
+  isolation cargo wasn't already providing within one package, and
+  costs a third manifest, re-declared deps, a cross-crate API to keep
+  stable, and generalising `repo_root()` for a second caller.
+  Rejected duplicating the skills roots: that drift is exactly what
+  the backlog item flags. Rejected a subcommand of the install bin:
+  it would put verify's flag surface inside the installer's CLI, and
+  the two verbs have nothing in common at the command layer.
+  `default-run = "build-tool"` keeps every existing
+  `cargo run -p build-tool` invocation working; verified against the
+  repo toolchain before the shape was committed to.
+  **Superseded an earlier draft of this spec** that argued for a
+  separate crate on blast-radius grounds. That reasoning was wrong —
+  code paths don't leak into each other, so a package boundary
+  protects nothing that clap's exhaustive dispatch doesn't already.
+  What the decision record actually prizes is that install logic
+  changes rarely, which is independent of where the runner lives.
 - **Straight port, fixture format frozen.** No `.smoke` file is
   edited. Considered redesigning the format at the same time;
   rejected because the current suite's results are the only
