@@ -47,18 +47,20 @@ Two halves at the top level:
      by asking, since a role it fills may be resolved from content it
      doesn't control.
   2. **Tooling** (`resources/build-tool/`) — Rust crate
-     (single-file) that does the install. Validates content
-     and creates/removes/reports the `$HOME`-facing
-     symlinks. Plus a small bash script
-     (`resources/tests/run`) that drives the AI tools
-     against the installed content. Rust where types help
-     (the symlink state machine and content validator);
-     bash where shelling out to other tools is the job
-     (driving `claude` / `kiro-cli` / `codex`).
+     organised as the pipeline it performs: validate content,
+     check each skill in isolation, install the `$HOME`-facing
+     symlinks, then smoke-test what is deployed. Four files, one
+     per category — `main.rs` (the clap shim), `shared.rs` (agents,
+     registry, roots), `harness.rs` (driving an agent and scoring
+     the reply), `stages.rs` (the pipeline). Dependencies run one
+     direction: stages → harness → shared. The only bash left is
+     what is genuinely shell — a fixture's `--- setup ---` /
+     `--- assert ---` blocks, executed by the runner.
   3. **Verbs** (Justfile recipes that use the tooling) —
      `just resources::install-skills`, `…::uninstall-skills`,
-     `…::status-skills`, `…::verify-skills`
-     (single-fixture: `just resources::verify-skills-one <name>`).
+     `…::status-skills`, `…::check-skills`, `…::smoke-skills`,
+     `…::verify-skills` (both stages; single-fixture:
+     `just resources::verify-skills-one <name>`).
      Every verb follows the `<action>-<resource-kind>` pattern and
      takes an optional coding-agent selector (`claude|kiro|codex`;
      omit for all three). These are how a human or another tool
@@ -79,7 +81,7 @@ Both halves are members of one cargo workspace at the
 root, so `cargo build --workspace` covers everything.
 
 **Registry** lives inline at the top of
-`resources/build-tool/src/main.rs` (a slice of
+`resources/build-tool/src/shared.rs` (a slice of
 `(home_subpath, source_subpath, kind, agent)` tuples). The
 authoritative manifest for what gets installed where. The
 `agent` tag is what lets install/uninstall/status be scoped
@@ -151,9 +153,12 @@ re-auth. Its shape differs from skills in two ways:
     taking the coding-agent selector (`claude|kiro|codex`; omit
     for all three): `just resources::install-skills [agent]`,
     `…::uninstall-skills [agent]`, `…::status-skills [agent]`,
-    `…::verify-skills [agent]` (drives the agents against
-    installed content; costs API credits, gated behind a
-    confirmation prompt), `…::verify-skills-one <name> [agent]`,
+    `…::check-skills [agent]` (pre-install: reads each skill from
+    the checkout, so no deploy is needed), `…::smoke-skills
+    [agent]` (post-install: the agent must find the skill among
+    everything deployed), `…::verify-skills [agent]` (both
+    stages). All three cost API credits and are gated behind a
+    confirmation prompt. `…::verify-skills-one <name> [agent]`,
     `…::verify-skills-kind <kind> [agent]` (one kind of skill
     test across every skill — see Testing), `…::verify-skills-dry
     [name]` (construct and structurally check every prompt
@@ -192,16 +197,20 @@ mAId/
 ├── flake.nix / .envrc      repo-local rust toolchain + just (direnv + rust-overlay)
 ├── resources/
 │   ├── Justfile            `resources::*` verb surface (install/uninstall/status/verify)
-│   ├── build-tool/         single-file Rust crate (install/uninstall/status)
+│   ├── build-tool/         Rust crate — the pipeline (check/install/uninstall/status/smoke)
 │   │   ├── Cargo.toml      deps: clap, anyhow; dev: tempfile
-│   │   └── src/main.rs     registry + content checks + symlink core + clap + tests
+│   │   ├── src/main.rs     the shim: clap surface + dispatch
+│   │   ├── src/lib.rs      module wiring + the pipeline doc comment
+│   │   ├── src/shared.rs   Agent, REGISTRY, roots — what every stage speaks
+│   │   ├── src/harness.rs  fixtures, the five kinds, prompts, invocation, verdicts
+│   │   ├── src/stages.rs   content → check → install → smoke
+│   │   └── tests/integration.rs  cross-stage tests against the real repo
 │   ├── content/            the deployable skills (symlinked in)
 │   │   └── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
 │   ├── browser/            browser-control MCP (not symlinked — runnable)
 │   │   ├── launch          allowlist-enforcing launcher; enters flake, execs chrome-devtools-mcp
 │   │   └── manage          data-driven MCP registrar (MCP_AGENTS table: claude/codex global, kiro per-sub-agent)
 │   └── tests/              bash fixture-runner (drives claude / kiro / codex against installed content)
-│       ├── run             entrypoint (`just resources::verify-skills` calls this)
 │       ├── browser-functional   ATTENDED test: drives real Chrome, asserts off-list blocked
 │       └── skills/<name>.smoke   fixtures: skill + playback/enact sections (runner owns the five kinds)
 ├── kaimux/                 tmux-pane orchestrator for coding-agent sessions
@@ -243,7 +252,8 @@ uninstallable — which is exactly what happened when two descriptions
 carried an unquoted `: ` (see "Writing a skill"). It reads only, so it
 keeps the no-side-effects property.
 
-**`just resources::verify-skills` — AI-tool functional tests.** Drives
+**`just resources::check-skills` / `…::smoke-skills` — AI-tool
+functional tests, on opposite sides of install.** Drives
 the real coding agents (claude, kiro, codex) against the `.smoke`
 fixtures under `resources/tests/skills/`. Three verification styles
 share the harness: **substring** (the reply contains a string),
@@ -252,10 +262,20 @@ share the harness: **substring** (the reply contains a string),
 agent runs against a seeded test project and the assert inspects the
 changes it made). Every fixture runs against each requested agent; the
 verb's agent selector (surfaced to the runner as `--tools <list>`)
-scopes to one, default all three, all required. Slow (minutes), costs
-API credits, requires the managed symlinks already deployed (run
-`just resources::install-skills` first). Gated behind a confirmation
+scopes to one, default all three, all required. Slow (minutes) and costs API credits; gated behind a confirmation
 prompt in the Justfile.
+
+**Only `smoke` needs the symlinks deployed.** The reach axis is the
+install boundary: an explicit prompt names the skill's path, so `check`
+points it at the checkout and needs no install at all — which is what
+makes a content change provable *before* it is made live for every
+session on the machine. An implicit prompt makes the agent find the
+skill unaided, competing against every other installed skill for a
+capped, shared description listing, so `smoke` requires
+`just resources::install-skills` to have run (it says so and stops,
+rather than failing every test obscurely). A failure therefore
+localises: pre-install means the content is wrong; post-install with
+check passing means deployment or description-budget competition.
 
 ### The five kinds of skill test
 
@@ -377,7 +397,7 @@ expect: <narrative>          for prose skills with no artefact
 --- setup --- / --- assert --- optional; seed and inspect a workdir
 ```
 
-`resources/tests/run --dry-run` constructs every prompt and checks it
+`--dry-run` on either stage constructs every prompt and checks it
 structurally **without calling an agent** — explicit prompts must carry
 that agent's own skill path, implicit prompts must leak no skill name,
 path, or marker, and a malformed fixture fails before any credits are
@@ -395,25 +415,30 @@ behavioral assert must fail a no-op agent (pair a presence check
 with the absence check) or it proves nothing.
 
 The §8 Test Gate uses `just test` by default. SKILL.md
-prose revisions add `just resources::verify-skills` (judge mode)
-as their A/B evidence. The §9 close-out can run
+prose revisions add `just resources::check-skills` (judge mode)
+as their A/B evidence — the pre-install stage is the one that
+isolates content, so it is the honest A/B. The §9 close-out can run
 `just resources::status-skills` after an install to confirm
 symlinks resolved.
 
 ### Functional tests are user-driven
 
 Agentic runs (an AI assistant working through this project)
-**must** stop at `just test`. `just resources::verify-skills` costs
-API credits and takes minutes; whether to spend that budget
+**must** stop at `just test`. The `check-skills` / `smoke-skills` /
+`verify-skills` verbs cost API credits and take minutes; whether to spend that budget
 on a given change is a human call. The agent prepares the
 fixture, names the exact command, and hands off — it does
-not run it. The Justfile's `[confirm]` gate on `verify-skills`
-provides a second line of defense.
+not run it. The Justfile's `[confirm]` gate on each of those verbs
+provides a second line of defense. `verify-skills-dry` is free and
+un-gated — it constructs and structurally checks every prompt without
+calling an agent, so an agentic run may use it.
 
 Commands the user runs by hand:
 
-- All fixtures: `just resources::verify-skills`
-- A single fixture: `just resources::verify-skills-one <name>`
+- Pre-install only (no deploy needed): `just resources::check-skills`
+- Post-install only: `just resources::smoke-skills`
+- Both stages: `just resources::verify-skills`
+- A single fixture, both stages: `just resources::verify-skills-one <name>`
   (e.g. `just resources::verify-skills-one notes-git-commit`).
 
 The fixture file's basename (without `.smoke`) is the

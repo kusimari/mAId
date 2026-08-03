@@ -9,8 +9,8 @@ The repo has two halves:
 
 - **`resources/`** — three layers in one directory:
   the markdown content (`resources/content/`) the AI tools
-  load; the Rust + bash tooling (`resources/build-tool/`,
-  `resources/tests/run`) that installs and tests it; and
+  load; the Rust tooling (`resources/build-tool/`) that
+  validates, installs, and verifies it; and
   the Justfile verbs (`resources::install-skills`,
   `resources::uninstall-skills`, `resources::status-skills`,
   `resources::verify-skills`) that drive the tooling.
@@ -52,8 +52,11 @@ coding-agent selector (`claude|kiro|codex`; omit for all three):
 just resources::install-skills [agent]     # validate content + create $HOME-facing symlinks
 just resources::uninstall-skills [agent]   # remove install-managed symlinks
 just resources::status-skills [agent]      # report current symlink state
-just resources::verify-skills [agent]      # drive the coding agents against installed content (costs API credits, gated)
-just resources::verify-skills-one <name> [agent]   # single fixture
+just resources::check-skills [agent]      # pre-install: verify each skill from the checkout (costs API credits, gated)
+just resources::smoke-skills [agent]      # post-install: verify against the deployed tree (gated)
+just resources::verify-skills [agent]     # both stages
+just resources::verify-skills-one <name> [agent]   # single fixture, both stages
+just resources::verify-skills-dry [name]  # construct + structurally check every prompt; free
 
 just resources::install-browser-mcp [agent] [kiro-sub]     # register the browser-control MCP server (claude/codex global; kiro into the named sub-agent)
 just resources::uninstall-browser-mcp [agent] [kiro-sub]   # remove it (keeps your allowlist)
@@ -95,7 +98,7 @@ What it does:
    has the required frontmatter.
 2. Creates `$HOME`-facing symlinks per the registry at the
    top of
-   [`resources/build-tool/src/main.rs`](./resources/build-tool/src/main.rs).
+   [`resources/build-tool/src/shared.rs`](./resources/build-tool/src/shared.rs).
    The skills tree, per tool: `~/.claude/skills` and
    `~/.kiro/steering/skills` (whole-dir symlinks), and
    `~/.codex/skills` (per-skill symlinks, since codex owns that
@@ -170,7 +173,7 @@ the registration but leaves your allowlist in place.
   [`resources/content/`](./resources/content/).
 - How installation is decided: the `REGISTRY` constant at
   the top of
-  [`resources/build-tool/src/main.rs`](./resources/build-tool/src/main.rs).
+  [`resources/build-tool/src/shared.rs`](./resources/build-tool/src/shared.rs).
 - Reference shape for a new skill:
   [`resources/content/skills/kdevkit/SKILL.md`](./resources/content/skills/kdevkit/SKILL.md)
   (live siblings:
