@@ -563,12 +563,16 @@ fn run_one(
         return Outcome::Skip(why);
     }
 
+    // Unreachable in practice: plan_tests only yields kinds this fixture
+    // supplies a task for. Kept as a skip rather than an unwrap so a
+    // future kind that forgets its task source degrades visibly instead
+    // of panicking mid-sweep.
     let task = match kind {
         TestKind::Activation | TestKind::Discovery => generated_task(kind, fixture),
         _ => fixture.section_for(kind).map(|s| s.task.clone()),
     };
     let Some(task) = task else {
-        return Outcome::Skip("no task for this kind".into());
+        return Outcome::Skip(format!("no task source for {}", kind.name()));
     };
 
     let base = prompt(kind, &fixture.skill, &source, &task);
@@ -780,9 +784,6 @@ mod tests {
         let errs = check_content(dir.path()).unwrap_err();
         assert!(errs.iter().any(|e| e.contains("description")));
     }
-
-    /// The shipped content must pass its own validator.
-    ///
 
     #[test]
     fn check_content_collects_multiple_errors() {

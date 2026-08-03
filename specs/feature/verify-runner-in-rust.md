@@ -678,43 +678,43 @@ Building the stages in order also means each slice compiles against
 only what precedes it, which is the check that the one-directional
 dependency claim in Design actually holds.
 
-- [ ] **Extract `shared.rs` + `lib.rs`.** The `Agent` type (selector
+- [x] **Extract `shared.rs` + `lib.rs`.** The `Agent` type (selector
       parsing, `skills_root`, `skill_path` from `REGISTRY`), `REGISTRY`
       + `Kind` as pure data, and the roots. Existing agent-selection
       tests move here verbatim; `main.rs` keeps compiling against it.
-- [ ] **Extract `stages.rs` — content and install.** Content § gains
+- [x] **Extract `stages.rs` — content and install.** Content § gains
       the typed `Skill` carrying the announce contract (so both verify
       stages consume it rather than re-reading the file); install §
       keeps plan (pure) and apply (effectful) as separate functions.
       `main.rs` drops to clap + dispatch. Logic verbatim.
-- [ ] **Redistribute the tests** per the table above, bodies verbatim,
+- [x] **Redistribute the tests** per the table above, bodies verbatim,
       with the two cross-stage tests moving to `tests/integration.rs`.
       Count still 45 summed across targets — the number is the
       relocation's proof. Slices 1–3 land green with no behavior change
       and no harness code yet.
-- [ ] **Build `harness.rs` — fixtures and kinds.** Parse `.smoke`
+- [x] **Build `harness.rs` — fixtures and kinds.** Parse `.smoke`
       sections and fields; derive which kinds each section implies;
       model each kind's reach, verification, and **owning stage**;
       reject every malformed shape with today's messages (`tools:`
       defaults to claude). Unit-tested.
-- [ ] **Build `harness.rs` — prompts.** Explicit/implicit envelopes
+- [x] **Build `harness.rs` — prompts.** Explicit/implicit envelopes
       parameterised by skill source, every implicit-leak class, the
       common-noun carve-out. Unit-tested, including that `check`
       resolves to the checkout and `smoke` to the installed root.
-- [ ] **Build `harness.rs` — judging and invocation.** Grader
+- [x] **Build `harness.rs` — judging and invocation.** Grader
       selection, judge prompt, `Verdict` extraction (table-driven over
       recorded output for the four shipped bugs), then per-agent
       driving, availability checks, reply normalisation, and the
       read-only versus workdir shapes.
-- [ ] **Build `harness.rs` — assertions.** Both paths (judged reply,
+- [x] **Build `harness.rs` — assertions.** Both paths (judged reply,
       behavioral shell) plus the leak tripwire.
-- [ ] **Add stage 2 (`check`) and stage 4 (`smoke`)** to `stages.rs`,
+- [x] **Add stage 2 (`check`) and stage 4 (`smoke`)** to `stages.rs`,
       with their two subcommands: check runs the three no-install kinds
       against checkout-sourced skills, mutating nothing and erroring on
       a smoke-only `--kind`; smoke runs the two implicit kinds against
       installed skills with a clear stop when the symlinks are absent.
       Wire `verify` as the check-then-smoke convenience.
-- [ ] **Rewire and document.** Point the four existing Just verbs at
+- [x] **Rewire and document.** Point the four existing Just verbs at
       the new binary, add `check-skills` / `smoke-skills`, delete
       `resources/tests/run`, and update `README.md` + `project.md` —
       including correcting the "requires the managed symlinks already
@@ -743,6 +743,30 @@ dependency claim in Design actually holds.
   hidden.
 
 ## Session Log
+
+- **2026-08-03** · Build complete; all nine slices shipped. Relocation
+  slices landed with the 45-test count intact, then the harness and the
+  two verify stages. Final gate: `just ci` green, 149 build-tool tests
+  (147 lib + 2 integration) + 53 kaimux, up from 45.
+  **Dry-run parity is exact:** `check --dry-run` + `smoke --dry-run`
+  reproduce the pre-port bash listing at 102 lines identical, PASS/FAIL/
+  SKIP tokens included, exit 0 — verified independently by the Code
+  Review Gate against `git show main:resources/tests/run`.
+  Two open questions answered: `strip-ansi-escapes` **cannot** be
+  vendored (offline cargo closure, not in the registry index), so escape
+  stripping is hand-rolled against the grammar with the tests this
+  feature exists to add; and the containment fix stays in its backlog
+  item, with the port carrying the tripwire and *widening* it (see
+  below).
+  Three regressions found by the review gate and fixed: a non-zero agent
+  exit scored as a reply, `detect_leak` blind to removed status lines,
+  and `--agent` having lost the comma-list form `--tools` had. Parity
+  re-verified after each.
+  Four defects found by my own parity diff rather than by review: the
+  generated kinds ran once per fixture instead of once per skill, the
+  announce contract was never consulted, and two of my four bug-tests
+  did not fail when their bug was reintroduced (a `?25l` terminator that
+  is alphabetic, and a decoy carrying the wrong token).
 
 - **2026-08-02** · Promoted from backlog; grounded in
   `resources/tests/run` (890 lines), `build-tool` (1202 lines, 45
@@ -827,6 +851,33 @@ dependency claim in Design actually holds.
   checked: each slice compiles against only what precedes it.
 
 ## Decision Log
+
+- **`strip-ansi-escapes` cannot be vendored; hand-rolled instead.** The
+  flake's cargo closure is offline and the crate is absent from the
+  registry index, so the Design's stated fallback applies. The
+  hand-rolled version matches the escape grammar (CSI, parameters, final
+  byte in `0x40..=0x7E`) rather than the `sed` class `[a-zA-Z]` it
+  replaces — which is the actual defect, since `?25l` happens to end in
+  an alphabetic byte and `\x1b[3~` does not.
+- **The leak tripwire widened rather than being ported verbatim.** The
+  plan said carry it as-is, and I did initially — but the review gate
+  showed the bash version only compared for *added* status lines, so the
+  very incident it documents (`close notes` running `git commit`, which
+  removes an untracked line) could pass silently. Reporting both
+  directions is a one-line change inside the scope the plan already
+  claimed, and leaving a knowingly-blind tripwire in place would have
+  been worse than the small scope growth. The real containment fix still
+  belongs to its backlog item.
+- **`--agent` takes a list; the install verbs do not.** `--tools`
+  accepted `claude,kiro`, and collapsing it to a single agent silently
+  turned a two-agent run into a three-agent one. Verification verbs use
+  `validate_agents`; install/uninstall/status keep the single-agent
+  `validate_agent`, since scoping an install to two agents was never a
+  thing the surface offered.
+- **A non-zero agent exit is an invocation failure, not a reply.** The
+  bash version distinguished these and the first port did not, so an
+  expired token read as "response missing <marker>" — pointing the reader
+  at content that was fine. Scoring only reached on a clean exit now.
 
 - **Verification belongs in `build-tool`, as verbs on one binary.**
   Derived from `project.md`'s `<action>-<resource-kind>` verb rule
