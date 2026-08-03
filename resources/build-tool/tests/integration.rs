@@ -28,3 +28,35 @@ fn shipped_content_validates() {
         ),
     }
 }
+
+/// Every shipped `.smoke` fixture parses, and yields the kinds its
+/// sections imply. The unit tests build synthetic fixtures, so without
+/// this the parser can be green while the real suite is unrunnable —
+/// the same gap `shipped_content_validates` closes for content.
+#[test]
+fn shipped_fixtures_parse() {
+    use build_tool::harness::Fixture;
+
+    let dir = repo_root()
+        .expect("repo root resolves under cargo test")
+        .join("resources/tests/skills");
+    let mut seen = 0;
+    for entry in std::fs::read_dir(&dir).expect("fixture dir exists") {
+        let path = entry.expect("readable entry").path();
+        if path.extension().and_then(|e| e.to_str()) != Some("smoke") {
+            continue;
+        }
+        let name = path.file_stem().unwrap().to_string_lossy().to_string();
+        let body = std::fs::read_to_string(&path).expect("readable fixture");
+        let fixture = Fixture::parse(&name, &body)
+            .unwrap_or_else(|e| panic!("{name}.smoke does not parse: {e}"));
+        assert!(!fixture.skill.is_empty());
+        assert!(!fixture.agents.is_empty());
+        assert!(
+            !fixture.kinds().is_empty(),
+            "{name} yields no kinds — it would run nothing"
+        );
+        seen += 1;
+    }
+    assert!(seen > 0, "no fixtures found under {}", dir.display());
+}

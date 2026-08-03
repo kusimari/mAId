@@ -22,5 +22,6 @@
 //! independently of the binary, and so cross-stage tests under `tests/`
 //! can exercise the crate from outside.
 
+pub mod harness;
 pub mod shared;
 pub mod stages;
