@@ -526,6 +526,150 @@ fn invocations(skill: &str) -> &'static [&'static str] {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────
+// Verdicts — reading a judge's answer out of an agent's reply.
+//
+// Every bug in this section shipped once and was found only by spending
+// API credits on a paid sweep. They are unit tests now.
+// ─────────────────────────────────────────────────────────────────
+
+/// A judged test's outcome. `Unparseable` is explicit rather than folded
+/// into a failure: a verdict that could not be read means the harness is
+/// broken, which is a different problem from the skill being wrong, and
+/// silently treating it as either one hides it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Verdict {
+    Pass(String),
+    Fail(String),
+    Unparseable,
+}
+
+/// Strip terminal control sequences from an agent's reply.
+///
+/// Hand-rolled deliberately: a parser crate cannot be added to this
+/// flake's offline cargo closure. The `sed` expression this replaces used
+/// the character class `[a-zA-Z]` as its terminator, which does not match
+/// the `?25l` cursor-hide sequence kiro emits — so kiro's verdict became
+/// unreadable and every judged kiro test reported no verdict. Matching
+/// the grammar (CSI, then parameter and intermediate bytes, then one
+/// final byte in 0x40..=0x7E) is what fixes that class of miss rather
+/// than the one instance.
+pub fn strip_ansi(text: &str) -> String {
+    let bytes: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != '\x1b' {
+            if bytes[i] != '\r' {
+                out.push(bytes[i]);
+            }
+            i += 1;
+            continue;
+        }
+        // ESC. A CSI sequence is ESC '[' params intermediates final;
+        // anything else two-byte we drop as ESC + one byte.
+        i += 1;
+        if i < bytes.len() && bytes[i] == '[' {
+            i += 1;
+            while i < bytes.len() && !matches!(bytes[i], '\x40'..='\x7e') {
+                i += 1;
+            }
+            i += 1; // the final byte
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// The literal placeholder the judge prompt asks the model to replace.
+/// Any line still carrying it is the template echoed back, not an answer.
+const VERDICT_PLACEHOLDER: &str = "<one short sentence";
+
+/// Read a verdict out of a judge's raw reply.
+///
+/// Three guards, each for a bug that shipped:
+///
+/// - Lines carrying the instruction template's placeholder are dropped.
+///   The judge prompt necessarily contains the literal `PASS — <one short
+///   sentence …>`, and codex's `exec` echoes the prompt back, so a
+///   first-match scan read the template instead of the model's answer and
+///   every judged codex test passed unconditionally.
+/// - The token must start its line, so a mid-sentence "…would FAIL" in
+///   the judge's prose is not mistaken for the verdict.
+/// - Escapes and a leading `> ` are stripped first: kiro prefixes its
+///   reply with a cursor-hide sequence and a quote marker, which
+///   line-anchoring alone then failed to see past.
+pub fn read_verdict(raw: &str) -> Verdict {
+    strip_ansi(raw)
+        .lines()
+        .map(|l| l.trim_start().trim_start_matches("> ").trim_start())
+        .filter(|l| !l.contains(VERDICT_PLACEHOLDER))
+        .find_map(|l| {
+            l.strip_prefix("PASS")
+                .map(|rest| Verdict::Pass(clean_reason(rest)))
+                .or_else(|| {
+                    l.strip_prefix("FAIL")
+                        .map(|rest| Verdict::Fail(clean_reason(rest)))
+                })
+        })
+        .unwrap_or(Verdict::Unparseable)
+}
+
+/// The judge's one-line reason, with the separator it was asked to use.
+fn clean_reason(rest: &str) -> String {
+    rest.trim_start()
+        .trim_start_matches(['—', '-', ':'])
+        .trim()
+        .to_string()
+}
+
+/// The prompt that asks one agent to score another's answer.
+pub fn judge_prompt(question: &str, answer: &str, expected: &str) -> String {
+    format!(
+        "You are evaluating whether an AI agent's answer is consistent with a skill's intended narrative.\n\
+         \n\
+         Question:\n{question}\n\
+         \n\
+         Answer:\n{answer}\n\
+         \n\
+         Expected narrative:\n{expected}\n\
+         \n\
+         Reply with exactly one line in this format:\n\
+         PASS — {VERDICT_PLACEHOLDER} describing what's right>\n\
+         or\n\
+         FAIL — {VERDICT_PLACEHOLDER} describing what's missing or wrong>\n"
+    )
+}
+
+/// Which agent grades judged tests, whichever produced the answer.
+///
+/// One fixed grader, not the answering agent. Self-grading let each agent
+/// mark its own homework, and the grader rather than the skill decided the
+/// result: codex failed its own notes answer for omitting something the
+/// answer stated, and its own writing-style rewrite as "not first-person"
+/// when it opened "I want to…". Claude passed both verbatim. A per-agent
+/// grader also makes results incomparable across agents, which defeats
+/// running tri-tool at all.
+///
+/// Falls back to the first available agent so a host without the
+/// preferred grader still runs.
+pub fn judge_agent(preferred: Option<&str>, available: &[Agent]) -> Result<Agent> {
+    if let Some(token) = preferred {
+        let want = Agent::parse(token)?;
+        if available.contains(&want) {
+            return Ok(want);
+        }
+    }
+    if preferred.is_none() && available.contains(&Agent::Claude) {
+        return Ok(Agent::Claude);
+    }
+    available
+        .first()
+        .copied()
+        .ok_or_else(|| anyhow!("no coding agent available to judge with"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1008,5 +1152,223 @@ mod tests {
         for kind in Kind::ALL {
             assert!(applicable(*kind, &src, "notes").is_ok(), "{}", kind.name());
         }
+    }
+
+    // ── verdicts · the four bugs that shipped ────────────────────
+
+    /// BUG 1. codex `exec` echoes the prompt back, so the judge's own
+    /// instruction template appeared in captured output. A first-match
+    /// scan read the template's `PASS — <one short sentence…>` as the
+    /// answer, and every judged test on codex passed unconditionally.
+    #[test]
+    fn template_echoed_in_a_transcript_is_not_a_verdict() {
+        let transcript = "\
+You are evaluating whether an AI agent's answer is consistent with a skill's intended narrative.
+Reply with exactly one line in this format:
+PASS — <one short sentence describing what's right>
+or
+FAIL — <one short sentence describing what's missing or wrong>
+[tool] read SKILL.md
+FAIL — the answer never mentions the vault selector
+";
+        assert_eq!(
+            read_verdict(transcript),
+            Verdict::Fail("the answer never mentions the vault selector".into()),
+            "the echoed template must not be read as the verdict"
+        );
+    }
+
+    /// A transcript carrying ONLY the template has no answer in it, so it
+    /// is unparseable — not a pass.
+    #[test]
+    fn a_transcript_with_only_the_template_is_unparseable() {
+        let only_template = judge_prompt("q", "a", "n");
+        assert_eq!(read_verdict(&only_template), Verdict::Unparseable);
+    }
+
+    /// BUG 2. kiro prefixes its reply with a cursor-hide escape and `> `.
+    /// The `sed` class `[a-zA-Z]` does not match `?25l`'s final byte, so
+    /// the escape survived, the line no longer started with the token,
+    /// and every judged kiro test reported no verdict.
+    #[test]
+    fn kiro_cursor_hide_and_quote_prefix_still_yields_a_verdict() {
+        let reply =
+            "\x1b[?25l> PASS — the reply states the rule correctly\n\x1b[?25h▸ Credits: 0.01";
+        assert_eq!(
+            read_verdict(reply),
+            Verdict::Pass("the reply states the rule correctly".into())
+        );
+    }
+
+    /// BUG 3. Anchoring on the token without line-anchoring let the
+    /// judge's own prose decide the result.
+    ///
+    /// The decoy carries the SAME token as the real verdict and the
+    /// opposite outcome, so an unanchored scan reads it and inverts the
+    /// result. A decoy with the other token would never be consulted —
+    /// the first `PASS` lookup would already have matched the real line.
+    #[test]
+    fn a_token_mid_sentence_is_not_the_verdict() {
+        let reply = "\
+This would PASS a weaker rubric, but it misses the guardrail.
+FAIL — omits the guardrail entirely";
+        assert_eq!(
+            read_verdict(reply),
+            Verdict::Fail("omits the guardrail entirely".into()),
+            "an unanchored scan reads the prose and inverts the verdict"
+        );
+    }
+
+    /// BUG 4. No token at all must be explicit, not silently either
+    /// outcome — it means the harness could not read the judge.
+    #[test]
+    fn no_token_is_unparseable_not_a_pass() {
+        for reply in [
+            "I think the answer is broadly consistent.",
+            "",
+            "passed, probably",
+        ] {
+            assert_eq!(read_verdict(reply), Verdict::Unparseable, "{reply:?}");
+        }
+    }
+
+    /// The full matrix, so a regression in one transport cannot hide
+    /// behind another passing.
+    #[test]
+    fn every_agents_reply_shape_parses() {
+        let cases: &[(&str, &str, Verdict)] = &[
+            (
+                "claude",
+                "PASS — states the rule",
+                Verdict::Pass("states the rule".into()),
+            ),
+            (
+                "kiro",
+                "\x1b[?25l> FAIL — omits the guardrail\n▸ Credits: 0.02 • Time: 3s",
+                Verdict::Fail("omits the guardrail".into()),
+            ),
+            (
+                "codex",
+                "[2026-08-03] tokens used: 812\nPASS — does the thing",
+                Verdict::Pass("does the thing".into()),
+            ),
+        ];
+        for (agent, raw, want) in cases {
+            assert_eq!(&read_verdict(raw), want, "{agent} reply shape");
+        }
+    }
+
+    #[test]
+    fn verdict_reason_survives_either_separator() {
+        assert_eq!(read_verdict("PASS — why"), Verdict::Pass("why".into()));
+        assert_eq!(read_verdict("PASS - why"), Verdict::Pass("why".into()));
+        assert_eq!(read_verdict("PASS: why"), Verdict::Pass("why".into()));
+    }
+
+    // ── escape stripping ─────────────────────────────────────────
+
+    /// The specific sequence that broke kiro, plus the classes around it.
+    /// A terminator class of `[a-zA-Z]` misses `?25l` — the grammar's
+    /// final byte is anything in 0x40..=0x7E.
+    #[test]
+    fn strip_ansi_handles_every_sequence_shape() {
+        let cases: &[(&str, &str)] = &[
+            ("\x1b[?25lhidden", "hidden"), // cursor hide — the sequence that broke kiro
+            ("\x1b[?25hshown", "shown"),   // cursor show
+            ("\x1b[31mred\x1b[0m", "red"), // colour
+            ("\x1b[1;32mbold green\x1b[0m", "bold green"),
+            ("\x1b[2Jcleared", "cleared"),
+            ("plain", "plain"),
+            ("carriage\r\nreturn", "carriage\nreturn"),
+        ];
+        for (raw, want) in cases {
+            assert_eq!(&strip_ansi(raw), want, "{raw:?}");
+        }
+    }
+
+    /// A final byte outside `[a-zA-Z]` is what the old `sed` class missed.
+    /// `?25l` ends in `l`, which IS alphabetic, so it alone cannot tell
+    /// the two implementations apart — these can. The grammar's final byte
+    /// is anything in 0x40..=0x7E, which includes `@`, `~`, `\`, and `^`.
+    #[test]
+    fn strip_ansi_handles_non_alphabetic_final_bytes() {
+        let cases: &[(&str, &str)] = &[
+            ("\x1b[1@inserted", "inserted"),
+            ("\x1b[3~deleted", "deleted"),
+            ("\x1b[0^private", "private"),
+            ("\x1b[2\\ending", "ending"),
+        ];
+        for (raw, want) in cases {
+            assert_eq!(
+                &strip_ansi(raw),
+                want,
+                "{raw:?} — an [a-zA-Z] terminator class misses this"
+            );
+        }
+    }
+
+    /// The same miss reaching `read_verdict`, which is how it actually
+    /// broke: the escape survived, so the line no longer began with the
+    /// token and the verdict read as unparseable.
+    #[test]
+    fn a_non_alphabetic_escape_before_the_token_still_yields_a_verdict() {
+        let reply = "\x1b[3~PASS — the reply states the rule";
+        assert_eq!(
+            read_verdict(reply),
+            Verdict::Pass("the reply states the rule".into())
+        );
+    }
+
+    #[test]
+    fn strip_ansi_leaves_ordinary_brackets_alone() {
+        assert_eq!(strip_ansi("[notes] applies"), "[notes] applies");
+    }
+
+    // ── judge selection ──────────────────────────────────────────
+
+    /// Claude by default, so results stay comparable across agents.
+    #[test]
+    fn judge_defaults_to_claude_when_available() {
+        assert_eq!(
+            judge_agent(None, &[Agent::Claude, Agent::Codex]).unwrap(),
+            Agent::Claude
+        );
+    }
+
+    /// Falls back rather than refusing, so a host without claude runs.
+    #[test]
+    fn judge_falls_back_to_the_first_available() {
+        assert_eq!(
+            judge_agent(None, &[Agent::Codex, Agent::Kiro]).unwrap(),
+            Agent::Codex
+        );
+        assert_eq!(
+            judge_agent(Some("claude"), &[Agent::Kiro]).unwrap(),
+            Agent::Kiro
+        );
+    }
+
+    #[test]
+    fn judge_honours_an_explicit_override() {
+        assert_eq!(
+            judge_agent(Some("codex"), &[Agent::Claude, Agent::Codex]).unwrap(),
+            Agent::Codex
+        );
+        assert!(judge_agent(Some("bogus"), &[Agent::Claude]).is_err());
+    }
+
+    #[test]
+    fn judge_with_no_agents_is_an_error() {
+        assert!(judge_agent(None, &[]).is_err());
+    }
+
+    /// The prompt must carry the placeholder verbatim — `read_verdict`
+    /// filters on it, so the two have to agree or the filter silently
+    /// stops working.
+    #[test]
+    fn judge_prompt_carries_the_placeholder_the_filter_looks_for() {
+        let p = judge_prompt("q", "a", "n");
+        assert!(p.contains(VERDICT_PLACEHOLDER));
+        assert!(p.contains("q") && p.contains("a") && p.contains("n"));
     }
 }
