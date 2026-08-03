@@ -8,10 +8,10 @@
 //! reaches back into the CLI.
 
 use crate::harness::{
-    agent_available, applicable, assertion_for, check_prompt, detect_leak, generated_task,
-    invocation, judge_agent, judge_prompt, plan_tests, prompt, read_verdict, score_reply,
-    skill_announces, skill_source, snapshot_checkout, test_name, Assertion, Authority, Fixture,
-    Kind as TestKind, Outcome, Reach, Selection, Stage,
+    agent_available, applicable, assertion_for, check_prompt, detect_leak, dump_path,
+    generated_task, invocation, judge_agent, judge_prompt, plan_tests, prompt, read_verdict,
+    score_reply, skill_announces, skill_source, snapshot_checkout, test_name, Assertion, Authority,
+    Fixture, Kind as TestKind, Outcome, Reach, Selection, Stage, Verdict,
 };
 use crate::shared::{checkout_skill, selected_entries, Agent, Entry, Kind, Link};
 use anyhow::{anyhow, Context, Result};
@@ -437,7 +437,7 @@ pub fn cmd_verify(
                 agent,
             );
             let outcome = run_one(
-                fixture, kind, agent, home, checkout, dry_run, stressed, judge,
+                fixture, kind, agent, home, checkout, dry_run, stressed, judge, &name,
             );
             report(&name, &outcome);
             if matches!(outcome, Outcome::Fail(_)) {
@@ -551,6 +551,7 @@ fn run_one(
     dry_run: bool,
     stressed: Option<&str>,
     judge: Option<Agent>,
+    label: &str,
 ) -> Outcome {
     let source = match skill_source(kind.stage(), agent, home, checkout, &fixture.skill) {
         Ok(s) => s,
@@ -596,10 +597,17 @@ fn run_one(
     };
 
     match assertion_for(fixture, kind, skill_announces(&content, &fixture.skill)) {
-        Assertion::Behavioral { setup, assert } => run_behavioral(agent, &full, &setup, &assert),
-        Assertion::Reply { substr, narrative } => {
-            run_reply(agent, &full, substr.as_deref(), narrative.as_deref(), judge)
+        Assertion::Behavioral { setup, assert } => {
+            run_behavioral(agent, &full, &setup, &assert, label)
         }
+        Assertion::Reply { substr, narrative } => run_reply(
+            agent,
+            &full,
+            substr.as_deref(),
+            narrative.as_deref(),
+            judge,
+            label,
+        ),
     }
 }
 
@@ -610,24 +618,34 @@ fn run_reply(
     substr: Option<&str>,
     narrative: Option<&str>,
     judge: Option<Agent>,
+    label: &str,
 ) -> Outcome {
     let reply = match drive(agent, prompt, Authority::ReadOnly, None) {
         Ok(r) => r,
         Err(e) => return Outcome::Fail(format!("{} invocation failed: {e}", agent.name())),
     };
 
+    let mut dump = None;
     let verdict = match (narrative, judge) {
         (Some(want), Some(judge)) => {
             let jp = judge_prompt(prompt, &reply, want);
             match drive(judge, &jp, Authority::ReadOnly, None) {
-                Ok(raw) => Some(read_verdict(&raw)),
+                Ok(raw) => {
+                    let verdict = read_verdict(&raw);
+                    if verdict == Verdict::Unparseable {
+                        let path = dump_path("verify-judge", label);
+                        let _ = fs::write(&path, &raw);
+                        dump = Some(path);
+                    }
+                    Some(verdict)
+                }
                 Err(e) => return Outcome::Fail(format!("judge invocation failed: {e}")),
             }
         }
         (Some(_), None) => return Outcome::Fail("no judge available".into()),
         (None, _) => None,
     };
-    score_reply(&reply, substr, verdict.as_ref())
+    score_reply(&reply, substr, verdict.as_ref(), dump.as_deref())
 }
 
 /// Seed a scratch workdir, run the agent inside it, then run the fixture's
@@ -637,7 +655,7 @@ fn run_reply(
 /// broke: asserts are silent `test`/`grep -q` under `set -e`, so without
 /// the trace every behavioral failure read "assert failed" with nothing
 /// after it — undiagnosable without hand-reproducing the fixture.
-fn run_behavioral(agent: Agent, prompt: &str, setup: &str, assert: &str) -> Outcome {
+fn run_behavioral(agent: Agent, prompt: &str, setup: &str, assert: &str, label: &str) -> Outcome {
     let Ok(work) = tempfile::TempDir::new() else {
         return Outcome::Fail("could not create scratch workdir".into());
     };
@@ -660,10 +678,18 @@ fn run_behavioral(agent: Agent, prompt: &str, setup: &str, assert: &str) -> Outc
                 .map(|l| l.trim_start_matches('+').trim())
                 .unwrap_or("<no trace>")
                 .to_string();
-            let dump = std::env::temp_dir().join("verify-behavioral.log");
+            // The scratch dir is removed on drop, so the tree is the only
+            // record of what the agent actually created — often the
+            // fastest way to see a file landed one directory up.
+            let tree = shell("find . -not -path '*/.git/*' | head -60", dir).unwrap_or_default();
+            let dump = dump_path("verify-behavioral", label);
             let _ = fs::write(
                 &dump,
-                format!("=== assert trace ===\n{trace}\n=== agent reply ===\n{reply}\n"),
+                format!(
+                    "=== assert trace ===\n{trace}\n\
+                     === agent reply ===\n{reply}\n\
+                     === workdir tree ===\n{tree}\n"
+                ),
             );
             Outcome::Fail(format!(
                 "failed check: {culprit} (trace + reply → {})",

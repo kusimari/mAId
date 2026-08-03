@@ -40,7 +40,7 @@
 //! is what keeps the per-agent paths in the registry instead of
 //! hand-copied into every prompt, where they had already drifted.
 
-use crate::shared::Agent;
+use crate::shared::{usage, Agent};
 use anyhow::{anyhow, Result};
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -112,14 +112,14 @@ impl Kind {
             .copied()
             .find(|k| k.name() == token)
             .ok_or_else(|| {
-                anyhow!(
+                usage(format!(
                     "unknown kind {token:?} (known: {})",
                     Kind::ALL
                         .iter()
                         .map(|k| k.name())
                         .collect::<Vec<_>>()
                         .join(", ")
-                )
+                ))
             })
     }
 
@@ -586,6 +586,17 @@ pub fn strip_ansi(text: &str) -> String {
 /// Any line still carrying it is the template echoed back, not an answer.
 const VERDICT_PLACEHOLDER: &str = "<one short sentence";
 
+/// kiro appends a `▸ Credits: … • Time: …` footer to its reply. It is
+/// stripped before the verdict is read: today the verdict happens to
+/// precede it, but a footer on the same line — or ahead of the verdict —
+/// would stop the token starting its line and read as unparseable.
+fn strip_footer(line: &str) -> &str {
+    match line.find("▸ Credits:") {
+        Some(at) => line[..at].trim_end(),
+        None => line,
+    }
+}
+
 /// Read a verdict out of a judge's raw reply.
 ///
 /// Three guards, each for a bug that shipped:
@@ -603,7 +614,7 @@ const VERDICT_PLACEHOLDER: &str = "<one short sentence";
 pub fn read_verdict(raw: &str) -> Verdict {
     strip_ansi(raw)
         .lines()
-        .map(|l| l.trim_start().trim_start_matches("> ").trim_start())
+        .map(|l| strip_footer(l.trim_start().trim_start_matches("> ").trim_start()))
         .filter(|l| !l.contains(VERDICT_PLACEHOLDER))
         .find_map(|l| {
             l.strip_prefix("PASS")
@@ -884,6 +895,7 @@ pub fn score_reply(
     reply: &str,
     substr: Option<&str>,
     narrative_verdict: Option<&Verdict>,
+    dump: Option<&Path>,
 ) -> Outcome {
     if let Some(want) = substr {
         if !reply_contains(reply, want) {
@@ -897,8 +909,33 @@ pub fn score_reply(
         }),
         Some(Verdict::Pass(why)) => Outcome::Pass(why.clone()),
         Some(Verdict::Fail(why)) => Outcome::Fail(why.clone()),
-        Some(Verdict::Unparseable) => Outcome::Fail("judge returned no PASS/FAIL token".into()),
+        // The dump is the whole diagnostic: every historical verdict bug
+        // was found by reading what the judge actually said, so a future
+        // one must not surface with nothing to inspect.
+        Some(Verdict::Unparseable) => Outcome::Fail(format!(
+            "judge returned no PASS/FAIL token{}",
+            match dump {
+                Some(path) => format!(" — full judge output → {}", path.display()),
+                None => String::new(),
+            }
+        )),
     }
+}
+
+/// A per-test dump path. The name is part of it: a single fixed filename
+/// means each failure in a sequential sweep overwrites the last, and the
+/// scratch dir is gone by then, so only the final one stays recoverable.
+pub fn dump_path(prefix: &str, name: &str) -> PathBuf {
+    let safe: String = name
+        .chars()
+        .map(
+            |c| match c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                true => c,
+                false => '_',
+            },
+        )
+        .collect();
+    std::env::temp_dir().join(format!("{prefix}-{safe}.log"))
 }
 
 /// The name a result line carries. Kept in the shape the bash runner
@@ -1005,10 +1042,10 @@ impl Selection {
                     .map(Kind::parse)
                     .collect::<Result<_>>()?;
                 if asked.is_empty() {
-                    return Err(anyhow!("--kind listed no kinds"));
+                    return Err(usage("--kind listed no kinds"));
                 }
                 if let Some(wrong) = asked.iter().find(|k| k.stage() != stage) {
-                    return Err(anyhow!(
+                    return Err(usage(format!(
                         "kind '{}' belongs to `{}`, not `{stage}` — it is {} reach, so it needs {}",
                         wrong.name(),
                         wrong.stage(),
@@ -1020,7 +1057,7 @@ impl Selection {
                             Stage::Smoke => "the deployed skills listing to compete in",
                             Stage::Check => "only the checkout",
                         }
-                    ));
+                    )));
                 }
                 asked
             }
@@ -1961,7 +1998,7 @@ FAIL — omits the guardrail entirely";
 
     #[test]
     fn a_missing_substring_fails_before_the_judge_is_consulted() {
-        let out = score_reply("nothing here", Some("[notes] applies"), None);
+        let out = score_reply("nothing here", Some("[notes] applies"), None, None);
         assert!(matches!(out, Outcome::Fail(_)));
         assert!(out.detail().contains("[notes] applies"));
     }
@@ -1973,7 +2010,8 @@ FAIL — omits the guardrail entirely";
             score_reply(
                 reply,
                 Some("[notes] applies"),
-                Some(&Verdict::Pass("good".into()))
+                Some(&Verdict::Pass("good".into())),
+                None
             ),
             Outcome::Pass(_)
         ));
@@ -1981,7 +2019,8 @@ FAIL — omits the guardrail entirely";
             score_reply(
                 reply,
                 Some("[notes] applies"),
-                Some(&Verdict::Fail("bad".into()))
+                Some(&Verdict::Fail("bad".into())),
+                None
             ),
             Outcome::Fail(_)
         ));
@@ -1991,7 +2030,7 @@ FAIL — omits the guardrail entirely";
     /// how every judged codex test once reported green.
     #[test]
     fn an_unparseable_verdict_fails() {
-        let out = score_reply("anything", None, Some(&Verdict::Unparseable));
+        let out = score_reply("anything", None, Some(&Verdict::Unparseable), None);
         assert!(matches!(out, Outcome::Fail(_)));
         assert!(out.detail().contains("no PASS/FAIL token"));
     }
@@ -2002,7 +2041,7 @@ FAIL — omits the guardrail entirely";
     #[test]
     fn no_assertion_reports_that_it_asserted_nothing() {
         assert_eq!(
-            score_reply("anything", None, None),
+            score_reply("anything", None, None, None),
             Outcome::Pass("no assertion".into())
         );
     }
@@ -2267,6 +2306,88 @@ FAIL — omits the guardrail entirely";
             judge_agent(Some("kiro"), &[Agent::Claude, Agent::Kiro]).unwrap(),
             Agent::Kiro,
             "the preference must win over claude-by-default"
+        );
+    }
+
+    // ── defects the review briefing caught ───────────────────────
+
+    /// kiro appends `▸ Credits: … • Time: …`. The existing footer tests
+    /// pass only because the verdict precedes it and the scan
+    /// short-circuits — these put the footer where that cannot save it.
+    #[test]
+    fn the_credits_footer_never_hides_a_verdict() {
+        for raw in [
+            "PASS — states the rule ▸ Credits: 0.01 • Time: 3s",
+            "▸ Credits: 0.01 • Time: 3s\nPASS — states the rule",
+            "\x1b[?25l> PASS — states the rule ▸ Credits: 0.02",
+        ] {
+            assert_eq!(
+                read_verdict(raw),
+                Verdict::Pass("states the rule".into()),
+                "{raw:?}"
+            );
+        }
+    }
+
+    /// A footer on its own is not a verdict.
+    #[test]
+    fn a_footer_alone_is_unparseable() {
+        assert_eq!(
+            read_verdict("▸ Credits: 0.01 • Time: 3s"),
+            Verdict::Unparseable
+        );
+    }
+
+    /// An unparseable verdict must name where the judge output was kept:
+    /// reading what the judge actually said is how all four historical
+    /// verdict bugs were found.
+    #[test]
+    fn an_unparseable_verdict_reports_its_dump_path() {
+        let out = score_reply(
+            "reply",
+            None,
+            Some(&Verdict::Unparseable),
+            Some(Path::new("/tmp/verify-judge-notes.log")),
+        );
+        assert!(matches!(out, Outcome::Fail(_)));
+        assert!(
+            out.detail().contains("/tmp/verify-judge-notes.log"),
+            "{}",
+            out.detail()
+        );
+    }
+
+    /// Per-test filenames: a single fixed name means each failure in a
+    /// sequential sweep overwrites the last, and the scratch dir is gone
+    /// by then, so only the final one stays recoverable.
+    #[test]
+    fn dump_paths_are_distinct_per_test() {
+        let a = dump_path("verify-judge", "notes-git-commit enact via claude");
+        let b = dump_path("verify-judge", "notes-git-commit enact via kiro");
+        assert_ne!(a, b);
+        assert!(a.to_string_lossy().contains("notes-git-commit"));
+    }
+
+    /// The name goes into a filename, so path separators and spaces must
+    /// not survive into it.
+    #[test]
+    fn dump_paths_are_filesystem_safe() {
+        let p = dump_path("verify-behavioral", "a/b c:d via claude");
+        let name = p.file_name().unwrap().to_string_lossy().to_string();
+        assert!(!name.contains('/'), "{name}");
+        assert!(!name.contains(' '), "{name}");
+        assert!(name.starts_with("verify-behavioral-"));
+    }
+    #[test]
+    fn an_unknown_or_misplaced_kind_is_a_usage_error() {
+        use crate::shared::UsageError;
+        let unknown = Kind::parse("bogus").unwrap_err();
+        assert!(unknown.downcast_ref::<UsageError>().is_some(), "{unknown}");
+        let misplaced =
+            Selection::resolve(Stage::Check, None, Some("discovery"), None).unwrap_err();
+        assert!(
+            misplaced.downcast_ref::<UsageError>().is_some(),
+            "{misplaced}"
         );
     }
 }

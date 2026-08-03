@@ -5,7 +5,30 @@
 //! order (`stages` → `harness` → `shared`).
 
 use anyhow::{anyhow, Context, Result};
+use std::fmt;
 use std::path::{Path, PathBuf};
+
+/// A bad invocation — an unknown agent or kind, a kind belonging to the
+/// other stage. Distinct from a test failure so a wrapper can tell "your
+/// command was wrong" (exit 2) from "the tests failed" (exit 1); clap's
+/// own errors already exit 2, so collapsing these to 1 made the surface
+/// disagree with itself.
+#[derive(Debug)]
+pub struct UsageError(pub String);
+
+impl fmt::Display for UsageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for UsageError {}
+
+/// Build a usage error, for the `?` paths that would otherwise produce a
+/// plain `anyhow!`.
+pub fn usage(msg: impl Into<String>) -> anyhow::Error {
+    anyhow::Error::new(UsageError(msg.into()))
+}
 
 // ─────────────────────────────────────────────────────────────────
 // Registry — the deployment manifest.
@@ -93,14 +116,14 @@ impl Agent {
             .copied()
             .find(|a| a.name() == token)
             .ok_or_else(|| {
-                anyhow!(
+                usage(format!(
                     "unknown coding agent {token:?} (known: {})",
                     Agent::ALL
                         .iter()
                         .map(|a| a.name())
                         .collect::<Vec<_>>()
                         .join(", ")
-                )
+                ))
             })
     }
 
@@ -155,7 +178,7 @@ pub fn validate_agents(agents: Option<&str>) -> Result<Option<Vec<Agent>>> {
         .map(Agent::parse)
         .collect::<Result<_>>()?;
     match parsed.is_empty() {
-        true => Err(anyhow!("--agent listed no agents")),
+        true => Err(usage("--agent listed no agents")),
         false => Ok(Some(parsed)),
     }
 }
@@ -349,5 +372,20 @@ mod tests {
         assert_eq!(validate_agents(None).unwrap(), None);
         assert!(validate_agents(Some("claude,bogus")).is_err());
         assert!(validate_agents(Some(",")).is_err());
+    }
+
+    /// A bad invocation must be distinguishable from a failed run: clap's
+    /// own errors exit 2, so an unknown agent or kind exiting 1 made the
+    /// surface disagree with itself and hid "your command was wrong".
+    #[test]
+    fn an_unknown_agent_is_a_usage_error() {
+        let e = Agent::parse("bogus").unwrap_err();
+        assert!(e.downcast_ref::<UsageError>().is_some(), "{e}");
+    }
+
+    #[test]
+    fn an_empty_agent_list_is_a_usage_error() {
+        let e = validate_agents(Some(",")).unwrap_err();
+        assert!(e.downcast_ref::<UsageError>().is_some(), "{e}");
     }
 }

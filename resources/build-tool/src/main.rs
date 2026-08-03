@@ -11,7 +11,7 @@
 
 use anyhow::{Context, Result};
 use build_tool::harness::{Selection, Stage};
-use build_tool::shared::{home_dir, repo_root, validate_agent, validate_agents};
+use build_tool::shared::{home_dir, repo_root, validate_agent, validate_agents, UsageError};
 use build_tool::stages;
 use clap::{Parser, Subcommand};
 use std::path::Path;
@@ -96,7 +96,12 @@ fn main() -> ExitCode {
         Ok(rc) => ExitCode::from(rc),
         Err(e) => {
             eprintln!("build-tool: {e:#}");
-            ExitCode::from(1)
+            // 2 for a bad invocation, matching clap's own usage errors;
+            // 1 is reserved for "the run happened and something failed".
+            ExitCode::from(match e.downcast_ref::<UsageError>() {
+                Some(_) => 2,
+                None => 1,
+            })
         }
     }
 }
