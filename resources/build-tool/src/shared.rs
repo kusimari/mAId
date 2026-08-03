@@ -141,6 +141,25 @@ pub fn validate_agent(agent: Option<&str>) -> Result<Option<Agent>> {
     agent.map(Agent::parse).transpose()
 }
 
+/// Resolve an `--agent` value that may name several agents, as the
+/// verification verbs accept (`--agent claude,kiro`). `None` means all of
+/// them; the install verbs take a single agent and use `validate_agent`.
+pub fn validate_agents(agents: Option<&str>) -> Result<Option<Vec<Agent>>> {
+    let Some(list) = agents else {
+        return Ok(None);
+    };
+    let parsed: Vec<Agent> = list
+        .split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(Agent::parse)
+        .collect::<Result<_>>()?;
+    match parsed.is_empty() {
+        true => Err(anyhow!("--agent listed no agents")),
+        false => Ok(Some(parsed)),
+    }
+}
+
 /// The one source tree skills are authored in, per REGISTRY. Every row
 /// shares it — `registry_rows_share_one_content_source` pins that — so
 /// the first row answers. REGISTRY is a non-empty const.
@@ -319,5 +338,16 @@ mod tests {
         for agent in Agent::ALL {
             assert_ne!(agent.installed_skill(root, "notes").unwrap(), from_checkout);
         }
+    }
+
+    #[test]
+    fn validate_agents_parses_a_list_and_rejects_junk() {
+        assert_eq!(
+            validate_agents(Some("claude,codex")).unwrap(),
+            Some(vec![Agent::Claude, Agent::Codex])
+        );
+        assert_eq!(validate_agents(None).unwrap(), None);
+        assert!(validate_agents(Some("claude,bogus")).is_err());
+        assert!(validate_agents(Some(",")).is_err());
     }
 }

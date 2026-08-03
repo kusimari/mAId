@@ -11,7 +11,7 @@
 
 use anyhow::{Context, Result};
 use build_tool::harness::{Selection, Stage};
-use build_tool::shared::{home_dir, repo_root, validate_agent};
+use build_tool::shared::{home_dir, repo_root, validate_agent, validate_agents};
 use build_tool::stages;
 use clap::{Parser, Subcommand};
 use std::path::Path;
@@ -36,7 +36,8 @@ struct VerifyArgs {
     /// Comma-separated kinds; default every kind this stage owns.
     #[arg(long)]
     kind: Option<String>,
-    /// Scope to one coding agent (claude|kiro|codex); default all.
+    /// Scope to one or more coding agents (claude|kiro|codex, comma
+    /// separated); default all.
     #[arg(long)]
     agent: Option<String>,
     /// Construct and structurally check every prompt without calling an
@@ -142,7 +143,7 @@ fn verify(stage: Stage, args: VerifyArgs, home: &Path, root: &Path) -> Result<u8
         stage,
         args.fixture.as_deref(),
         args.kind.as_deref(),
-        validate_agent(args.agent.as_deref())?,
+        validate_agents(args.agent.as_deref())?,
     )?;
     let stress = args
         .stressed

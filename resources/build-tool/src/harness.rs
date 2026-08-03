@@ -939,14 +939,25 @@ pub fn snapshot_checkout(checkout: &Path) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// Paths that appeared in the checkout since the snapshot. Empty means no
-/// leak; any entry is a test that wrote outside its scratch dir.
+/// How the checkout's git status differs from the snapshot. Empty means no
+/// leak; any entry is a test that acted outside its scratch dir.
+///
+/// Both directions matter. A line that DISAPPEARS is the documented
+/// incident: `close notes` runs `git commit`, which turns an untracked
+/// `??` line into a commit and removes it from the status — so watching
+/// only for additions would miss the exact case the tripwire exists for.
 pub fn detect_leak(before: &str, after: &str) -> Vec<String> {
     let prior: Vec<&str> = before.lines().collect();
-    after
-        .lines()
-        .filter(|line| !prior.contains(line))
-        .map(str::to_string)
+    let now: Vec<&str> = after.lines().collect();
+    now.iter()
+        .filter(|line| !prior.contains(*line))
+        .map(|line| format!("appeared: {line}"))
+        .chain(
+            prior
+                .iter()
+                .filter(|line| !now.contains(*line))
+                .map(|line| format!("gone (committed?): {line}")),
+        )
         .collect()
 }
 
@@ -976,7 +987,7 @@ impl Selection {
         stage: Stage,
         fixture: Option<&str>,
         kinds: Option<&str>,
-        agent: Option<Agent>,
+        agents: Option<Vec<Agent>>,
     ) -> Result<Selection> {
         let owned: Vec<Kind> = Kind::ALL
             .iter()
@@ -1019,10 +1030,7 @@ impl Selection {
             stage,
             fixture: fixture.map(str::to_string),
             kinds,
-            agents: match agent {
-                Some(a) => vec![a],
-                None => Agent::ALL.to_vec(),
-            },
+            agents: agents.unwrap_or_else(|| Agent::ALL.to_vec()),
         })
     }
 
@@ -2039,7 +2047,9 @@ FAIL — omits the guardrail entirely";
     fn a_leak_is_detected_alongside_pre_existing_changes() {
         let before = " M Cargo.lock\n";
         let after = " M Cargo.lock\n?? stray.md\n";
-        assert_eq!(detect_leak(before, after), vec!["?? stray.md".to_string()]);
+        let leaked = detect_leak(before, after);
+        assert_eq!(leaked.len(), 1, "{leaked:?}");
+        assert!(leaked[0].contains("stray.md"));
     }
 
     // ── selection ────────────────────────────────────────────────
@@ -2093,7 +2103,7 @@ FAIL — omits the guardrail entirely";
 
     #[test]
     fn an_agent_selector_scopes_the_run() {
-        let s = Selection::resolve(Stage::Check, None, None, Some(Agent::Codex)).unwrap();
+        let s = Selection::resolve(Stage::Check, None, None, Some(vec![Agent::Codex])).unwrap();
         assert_eq!(s.agents, vec![Agent::Codex]);
     }
 
@@ -2114,7 +2124,7 @@ FAIL — omits the guardrail entirely";
     fn planning_intersects_fixture_and_selection() {
         let f =
             fx("skill: notes\ntools: claude,kiro\n--- enact ---\ntask: t\nexpect: n\n").unwrap();
-        let s = Selection::resolve(Stage::Check, None, None, Some(Agent::Claude)).unwrap();
+        let s = Selection::resolve(Stage::Check, None, None, Some(vec![Agent::Claude])).unwrap();
         let planned = plan_tests(&f, &s, &mut Vec::new());
         assert!(planned.iter().all(|(_, a)| *a == Agent::Claude));
         // Enact and activation are check-stage; integration/discovery are not.
@@ -2150,7 +2160,7 @@ FAIL — omits the guardrail entirely";
     fn generated_kinds_run_once_per_skill_across_fixtures() {
         let a = fx("skill: notes\n--- enact ---\ntask: t\nexpect: n\n").unwrap();
         let b = fx("skill: notes\n--- enact ---\ntask: other\nexpect: n\n").unwrap();
-        let s = Selection::resolve(Stage::Check, None, None, Some(Agent::Claude)).unwrap();
+        let s = Selection::resolve(Stage::Check, None, None, Some(vec![Agent::Claude])).unwrap();
         let mut claimed = Vec::new();
 
         let first = plan_tests(&a, &s, &mut claimed);
@@ -2170,7 +2180,7 @@ FAIL — omits the guardrail entirely";
     fn generated_kinds_are_not_deduped_across_different_skills() {
         let a = fx("skill: notes\n--- enact ---\ntask: t\nexpect: n\n").unwrap();
         let b = fx("skill: browser\n--- enact ---\ntask: t\nexpect: n\n").unwrap();
-        let s = Selection::resolve(Stage::Check, None, None, Some(Agent::Claude)).unwrap();
+        let s = Selection::resolve(Stage::Check, None, None, Some(vec![Agent::Claude])).unwrap();
         let mut claimed = Vec::new();
         plan_tests(&a, &s, &mut claimed);
         let second = plan_tests(&b, &s, &mut claimed);
@@ -2191,5 +2201,72 @@ FAIL — omits the guardrail entirely";
             .map(|(_, a)| *a)
             .collect();
         assert_eq!(agents, vec![Agent::Claude, Agent::Kiro]);
+    }
+
+    // ── regressions the Code Review Gate caught ──────────────────
+
+    /// A line DISAPPEARING is the documented incident: `close notes` runs
+    /// `git commit`, turning an untracked `??` into a commit and removing
+    /// it from the status. Watching only additions missed the exact case
+    /// the tripwire exists for.
+    #[test]
+    fn a_committed_path_is_a_leak_even_though_the_status_line_vanishes() {
+        let before = "?? insights/wadler.md\n";
+        let after = "";
+        let leaked = detect_leak(before, after);
+        assert_eq!(leaked.len(), 1, "{leaked:?}");
+        assert!(leaked[0].contains("wadler.md"));
+        assert!(leaked[0].contains("committed"), "{}", leaked[0]);
+    }
+
+    #[test]
+    fn both_directions_are_reported_together() {
+        let before = "?? a.md\n M b.md\n";
+        let after = " M b.md\n?? c.md\n";
+        let leaked = detect_leak(before, after);
+        assert_eq!(leaked.len(), 2, "{leaked:?}");
+        assert!(leaked
+            .iter()
+            .any(|l| l.contains("c.md") && l.contains("appeared")));
+        assert!(leaked
+            .iter()
+            .any(|l| l.contains("a.md") && l.contains("gone")));
+    }
+
+    /// `--tools claude,kiro` accepted a list; `--agent` must too, or a
+    /// two-agent run silently becomes a three-agent one.
+    #[test]
+    fn the_agent_selector_accepts_a_list() {
+        let s = Selection::resolve(
+            Stage::Check,
+            None,
+            None,
+            crate::shared::validate_agents(Some("claude,kiro")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(s.agents, vec![Agent::Claude, Agent::Kiro]);
+    }
+
+    #[test]
+    fn an_absent_agent_selector_still_means_all() {
+        let s = Selection::resolve(
+            Stage::Check,
+            None,
+            None,
+            crate::shared::validate_agents(None).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(s.agents, Agent::ALL.to_vec());
+    }
+
+    /// The judge-preference branch is only exercised when the preferred
+    /// agent is NOT the one a fallback would pick anyway.
+    #[test]
+    fn an_explicit_judge_preference_is_honoured_over_the_default() {
+        assert_eq!(
+            judge_agent(Some("kiro"), &[Agent::Claude, Agent::Kiro]).unwrap(),
+            Agent::Kiro,
+            "the preference must win over claude-by-default"
+        );
     }
 }

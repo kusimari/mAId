@@ -710,14 +710,29 @@ fn drive(
 
     // An agent that writes its final message to a file: read that, and
     // never the transcript on stdout.
-    match &inv.reply_file {
-        Some(path) => fs::read_to_string(path).context("reading agent reply file"),
-        None => Ok(format!(
+    let reply = match &inv.reply_file {
+        Some(path) => fs::read_to_string(path).context("reading agent reply file")?,
+        None => format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
-        )),
+        ),
+    };
+
+    // A non-zero exit is the agent failing, not the skill: an expired
+    // token or a rate limit would otherwise be scored as a reply and
+    // reported as "response missing <marker>", sending the reader to
+    // debug content that is fine.
+    if !out.status.success() {
+        return Err(anyhow!(
+            "exited {} — {}",
+            out.status
+                .code()
+                .map_or("by signal".into(), |c| c.to_string()),
+            reply.trim().lines().next_back().unwrap_or("no output")
+        ));
     }
+    Ok(reply)
 }
 
 // ─────────────────────────────────────────────────────────────────
