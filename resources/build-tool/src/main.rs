@@ -9,24 +9,53 @@
 //! An optional `--agent <claude|kiro|codex>` scopes any of the three
 //! to one coding agent; the default is all of them.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use build_tool::harness::{Selection, Stage};
 use build_tool::shared::{home_dir, repo_root, validate_agent};
 use build_tool::stages;
 use clap::{Parser, Subcommand};
+use std::path::Path;
 use std::process::ExitCode;
 
 #[derive(Parser)]
 #[command(
     name = "build-tool",
-    about = "mAId build-tool — install / uninstall / status."
+    about = "mAId build-tool — check / install / uninstall / status / smoke."
 )]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
 }
 
+/// The flags both verification stages share. They differ only in which
+/// side of install they read a skill from, so they take the same surface.
+#[derive(clap::Args)]
+struct VerifyArgs {
+    /// Only this fixture (its basename without `.smoke`).
+    fixture: Option<String>,
+    /// Comma-separated kinds; default every kind this stage owns.
+    #[arg(long)]
+    kind: Option<String>,
+    /// Scope to one coding agent (claude|kiro|codex); default all.
+    #[arg(long)]
+    agent: Option<String>,
+    /// Construct and structurally check every prompt without calling an
+    /// agent. Costs nothing.
+    #[arg(long)]
+    dry_run: bool,
+    /// Prepend a long conversational prefix to stress retention.
+    #[arg(long)]
+    stressed: bool,
+}
+
 #[derive(Subcommand)]
 enum Cmd {
+    /// Verify skills BEFORE install, from the checkout: the kinds whose
+    /// prompt names the skill's path, so no deployment is needed.
+    Check(VerifyArgs),
+    /// Verify skills AFTER install, from the deployed tree: the kinds
+    /// where the agent must find the skill among everything installed.
+    Smoke(VerifyArgs),
     /// Validate content and create/refresh $HOME-facing symlinks.
     Install {
         /// Plan without making changes.
@@ -102,5 +131,23 @@ fn run(cli: Cli) -> Result<u8> {
         Cmd::Status { agent } => {
             stages::cmd_status(&home, &root, validate_agent(agent.as_deref())?)
         }
+        Cmd::Check(args) => verify(Stage::Check, args, &home, &root),
+        Cmd::Smoke(args) => verify(Stage::Smoke, args, &home, &root),
     }
+}
+
+/// Both verification stages, which differ only in their `Stage`.
+fn verify(stage: Stage, args: VerifyArgs, home: &Path, root: &Path) -> Result<u8> {
+    let selection = Selection::resolve(
+        stage,
+        args.fixture.as_deref(),
+        args.kind.as_deref(),
+        validate_agent(args.agent.as_deref())?,
+    )?;
+    let stress = args
+        .stressed
+        .then(|| std::fs::read_to_string(root.join("resources/tests/conversational-stream.txt")))
+        .transpose()
+        .context("--stressed needs resources/tests/conversational-stream.txt")?;
+    stages::cmd_verify(home, root, &selection, args.dry_run, stress.as_deref())
 }

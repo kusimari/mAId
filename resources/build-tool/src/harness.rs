@@ -845,6 +845,228 @@ pub fn reply_contains(reply: &str, want: &str) -> bool {
     reply.to_lowercase().contains(&want.to_lowercase())
 }
 
+// ─────────────────────────────────────────────────────────────────
+// Running a test — the reply and behavioral paths.
+// ─────────────────────────────────────────────────────────────────
+
+/// What one test run produced.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Outcome {
+    Pass(String),
+    Fail(String),
+    /// Not run, with the reason — a marker-less skill's announce kinds,
+    /// or an agent absent from PATH when it wasn't required.
+    Skip(String),
+}
+
+impl Outcome {
+    pub fn token(&self) -> &'static str {
+        match self {
+            Outcome::Pass(_) => "PASS",
+            Outcome::Fail(_) => "FAIL",
+            Outcome::Skip(_) => "SKIP",
+        }
+    }
+
+    pub fn detail(&self) -> &str {
+        match self {
+            Outcome::Pass(d) | Outcome::Fail(d) | Outcome::Skip(d) => d,
+        }
+    }
+}
+
+/// Score a reply against its assertion. Pure — the process work happens
+/// in the caller, so the scoring rules are testable without an agent.
+///
+/// A substring and a narrative both apply when both are given: the
+/// literal is the cheap structural check, the judge the semantic one.
+pub fn score_reply(
+    reply: &str,
+    substr: Option<&str>,
+    narrative_verdict: Option<&Verdict>,
+) -> Outcome {
+    if let Some(want) = substr {
+        if !reply_contains(reply, want) {
+            return Outcome::Fail(format!("response missing {want:?}"));
+        }
+    }
+    match narrative_verdict {
+        None => Outcome::Pass(match substr {
+            Some(_) => "substr".into(),
+            None => "no assertion".into(),
+        }),
+        Some(Verdict::Pass(why)) => Outcome::Pass(why.clone()),
+        Some(Verdict::Fail(why)) => Outcome::Fail(why.clone()),
+        Some(Verdict::Unparseable) => Outcome::Fail("judge returned no PASS/FAIL token".into()),
+    }
+}
+
+/// The name a result line carries. Kept in the shape the bash runner
+/// used so a run stays diffable against a prior run.
+pub fn test_name(fixture: &str, kind: Kind, agent: Agent) -> String {
+    match kind.announce_only() {
+        true => format!("skill:{fixture} {} via {}", kind.name(), agent.name()),
+        false => format!("{fixture} {} via {}", kind.name(), agent.name()),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Leak tripwire.
+//
+// Behavioral tests seed a scratch workdir, but containment is by
+// convention: the agent keeps ambient filesystem authority, so a
+// differently-resolved relative path lands in the checkout instead. It
+// has happened — notes-git-commit runs `close notes`, which runs
+// `git commit`, and twice committed insight files into the repo while
+// reporting PASS. Snapshot before, diff after, so a leak is reported by
+// the suite rather than found later in git log.
+//
+// See specs/backlog/test-runner-workdir-containment.md for the real fix;
+// this only detects.
+// ─────────────────────────────────────────────────────────────────
+
+/// A `git status --porcelain` snapshot of the checkout, or `None` when it
+/// isn't a git tree (nothing to compare).
+pub fn snapshot_checkout(checkout: &Path) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["-C"])
+        .arg(checkout)
+        .args(["status", "--porcelain"])
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Paths that appeared in the checkout since the snapshot. Empty means no
+/// leak; any entry is a test that wrote outside its scratch dir.
+pub fn detect_leak(before: &str, after: &str) -> Vec<String> {
+    let prior: Vec<&str> = before.lines().collect();
+    after
+        .lines()
+        .filter(|line| !prior.contains(line))
+        .map(str::to_string)
+        .collect()
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Selection — which fixtures, kinds, and agents a run covers.
+// ─────────────────────────────────────────────────────────────────
+
+/// What a run was asked to cover. The requested set is also the required
+/// set: an agent named here but missing from PATH is a failure, not a
+/// skip, because "verify across the agents we asked for" is the point.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Selection {
+    pub stage: Stage,
+    pub fixture: Option<String>,
+    pub kinds: Vec<Kind>,
+    pub agents: Vec<Agent>,
+}
+
+impl Selection {
+    /// Resolve CLI arguments into a selection, defaulting to every kind
+    /// this stage owns and every agent.
+    ///
+    /// A kind belonging to the other stage is an error rather than a
+    /// silent no-op: `check --kind discovery` running zero tests and
+    /// reporting success would read as "discovery passes".
+    pub fn resolve(
+        stage: Stage,
+        fixture: Option<&str>,
+        kinds: Option<&str>,
+        agent: Option<Agent>,
+    ) -> Result<Selection> {
+        let owned: Vec<Kind> = Kind::ALL
+            .iter()
+            .copied()
+            .filter(|k| k.stage() == stage)
+            .collect();
+
+        let kinds = match kinds {
+            None => owned,
+            Some(list) => {
+                let asked: Vec<Kind> = list
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(Kind::parse)
+                    .collect::<Result<_>>()?;
+                if asked.is_empty() {
+                    return Err(anyhow!("--kind listed no kinds"));
+                }
+                if let Some(wrong) = asked.iter().find(|k| k.stage() != stage) {
+                    return Err(anyhow!(
+                        "kind '{}' belongs to `{}`, not `{stage}` — it is {} reach, so it needs {}",
+                        wrong.name(),
+                        wrong.stage(),
+                        match wrong.reach() {
+                            Reach::Implicit => "implicit",
+                            Reach::Explicit => "explicit",
+                        },
+                        match wrong.stage() {
+                            Stage::Smoke => "the deployed skills listing to compete in",
+                            Stage::Check => "only the checkout",
+                        }
+                    ));
+                }
+                asked
+            }
+        };
+
+        Ok(Selection {
+            stage,
+            fixture: fixture.map(str::to_string),
+            kinds,
+            agents: match agent {
+                Some(a) => vec![a],
+                None => Agent::ALL.to_vec(),
+            },
+        })
+    }
+
+    /// True when this fixture is in scope for the run.
+    pub fn covers(&self, fixture: &str) -> bool {
+        self.fixture.as_deref().is_none_or(|want| want == fixture)
+    }
+}
+
+/// The tests a fixture contributes to a run, in a deterministic order so
+/// two runs are diffable.
+///
+/// `claimed` tracks the (skill, kind, agent) triples the generated kinds
+/// have already produced. Those two are per-SKILL, not per-fixture — one
+/// skill commonly has several fixtures (notes has five), and asking each
+/// of them whether the skill announces itself would run the same test
+/// five times and report it five times.
+pub fn plan_tests(
+    fixture: &Fixture,
+    selection: &Selection,
+    claimed: &mut Vec<(String, Kind, Agent)>,
+) -> Vec<(Kind, Agent)> {
+    let mut out = Vec::new();
+    for kind in fixture.kinds() {
+        if !selection.kinds.contains(&kind) {
+            continue;
+        }
+        for agent in &fixture.agents {
+            if !selection.agents.contains(agent) {
+                continue;
+            }
+            if kind.announce_only() {
+                let claim = (fixture.skill.clone(), kind, *agent);
+                if claimed.contains(&claim) {
+                    continue;
+                }
+                claimed.push(claim);
+            }
+            out.push((kind, *agent));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1725,5 +1947,249 @@ FAIL — omits the guardrail entirely";
             "[notes] applies"
         ));
         assert!(!reply_contains("nothing relevant", "[notes] applies"));
+    }
+
+    // ── scoring ──────────────────────────────────────────────────
+
+    #[test]
+    fn a_missing_substring_fails_before_the_judge_is_consulted() {
+        let out = score_reply("nothing here", Some("[notes] applies"), None);
+        assert!(matches!(out, Outcome::Fail(_)));
+        assert!(out.detail().contains("[notes] applies"));
+    }
+
+    #[test]
+    fn a_judge_verdict_decides_when_the_substring_passes() {
+        let reply = "[notes] applies\nthe note is filed";
+        assert!(matches!(
+            score_reply(
+                reply,
+                Some("[notes] applies"),
+                Some(&Verdict::Pass("good".into()))
+            ),
+            Outcome::Pass(_)
+        ));
+        assert!(matches!(
+            score_reply(
+                reply,
+                Some("[notes] applies"),
+                Some(&Verdict::Fail("bad".into()))
+            ),
+            Outcome::Fail(_)
+        ));
+    }
+
+    /// An unreadable verdict must fail, not pass. Treating it as a pass is
+    /// how every judged codex test once reported green.
+    #[test]
+    fn an_unparseable_verdict_fails() {
+        let out = score_reply("anything", None, Some(&Verdict::Unparseable));
+        assert!(matches!(out, Outcome::Fail(_)));
+        assert!(out.detail().contains("no PASS/FAIL token"));
+    }
+
+    /// A test with no assertion at all would pass for an idle agent. The
+    /// fixture parser rejects that shape, so this only documents that
+    /// scoring itself never invents a pass reason.
+    #[test]
+    fn no_assertion_reports_that_it_asserted_nothing() {
+        assert_eq!(
+            score_reply("anything", None, None),
+            Outcome::Pass("no assertion".into())
+        );
+    }
+
+    // ── test naming ──────────────────────────────────────────────
+
+    /// Names keep the bash shapes so a run stays diffable against a prior
+    /// run: generated kinds are per-skill, authored kinds per-fixture.
+    #[test]
+    fn generated_kinds_are_named_per_skill() {
+        assert_eq!(
+            test_name("notes", Kind::Activation, Agent::Claude),
+            "skill:notes activation via claude"
+        );
+        assert_eq!(
+            test_name("notes-git-commit", Kind::Enact, Agent::Codex),
+            "notes-git-commit enact via codex"
+        );
+    }
+
+    // ── leak tripwire ────────────────────────────────────────────
+
+    #[test]
+    fn an_unchanged_checkout_reports_no_leak() {
+        let before = " M resources/content/skills/notes/SKILL.md\n";
+        assert!(detect_leak(before, before).is_empty());
+    }
+
+    /// The real incident: a behavioral test wrote insight files into the
+    /// checkout while its assert ran in the scratch dir, so the suite
+    /// reported PASS and the damage was found later in git log.
+    #[test]
+    fn a_new_path_in_the_checkout_is_a_leak() {
+        let before = "";
+        let after = "?? insights/wadler-builds-an-immutable-document-tree.md\n";
+        let leaked = detect_leak(before, after);
+        assert_eq!(leaked.len(), 1);
+        assert!(leaked[0].contains("insights/"));
+    }
+
+    #[test]
+    fn a_leak_is_detected_alongside_pre_existing_changes() {
+        let before = " M Cargo.lock\n";
+        let after = " M Cargo.lock\n?? stray.md\n";
+        assert_eq!(detect_leak(before, after), vec!["?? stray.md".to_string()]);
+    }
+
+    // ── selection ────────────────────────────────────────────────
+
+    #[test]
+    fn check_defaults_to_the_three_pre_install_kinds() {
+        let s = Selection::resolve(Stage::Check, None, None, None).unwrap();
+        let names: Vec<&str> = s.kinds.iter().map(|k| k.name()).collect();
+        assert_eq!(names, ["activation", "playback", "enact"]);
+        assert_eq!(s.agents, Agent::ALL.to_vec());
+    }
+
+    #[test]
+    fn smoke_defaults_to_the_two_post_install_kinds() {
+        let s = Selection::resolve(Stage::Smoke, None, None, None).unwrap();
+        let names: Vec<&str> = s.kinds.iter().map(|k| k.name()).collect();
+        assert_eq!(names, ["discovery", "integration"]);
+    }
+
+    /// A kind belonging to the other stage is an error naming why. Running
+    /// zero tests and reporting success would read as "discovery passes".
+    #[test]
+    fn asking_check_for_a_smoke_kind_is_an_error_naming_why() {
+        let e = Selection::resolve(Stage::Check, None, Some("discovery"), None)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("discovery"), "{e}");
+        assert!(e.contains("smoke"), "{e}");
+        assert!(e.contains("deployed"), "{e}");
+    }
+
+    #[test]
+    fn asking_smoke_for_a_check_kind_is_an_error_naming_why() {
+        let e = Selection::resolve(Stage::Smoke, None, Some("playback"), None)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("playback") && e.contains("check"), "{e}");
+    }
+
+    #[test]
+    fn an_unknown_kind_or_empty_list_is_rejected() {
+        assert!(Selection::resolve(Stage::Check, None, Some("bogus"), None).is_err());
+        assert!(Selection::resolve(Stage::Check, None, Some(""), None).is_err());
+    }
+
+    #[test]
+    fn a_kind_this_stage_owns_is_accepted() {
+        let s = Selection::resolve(Stage::Check, None, Some("playback,enact"), None).unwrap();
+        assert_eq!(s.kinds, vec![Kind::Playback, Kind::Enact]);
+    }
+
+    #[test]
+    fn an_agent_selector_scopes_the_run() {
+        let s = Selection::resolve(Stage::Check, None, None, Some(Agent::Codex)).unwrap();
+        assert_eq!(s.agents, vec![Agent::Codex]);
+    }
+
+    #[test]
+    fn a_fixture_selector_scopes_to_one_fixture() {
+        let s = Selection::resolve(Stage::Check, Some("notes"), None, None).unwrap();
+        assert!(s.covers("notes"));
+        assert!(!s.covers("writing-style"));
+        let all = Selection::resolve(Stage::Check, None, None, None).unwrap();
+        assert!(all.covers("anything"));
+    }
+
+    // ── planning ─────────────────────────────────────────────────
+
+    /// A fixture contributes only the intersection of its own kinds and
+    /// agents with what the run asked for.
+    #[test]
+    fn planning_intersects_fixture_and_selection() {
+        let f =
+            fx("skill: notes\ntools: claude,kiro\n--- enact ---\ntask: t\nexpect: n\n").unwrap();
+        let s = Selection::resolve(Stage::Check, None, None, Some(Agent::Claude)).unwrap();
+        let planned = plan_tests(&f, &s, &mut Vec::new());
+        assert!(planned.iter().all(|(_, a)| *a == Agent::Claude));
+        // Enact and activation are check-stage; integration/discovery are not.
+        assert!(planned.iter().any(|(k, _)| *k == Kind::Enact));
+        assert!(planned.iter().all(|(k, _)| k.stage() == Stage::Check));
+    }
+
+    /// An agent the fixture never declared is not run for it, even when
+    /// the selection asks for every agent.
+    #[test]
+    fn planning_never_runs_an_agent_a_fixture_excludes() {
+        let f = fx("skill: notes\ntools: claude\n--- enact ---\ntask: t\nexpect: n\n").unwrap();
+        let s = Selection::resolve(Stage::Check, None, None, None).unwrap();
+        assert!(plan_tests(&f, &s, &mut Vec::new())
+            .iter()
+            .all(|(_, a)| *a == Agent::Claude));
+    }
+
+    #[test]
+    fn planning_is_deterministic() {
+        let f = fx("skill: notes\ntools: claude,kiro,codex\n--- playback ---\ntask: q\nexpect: n\n--- enact ---\ntask: t\nexpect: n\n").unwrap();
+        let s = Selection::resolve(Stage::Check, None, None, None).unwrap();
+        assert_eq!(
+            plan_tests(&f, &s, &mut Vec::new()),
+            plan_tests(&f, &s, &mut Vec::new())
+        );
+    }
+
+    /// The generated kinds are per-SKILL, not per-fixture. `notes` has
+    /// five fixtures; without a claim list, activation would run and be
+    /// reported five times for one skill.
+    #[test]
+    fn generated_kinds_run_once_per_skill_across_fixtures() {
+        let a = fx("skill: notes\n--- enact ---\ntask: t\nexpect: n\n").unwrap();
+        let b = fx("skill: notes\n--- enact ---\ntask: other\nexpect: n\n").unwrap();
+        let s = Selection::resolve(Stage::Check, None, None, Some(Agent::Claude)).unwrap();
+        let mut claimed = Vec::new();
+
+        let first = plan_tests(&a, &s, &mut claimed);
+        let second = plan_tests(&b, &s, &mut claimed);
+
+        assert!(first.iter().any(|(k, _)| *k == Kind::Activation));
+        assert!(
+            !second.iter().any(|(k, _)| *k == Kind::Activation),
+            "activation ran twice for one skill"
+        );
+        // The authored kinds still run for both fixtures.
+        assert!(second.iter().any(|(k, _)| *k == Kind::Enact));
+    }
+
+    /// Two different skills each get their own generated kinds.
+    #[test]
+    fn generated_kinds_are_not_deduped_across_different_skills() {
+        let a = fx("skill: notes\n--- enact ---\ntask: t\nexpect: n\n").unwrap();
+        let b = fx("skill: browser\n--- enact ---\ntask: t\nexpect: n\n").unwrap();
+        let s = Selection::resolve(Stage::Check, None, None, Some(Agent::Claude)).unwrap();
+        let mut claimed = Vec::new();
+        plan_tests(&a, &s, &mut claimed);
+        let second = plan_tests(&b, &s, &mut claimed);
+        assert!(second.iter().any(|(k, _)| *k == Kind::Activation));
+    }
+
+    /// Dedup is per agent too: the same skill's activation still runs
+    /// once for each agent asked for.
+    #[test]
+    fn generated_kinds_dedupe_per_agent_not_globally() {
+        let f =
+            fx("skill: notes\ntools: claude,kiro\n--- enact ---\ntask: t\nexpect: n\n").unwrap();
+        let s = Selection::resolve(Stage::Check, None, None, None).unwrap();
+        let planned = plan_tests(&f, &s, &mut Vec::new());
+        let agents: Vec<Agent> = planned
+            .iter()
+            .filter(|(k, _)| *k == Kind::Activation)
+            .map(|(_, a)| *a)
+            .collect();
+        assert_eq!(agents, vec![Agent::Claude, Agent::Kiro]);
     }
 }

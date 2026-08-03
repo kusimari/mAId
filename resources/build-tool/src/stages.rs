@@ -7,8 +7,14 @@
 //! Reads `shared` for the registry, agents, and roots; nothing here
 //! reaches back into the CLI.
 
-use crate::shared::{selected_entries, Agent, Entry, Kind, Link};
-use anyhow::{anyhow, Result};
+use crate::harness::{
+    agent_available, applicable, assertion_for, check_prompt, detect_leak, generated_task,
+    invocation, judge_agent, judge_prompt, plan_tests, prompt, read_verdict, score_reply,
+    skill_announces, skill_source, snapshot_checkout, test_name, Assertion, Authority, Fixture,
+    Kind as TestKind, Outcome, Reach, Selection, Stage,
+};
+use crate::shared::{checkout_skill, selected_entries, Agent, Entry, Kind, Link};
+use anyhow::{anyhow, Context, Result};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -360,6 +366,357 @@ fn uninstall_one(home: PathBuf, source: PathBuf, dry_run: bool, force: bool) -> 
             );
             Ok(true)
         }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Stage 2 · check — pre-install verification.
+//
+// The three explicit kinds, reading each skill from the CHECKOUT. No
+// install, no $HOME: a content change is provable before it is made live
+// for every session on the machine.
+//
+// Stage 4 · smoke — post-install verification.
+//
+// The two implicit kinds, where the agent must find the skill among
+// everything deployed. Requires install to have run.
+// ─────────────────────────────────────────────────────────────────
+
+/// Run one verification stage. `dry_run` constructs and structurally
+/// checks every prompt without calling an agent, which costs nothing.
+pub fn cmd_verify(
+    home: &Path,
+    checkout: &Path,
+    selection: &Selection,
+    dry_run: bool,
+    stressed: Option<&str>,
+) -> Result<u8> {
+    let fixtures = load_fixtures(checkout, selection)?;
+    if fixtures.is_empty() {
+        return Err(anyhow!(
+            "no fixtures matched{}",
+            selection
+                .fixture
+                .as_deref()
+                .map(|f| format!(" selector {f:?}"))
+                .unwrap_or_default()
+        ));
+    }
+
+    // Smoke reads the deployed tree, so say so plainly rather than
+    // failing every test with a confusing path error.
+    if selection.stage == Stage::Smoke && !dry_run {
+        require_installed(home, selection)?;
+    }
+
+    let judge = (!dry_run)
+        .then(|| {
+            let available: Vec<Agent> = Agent::ALL
+                .iter()
+                .copied()
+                .filter(|a| agent_available(*a))
+                .collect();
+            judge_agent(std::env::var("VERIFY_JUDGE").ok().as_deref(), &available)
+        })
+        .transpose()?;
+
+    let before = snapshot_checkout(checkout);
+    let mut failures = 0usize;
+    // The generated kinds are per-skill; several fixtures share a skill.
+    let mut claimed = Vec::new();
+
+    for fixture in &fixtures {
+        for (kind, agent) in plan_tests(fixture, selection, &mut claimed) {
+            let name = test_name(
+                if kind.announce_only() {
+                    &fixture.skill
+                } else {
+                    &fixture.name
+                },
+                kind,
+                agent,
+            );
+            let outcome = run_one(
+                fixture, kind, agent, home, checkout, dry_run, stressed, judge,
+            );
+            report(&name, &outcome);
+            if matches!(outcome, Outcome::Fail(_)) {
+                failures += 1;
+            }
+        }
+    }
+
+    // Behavioral tests can escape their scratch dir; catch it here rather
+    // than leaving it to be found in git log later.
+    if let (Some(before), Some(after)) = (before, snapshot_checkout(checkout)) {
+        let leaked = detect_leak(&before, &after);
+        if !leaked.is_empty() {
+            eprintln!(
+                "\x1b[31mLEAK\x1b[0m a test wrote into the checkout (not its scratch workdir):"
+            );
+            for line in &leaked {
+                eprintln!("  {line}");
+            }
+            eprintln!("  also check git log — a leaked close-notes verb can COMMIT these.");
+            failures += 1;
+        }
+    }
+
+    println!();
+    match failures {
+        0 => {
+            println!("all tests passed");
+            Ok(0)
+        }
+        n => {
+            println!("{n} test(s) failed");
+            Ok(1)
+        }
+    }
+}
+
+fn report(name: &str, outcome: &Outcome) {
+    let colour = match outcome {
+        Outcome::Pass(_) => "32",
+        Outcome::Fail(_) => "31",
+        Outcome::Skip(_) => "33",
+    };
+    let line = format!("\x1b[{colour}m{}\x1b[0m {name}", outcome.token());
+    match outcome {
+        Outcome::Fail(_) => eprintln!("{line}"),
+        _ => println!("{line}"),
+    }
+    if !outcome.detail().is_empty() {
+        println!("  {}", outcome.detail());
+    }
+}
+
+/// Read every `.smoke` under `resources/tests/skills/`, in name order so
+/// two runs are diffable.
+fn load_fixtures(checkout: &Path, selection: &Selection) -> Result<Vec<Fixture>> {
+    let dir = checkout.join("resources/tests/skills");
+    let mut paths: Vec<PathBuf> = fs::read_dir(&dir)
+        .with_context(|| format!("reading fixtures from {}", dir.display()))?
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "smoke"))
+        .collect();
+    paths.sort();
+
+    paths
+        .iter()
+        .filter_map(|p| {
+            let name = p.file_stem()?.to_string_lossy().to_string();
+            selection.covers(&name).then_some((name, p))
+        })
+        .map(|(name, path)| {
+            let body =
+                fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+            Fixture::parse(&name, &body)
+        })
+        .collect()
+}
+
+/// Stop early when the smoke stage's precondition is unmet, naming the
+/// verb that fixes it.
+fn require_installed(home: &Path, selection: &Selection) -> Result<()> {
+    let missing: Vec<&str> = selection
+        .agents
+        .iter()
+        .filter(|a| {
+            a.skills_root(home)
+                .is_none_or(|root| !root.exists() && !root.is_symlink())
+        })
+        .map(|a| a.name())
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "smoke needs the skills deployed, but {} has no skills tree.\n\
+         Run `just resources::install-skills` first, or use `check` for the \
+         pre-install kinds (activation, playback, enact) which need no install.",
+        missing.join(", ")
+    ))
+}
+
+/// Run one (fixture, kind, agent) test.
+#[allow(clippy::too_many_arguments)]
+fn run_one(
+    fixture: &Fixture,
+    kind: TestKind,
+    agent: Agent,
+    home: &Path,
+    checkout: &Path,
+    dry_run: bool,
+    stressed: Option<&str>,
+    judge: Option<Agent>,
+) -> Outcome {
+    let source = match skill_source(kind.stage(), agent, home, checkout, &fixture.skill) {
+        Ok(s) => s,
+        Err(e) => return Outcome::Fail(e.to_string()),
+    };
+
+    // A skill with no announce contract cannot be proven by a marker.
+    let content = checkout_skill(checkout, &fixture.skill);
+    if let Err(why) = applicable(kind, &content, &fixture.skill) {
+        return Outcome::Skip(why);
+    }
+
+    let task = match kind {
+        TestKind::Activation | TestKind::Discovery => generated_task(kind, fixture),
+        _ => fixture.section_for(kind).map(|s| s.task.clone()),
+    };
+    let Some(task) = task else {
+        return Outcome::Skip("no task for this kind".into());
+    };
+
+    let base = prompt(kind, &fixture.skill, &source, &task);
+    if dry_run {
+        return match check_prompt(kind, &fixture.skill, &source, &base) {
+            Ok(()) => Outcome::Pass(match kind.reach() {
+                Reach::Explicit => format!("dry: carries {} path", agent.name()),
+                Reach::Implicit => "dry: names no skill".into(),
+            }),
+            Err(e) => Outcome::Fail(format!("dry: {e}")),
+        };
+    }
+
+    if !agent_available(agent) {
+        return Outcome::Fail(format!("{} required but not on PATH", agent.name()));
+    }
+
+    let full = match stressed {
+        Some(prefix) => format!("{prefix}\n{base}"),
+        None => base,
+    };
+
+    match assertion_for(fixture, kind, skill_announces(&content, &fixture.skill)) {
+        Assertion::Behavioral { setup, assert } => run_behavioral(agent, &full, &setup, &assert),
+        Assertion::Reply { substr, narrative } => {
+            run_reply(agent, &full, substr.as_deref(), narrative.as_deref(), judge)
+        }
+    }
+}
+
+/// Drive an agent read-only and score its reply.
+fn run_reply(
+    agent: Agent,
+    prompt: &str,
+    substr: Option<&str>,
+    narrative: Option<&str>,
+    judge: Option<Agent>,
+) -> Outcome {
+    let reply = match drive(agent, prompt, Authority::ReadOnly, None) {
+        Ok(r) => r,
+        Err(e) => return Outcome::Fail(format!("{} invocation failed: {e}", agent.name())),
+    };
+
+    let verdict = match (narrative, judge) {
+        (Some(want), Some(judge)) => {
+            let jp = judge_prompt(prompt, &reply, want);
+            match drive(judge, &jp, Authority::ReadOnly, None) {
+                Ok(raw) => Some(read_verdict(&raw)),
+                Err(e) => return Outcome::Fail(format!("judge invocation failed: {e}")),
+            }
+        }
+        (Some(_), None) => return Outcome::Fail("no judge available".into()),
+        (None, _) => None,
+    };
+    score_reply(&reply, substr, verdict.as_ref())
+}
+
+/// Seed a scratch workdir, run the agent inside it, then run the fixture's
+/// assert shell against the result. Tests execution, not recall.
+///
+/// The assert runs under `set -x` so a failure names the exact check that
+/// broke: asserts are silent `test`/`grep -q` under `set -e`, so without
+/// the trace every behavioral failure read "assert failed" with nothing
+/// after it — undiagnosable without hand-reproducing the fixture.
+fn run_behavioral(agent: Agent, prompt: &str, setup: &str, assert: &str) -> Outcome {
+    let Ok(work) = tempfile::TempDir::new() else {
+        return Outcome::Fail("could not create scratch workdir".into());
+    };
+    let dir = work.path();
+
+    if let Err(e) = shell(setup, dir) {
+        return Outcome::Fail(format!("setup failed: {e}"));
+    }
+
+    // The agent's own failure is not fatal: the assert decides, since a
+    // non-zero exit with correct artefacts is still a pass.
+    let reply = drive(agent, prompt, Authority::Workdir, Some(dir)).unwrap_or_default();
+
+    match shell(&format!("set -x\n{assert}"), dir) {
+        Ok(_) => Outcome::Pass("behavioral".into()),
+        Err(trace) => {
+            let culprit = trace
+                .lines()
+                .rfind(|l| l.starts_with('+'))
+                .map(|l| l.trim_start_matches('+').trim())
+                .unwrap_or("<no trace>")
+                .to_string();
+            let dump = std::env::temp_dir().join("verify-behavioral.log");
+            let _ = fs::write(
+                &dump,
+                format!("=== assert trace ===\n{trace}\n=== agent reply ===\n{reply}\n"),
+            );
+            Outcome::Fail(format!(
+                "failed check: {culprit} (trace + reply → {})",
+                dump.display()
+            ))
+        }
+    }
+}
+
+/// Run a shell fragment in `dir`, returning its combined output on
+/// failure. `set -e` so a fixture's first broken command stops it.
+fn shell(script: &str, dir: &Path) -> std::result::Result<String, String> {
+    let out = std::process::Command::new("bash")
+        .arg("-c")
+        .arg(format!("set -e\n{script}"))
+        .current_dir(dir)
+        .output()
+        .map_err(|e| e.to_string())?;
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    match out.status.success() {
+        true => Ok(combined),
+        false => Err(combined),
+    }
+}
+
+/// Invoke a coding agent and return its REPLY — not the transcript.
+fn drive(
+    agent: Agent,
+    prompt: &str,
+    authority: Authority,
+    workdir: Option<&Path>,
+) -> Result<String> {
+    let last = tempfile::NamedTempFile::new().context("creating reply file")?;
+    let inv = invocation(agent, prompt, authority, workdir, last.path());
+
+    let mut cmd = std::process::Command::new(&inv.program);
+    cmd.args(&inv.args).stdin(std::process::Stdio::null());
+    if let Some(dir) = &inv.cwd {
+        cmd.current_dir(dir);
+    }
+    let out = cmd
+        .output()
+        .with_context(|| format!("running {}", inv.program))?;
+
+    // An agent that writes its final message to a file: read that, and
+    // never the transcript on stdout.
+    match &inv.reply_file {
+        Some(path) => fs::read_to_string(path).context("reading agent reply file"),
+        None => Ok(format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )),
     }
 }
 
