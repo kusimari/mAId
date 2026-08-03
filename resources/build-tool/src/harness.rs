@@ -43,7 +43,7 @@
 use crate::shared::Agent;
 use anyhow::{anyhow, Result};
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 // ─────────────────────────────────────────────────────────────────
 // Kinds — the two axes, and which stage owns each composition.
@@ -668,6 +668,181 @@ pub fn judge_agent(preferred: Option<&str>, available: &[Agent]) -> Result<Agent
         .first()
         .copied()
         .ok_or_else(|| anyhow!("no coding agent available to judge with"))
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Invocation — driving a coding agent non-interactively.
+//
+// The single indirection point. Per-tool CLI flags change across
+// versions; when they do, this is the only place to touch.
+//
+// What an invocation returns is load-bearing: the *reply*, not the
+// session transcript. Codex `exec` prints a transcript — the prompt
+// echoed back, then tool output, then the reply — so capturing it whole
+// silently breaks every reply-level assertion (see Verdict, and the
+// marker, which appears in tool output whenever the agent cats a
+// SKILL.md). Codex's --output-last-message writes just the final
+// message; claude --print and kiro's non-interactive chat already emit
+// the reply alone.
+// ─────────────────────────────────────────────────────────────────
+
+/// How much filesystem authority an invocation gets. A reply-only test
+/// needs none; a behavioral test needs to write inside its scratch dir.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Authority {
+    ReadOnly,
+    Workdir,
+}
+
+/// The argv for driving one agent, plus whether its reply lands on stdout
+/// or in a file. Pure — building it takes no process, which is what makes
+/// the flag surface testable.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Invocation {
+    pub program: String,
+    pub args: Vec<String>,
+    /// Set when the agent writes its final message to a file rather than
+    /// stdout, so the caller reads that instead of the transcript.
+    pub reply_file: Option<PathBuf>,
+    pub cwd: Option<PathBuf>,
+}
+
+/// Build the invocation for an agent. `reply_to` is where an agent that
+/// cannot emit a bare reply on stdout should write it.
+pub fn invocation(
+    agent: Agent,
+    prompt: &str,
+    authority: Authority,
+    workdir: Option<&Path>,
+    reply_to: &Path,
+) -> Invocation {
+    let owned = |s: &str| s.to_string();
+    match agent {
+        Agent::Claude => Invocation {
+            program: owned("claude"),
+            args: vec![
+                owned("--print"),
+                owned("--dangerously-skip-permissions"),
+                prompt.to_string(),
+            ],
+            reply_file: None,
+            cwd: workdir.map(Path::to_path_buf),
+        },
+        Agent::Kiro => Invocation {
+            program: owned("kiro-cli"),
+            args: vec![
+                owned("chat"),
+                owned("--no-interactive"),
+                // Trust everything only where the test seeded a workdir to
+                // act in; a reply-only test gets an empty trust list.
+                match authority {
+                    Authority::Workdir => owned("--trust-all-tools"),
+                    Authority::ReadOnly => owned("--trust-tools="),
+                },
+                prompt.to_string(),
+            ],
+            reply_file: None,
+            cwd: workdir.map(Path::to_path_buf),
+        },
+        Agent::Codex => {
+            let mut args = vec![owned("exec")];
+            if let Some(dir) = workdir {
+                args.push(owned("--cd"));
+                args.push(dir.display().to_string());
+            }
+            args.push(owned("--sandbox"));
+            args.push(owned(match authority {
+                Authority::Workdir => "workspace-write",
+                Authority::ReadOnly => "read-only",
+            }));
+            // A seeded scratch dir may not be a git tree.
+            args.push(owned("--skip-git-repo-check"));
+            args.push(owned("-o"));
+            args.push(reply_to.display().to_string());
+            args.push(prompt.to_string());
+            Invocation {
+                program: owned("codex"),
+                args,
+                reply_file: Some(reply_to.to_path_buf()),
+                cwd: None,
+            }
+        }
+    }
+}
+
+/// Whether an agent's CLI is on PATH.
+pub fn agent_available(agent: Agent) -> bool {
+    let program = match agent {
+        Agent::Claude => "claude",
+        Agent::Kiro => "kiro-cli",
+        Agent::Codex => "codex",
+    };
+    std::process::Command::new("command")
+        .args(["-v", program])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+        || std::env::var_os("PATH").is_some_and(|paths| {
+            std::env::split_paths(&paths).any(|dir| dir.join(program).is_file())
+        })
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Assertions — how a reply or a workdir is scored.
+// ─────────────────────────────────────────────────────────────────
+
+/// What a test asserts against. A behavioral test inspects the workdir it
+/// seeded; a reply test scores the text. Which one applies is a property
+/// of the fixture, not of the kind.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Assertion {
+    /// Run the fixture's assert shell in the seeded workdir.
+    Behavioral { setup: String, assert: String },
+    /// Score the reply: a literal substring, a judged narrative, or both.
+    Reply {
+        substr: Option<String>,
+        narrative: Option<String>,
+    },
+}
+
+/// Decide what a given kind of a given fixture asserts.
+///
+/// An assert block makes the enact/integration kinds artefact-based; the
+/// announce-only kinds always score the reply, since the marker IS the
+/// assertion. For a marker-less skill an implicit reply test would prove
+/// nothing, so the marker is only added where the skill promises one.
+pub fn assertion_for(fixture: &Fixture, kind: Kind, announces: bool) -> Assertion {
+    let artefact_kind = matches!(kind, Kind::Enact | Kind::Integration);
+    if let (true, Some(assert)) = (artefact_kind, fixture.assert.as_ref()) {
+        return Assertion::Behavioral {
+            setup: fixture.setup.clone().unwrap_or_default(),
+            assert: assert.clone(),
+        };
+    }
+    if kind.announce_only() {
+        return Assertion::Reply {
+            substr: Some(marker_for(&fixture.skill)),
+            narrative: None,
+        };
+    }
+    let section = fixture.section_for(kind);
+    let mut substr = section.and_then(|s| s.substr.clone());
+    // An implicit reply test needs SOME proof the skill fired, and the
+    // marker is the only reply-level evidence available — but only for a
+    // skill that promises one.
+    if substr.is_none() && kind.reach() == Reach::Implicit && announces {
+        substr = Some(marker_for(&fixture.skill));
+    }
+    Assertion::Reply {
+        substr,
+        narrative: section.and_then(|s| s.narrative.clone()),
+    }
+}
+
+/// Score a reply against a literal substring, case-insensitively as the
+/// bash `grep -qiF` did.
+pub fn reply_contains(reply: &str, want: &str) -> bool {
+    reply.to_lowercase().contains(&want.to_lowercase())
 }
 
 #[cfg(test)]
@@ -1370,5 +1545,185 @@ FAIL — omits the guardrail entirely";
         let p = judge_prompt("q", "a", "n");
         assert!(p.contains(VERDICT_PLACEHOLDER));
         assert!(p.contains("q") && p.contains("a") && p.contains("n"));
+    }
+
+    // ── invocation ───────────────────────────────────────────────
+
+    /// Read-only means read-only for EVERY agent. The bash runner gave
+    /// codex `--sandbox read-only` and kiro an empty trust list but ran
+    /// claude with --dangerously-skip-permissions, so a fixture meant to
+    /// be read-only could still let claude edit the installed, symlinked
+    /// SKILL.md. Pinning the asymmetry here rather than leaving it to a
+    /// reading of three call sites.
+    ///
+    /// This test documents CURRENT behavior including that gap, so the
+    /// fix (specs/backlog/test-runner-sandbox-asymmetry.md) has something
+    /// to flip deliberately rather than drifting into place unnoticed.
+    #[test]
+    fn read_only_authority_is_asymmetric_across_agents_today() {
+        let reply = Path::new("/tmp/r");
+        let flags = |a: Agent| {
+            invocation(a, "p", Authority::ReadOnly, None, reply)
+                .args
+                .join(" ")
+        };
+        assert!(flags(Agent::Codex).contains("--sandbox read-only"));
+        assert!(flags(Agent::Kiro).contains("--trust-tools="));
+        // The outlier — see the backlog item.
+        assert!(flags(Agent::Claude).contains("--dangerously-skip-permissions"));
+    }
+
+    #[test]
+    fn workdir_authority_widens_only_where_the_agent_needs_it() {
+        let reply = Path::new("/tmp/r");
+        let dir = Path::new("/tmp/work");
+        let codex = invocation(Agent::Codex, "p", Authority::Workdir, Some(dir), reply);
+        assert!(codex.args.join(" ").contains("--sandbox workspace-write"));
+        assert!(codex.args.join(" ").contains("--cd /tmp/work"));
+
+        let kiro = invocation(Agent::Kiro, "p", Authority::Workdir, Some(dir), reply);
+        assert!(kiro.args.contains(&"--trust-all-tools".to_string()));
+        assert_eq!(kiro.cwd.as_deref(), Some(dir));
+    }
+
+    /// Codex writes its final message to a file; the transcript on stdout
+    /// must not be mistaken for the reply. The other two emit the reply
+    /// alone, so they have no reply file.
+    #[test]
+    fn only_codex_redirects_its_reply_to_a_file() {
+        let reply = Path::new("/tmp/last");
+        for agent in Agent::ALL {
+            let inv = invocation(*agent, "p", Authority::ReadOnly, None, reply);
+            assert_eq!(
+                inv.reply_file.is_some(),
+                *agent == Agent::Codex,
+                "{}",
+                agent.name()
+            );
+        }
+        let codex = invocation(Agent::Codex, "p", Authority::ReadOnly, None, reply);
+        assert!(codex.args.join(" ").contains("-o /tmp/last"));
+    }
+
+    #[test]
+    fn every_invocation_carries_the_prompt_and_the_right_program() {
+        let reply = Path::new("/tmp/r");
+        for (agent, program) in [
+            (Agent::Claude, "claude"),
+            (Agent::Kiro, "kiro-cli"),
+            (Agent::Codex, "codex"),
+        ] {
+            let inv = invocation(agent, "the-prompt", Authority::ReadOnly, None, reply);
+            assert_eq!(inv.program, program);
+            assert!(
+                inv.args.iter().any(|a| a == "the-prompt"),
+                "{} drops the prompt",
+                agent.name()
+            );
+        }
+    }
+
+    /// A seeded scratch dir may not be a git tree, so codex must skip the
+    /// check or every behavioral test fails for the wrong reason.
+    #[test]
+    fn codex_skips_the_git_repo_check() {
+        let inv = invocation(
+            Agent::Codex,
+            "p",
+            Authority::Workdir,
+            Some(Path::new("/tmp/w")),
+            Path::new("/tmp/r"),
+        );
+        assert!(inv.args.contains(&"--skip-git-repo-check".to_string()));
+    }
+
+    // ── assertion selection ──────────────────────────────────────
+
+    #[test]
+    fn an_assert_block_makes_enact_behavioral() {
+        let f = fx("skill: notes\n--- enact ---\ntask: t\n--- setup ---\ngit init\n--- assert ---\ntest -f x\n")
+            .unwrap();
+        match assertion_for(&f, Kind::Enact, true) {
+            Assertion::Behavioral { setup, assert } => {
+                assert!(setup.contains("git init"));
+                assert!(assert.contains("test -f x"));
+            }
+            other => panic!("expected behavioral, got {other:?}"),
+        }
+    }
+
+    /// Same fixture, same assert block: integration is behavioral too —
+    /// it is the implicit half of the same proof.
+    #[test]
+    fn integration_shares_the_behavioral_assertion() {
+        let f = fx("skill: notes\n--- enact ---\ntask: t\n--- assert ---\ntest -f x\n").unwrap();
+        assert_eq!(
+            assertion_for(&f, Kind::Enact, true),
+            assertion_for(&f, Kind::Integration, true)
+        );
+    }
+
+    #[test]
+    fn without_an_assert_block_enact_scores_the_reply() {
+        let f = fx("skill: notes\n--- enact ---\ntask: t\nexpect: narrative\n").unwrap();
+        match assertion_for(&f, Kind::Enact, true) {
+            Assertion::Reply { narrative, .. } => {
+                assert_eq!(narrative.as_deref(), Some("narrative"))
+            }
+            other => panic!("expected reply, got {other:?}"),
+        }
+    }
+
+    /// The announce-only kinds assert the marker and nothing else — it IS
+    /// the assertion, so a narrative would confuse what failed.
+    #[test]
+    fn announce_only_kinds_assert_the_marker() {
+        let f = fx("skill: notes\n--- enact ---\ntask: t\nexpect: n\n").unwrap();
+        for kind in [Kind::Activation, Kind::Discovery] {
+            match assertion_for(&f, kind, true) {
+                Assertion::Reply { substr, narrative } => {
+                    assert_eq!(substr.as_deref(), Some("[notes] applies"));
+                    assert!(narrative.is_none(), "{}", kind.name());
+                }
+                other => panic!("expected reply, got {other:?}"),
+            }
+        }
+    }
+
+    /// An implicit reply test needs the marker as its "did it fire" half —
+    /// but only where the skill promises one. For a marker-less skill,
+    /// asserting it would fail a correct answer.
+    #[test]
+    fn implicit_reply_test_adds_the_marker_only_when_promised() {
+        let f = fx("skill: kdevkit\n--- enact ---\ntask: t\nexpect: n\n").unwrap();
+        let with = assertion_for(&f, Kind::Integration, true);
+        let without = assertion_for(&f, Kind::Integration, false);
+        match (with, without) {
+            (Assertion::Reply { substr: a, .. }, Assertion::Reply { substr: b, .. }) => {
+                assert_eq!(a.as_deref(), Some("[kdevkit] applies"));
+                assert!(b.is_none(), "a marker-less skill must not be held to one");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// An explicit reply test never borrows the marker: its proof is the
+    /// narrative, and the prompt already named the path.
+    #[test]
+    fn explicit_reply_test_does_not_borrow_the_marker() {
+        let f = fx("skill: notes\n--- playback ---\ntask: q\nexpect: n\n").unwrap();
+        match assertion_for(&f, Kind::Playback, true) {
+            Assertion::Reply { substr, .. } => assert!(substr.is_none()),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn reply_matching_is_case_insensitive() {
+        assert!(reply_contains(
+            "The [Notes] Applies here",
+            "[notes] applies"
+        ));
+        assert!(!reply_contains("nothing relevant", "[notes] applies"));
     }
 }
