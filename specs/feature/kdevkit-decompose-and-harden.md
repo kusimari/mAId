@@ -585,6 +585,75 @@ undefended in the docs). So BMAD is strong evidence for the
 *mechanisms* and weak evidence for the *magnitudes*; Anthropic's
 context-rot material is the better citation for the latter.
 
+### Reviewer extension points — the two concrete schemas
+
+**Claude Code subagents** are the host-native primitive our
+dispatch already assumes, and the docs confirm the isolation
+property kdevkit's gate depends on:
+
+> Each subagent runs in its **own context window** with a custom
+> system prompt, specific tool access, and independent
+> permissions.
+
+Definition format — markdown + YAML frontmatter, at
+`.claude/agents/` (project) or `~/.claude/agents/` (user):
+
+```markdown
+---
+name: code-improver
+description: Scans files and suggests improvements… Use after
+  writing or modifying code.
+tools: Read, Grep, Glob
+model: sonnet
+---
+You are a code improvement specialist. …
+```
+
+Three points that matter for R3 below:
+
+- **Dispatch is by `description`** — "Claude uses each subagent's
+  description to decide when to delegate." Same mechanism, and
+  same failure mode, as skill discovery (`project.md` already
+  documents the description-budget problem).
+- **`tools:` is the safety floor made real.** A reviewer lens can
+  be declared `tools: Read, Grep, Glob` — no Write, no Edit —
+  which enforces kdevkit's "no write authority" briefing rule
+  mechanically rather than by prose.
+- **A project-level file overrides a user-level one of the same
+  name.** That is exactly the project-wins layering gastown does
+  with role directives, available natively — so "bring your own
+  reviewer" needs no new plugin system on hosts that have this.
+
+**CodeRabbit** shows the shape for *path-scoped* review rules,
+which is how a project expresses "this directory has different
+guidelines":
+
+```yaml
+reviews:
+  path_instructions:
+    - path: "app/api/**"        # minimatch glob
+      instructions: |
+        Verify auth and input sanitization on every handler.
+```
+
+Two adjacent mechanisms are worth noting. **Code guidelines**
+reads standards files a repo already keeps — "`AGENTS.md`,
+`.cursorrules`, and similar files" — picked up automatically;
+that is independent confirmation that a reviewer should read the
+repo's own convention files rather than requiring a bespoke
+config, which is precisely the fix for the folded-in Rule C.
+**Custom checks** define pass/fail conditions "evaluated on every
+review" — i.e. project-defined hard gates alongside advisory
+lenses. There is also a separate AST-grep instruction mechanism
+for "precise, syntax-aware review instructions" — the
+deterministic end of the spectrum, which for us belongs in the
+Quality Gate (linters), not the review panel.
+
+Their advice on *adding* rules matches Cursor's cadence and is
+worth honouring so the panel doesn't bloat: watch a few reviews
+first, then add instructions where something is consistently
+missed.
+
 ## Analysis — mapping findings onto kdevkit
 
 ### Finding 1 · The seams we already have are the right ones
@@ -608,6 +677,38 @@ closure**. That fourth phase is real and currently under-modelled —
 §7's Review Briefing + Agent-dev Review Gate is where a human
 enters and iterates, and it is the one phase whose loop-backs are
 driven by an external party rather than by the agent's own gates.
+
+### Finding 1b · What the split actually yields (measured)
+
+Section line counts in today's `SKILL.md`, grouped by the
+brief's proposed phases. This is the concrete answer to "what
+stays always-on":
+
+| Group | Sections | Lines |
+|---|---|---|
+| Session entry (detect, load, entry mode) | §1–§4 | ~229 |
+| Planning phase | §6 | ~176 |
+| Agentic dev (quality/test/code-review) | §7 minus briefing | ~194 |
+| Human code review | §7 briefing + prefix + gate | ~162 |
+| Closure | §8 | ~122 |
+| Cross-cutting | §9 | ~165 |
+| Initiative tier | §10 | ~91 |
+| Preamble + §5 framing | — | ~107 |
+
+Two things fall out:
+
+- **The human-review phase is already ~162 lines** — the Review
+  Briefing (101) plus the comment-prefix convention (52) plus the
+  Agent-dev gate (9). It is the second-largest phase and is
+  currently buried inside §7, which is why the brief is right to
+  name it a phase of its own. Note the repo has already had an
+  ordering bug here: the shrink backlog records that the Review
+  Briefing section "had to be physically moved to match execution
+  order."
+- **A dev-loop session needs ~194 + ~165 + entry ≈ 590 lines, not
+  1246.** Roughly half the always-on file is irrelevant to any
+  given phase. Under Cursor's 500-line ceiling, per-phase files
+  land in range; the monolith is 2.5× over.
 
 ### Finding 2 · Isolation is the missing half, not the split
 
@@ -672,6 +773,134 @@ grouping), not only a kdevkit prose change. The oh-my-* Team Mode
 tmux focus+grid layout is the precedent for what that dashboard
 looks like. This is a strong candidate for a **separate stream**.
 
+## Recommendation — the shape I'd propose
+
+Not yet agreed; this is the proposal to react to. Five moves,
+ordered so each is independently shippable and A/B-able.
+
+### R1 · Make the phase boundary a context boundary (the drift fix)
+
+Split `SKILL.md` by **stage**, not by tier, since stage is what
+changes within a session:
+
+```
+SKILL.md          always-on: detect, entry mode, lane classifier,
+                  phase router, §9 cross-cutting        (target <300)
+phases/plan.md    §6 planning + interviews trigger
+phases/dev.md     §7 quality/test/code-review + dev-time rules
+phases/review.md  briefing + comment-prefix + agent-dev gate
+phases/close.md   §8 closure
+tiers/initiative.md  §10 (loads only when an initiative is in play)
+setup.md / interviews.md  (unchanged)
+```
+
+The router in the always-on file resolves *which one* phase file
+to load and hands it to a **fresh agent**. Justification is
+strongest here: Anthropic's context-rot mechanism, BMAD v4's two
+rationales (length *and* role bleed), and gastown's three-lifetime
+separation all point the same way, and this repo's own fixtures
+already mirror these seams.
+
+**Deliberately not adopted:** a persistent master session that
+spawns and tracks children. gastown rejected exactly that
+("No coordinator — patrol steps + Dogs"; "the beads ARE the
+state"), and BMAD v6's `sprint-status.yaml` reached the same
+answer. The feature spec on disk should be the state; the "master
+session" is a router that reads it, not a supervisor that
+remembers.
+
+### R2 · A handoff record that is assembled, not narrated
+
+Each phase transition writes a handoff block into the feature
+spec, then the next phase starts fresh from it. Two rules make
+this a handoff rather than telephone, both borrowed:
+
+- **Extract-and-cite, never invent** (BMAD): every technical
+  detail carries its source, and absent guidance is stated as
+  absent rather than filled in.
+- **Mechanically collected where possible** (gastown's
+  `collectHandoffState()`): branch, modified files, unpushed
+  count, ticked plan items, and open findings are *read from git
+  and the spec*, with truncation caps — not recalled by the
+  outgoing agent. Judgement (what's left, what's risky) is the
+  only part the agent authors.
+
+This also satisfies §6's standing refusal to add a new artefact:
+the handoff lives as a section of the feature spec, not a new
+file. BMAD v6's 800–1500-token epic-context budget is a useful
+size target.
+
+### R3 · A reviewer panel with a project-owned registry (the hardening fix)
+
+Turn `code_review.reviewer` from singular to plural, keeping the
+existing `<ref>` grammar:
+
+```yaml
+code_review:
+  reviewers:                 # shipped defaults, each a lens
+    - lens: comment-hygiene  # "comments carry intent, not history"
+    - lens: security
+    - lens: project-idiom     # functional vs OO vs project style
+    - lens: correctness
+    - skill: my-team-reviewer # bring your own
+  aggregate: highest-severity # gastown's rule, not weighted scores
+```
+
+Three design calls, each with a source:
+
+- **Panel members are lenses, dispatched in parallel, each with a
+  mandated output contract** (gastown's legs + `## Verdict / ##
+  Must Fix / ## Should Fix / ## Observations`), then one synthesis
+  step. This directly fixes the observed 2026-07-15 miss, where a
+  generic reviewer scored 90/100 while missing an
+  authoring-convention violation it was never given.
+- **Aggregation is highest-severity-wins**, not a weighted mean —
+  a mean lets nine happy lenses drown one real security finding.
+  This is also the natural home for the per-category authority
+  that `kdevkit-code-review-gate.md` deferred to backlog: a
+  security FAIL hard-stops regardless of `authority: soft`.
+- **Extension is a layered override, project-wins** (gastown's
+  role directives): the project's `kdevkit` block can append a
+  reviewer, replace a shipped lens, or `skip` one — and mAId's
+  own architectural rule already forbids naming a specific skill,
+  so lenses are advertised roles, not products.
+
+The `project-idiom` lens is the one the brief specifically asks
+for (functional vs OO vs other), and it is the one that *must* be
+project-configurable rather than shipped with an opinion.
+
+**Cost control:** the ceremony lane (folded-in Rule A) scales the
+panel — a trivial-lane change gets one lens, a real feature gets
+the full panel. Otherwise N lenses × `retry_budget` is a real
+bill. Also adopt BMAD v6's scope rule: incidental findings get
+deferred rather than expanding the current diff, "optimizing for
+signal quality, not exhaustive recall."
+
+### R4 · A drift detector, not just a closure sweep
+
+kdevkit's only spec-vs-code reconciliation is §8.1, at closure,
+manually. spec-kit ships `/speckit.converge` — assess "the
+codebase against spec/plan/tasks and append remaining work as new
+tasks." Worth adding as a cheap mid-dev check, since decomposition
+*increases* the number of places the spec and code can diverge.
+Pairs with BMAD v6's failure-layer rule: fix at the layer where
+the failure entered, not where it surfaced.
+
+### R5 · Prose must stand alone; code may accelerate it
+
+On the backlog's option-2-vs-3 question: **do option 2 (prose
+split) first, and keep it self-sufficient.** BMAD v6 draws the
+line where I'd draw it — code owns what is "not judgment calls"
+(which phase, which file, which gates ran), prose owns the
+judgement. So a `kaimux`-side router is a legitimate accelerator
+but must not become a *requirement*, or kdevkit stops working for
+anyone driving it bare, and the "skills are plain markdown
+symlinks" deploy invariant breaks.
+
+The kaimux lineage work (Finding 4) is therefore a **sibling
+stream, not a blocker** — which makes this whole thing an
+initiative with ordered streams rather than one feature branch.
+
 ## Folded-in backlogs
 
 | Backlog | Disposition |
@@ -705,28 +934,59 @@ looks like. This is a strong candidate for a **separate stream**.
    critical-category override.
 5. **Panel cost.** N reviewers per slice multiplied by
    `retry_budget` is a real token bill. Does the ceremony lane
-   (Rule A) also scale the panel size?
+   (Rule A) also scale the panel size? *Proposed: yes — R3.*
 6. **Does the review panel ship as one skill or several?** The
    brief says "a skill which uses multiple reviewers" — so one
    dispatching skill with several internal lenses, plus a
-   project-extension point.
-7. **Is the kaimux lineage work in scope**, or a sibling stream
-   under a shared initiative?
+   project-extension point. Open sub-question: do the shipped
+   lenses ride *inside* that skill, or as separate
+   `.claude/agents/*.md`-style files the skill dispatches? The
+   latter is more host-native but less tool-agnostic, which cuts
+   against mAId's mission.
+7. **Is the kaimux lineage work in scope**, or a sibling stream?
+   *Proposed: sibling stream — R5.* Which makes the whole thing
+   an **initiative** with ordered streams rather than one feature
+   branch. This is the biggest scoping decision and it is yours.
 8. **How is the whole thing A/B'd?** The four `kdevkit-*.smoke`
    fixtures tri-tool, before and after. Budget for it up front —
    the shrink backlog's rule: "a refactor that can't be A/B'd
-   shouldn't ship."
+   shouldn't ship." Note `project.md` forbids agentic runs from
+   spending those credits, so the A/B is a hand-off to you at
+   each stream's Test Gate.
+9. **Does decomposition break the announce/verification
+   model?** `project.md` says kdevkit's evidence is "the
+   artefacts it leaves" rather than a per-turn marker. With four
+   agents in a chain, per-phase artefacts become the only trace
+   — so the handoff record (R2) doubles as the test surface.
+   Worth confirming the fixtures can still assert it.
+10. **Where does the ceremony-lane decision get recorded** so a
+    later phase agent doesn't re-litigate it? A fresh reviewer
+    that doesn't know the change was trivial-lane will apply the
+    full rubric. Probably part of the handoff record.
 
 ## Session Log
 
 <!-- Newest at top. -->
 
+- **2026-08-03 · Research complete; recommendation R1–R5
+  drafted.** Awaiting user reaction before any planning commit
+  beyond this analysis. Open questions 1–8 narrowed: Q1 answered
+  by measurement (Finding 1b), Q4 answered by gastown
+  (highest-severity-wins), Q2/Q3 answered in principle by BMAD v6
+  (code owns the mechanical, prose owns the judgement;
+  synthesize a briefing rather than shard). Q5–Q8 still open and
+  are the ones worth the user's time.
 - **2026-08-03 · Analysis session opened.** Worktree +
   branch created. Read `SKILL.md` (1246 lines), `project.md`,
   and four related backlogs. Deep research on spec-kit, Cursor
-  rules, Anthropic context engineering, and the oh-my-* harness
-  family; gastown / BMAD / reviewer-extension research in
-  flight. Recorded findings 1–4 above.
+  rules, Anthropic context engineering, the oh-my-* harness
+  family, gastown, BMAD v4/v6, Claude Code subagents, and
+  CodeRabbit. Recorded findings 1–4 above.
+- **Note on research method.** A fourth research thread on
+  multi-reviewer panels in the oh-my-* family did not return
+  within the session; its ground was covered by gastown's convoy
+  formulas and the subagent/CodeRabbit schemas above. Worth
+  re-running if the panel design needs more prior art.
 
 ## Decision Log
 
