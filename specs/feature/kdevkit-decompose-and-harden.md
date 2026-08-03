@@ -18,7 +18,10 @@ modes follow from that shape, and this feature addresses both:
   it. The fix is decomposition: the loops (project / initiative /
   feature) and the phases *within* the feature loop (plan → agentic
   dev → human review → closure) become independently loadable
-  contexts, each handed to a fresh agent.
+  **modules**, each handed to a fresh agent. Every module declares
+  the **question that admits it**, so a session's packing list is
+  *derived by answering questions* — and can be argued out with an
+  agent — rather than fixed by a router (R1).
 - **Soft gates.** The Code Review Gate dispatches one generic
   reviewer. Projects differ on what matters (comment hygiene,
   security, functional-vs-OO idiom), and there is no way for a
@@ -1020,8 +1023,8 @@ Split `SKILL.md` by **stage**, not by tier, since stage is what
 changes within a session:
 
 ```
-SKILL.md          always-on: detect, entry mode, lane classifier,
-                  phase router, §9 cross-cutting        (target <300)
+SKILL.md          always-on: detect, entry mode, the composition
+                  questions, §9 cross-cutting          (target <300)
 phases/plan.md    §6 planning + interviews trigger
 phases/dev.md     §7 quality/test/code-review + dev-time rules
 phases/review.md  briefing + comment-prefix + agent-dev gate
@@ -1030,20 +1033,91 @@ tiers/initiative.md  §10 (loads only when an initiative is in play)
 setup.md / interviews.md  (unchanged)
 ```
 
-The router in the always-on file resolves *which one* phase file
-to load and hands it to a **fresh agent**. Justification is
-strongest here: Anthropic's context-rot mechanism, BMAD v4's two
-rationales (length *and* role bleed), and gastown's three-lifetime
-separation all point the same way, and this repo's own fixtures
-already mirror these seams.
+Justification is strongest here: Anthropic's context-rot
+mechanism, BMAD v4's two rationales (length *and* role bleed), and
+gastown's three-lifetime separation all point the same way, and
+this repo's own fixtures already mirror these seams.
+
+#### Each module's header is the question that admits it
+
+**Not** a fixed router that maps state → file. Every module opens
+with the **question whose answer decides whether it composes in**,
+so the packing list for a session is *derived by answering
+questions*, never hardcoded. That makes the composition
+interrogable: hand the module set to an agent, walk the questions,
+and get the pack — or interrogate it yourself and override.
+
+So a module header carries its admission question, not a label:
+
+```markdown
+---
+module: phases/dev
+question: "Is code being written or changed right now?"
+admits_when: "yes — implementation work is in flight"
+skip_when: "no code has been written yet (→ phases/plan), or the
+            work is written and pushed and awaiting a human
+            (→ phases/review)"
+cost: ~194 lines
+---
+```
+
+Three properties this buys, each of which the alternatives lack:
+
+- **The pack is derivable, not decided in advance.** A router
+  encodes today's phase list; a question set answers *any*
+  composition, including ones we didn't anticipate ("resuming
+  mid-review on a branch whose plan changed" composes plan +
+  review without a router case for it).
+- **It's interactive by construction.** Because the header is a
+  question, you can ask an agent "which modules do I need?" and
+  push back on each answer, arriving at the packing list you
+  want. A router would have to be *edited* to be argued with.
+- **It's self-documenting and testable.** The question is the
+  spec for when the module applies, so a fixture can assert the
+  pack a scenario yields. A misfiring module is a wrong *answer*
+  to a visible question, not buried routing logic.
+
+**Design constraints on the questions**, or this degrades into
+another form of prose bloat:
+
+- **Answerable from cheap observable state** — branch name, git
+  status, spec section presence, the handoff record (R2). A
+  question needing the agent to read all four phase files to
+  answer has defeated the purpose.
+- **One question per module, phrased so "no" is the cheap
+  default.** Deny-by-default keeps the pack minimal; a module
+  argues its way *in*.
+- **Mutually intelligible, not mutually exclusive.** Two modules
+  may both admit (plan + dev during a mid-dev spec amendment).
+  Where they conflict, precedence is declared, mirroring Cursor's
+  nested-rules "more specific wins."
+- **Cost declared in the header** so a composition's context
+  budget is visible before it's assembled — the "attention
+  budget" made legible.
+
+This subsumes the ceremony-lane classifier (folded-in Rule A):
+the lane is just another admission question ("does this change
+have undetermined design?"), and its answer belongs in the
+handoff record so a later phase doesn't re-litigate it (open
+question 8).
+
+**Prior art, and where this goes further.** Cursor's four rule
+modes are the closest analogue — `Apply Intelligently` already
+means "the Agent decides based on `description`" — but a
+description is a *topic*, not a question, so it can't be
+interrogated or answered wrong-but-visibly. gastown's `gt prime`
+assembles context in a fixed order; BMAD v6's `discover-inputs`
+has load strategies per input. Neither exposes the admission
+criterion as a question you can argue with. This is the piece to
+get right, since it's also the growth-curve fix: a new workflow
+rule lands as a module with a question, not as always-on prose.
 
 **Deliberately not adopted:** a persistent master session that
 spawns and tracks children. gastown rejected exactly that
 ("No coordinator — patrol steps + Dogs"; "the beads ARE the
 state"), and BMAD v6's `sprint-status.yaml` reached the same
-answer. The feature spec on disk should be the state; the "master
-session" is a router that reads it, not a supervisor that
-remembers.
+answer. The feature spec on disk is the state; the composer reads
+it and answers questions — it does not remember.
 
 ### R2 · A handoff record that is assembled, not narrated
 
@@ -1195,12 +1269,21 @@ the failure entered, not where it surfaced.
 
 On the backlog's option-2-vs-3 question: **do option 2 (prose
 split) first, and keep it self-sufficient.** BMAD v6 draws the
-line where I'd draw it — code owns what is "not judgment calls"
-(which phase, which file, which gates ran), prose owns the
-judgement. So a `kaimux`-side router is a legitimate accelerator
-but must not become a *requirement*, or kdevkit stops working for
-anyone driving it bare, and the "skills are plain markdown
-symlinks" deploy invariant breaks.
+line where I'd draw it — code owns what is "not judgment calls,"
+prose owns the judgement.
+
+R1's question-headers put that line in a specific place, and it
+falls out cleanly: **answering an admission question is a
+judgement** (prose, and interrogable by design), while
+**collecting the state the questions are answered against is
+not** (git status, branch, spec sections, handoff record — code,
+or a plain shell one-liner). So a `kaimux`-side helper that
+gathers observable state and prints the candidate pack is a
+legitimate accelerator; it must never *become* the decision, or
+kdevkit stops working for anyone driving it bare and the "skills
+are plain markdown symlinks" deploy invariant breaks. The bare
+path is: read the questions, answer them yourself, load what
+admits.
 
 The kaimux lineage work (Finding 4) is therefore a **sibling
 stream, not a blocker** — which makes this whole thing an
@@ -1228,11 +1311,13 @@ inline on the PR** — one line each is enough ("D1: b", or
 The biggest call, and it shapes everything downstream.
 
 - **(a) Initiative, 3–4 ordered streams** — *my recommendation.*
-  (1) stage split + router, (2) handoff record, (3) reviewer panel
-  + eval, (4) kaimux session lineage. Each ships, gets A/B'd, and
-  squash-merges on its own. Fits §10's own trigger: sequential
-  dependency between branches, not just size — stream 3 genuinely
-  needs stream 1's dev-phase file to exist first.
+  (1) module split + composition questions, (2) handoff record,
+  (3) reviewer panel + eval, (4) kaimux session lineage. Each
+  ships, gets A/B'd, and squash-merges on its own. Fits §10's own
+  trigger: sequential dependency between branches, not just size —
+  stream 3 genuinely needs stream 1's dev module to exist first,
+  and stream 1's question-header convention is what streams 2–3
+  hang their own modules off.
 - **(b) One feature, decomposition only** — land R1+R2, file the
   panel and kaimux work back to backlog. Smallest diff, fastest
   evidence, but defers the hardening half of your brief.
@@ -1286,32 +1371,42 @@ Recorded for traceability; no answer needed unless you disagree.
 1. **What stays always-on after the split?** The shrink backlog
    flags §9's Conventional Commits, public-repo hygiene, and Review
    Gates as plausibly irreducible. Cursor's 500-line ceiling is the
-   target for the residual.
-2. **Prose-driven or code-driven phase transitions?** *Leaning
+   target for the residual. Note the always-on file now also
+   carries the composition questions themselves — cheap, but not
+   free, so the question set is part of that budget.
+2. **Do the composition questions live with their modules, or
+   collected in one index?** Per-module headers keep the question
+   next to what it admits (and survive a module being moved or
+   dropped); an index is one cheap read instead of N. *Leaning:
+   headers are canonical, with a generated index so the always-on
+   file doesn't have to open every module to ask.* That generation
+   is exactly the "not a judgement call" work R5 assigns to code,
+   and `build-tool` already validates content, so it has a home.
+3. **Prose-driven or code-driven phase transitions?** *Leaning
    prose-first (R5):* code owns what isn't a judgement call, but
    the prose must stand alone or the markdown-symlink deploy
    invariant breaks.
-3. **Where does the handoff record live?** *Leaning a section of
+4. **Where does the handoff record live?** *Leaning a section of
    the feature spec* — §6 already refused a `research.md`, so the
    bias is against new artefacts. BMAD v6's 800–1500-token budget
    is the size target.
-4. **Panel cost scaling.** Does the ceremony lane also scale panel
+5. **Panel cost scaling.** Does the ceremony lane also scale panel
    size? *Proposed: yes, gated on the LLM-free path-risk check.*
-5. **One skill or several?** *Leaning one dispatching skill with
+6. **One skill or several?** *Leaning one dispatching skill with
    internal lenses* + a project extension point. Shipped lenses as
    separate `.claude/agents/*.md` files would be more host-native
    but less tool-agnostic, which cuts against mAId's mission.
-6. **How is it A/B'd?** The four `kdevkit-*.smoke` fixtures
+7. **How is it A/B'd?** The four `kdevkit-*.smoke` fixtures
    tri-tool, before and after, 3 runs averaged. Note `project.md`
    forbids agentic runs from spending those credits — so the A/B is
    a hand-off to you at each stream's Test Gate, and I'll name the
    exact command.
-7. **Does decomposition break the verification model?**
+8. **Does decomposition break the verification model?**
    `project.md` says kdevkit's evidence is "the artefacts it
    leaves." With four agents chained, per-phase artefacts become
    the only trace — so the handoff record doubles as the test
    surface. To confirm against the fixtures.
-8. **Where does the ceremony-lane decision get recorded** so a
+9. **Where does the ceremony-lane decision get recorded** so a
    later phase agent doesn't re-litigate it? A fresh reviewer that
    doesn't know the change was trivial-lane would apply the full
    rubric. *Leaning: part of the handoff record.*
@@ -1345,6 +1440,18 @@ Recorded for traceability; no answer needed unless you disagree.
   rules, Anthropic context engineering, the oh-my-* harness
   family, gastown, BMAD v4/v6, Claude Code subagents, and
   CodeRabbit. Recorded findings 1–4 above.
+- **2026-08-03 · R1 reshaped: module headers carry their admission
+  question, not a label.** User steer — the composition should be
+  *derived* by answering questions and interrogable with an agent,
+  so a packing list can be argued out per session rather than fixed
+  by a router. Replaces the phase-router design. Adds the header
+  schema (`question` / `admits_when` / `skip_when` / `cost`), four
+  constraints on question design (cheap-to-answer, deny-by-default,
+  precedence over exclusivity, declared cost), and folds the
+  ceremony lane in as just another admission question. R5's
+  code/prose line moves accordingly: answering is judgement (prose),
+  collecting the state answered against is not (code). New open
+  question 2 on headers-vs-index.
 - **2026-08-03 · Panel research returned late; R3 revised.** The
   fourth thread (eight panel implementations + vendor configs)
   completed after the first summary and **changed two design
@@ -1360,6 +1467,17 @@ Recorded for traceability; no answer needed unless you disagree.
 ## Decision Log
 
 <!-- append: decision · rationale · alternatives rejected -->
+
+- **2026-08-03 · Module admission is a declared question, not a
+  router case.** Rationale: the packing list must be *derivable*
+  for compositions we didn't foresee, and interrogable — you can
+  hand the module set to an agent, walk the questions, and argue
+  the pack you want. A router encodes only today's phase list and
+  has to be *edited* to be disagreed with. Alternatives rejected:
+  (a) a state→file router in the always-on file — cheapest, but
+  fixed and opaque; (b) Cursor-style `description`-based
+  auto-attach — a topic is not a question, so a wrong admission
+  is invisible rather than a visibly wrong answer.
 
 - **2026-08-03 · Analysis captured in the feature file from the
   start, not in chat.** Rationale: user asked for it explicitly,
