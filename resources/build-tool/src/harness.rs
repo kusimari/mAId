@@ -372,6 +372,160 @@ pub fn skill_source(
     }
 }
 
+// ─────────────────────────────────────────────────────────────────
+// Prompt envelopes.
+//
+// An explicit prompt names the skill and the path it lives at, so the
+// test isolates the skill's content from whether it would have been
+// found. It deliberately does NOT quote the announce line: it tells the
+// agent to follow the skill's own instruction for opening a response, so
+// an agent that never read the file cannot emit the marker.
+//
+// An implicit prompt is the task alone — no skill name, no path, no
+// marker — so the skill can only apply if the agent recognised the task
+// and loaded it unprompted.
+// ─────────────────────────────────────────────────────────────────
+
+/// The self-announce line a skill declares, when it has one.
+pub fn marker_for(skill: &str) -> String {
+    format!("[{skill}] applies")
+}
+
+/// True when `skill` declares a self-announce line in its SKILL.md — i.e.
+/// when the marker is a contract we may assert.
+///
+/// Read from the skill itself rather than a list here, which would drift
+/// from it. The payoff is real for skills whose output a user then
+/// inspects and trusts; a workflow skill like kdevkit earns it
+/// differently — its evidence is the artefacts it leaves — so a skill
+/// without a marker skips the two announce-only kinds and is proven to
+/// have fired by its enact / integration artefacts instead.
+pub fn skill_announces(source: &Path, skill: &str) -> bool {
+    std::fs::read_to_string(source)
+        .map(|body| body.contains(&marker_for(skill)))
+        .unwrap_or(false)
+}
+
+/// Whether a kind can assert anything for this skill. An announce-only
+/// kind against a marker-less skill has nothing in the reply that a
+/// generally-capable model wouldn't also produce, so it is skipped with
+/// a reason rather than run as a vacuous pass.
+pub fn applicable(kind: Kind, source: &Path, skill: &str) -> Result<(), String> {
+    if kind.announce_only() && !skill_announces(source, skill) {
+        return Err(format!(
+            "{skill} declares no announce contract — artefacts prove it (see enact/integration)"
+        ));
+    }
+    Ok(())
+}
+
+/// Build the prompt for one test. `source` is the SKILL.md path an
+/// explicit prompt should name; implicit prompts ignore it.
+pub fn prompt(kind: Kind, skill: &str, source: &Path, task: &str) -> String {
+    match kind.reach() {
+        Reach::Explicit => format!(
+            "Load the `{skill}` skill from {} and follow its instructions —\n\
+             including its instruction for how to open a response that uses it.\n\
+             \n\
+             Then do this:\n\
+             {task}\n",
+            source.display()
+        ),
+        Reach::Implicit => format!("{task}\n"),
+    }
+}
+
+/// The task the two generated kinds fire on. `activation` asks the skill
+/// to describe itself; `discovery` needs a real task, which only an enact
+/// section supplies.
+pub fn generated_task(kind: Kind, fixture: &Fixture) -> Option<String> {
+    match kind {
+        Kind::Activation => Some("In one short sentence, say what this skill lets me do.".into()),
+        Kind::Discovery => fixture.enact.as_ref().map(|s| s.task.clone()),
+        _ => None,
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Dry-run structural checks.
+//
+// Run instead of calling an agent under --dry-run. These are the
+// assertions that were impossible when every fixture hand-wrote its own
+// paths: nothing could check that the codex run actually pointed at
+// codex's skills root.
+// ─────────────────────────────────────────────────────────────────
+
+/// Why a constructed prompt is structurally wrong. `Ok(())` means the
+/// prompt is well-formed for its kind.
+pub fn check_prompt(kind: Kind, skill: &str, source: &Path, prompt: &str) -> Result<()> {
+    match kind.reach() {
+        Reach::Explicit => explicit_carries_path(source, prompt),
+        Reach::Implicit => implicit_leaks_nothing(skill, prompt),
+    }
+}
+
+fn explicit_carries_path(source: &Path, prompt: &str) -> Result<()> {
+    let want = source.display().to_string();
+    if prompt.contains(&want) {
+        return Ok(());
+    }
+    Err(anyhow!("explicit prompt missing its own skill path {want}"))
+}
+
+/// An implicit prompt must not identify the skill it should trigger —
+/// otherwise the test measures instruction-following, not discovery.
+///
+/// The check is "does the skill's name appear at all", not a list of
+/// phrasings. A denylist of specific forms looked thorough and missed the
+/// obvious: `Run the kdevkit closure phase` named the skill outright and
+/// still reported "names no skill".
+///
+/// Two carve-outs, both about words that are ordinary English as well as
+/// skill names. A name that is a common noun ("notes", "browser") may
+/// appear in a longer domain phrase the task legitimately needs — an
+/// "Obsidian-shaped notes vault" is scene-setting, not a skill
+/// reference — so a bare common-noun name is allowed, but the skill's
+/// documented *invocation verb* is not: `add note in ./ for:` IS the
+/// skill's API, and pasting it in makes the prompt a call rather than a
+/// task. `SKILL.md` and the per-agent skills roots are always leaks.
+fn implicit_leaks_nothing(skill: &str, prompt: &str) -> Result<()> {
+    let lower = prompt.to_lowercase();
+    let leak = if prompt.contains(&marker_for(skill)) {
+        Some("the announce marker".to_string())
+    } else if prompt.contains("SKILL.md") {
+        Some("a SKILL.md path".to_string())
+    } else if let Some(agent) = Agent::ALL
+        .iter()
+        .find(|a| prompt.contains(&format!("/.{}/", a.name())))
+    {
+        Some(format!("a {} skills path", agent.name()))
+    } else if skill.contains('-') && lower.contains(skill) {
+        // A hyphenated name is never ordinary English, so any mention leaks.
+        Some(format!("the skill name '{skill}'"))
+    } else if lower.contains(&format!("{skill} skill")) {
+        Some(format!("the phrase '{skill} skill'"))
+    } else {
+        invocations(skill)
+            .iter()
+            .find(|verb| lower.contains(*verb))
+            .map(|verb| format!("the skill's invocation verb '{verb}'"))
+    };
+
+    match leak {
+        None => Ok(()),
+        Some(what) => Err(anyhow!("implicit prompt leaks {what}")),
+    }
+}
+
+/// The command syntax a skill documents as its entry point. Empty for a
+/// skill invoked by intent alone rather than a fixed verb.
+fn invocations(skill: &str) -> &'static [&'static str] {
+    match skill {
+        "notes" => &["add note", "close notes", "merge buffer"],
+        _ => &[],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -627,6 +781,232 @@ mod tests {
                 agent.name()
             );
             seen.push(p);
+        }
+    }
+
+    // ── prompt envelopes ─────────────────────────────────────────
+
+    #[test]
+    fn explicit_prompt_names_the_skill_and_its_path() {
+        let p = prompt(
+            Kind::Enact,
+            "notes",
+            Path::new("/x/notes/SKILL.md"),
+            "do it",
+        );
+        assert!(p.contains("`notes`"));
+        assert!(p.contains("/x/notes/SKILL.md"));
+        assert!(p.contains("do it"));
+    }
+
+    /// Quoting the marker would let an agent that never opened the file
+    /// emit it, so the envelope points at the skill's own instruction
+    /// instead of restating it.
+    #[test]
+    fn explicit_prompt_never_quotes_the_announce_marker() {
+        let p = prompt(Kind::Enact, "notes", Path::new("/x/SKILL.md"), "do it");
+        assert!(!p.contains(&marker_for("notes")));
+    }
+
+    #[test]
+    fn implicit_prompt_is_the_task_alone() {
+        let p = prompt(
+            Kind::Integration,
+            "notes",
+            Path::new("/x/SKILL.md"),
+            "do it",
+        );
+        assert_eq!(p.trim(), "do it");
+    }
+
+    /// Every explicit kind carries a path and every implicit one does
+    /// not — the property the leak checks depend on.
+    #[test]
+    fn reach_decides_whether_a_path_appears() {
+        let src = Path::new("/x/notes/SKILL.md");
+        for kind in Kind::ALL {
+            let p = prompt(*kind, "notes", src, "do it");
+            let carries = p.contains("/x/notes/SKILL.md");
+            assert_eq!(carries, kind.reach() == Reach::Explicit, "{}", kind.name());
+        }
+    }
+
+    #[test]
+    fn activation_synthesises_a_task_and_discovery_borrows_the_enact_one() {
+        let f = fx("skill: notes\n--- enact ---\ntask: real task\nexpect: n\n").unwrap();
+        assert!(generated_task(Kind::Activation, &f).is_some());
+        assert_eq!(
+            generated_task(Kind::Discovery, &f).as_deref(),
+            Some("real task")
+        );
+        assert!(generated_task(Kind::Enact, &f).is_none());
+    }
+
+    // ── dry-run checks ───────────────────────────────────────────
+
+    #[test]
+    fn explicit_check_requires_that_agents_own_path() {
+        let src = Path::new("/home/u/.codex/skills/notes/SKILL.md");
+        let good = prompt(Kind::Enact, "notes", src, "t");
+        assert!(check_prompt(Kind::Enact, "notes", src, &good).is_ok());
+
+        let wrong = prompt(
+            Kind::Enact,
+            "notes",
+            Path::new("/home/u/.claude/skills/notes/SKILL.md"),
+            "t",
+        );
+        assert!(check_prompt(Kind::Enact, "notes", src, &wrong).is_err());
+    }
+
+    #[test]
+    fn implicit_check_catches_the_announce_marker() {
+        let leak = format!("do it and say {}", marker_for("notes"));
+        assert!(check_prompt(Kind::Integration, "notes", Path::new("/x"), &leak).is_err());
+    }
+
+    #[test]
+    fn implicit_check_catches_a_skill_md_mention() {
+        assert!(check_prompt(
+            Kind::Integration,
+            "notes",
+            Path::new("/x"),
+            "read the SKILL.md first"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn implicit_check_catches_every_agents_skills_root() {
+        for agent in Agent::ALL {
+            let leak = format!("look in ~/.{}/skills for it", agent.name());
+            assert!(
+                check_prompt(Kind::Integration, "notes", Path::new("/x"), &leak).is_err(),
+                "{} root not caught",
+                agent.name()
+            );
+        }
+    }
+
+    /// A hyphenated name is never ordinary English, so any mention leaks —
+    /// including mid-sentence, which a phrase denylist missed.
+    #[test]
+    fn implicit_check_catches_a_hyphenated_name_anywhere() {
+        for text in [
+            "use writing-style on this",
+            "Run the writing-style formatter",
+            "WRITING-STYLE please",
+        ] {
+            assert!(
+                check_prompt(Kind::Integration, "writing-style", Path::new("/x"), text).is_err(),
+                "{text:?}"
+            );
+        }
+    }
+
+    /// The carve-out: a common-noun name in a domain phrase is
+    /// scene-setting, not a skill reference.
+    #[test]
+    fn implicit_check_allows_a_common_noun_name_in_a_domain_phrase() {
+        assert!(check_prompt(
+            Kind::Integration,
+            "notes",
+            Path::new("/x"),
+            "The current directory is an Obsidian-shaped notes vault."
+        )
+        .is_ok());
+    }
+
+    /// …but the phrase "<name> skill" is a reference, not scene-setting.
+    #[test]
+    fn implicit_check_catches_the_name_skill_phrasing() {
+        assert!(check_prompt(
+            Kind::Integration,
+            "notes",
+            Path::new("/x"),
+            "use the notes skill"
+        )
+        .is_err());
+    }
+
+    /// Pasting a skill's own command syntax is the same leak as naming
+    /// it: the prompt becomes a call rather than a task.
+    #[test]
+    fn implicit_check_catches_a_documented_invocation_verb() {
+        for text in ["add note in ./ for: x", "close notes in ./", "merge buffer"] {
+            assert!(
+                check_prompt(Kind::Integration, "notes", Path::new("/x"), text).is_err(),
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn implicit_check_passes_a_clean_task() {
+        assert!(check_prompt(
+            Kind::Integration,
+            "kdevkit",
+            Path::new("/x"),
+            "Plan a feature for adding a login page."
+        )
+        .is_ok());
+    }
+
+    // ── announce contract ────────────────────────────────────────
+
+    /// Read from the skill file, not a list here — a list would drift
+    /// from the content it describes.
+    #[test]
+    fn skill_announces_reads_the_marker_from_the_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let with = dir.path().join("with.md");
+        let without = dir.path().join("without.md");
+        std::fs::write(&with, "body\nYou begin with [notes] applies\n").unwrap();
+        std::fs::write(&without, "body with no marker\n").unwrap();
+        assert!(skill_announces(&with, "notes"));
+        assert!(!skill_announces(&without, "notes"));
+        // A marker for a different skill is not this skill's contract.
+        assert!(!skill_announces(&with, "kdevkit"));
+    }
+
+    #[test]
+    fn missing_skill_file_declares_no_contract() {
+        assert!(!skill_announces(
+            Path::new("/nonexistent/SKILL.md"),
+            "notes"
+        ));
+    }
+
+    /// The two announce-only kinds are skipped for a marker-less skill:
+    /// nothing in the reply would distinguish "the skill fired" from "the
+    /// model is capable". The other three still run.
+    #[test]
+    fn announce_only_kinds_skip_a_marker_less_skill() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let src = dir.path().join("s.md");
+        std::fs::write(&src, "a workflow skill, no marker\n").unwrap();
+
+        for kind in Kind::ALL {
+            let verdict = applicable(*kind, &src, "kdevkit");
+            assert_eq!(
+                verdict.is_err(),
+                kind.announce_only(),
+                "{} applicability wrong",
+                kind.name()
+            );
+        }
+        assert!(applicable(Kind::Activation, &src, "kdevkit")
+            .unwrap_err()
+            .contains("artefacts prove it"));
+    }
+
+    #[test]
+    fn every_kind_applies_to_a_skill_that_announces() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let src = dir.path().join("s.md");
+        std::fs::write(&src, "opens with [notes] applies\n").unwrap();
+        for kind in Kind::ALL {
+            assert!(applicable(*kind, &src, "notes").is_ok(), "{}", kind.name());
         }
     }
 }
