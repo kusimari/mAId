@@ -2,16 +2,20 @@
 //! the `--agent` token, then dispatch into a stage. All the work lives
 //! in the pipeline; see `lib.rs` for the crate's shape.
 //!
-//! Invoked via the project's Justfile:
+//! Invoked via the project's Justfile, in pipeline order:
+//!   just resources::check-skills [agent]      verify each skill from the checkout (no install needed)
 //!   just resources::install-skills [agent]    create the $HOME-facing symlinks (after content checks)
 //!   just resources::uninstall-skills [agent]  remove the managed symlinks
 //!   just resources::status-skills [agent]     report each managed symlink's current state
-//! An optional `--agent <claude|kiro|codex>` scopes any of the three
-//! to one coding agent; the default is all of them.
+//!   just resources::smoke-skills [agent]      verify against the deployed tree
+//!   just resources::verify-skills [agent]     both verification stages
+//! An optional `--agent <claude|kiro|codex>` scopes any of them to one
+//! coding agent (the verification verbs take a comma list); the default
+//! is all of them.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use build_tool::harness::{Selection, Stage};
-use build_tool::shared::{home_dir, repo_root, validate_agent, validate_agents, UsageError};
+use build_tool::shared::{home_dir, repo_root, usage, validate_agent, validate_agents, UsageError};
 use build_tool::stages;
 use clap::{Parser, Subcommand};
 use std::path::Path;
@@ -57,6 +61,9 @@ enum Cmd {
     /// Verify skills AFTER install, from the deployed tree: the kinds
     /// where the agent must find the skill among everything installed.
     Smoke(VerifyArgs),
+    /// Both stages: check, then smoke. Runs the second even when the
+    /// first reports failures, so one sweep is one report.
+    Verify(VerifyArgs),
     /// Validate content and create/refresh $HOME-facing symlinks.
     Install {
         /// Plan without making changes.
@@ -137,14 +144,47 @@ fn run(cli: Cli) -> Result<u8> {
         Cmd::Status { agent } => {
             stages::cmd_status(&home, &root, validate_agent(agent.as_deref())?)
         }
-        Cmd::Check(args) => verify(Stage::Check, args, &home, &root),
-        Cmd::Smoke(args) => verify(Stage::Smoke, args, &home, &root),
+        Cmd::Check(args) => verify(Stage::Check, args, &home, &root, false),
+        Cmd::Smoke(args) => verify(Stage::Smoke, args, &home, &root, false),
+        Cmd::Verify(args) => {
+            // Both stages, and the second runs even when the first fails:
+            // a 40-minute sweep that stops a third of the way in is a
+            // different tool from one that reports everything. The
+            // check-passes/smoke-fails split is the diagnostic this
+            // feature is largely justified by, so both halves must run.
+            let check = verify(Stage::Check, clone_args(&args), &home, &root, true)?;
+            let smoke = verify(Stage::Smoke, args, &home, &root, true)?;
+            Ok(check.max(smoke))
+        }
+    }
+}
+
+/// `Verify` runs both stages, so its arguments are consumed twice.
+fn clone_args(a: &VerifyArgs) -> VerifyArgs {
+    VerifyArgs {
+        fixture: a.fixture.clone(),
+        kind: a.kind.clone(),
+        agent: a.agent.clone(),
+        dry_run: a.dry_run,
+        stressed: a.stressed,
     }
 }
 
 /// Both verification stages, which differ only in their `Stage`.
-fn verify(stage: Stage, args: VerifyArgs, home: &Path, root: &Path) -> Result<u8> {
-    let selection = Selection::resolve(
+/// `both_stages_run` is set by `verify`, which tolerates a `--kind` this
+/// stage does not own because the other stage will run it.
+fn verify(
+    stage: Stage,
+    args: VerifyArgs,
+    home: &Path,
+    root: &Path,
+    both_stages_run: bool,
+) -> Result<u8> {
+    let resolve = match both_stages_run {
+        true => Selection::resolve_for_both,
+        false => Selection::resolve,
+    };
+    let selection = resolve(
         stage,
         args.fixture.as_deref(),
         args.kind.as_deref(),
@@ -154,6 +194,10 @@ fn verify(stage: Stage, args: VerifyArgs, home: &Path, root: &Path) -> Result<u8
         .stressed
         .then(|| std::fs::read_to_string(root.join("resources/tests/conversational-stream.txt")))
         .transpose()
-        .context("--stressed needs resources/tests/conversational-stream.txt")?;
+        .map_err(|e| {
+            usage(format!(
+                "--stressed needs resources/tests/conversational-stream.txt: {e}"
+            ))
+        })?;
     stages::cmd_verify(home, root, &selection, args.dry_run, stress.as_deref())
 }

@@ -1026,6 +1026,29 @@ impl Selection {
         kinds: Option<&str>,
         agents: Option<Vec<Agent>>,
     ) -> Result<Selection> {
+        Selection::resolve_scoped(stage, fixture, kinds, agents, false)
+    }
+
+    /// As `resolve`, but for `verify`, which runs both stages: a `--kind`
+    /// naming only the *other* stage's kinds leaves this stage with
+    /// nothing to do, which is a scoped-away no-op rather than the error a
+    /// single-stage verb must raise.
+    pub fn resolve_for_both(
+        stage: Stage,
+        fixture: Option<&str>,
+        kinds: Option<&str>,
+        agents: Option<Vec<Agent>>,
+    ) -> Result<Selection> {
+        Selection::resolve_scoped(stage, fixture, kinds, agents, true)
+    }
+
+    fn resolve_scoped(
+        stage: Stage,
+        fixture: Option<&str>,
+        kinds: Option<&str>,
+        agents: Option<Vec<Agent>>,
+        both_stages_run: bool,
+    ) -> Result<Selection> {
         let owned: Vec<Kind> = Kind::ALL
             .iter()
             .copied()
@@ -1044,7 +1067,24 @@ impl Selection {
                 if asked.is_empty() {
                     return Err(usage("--kind listed no kinds"));
                 }
-                if let Some(wrong) = asked.iter().find(|k| k.stage() != stage) {
+                // Under `verify` both stages run, so each takes its own
+                // half of the list and the other stage's kinds are scoped
+                // away — including all of them, which leaves this stage a
+                // no-op rather than an error.
+                if both_stages_run {
+                    return Ok(Selection {
+                        stage,
+                        fixture: fixture.map(str::to_string),
+                        kinds: asked.into_iter().filter(|k| k.stage() == stage).collect(),
+                        agents: agents.unwrap_or_else(|| Agent::ALL.to_vec()),
+                    });
+                }
+                // A single-stage verb must say why rather than run zero
+                // tests and report success.
+                let misplaced = (!both_stages_run)
+                    .then(|| asked.iter().find(|k| k.stage() != stage))
+                    .flatten();
+                if let Some(wrong) = misplaced {
                     return Err(usage(format!(
                         "kind '{}' belongs to `{}`, not `{stage}` — it is {} reach, so it needs {}",
                         wrong.name(),
@@ -2389,5 +2429,36 @@ FAIL — omits the guardrail entirely";
             misplaced.downcast_ref::<UsageError>().is_some(),
             "{misplaced}"
         );
+    }
+
+    /// Under `verify` both stages run, so a --kind naming only the other
+    /// stage's kinds must scope this stage away rather than error — the
+    /// other stage runs those tests.
+    #[test]
+    fn a_kind_from_the_other_stage_scopes_this_one_away_rather_than_failing() {
+        // Single-stage `check` rejects it outright, naming why...
+        assert!(Selection::resolve(Stage::Check, None, Some("discovery"), None).is_err());
+        // ...but under `verify` the check half is simply empty, because
+        // the smoke half runs it.
+        let check =
+            Selection::resolve_for_both(Stage::Check, None, Some("discovery"), None).unwrap();
+        assert!(check.kinds.is_empty());
+        let smoke =
+            Selection::resolve_for_both(Stage::Smoke, None, Some("discovery"), None).unwrap();
+        assert_eq!(smoke.kinds, vec![Kind::Discovery]);
+    }
+
+    /// A mixed list is legitimate under `verify`: each stage takes its own
+    /// half rather than one of them erroring on the other's kinds.
+    #[test]
+    fn a_mixed_kind_list_splits_across_the_two_stages() {
+        let check =
+            Selection::resolve_for_both(Stage::Check, None, Some("enact,discovery"), None).unwrap();
+        let smoke =
+            Selection::resolve_for_both(Stage::Smoke, None, Some("enact,discovery"), None).unwrap();
+        assert_eq!(check.kinds, vec![Kind::Enact]);
+        assert_eq!(smoke.kinds, vec![Kind::Discovery]);
+        // Between them they cover everything asked for, exactly once.
+        assert_eq!(check.kinds.len() + smoke.kinds.len(), 2);
     }
 }

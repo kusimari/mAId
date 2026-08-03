@@ -2,10 +2,13 @@
 //! previous one produced:
 //!
 //!   1 content — resources/content/ → a valid skill
-//!   2 install — a valid skill → $HOME symlinks
+//!   2 check   — that skill, verified in isolation from the CHECKOUT
+//!   3 install — a valid skill → $HOME symlinks
+//!   4 smoke   — the DEPLOYED skill, verified against everything installed
 //!
-//! Reads `shared` for the registry, agents, and roots; nothing here
-//! reaches back into the CLI.
+//! Stages 2 and 4 are the same mechanism (see `harness`) pointed at the
+//! two sides of install. Reads `shared` for the registry, agents, and
+//! roots; nothing here reaches back into the CLI.
 
 use crate::harness::{
     agent_available, applicable, assertion_for, check_prompt, detect_leak, dump_path,
@@ -79,7 +82,7 @@ fn check_skill_frontmatter(content: &str) -> Result<(), String> {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Stage 2 · plan — what is at the home path, and what should be.
+// Stage 3 · install/plan — what is at the home path, and what should be.
 //
 // Pure: every verb below asks `plan_one()` what it sees and decides the
 // action. Nothing here mutates the filesystem, which is what makes the
@@ -182,7 +185,7 @@ fn ensure_parent(p: &Path) -> io::Result<()> {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Stage 2 · apply — the mutations.
+// Stage 3 · install/apply — the mutations.
 //
 // The three verbs, each walking the selected registry rows, expanding
 // them to concrete links, and acting on plan_one's verdict. `agent` is
@@ -391,6 +394,14 @@ pub fn cmd_verify(
     dry_run: bool,
     stressed: Option<&str>,
 ) -> Result<u8> {
+    // Under `verify`, a --kind naming only the other stage's kinds leaves
+    // this stage with nothing to do. That is a scoped-away no-op, not a
+    // failure — the other stage runs the tests.
+    if selection.kinds.is_empty() {
+        println!("no {} kinds selected", selection.stage);
+        return Ok(0);
+    }
+
     let fixtures = load_fixtures(checkout, selection)?;
     if fixtures.is_empty() {
         return Err(anyhow!(
@@ -625,6 +636,10 @@ fn run_reply(
         Err(e) => return Outcome::Fail(format!("{} invocation failed: {e}", agent.name())),
     };
 
+    // Bash printed a 200-char head on both common reply failures; without
+    // it the two most frequent outcomes give the reader nothing to look
+    // at, while the rarer unparseable case gets a whole file.
+    let head: String = reply.chars().take(200).collect();
     let mut dump = None;
     let verdict = match (narrative, judge) {
         (Some(want), Some(judge)) => {
@@ -645,7 +660,10 @@ fn run_reply(
         (Some(_), None) => return Outcome::Fail("no judge available".into()),
         (None, _) => None,
     };
-    score_reply(&reply, substr, verdict.as_ref(), dump.as_deref())
+    match score_reply(&reply, substr, verdict.as_ref(), dump.as_deref()) {
+        Outcome::Fail(why) => Outcome::Fail(format!("{why}\n  reply head: {head}...")),
+        other => other,
+    }
 }
 
 /// Seed a scratch workdir, run the agent inside it, then run the fixture's

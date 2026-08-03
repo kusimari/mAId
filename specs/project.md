@@ -210,8 +210,9 @@ mAId/
 │   ├── browser/            browser-control MCP (not symlinked — runnable)
 │   │   ├── launch          allowlist-enforcing launcher; enters flake, execs chrome-devtools-mcp
 │   │   └── manage          data-driven MCP registrar (MCP_AGENTS table: claude/codex global, kiro per-sub-agent)
-│   └── tests/              bash fixture-runner (drives claude / kiro / codex against installed content)
+│   └── tests/              fixtures + the attended browser test (the runner itself is in build-tool)
 │       ├── browser-functional   ATTENDED test: drives real Chrome, asserts off-list blocked
+│       ├── conversational-stream.txt  the --stressed prefix
 │       └── skills/<name>.smoke   fixtures: skill + playback/enact sections (runner owns the five kinds)
 ├── kaimux/                 tmux-pane orchestrator for coding-agent sessions
 │   ├── Justfile            `kaimux::*` verb surface (build/test/integration)
@@ -317,17 +318,20 @@ non-skill output. A **workflow** skill earns that differently:
 `kdevkit`'s evidence is the artefacts it leaves (phase-prefixed
 commits, a feature spec, gate-shaped PR bodies), so a per-turn stamp
 across a long session would be noise. The runner therefore reads the
-contract from the installed `SKILL.md` rather than assuming it; a
+contract from the skill itself rather than assuming it; a
 skill without one skips activation/discovery and is proven to fire by
-its `enact` / `integration` artefacts instead.
+its `enact` / `integration` artefacts instead. The contract is read from
+the **checkout** copy, which is the same file the deployed symlink
+resolves to, so both stages agree on whether a marker is promised.
 
 The pair is diagnostic. When a skill's explicit test passes and its
 implicit counterpart fails, the fault is triggering, not content — no
 bisection needed. `activation` and `discovery` are **generated** by the
 runner from a fixture's `skill:` field, so no fixture authors them and
-none writes a skill path (the per-agent paths live only in the runner's
-`skill_path`, mirroring build-tool's `REGISTRY`; hand-copying them into
-prompts is what let them drift out of sync per fixture).
+none writes a skill path. The per-agent paths are derived from
+`REGISTRY` by `Agent::installed_skill`, so there is one definition;
+hand-copying them into prompts is what let them drift out of sync per
+fixture.
 
 **What a new skill is expected to carry.** At minimum one `enact`
 section per load-bearing behavior — which also produces its

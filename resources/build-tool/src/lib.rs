@@ -11,8 +11,11 @@
 //! section comments rather than a directory. In place today:
 //!
 //!   main.rs     the shim: clap surface + dispatch
+//!   lib.rs      this file: module wiring and the crate's shape
 //!   shared.rs   vocabulary every stage speaks (agents, registry, roots)
-//!   stages.rs   the pipeline: content, then install
+//!   harness.rs  driving an agent and scoring the reply; used by the two
+//!               verification stages, owned by neither
+//!   stages.rs   the pipeline: content, check, install, smoke
 //!
 //! Dependencies run one direction — later stages may read earlier ones
 //! and the shared vocabulary, never the reverse — which is readable off

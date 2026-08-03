@@ -83,15 +83,13 @@ verify-skills-one name agent="":
 verify-skills-kind kind agent="":
     #!/usr/bin/env bash
     set -uo pipefail
-    for stage in check smoke; do
-      if cargo run -p build-tool --release --quiet -- "$stage" --kind "{{ kind }}" \
-           {{ if agent != "" { "--agent " + agent } else { "" } }} 2>/tmp/vk.err; then
-        exit 0
-      fi
-      grep -q "belongs to" /tmp/vk.err || { cat /tmp/vk.err >&2; exit 1; }
-    done
-    cat /tmp/vk.err >&2
-    exit 2
+    # Both stages are attempted because the binary owns the kind -> stage
+    # mapping; the stage that does not own this kind reports a no-op and
+    # exits 0. Output is not redirected — report() splits FAIL headers
+    # (stderr) from their detail lines (stdout), so capturing one stream
+    # would print them unpaired.
+    cargo run -p build-tool --release --quiet -- verify --kind "{{ kind }}" \
+      {{ if agent != "" { "--agent " + agent } else { "" } }}
 
 # Construct every prompt and check it structurally without calling an
 # agent — explicit prompts must carry that agent's own skill path,
