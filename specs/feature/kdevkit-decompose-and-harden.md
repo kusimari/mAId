@@ -1215,63 +1215,117 @@ initiative with ordered streams rather than one feature branch.
 | `kdevkit-durable-facts-to-repo-not-agent-memory` | **Folds in** — a cross-cutting rule that must survive decomposition, so it lands in whatever stays always-on. Decomposition raises its stakes: more agents = more places to leak a fact into private memory. |
 | `kreviewkit-playback-layer-unverified` | Adjacent; note only. The human-review phase is this feature's territory, so verify coverage there should be checked. |
 
-## Open questions
+## Decisions needed from you
 
-<!-- To resolve during shaping, before the plan commits. -->
+Three blocking choices. Everything else I can resolve. **Answer
+inline on the PR** — one line each is enough ("D1: b", or
+"D1: a but drop stream 4").
+
+---
+
+### D1 · Scope — one feature, or an initiative with streams?
+
+The biggest call, and it shapes everything downstream.
+
+- **(a) Initiative, 3–4 ordered streams** — *my recommendation.*
+  (1) stage split + router, (2) handoff record, (3) reviewer panel
+  + eval, (4) kaimux session lineage. Each ships, gets A/B'd, and
+  squash-merges on its own. Fits §10's own trigger: sequential
+  dependency between branches, not just size — stream 3 genuinely
+  needs stream 1's dev-phase file to exist first.
+- **(b) One feature, decomposition only** — land R1+R2, file the
+  panel and kaimux work back to backlog. Smallest diff, fastest
+  evidence, but defers the hardening half of your brief.
+- **(c) One feature, everything** — biggest diff on the repo's
+  most critical skill, and an A/B regression becomes hard to
+  attribute to a cause. I'd argue against.
+
+### D2 · Does the 0–100 score survive?
+
+Today the gate is `score >= threshold`. The panel research says a
+numeric/rich verdict makes the same diff "flap between labels
+across runs" because the model is running a soft classifier, and
+every panel implementation surveyed uses severities instead.
+
+- **(a) Retire the score for severities** — *my recommendation.*
+  `fail_on: high` + strictest-wins, computed in code. **Breaking
+  change** to the `kdevkit` block (`threshold` disappears), so it
+  needs a migration note and a `project.md` edit here.
+- **(b) Keep the score, add severities alongside** — lenses report
+  severities, synthesis still emits a score. Non-breaking, existing
+  configs keep working, but retains the mechanism the evidence
+  warns about.
+- **(c) Keep the score as-is** — least churn; leaves the known
+  flapping problem in the one gate that's supposed to be the
+  hardening.
+
+### D3 · Panel shape — how do lenses actually run?
+
+- **(a) Three named perspectives inside one agent** — *my
+  recommendation.* correctness / security / comment-hygiene, with
+  the mandated `## What's Missing` contract. This is the shape the
+  only near-controlled A/B actually supports ("structured output
+  templates are the active ingredient"), and it costs ~1 dispatch
+  instead of N. Fan out later, per lens, where independence is
+  proven.
+- **(b) Fan out N parallel subagents now** — closer to gastown's
+  convoy, genuinely independent contexts, findings to files. But
+  N × `retry_budget` per slice, with no evidence it beats (a).
+- **(c) Build the eval harness first, then decide** — port
+  `quorum`'s ~200-line harness (planted defects + clean-diff
+  false-alarm baselines) and let it choose. Slowest to a shipped
+  gate; but it's the only way to *know*, and per R3 we need it
+  eventually regardless.
+
+---
+
+## Open questions I'll resolve myself
+
+Recorded for traceability; no answer needed unless you disagree.
 
 1. **What stays always-on after the split?** The shrink backlog
    flags §9's Conventional Commits, public-repo hygiene, and Review
-   Gates as plausibly irreducible. Cursor's 500-line ceiling is a
-   useful target for the residual.
-2. **Prose-driven or code-driven phase transitions?** Backlog
-   option 2 vs 3. Code-driven fixes the growth curve and removes
-   read-order bugs, but risks the "skills are plain markdown
-   symlinks, no runtime" deploy invariant, and must degrade
-   gracefully when a user drives kdevkit without the wrapper.
-3. **Where does the handoff record live?** BMAD's answer is a
-   self-contained story file. Ours might be the feature spec
-   itself, a per-phase section of it, or a new artefact — noting
-   §6 explicitly refused to introduce a `research.md`, so the bias
-   is against new artefacts.
-4. **Panel aggregation.** *Answered:* strictest-wins computed in
-   code, three-value verdict, severity × confidence independent,
-   plus an `INCOMPLETE` state. Remaining sub-question: does the
-   0–100 score survive at all? The research argues a richer enum
-   makes verdicts "flap between labels across runs," which is an
-   argument for retiring the score in favour of severities — but
-   `threshold` is currently the gate's whole mechanism, so this is
-   a breaking change to the `kdevkit` block.
-5. **Panel cost.** N reviewers per slice multiplied by
-   `retry_budget` is a real token bill. Does the ceremony lane
-   (Rule A) also scale the panel size? *Proposed: yes — R3.*
-6. **Does the review panel ship as one skill or several?** The
-   brief says "a skill which uses multiple reviewers" — so one
-   dispatching skill with several internal lenses, plus a
-   project-extension point. Open sub-question: do the shipped
-   lenses ride *inside* that skill, or as separate
-   `.claude/agents/*.md`-style files the skill dispatches? The
-   latter is more host-native but less tool-agnostic, which cuts
-   against mAId's mission.
-7. **Is the kaimux lineage work in scope**, or a sibling stream?
-   *Proposed: sibling stream — R5.* Which makes the whole thing
-   an **initiative** with ordered streams rather than one feature
-   branch. This is the biggest scoping decision and it is yours.
-8. **How is the whole thing A/B'd?** The four `kdevkit-*.smoke`
-   fixtures tri-tool, before and after. Budget for it up front —
-   the shrink backlog's rule: "a refactor that can't be A/B'd
-   shouldn't ship." Note `project.md` forbids agentic runs from
-   spending those credits, so the A/B is a hand-off to you at
-   each stream's Test Gate.
-9. **Does decomposition break the announce/verification
-   model?** `project.md` says kdevkit's evidence is "the
-   artefacts it leaves" rather than a per-turn marker. With four
-   agents in a chain, per-phase artefacts become the only trace
-   — so the handoff record (R2) doubles as the test surface.
-   Worth confirming the fixtures can still assert it.
-10. **Where does the ceremony-lane decision get recorded** so a
-    later phase agent doesn't re-litigate it? A fresh reviewer
-    that doesn't know the change was trivial-lane will apply the
-    full rubric. Probably part of the handoff record.
+   Gates as plausibly irreducible. Cursor's 500-line ceiling is the
+   target for the residual.
+2. **Prose-driven or code-driven phase transitions?** *Leaning
+   prose-first (R5):* code owns what isn't a judgement call, but
+   the prose must stand alone or the markdown-symlink deploy
+   invariant breaks.
+3. **Where does the handoff record live?** *Leaning a section of
+   the feature spec* — §6 already refused a `research.md`, so the
+   bias is against new artefacts. BMAD v6's 800–1500-token budget
+   is the size target.
+4. **Panel cost scaling.** Does the ceremony lane also scale panel
+   size? *Proposed: yes, gated on the LLM-free path-risk check.*
+5. **One skill or several?** *Leaning one dispatching skill with
+   internal lenses* + a project extension point. Shipped lenses as
+   separate `.claude/agents/*.md` files would be more host-native
+   but less tool-agnostic, which cuts against mAId's mission.
+6. **How is it A/B'd?** The four `kdevkit-*.smoke` fixtures
+   tri-tool, before and after, 3 runs averaged. Note `project.md`
+   forbids agentic runs from spending those credits — so the A/B is
+   a hand-off to you at each stream's Test Gate, and I'll name the
+   exact command.
+7. **Does decomposition break the verification model?**
+   `project.md` says kdevkit's evidence is "the artefacts it
+   leaves." With four agents chained, per-phase artefacts become
+   the only trace — so the handoff record doubles as the test
+   surface. To confirm against the fixtures.
+8. **Where does the ceremony-lane decision get recorded** so a
+   later phase agent doesn't re-litigate it? A fresh reviewer that
+   doesn't know the change was trivial-lane would apply the full
+   rubric. *Leaning: part of the handoff record.*
+
+## Out of scope / noted separately
+
+- **Pre-existing public-repo leak on `main`:**
+  `specs/backlog/kdevkit-durable-facts-to-repo-not-agent-memory.md`
+  names an internal repo twice (lines 34–35). Not introduced by
+  this branch and not fixed here — it wants its own scrub commit,
+  per §9's "never silently strip."
+- **Debate / adversarial panels.** Explicitly rejected, not
+  deferred: measured $162/run, ~30% run-to-run finding overlap,
+  and it lost to a plain baseline on code-level detail.
 
 ## Session Log
 
