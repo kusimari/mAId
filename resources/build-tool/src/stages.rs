@@ -7,8 +7,8 @@
 //! Reads `shared` for the registry, agents, and roots; nothing here
 //! reaches back into the CLI.
 
+use crate::shared::{selected_entries, Agent, Entry, Kind, Link};
 use anyhow::{anyhow, Result};
-use build_tool::shared::{selected_entries, Agent, Entry, Kind, Link};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 /// Validate `resources/content/`, returning the count of validated
 /// files or the joined error list. Caller decides whether to print or
 /// abort.
-fn check_content(content_dir: &Path) -> Result<usize, Vec<String>> {
+pub fn check_content(content_dir: &Path) -> Result<usize, Vec<String>> {
     // Walk every skill, partition into (oks, errs), and report the Ok
     // count or the FULL error list — matching on the partitioned tuple
     // so there's no intermediate binding but all errors are still kept.
@@ -361,4 +361,620 @@ fn uninstall_one(home: PathBuf, source: PathBuf, dry_run: bool, force: bool) -> 
             Ok(true)
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Tests.
+// ─────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shared::REGISTRY;
+    use tempfile::TempDir;
+
+    fn write(p: &Path, s: &str) {
+        if let Some(parent) = p.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(p, s).unwrap();
+    }
+
+    // ── content checks ──────────────────────────────────────────
+
+    #[test]
+    fn check_content_empty_root_ok() {
+        let dir = TempDir::new().unwrap();
+        assert_eq!(check_content(dir.path()).unwrap(), 0);
+    }
+
+    #[test]
+    fn check_content_skill_with_frontmatter_ok() {
+        let dir = TempDir::new().unwrap();
+        write(
+            &dir.path().join("skills/foo/SKILL.md"),
+            "---\nname: foo\ndescription: bar\n---\nbody.\n",
+        );
+        assert_eq!(check_content(dir.path()).unwrap(), 1);
+    }
+
+    #[test]
+    fn check_content_skill_missing_description_rejected() {
+        let dir = TempDir::new().unwrap();
+        write(
+            &dir.path().join("skills/foo/SKILL.md"),
+            "---\nname: foo\n---\n",
+        );
+        let errs = check_content(dir.path()).unwrap_err();
+        assert!(errs.iter().any(|e| e.contains("description")));
+    }
+
+    /// The shipped content must pass its own validator.
+    ///
+
+    #[test]
+    fn check_content_collects_multiple_errors() {
+        // Two bad skills — caller sees ALL problems, not just the first.
+        let dir = TempDir::new().unwrap();
+        write(
+            &dir.path().join("skills/foo/SKILL.md"),
+            "---\nname: foo\n---\n",
+        );
+        write(
+            &dir.path().join("skills/bar/SKILL.md"),
+            "---\nname: bar\n---\n",
+        );
+        let errs = check_content(dir.path()).unwrap_err();
+        assert_eq!(errs.len(), 2);
+    }
+
+    #[test]
+    fn check_content_skills_only_skill_md_parsed() {
+        // Sibling files in a skill dir must NOT be parsed; only SKILL.md.
+        let dir = TempDir::new().unwrap();
+        let skill_dir = dir.path().join("skills/multi");
+        write(
+            &skill_dir.join("SKILL.md"),
+            "---\nname: multi\ndescription: a multi-file skill\n---\nbody.\n",
+        );
+        write(&skill_dir.join("setup.md"), "# Plain markdown.\n");
+        assert_eq!(check_content(dir.path()).unwrap(), 1);
+    }
+
+    // ── frontmatter (gray_matter + serde) ───────────────────────
+
+    #[test]
+    fn frontmatter_minimal_ok() {
+        assert!(check_skill_frontmatter("---\nname: foo\ndescription: bar\n---\nbody.\n").is_ok());
+    }
+
+    #[test]
+    fn frontmatter_with_extra_fields_ok() {
+        // Real YAML: extra fields are ignored by serde when not in the struct.
+        assert!(check_skill_frontmatter(
+            "---\nname: foo\ndescription: bar\nversion: 1.0.0\ntags: [a, b]\n---\nbody.\n"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn frontmatter_quoted_values_ok() {
+        // Real YAML handles quoting natively — no hand-rolled unquote.
+        assert!(
+            check_skill_frontmatter("---\nname: \"foo\"\ndescription: 'bar baz'\n---\n").is_ok()
+        );
+    }
+
+    #[test]
+    fn frontmatter_missing_fence_rejected() {
+        let e = check_skill_frontmatter("name: foo\ndescription: bar\n").unwrap_err();
+        assert!(e.contains("frontmatter"));
+    }
+
+    #[test]
+    fn frontmatter_unterminated_rejected() {
+        let e = check_skill_frontmatter("---\nname: foo\ndescription: bar\n").unwrap_err();
+        assert!(e.contains("frontmatter"));
+    }
+
+    #[test]
+    fn frontmatter_missing_name_rejected() {
+        let e = check_skill_frontmatter("---\ndescription: bar\n---\n").unwrap_err();
+        assert!(e.contains("name"));
+    }
+
+    #[test]
+    fn frontmatter_missing_description_rejected() {
+        let e = check_skill_frontmatter("---\nname: foo\n---\n").unwrap_err();
+        assert!(e.contains("description"));
+    }
+
+    #[test]
+    fn frontmatter_empty_value_rejected() {
+        let e = check_skill_frontmatter("---\nname: \"\"\ndescription: bar\n---\n").unwrap_err();
+        assert!(e.contains("non-empty"));
+    }
+
+    // ── plan_one (compare core) ─────────────────────────────────
+
+    fn make_checkout() -> TempDir {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("resources/content/skills")).unwrap();
+        dir
+    }
+
+    /// Resolve `REGISTRY[0]` (`.claude/skills`, a `Kind::Link` entry) to
+    /// its single (home, source) pair for the per-link plan_one tests.
+    fn link0(home: &Path, checkout: &Path) -> (PathBuf, PathBuf) {
+        expand(REGISTRY[0], home, checkout)
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap()
+    }
+
+    #[test]
+    fn plan_one_missing_when_no_target() {
+        let checkout = make_checkout();
+        let home = TempDir::new().unwrap();
+        let (h, s) = link0(home.path(), checkout.path());
+        let p = plan_one(h, s).unwrap();
+        assert_eq!(p.cmp, Comparison::Missing);
+    }
+
+    #[test]
+    fn plan_one_match_after_install() {
+        let checkout = make_checkout();
+        let home = TempDir::new().unwrap();
+        cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
+        let (h, s) = link0(home.path(), checkout.path());
+        let p = plan_one(h, s).unwrap();
+        assert_eq!(p.cmp, Comparison::Match);
+    }
+
+    #[test]
+    fn plan_one_wrong_target_when_foreign_symlink() {
+        let checkout = make_checkout();
+        let home = TempDir::new().unwrap();
+        let (h, s) = link0(home.path(), checkout.path());
+        ensure_parent(&h).unwrap();
+        std::os::unix::fs::symlink("/nowhere", &h).unwrap();
+        let p = plan_one(h, s).unwrap();
+        assert!(matches!(p.cmp, Comparison::WrongTarget(_)));
+    }
+
+    #[test]
+    fn plan_one_blocked_by_real_file() {
+        let checkout = make_checkout();
+        let home = TempDir::new().unwrap();
+        let (h, s) = link0(home.path(), checkout.path());
+        ensure_parent(&h).unwrap();
+        write(&h, "user content");
+        let p = plan_one(h, s).unwrap();
+        assert_eq!(p.cmp, Comparison::BlockedByRealFile);
+    }
+
+    // ── install ─────────────────────────────────────────────────
+
+    #[test]
+    fn install_fresh_home_creates_every_entry() {
+        let checkout = make_checkout_with_skills();
+        let home = TempDir::new().unwrap();
+        let rc = cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
+        assert_eq!(rc, 0);
+        // Every managed symlink is the set of expanded links across all
+        // entries (fan-out entries contribute one link per source child).
+        for entry in REGISTRY {
+            for (h, s) in expand(*entry, home.path(), checkout.path()).unwrap() {
+                assert_eq!(fs::read_link(&h).unwrap(), s);
+            }
+        }
+    }
+
+    #[test]
+    fn install_second_run_is_idempotent() {
+        let checkout = make_checkout();
+        let home = TempDir::new().unwrap();
+        cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
+        let rc = cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
+        assert_eq!(rc, 0);
+    }
+
+    #[test]
+    fn install_dry_run_makes_no_changes() {
+        let checkout = make_checkout();
+        let home = TempDir::new().unwrap();
+        cmd_install(home.path(), checkout.path(), true, false, None).unwrap();
+        assert!(!path_exists(&home.path().join(REGISTRY[0].0)));
+    }
+
+    #[test]
+    fn install_wrong_symlink_skipped_without_force() {
+        let checkout = make_checkout();
+        let home = TempDir::new().unwrap();
+        let entry = REGISTRY[0];
+        let target = home.path().join(entry.0);
+        ensure_parent(&target).unwrap();
+        std::os::unix::fs::symlink("/nowhere", &target).unwrap();
+
+        let rc = cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
+        assert_eq!(rc, 1);
+        let cur = fs::read_link(&target).unwrap();
+        assert_eq!(cur, PathBuf::from("/nowhere"));
+    }
+
+    #[test]
+    fn install_wrong_symlink_replaced_with_force() {
+        let checkout = make_checkout();
+        let home = TempDir::new().unwrap();
+        let entry = REGISTRY[0];
+        let target = home.path().join(entry.0);
+        ensure_parent(&target).unwrap();
+        std::os::unix::fs::symlink("/nowhere", &target).unwrap();
+
+        let rc = cmd_install(home.path(), checkout.path(), false, true, None).unwrap();
+        assert_eq!(rc, 0);
+        let cur = fs::read_link(&target).unwrap();
+        assert_eq!(cur, checkout.path().join(entry.1));
+    }
+
+    #[test]
+    fn install_real_file_preserved() {
+        let checkout = make_checkout();
+        let home = TempDir::new().unwrap();
+        let entry = REGISTRY[0];
+        let target = home.path().join(entry.0);
+        ensure_parent(&target).unwrap();
+        write(&target, "user content");
+
+        let rc = cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
+        assert_eq!(rc, 1);
+        assert_eq!(fs::read_to_string(&target).unwrap(), "user content");
+    }
+
+    // ── uninstall ───────────────────────────────────────────────
+
+    #[test]
+    fn uninstall_clean_home_is_noop() {
+        let checkout = make_checkout();
+        let home = TempDir::new().unwrap();
+        assert_eq!(
+            cmd_uninstall(home.path(), checkout.path(), false, false, None).unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn uninstall_removes_managed_symlinks() {
+        let checkout = make_checkout();
+        let home = TempDir::new().unwrap();
+        cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
+
+        let rc = cmd_uninstall(home.path(), checkout.path(), false, false, None).unwrap();
+        assert_eq!(rc, 0);
+        for entry in REGISTRY {
+            assert!(!path_exists(&home.path().join(entry.0)));
+        }
+    }
+
+    #[test]
+    fn uninstall_idempotent() {
+        let checkout = make_checkout();
+        let home = TempDir::new().unwrap();
+        cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
+        cmd_uninstall(home.path(), checkout.path(), false, false, None).unwrap();
+        assert_eq!(
+            cmd_uninstall(home.path(), checkout.path(), false, false, None).unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn uninstall_foreign_symlink_skipped_without_force() {
+        let checkout = make_checkout();
+        let home = TempDir::new().unwrap();
+        let entry = REGISTRY[0];
+        let target = home.path().join(entry.0);
+        ensure_parent(&target).unwrap();
+        std::os::unix::fs::symlink("/nowhere", &target).unwrap();
+
+        let rc = cmd_uninstall(home.path(), checkout.path(), false, false, None).unwrap();
+        assert_eq!(rc, 1);
+        assert!(path_exists(&target));
+    }
+
+    #[test]
+    fn uninstall_foreign_symlink_force_removed() {
+        let checkout = make_checkout();
+        let home = TempDir::new().unwrap();
+        let entry = REGISTRY[0];
+        let target = home.path().join(entry.0);
+        ensure_parent(&target).unwrap();
+        std::os::unix::fs::symlink("/nowhere", &target).unwrap();
+
+        let rc = cmd_uninstall(home.path(), checkout.path(), false, true, None).unwrap();
+        assert_eq!(rc, 0);
+        assert!(!path_exists(&target));
+    }
+
+    #[test]
+    fn uninstall_user_file_preserved_without_force() {
+        let checkout = make_checkout();
+        let home = TempDir::new().unwrap();
+        let entry = REGISTRY[0];
+        let target = home.path().join(entry.0);
+        ensure_parent(&target).unwrap();
+        write(&target, "user content");
+
+        let rc = cmd_uninstall(home.path(), checkout.path(), false, false, None).unwrap();
+        assert_eq!(rc, 1);
+        assert_eq!(fs::read_to_string(&target).unwrap(), "user content");
+    }
+
+    #[test]
+    fn uninstall_dry_run_makes_no_changes() {
+        let checkout = make_checkout_with_skills();
+        let home = TempDir::new().unwrap();
+        cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
+
+        cmd_uninstall(home.path(), checkout.path(), true, false, None).unwrap();
+        for entry in REGISTRY {
+            for (h, _) in expand(*entry, home.path(), checkout.path()).unwrap() {
+                assert!(path_exists(&h));
+            }
+        }
+    }
+
+    // ── status ──────────────────────────────────────────────────
+
+    #[test]
+    fn status_runs_clean_on_fresh_install() {
+        let checkout = make_checkout();
+        let home = TempDir::new().unwrap();
+        cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
+        assert_eq!(cmd_status(home.path(), checkout.path(), None).unwrap(), 0);
+    }
+
+    // ── fan-out kind (codex-owned skills dir) ───────────────────
+
+    /// A checkout whose skills source holds two child skills, for
+    /// exercising the `Kind::FanOut` entry (`.codex/skills`).
+    fn make_checkout_with_skills() -> TempDir {
+        let dir = make_checkout();
+        for name in ["kdevkit", "notes"] {
+            write(
+                &dir.path()
+                    .join("resources/content/skills")
+                    .join(name)
+                    .join("SKILL.md"),
+                "---\nname: x\ndescription: y\n---\nbody.\n",
+            );
+        }
+        dir
+    }
+
+    #[test]
+    fn fanout_expands_to_one_link_per_source_child() {
+        let checkout = make_checkout_with_skills();
+        let home = TempDir::new().unwrap();
+        let codex_skills = REGISTRY
+            .iter()
+            .find(|(h, _, k, _)| *k == Kind::FanOut && h.contains("codex"))
+            .copied()
+            .expect("a codex fan-out entry");
+        let links = expand(codex_skills, home.path(), checkout.path()).unwrap();
+        let names: Vec<_> = links
+            .iter()
+            .map(|(h, _)| h.file_name().unwrap().to_str().unwrap().to_string())
+            .collect();
+        assert_eq!(names, vec!["kdevkit", "notes"]); // sorted, one per child
+    }
+
+    #[test]
+    fn fanout_installs_children_and_preserves_tool_owned_siblings() {
+        let checkout = make_checkout_with_skills();
+        let home = TempDir::new().unwrap();
+        // Codex owns ~/.codex/skills and ships its own .system/ inside.
+        let system_marker = home.path().join(".codex/skills/.system/.marker");
+        write(&system_marker, "codex-owned");
+
+        let rc = cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
+        assert_eq!(rc, 0);
+
+        // Each source skill is now a symlink child of ~/.codex/skills.
+        for name in ["kdevkit", "notes"] {
+            let child = home.path().join(".codex/skills").join(name);
+            assert!(child.is_symlink(), "{name} not linked into codex skills");
+            assert_eq!(
+                fs::read_link(&child).unwrap(),
+                checkout.path().join("resources/content/skills").join(name)
+            );
+        }
+        // Codex's own .system/ is untouched.
+        assert_eq!(fs::read_to_string(&system_marker).unwrap(), "codex-owned");
+    }
+
+    #[test]
+    fn fanout_uninstall_removes_children_leaves_tool_owned() {
+        let checkout = make_checkout_with_skills();
+        let home = TempDir::new().unwrap();
+        let system_marker = home.path().join(".codex/skills/.system/.marker");
+        write(&system_marker, "codex-owned");
+
+        cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
+        let rc = cmd_uninstall(home.path(), checkout.path(), false, false, None).unwrap();
+        assert_eq!(rc, 0);
+
+        for name in ["kdevkit", "notes"] {
+            assert!(!path_exists(&home.path().join(".codex/skills").join(name)));
+        }
+        // The tool-owned sibling survives the round-trip.
+        assert_eq!(fs::read_to_string(&system_marker).unwrap(), "codex-owned");
+    }
+
+    #[test]
+    fn fanout_reaps_orphaned_child_after_source_removal() {
+        // Install two skills, then remove one from source. expand() must
+        // still surface the orphaned home symlink so uninstall reaps it
+        // rather than leaving a dangling link in codex's dir.
+        let checkout = make_checkout_with_skills();
+        let home = TempDir::new().unwrap();
+        cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
+        // Drop "notes" from the source checkout.
+        fs::remove_dir_all(checkout.path().join("resources/content/skills/notes")).unwrap();
+
+        let codex = REGISTRY
+            .iter()
+            .find(|(h, _, k, _)| *k == Kind::FanOut && h.contains("codex"))
+            .copied()
+            .unwrap();
+        let homes: Vec<_> = expand(codex, home.path(), checkout.path())
+            .unwrap()
+            .into_iter()
+            .map(|(h, _)| h)
+            .collect();
+        // The orphaned link is still in the managed set.
+        assert!(homes.iter().any(|h| h.ends_with("notes")));
+
+        // Uninstall reaps it — no dangling symlink left behind.
+        cmd_uninstall(home.path(), checkout.path(), false, false, None).unwrap();
+        assert!(!path_exists(&home.path().join(".codex/skills/notes")));
+        assert!(!path_exists(&home.path().join(".codex/skills/kdevkit")));
+    }
+
+    #[test]
+    fn fanout_uninstall_force_refuses_to_delete_tool_owned_real_dir() {
+        // A real dir at a fan-out child path (a codex-owned skill sharing
+        // a name with one of ours) is never mAId's to remove — even with
+        // --force, which only reaps foreign symlinks and files.
+        let checkout = make_checkout_with_skills();
+        let home = TempDir::new().unwrap();
+        let collision = home.path().join(".codex/skills/kdevkit/OWNED.md");
+        write(&collision, "codex-owned skill");
+
+        let rc = cmd_uninstall(home.path(), checkout.path(), false, true, None).unwrap();
+        assert_eq!(rc, 1); // soft-skip counts as a failure exit
+        assert_eq!(fs::read_to_string(&collision).unwrap(), "codex-owned skill");
+    }
+
+    #[test]
+    fn fanout_source_missing_yields_no_links() {
+        // A bare checkout: skills dir exists but is empty → no children.
+        let checkout = make_checkout();
+        let home = TempDir::new().unwrap();
+        let codex_skills = REGISTRY
+            .iter()
+            .find(|(h, _, k, _)| *k == Kind::FanOut && h.contains("codex"))
+            .copied()
+            .unwrap();
+        assert!(expand(codex_skills, home.path(), checkout.path())
+            .unwrap()
+            .is_empty());
+    }
+
+    // ── structural integration test ─────────────────────────────
+
+    #[test]
+    fn structural_install_to_real_directory_layout() {
+        // Full install→status→uninstall round-trip against a realistic
+        // on-disk layout with a real skill exposed through the symlink.
+        let checkout = make_checkout();
+        write(
+            &checkout
+                .path()
+                .join("resources/content/skills/example/SKILL.md"),
+            "---\nname: example\ndescription: a sample skill\n---\nbody.\n",
+        );
+        let home = TempDir::new().unwrap();
+
+        assert_eq!(
+            cmd_install(home.path(), checkout.path(), false, false, None).unwrap(),
+            0
+        );
+        for entry in REGISTRY {
+            for (h, _) in expand(*entry, home.path(), checkout.path()).unwrap() {
+                assert!(h.is_symlink() || h.exists(), "missing {}", h.display());
+            }
+        }
+        // Skill is reachable through every tool's deployed skills path —
+        // claude and kiro symlink the whole dir; codex fans out per-child
+        // (example is linked into codex's own skills dir as a sibling).
+        for tool_skills in [
+            ".claude/skills/example/SKILL.md",
+            ".kiro/steering/skills/example/SKILL.md",
+            ".codex/skills/example/SKILL.md",
+        ] {
+            assert!(
+                home.path().join(tool_skills).exists(),
+                "skill not visible via {tool_skills}"
+            );
+        }
+
+        assert_eq!(cmd_status(home.path(), checkout.path(), None).unwrap(), 0);
+
+        assert_eq!(
+            cmd_uninstall(home.path(), checkout.path(), false, false, None).unwrap(),
+            0
+        );
+        for entry in REGISTRY {
+            for (h, _) in expand(*entry, home.path(), checkout.path()).unwrap() {
+                assert!(!path_exists(&h), "still present: {}", h.display());
+            }
+        }
+    }
+
+    // ── agent selector (--agent) ─────────────────────────────────
+    //
+    // The selector's own unit tests live with the type in shared.rs;
+    // these two check that a scoped selection reaches the filesystem.
+
+    #[test]
+    fn install_scoped_to_one_agent_touches_only_that_agent() {
+        // Install only codex; codex's skills dir is populated, the
+        // other agents' home paths stay absent.
+        let checkout = make_checkout_with_skills();
+        let home = TempDir::new().unwrap();
+        let rc = cmd_install(
+            home.path(),
+            checkout.path(),
+            false,
+            false,
+            Some(Agent::Codex),
+        )
+        .unwrap();
+        assert_eq!(rc, 0);
+
+        // codex fan-out children exist…
+        assert!(path_exists(&home.path().join(".codex/skills/kdevkit")));
+        // …while claude and kiro whole-dir links were never made.
+        assert!(!path_exists(&home.path().join(".claude/skills")));
+        assert!(!path_exists(&home.path().join(".kiro/steering/skills")));
+    }
+
+    #[test]
+    fn uninstall_scoped_leaves_other_agents_installed() {
+        // Install all three, then uninstall only claude: claude's link
+        // is gone, kiro's and codex's survive.
+        let checkout = make_checkout_with_skills();
+        let home = TempDir::new().unwrap();
+        cmd_install(home.path(), checkout.path(), false, false, None).unwrap();
+
+        let rc = cmd_uninstall(
+            home.path(),
+            checkout.path(),
+            false,
+            false,
+            Some(Agent::Claude),
+        )
+        .unwrap();
+        assert_eq!(rc, 0);
+        assert!(!path_exists(&home.path().join(".claude/skills")));
+        assert!(path_exists(&home.path().join(".kiro/steering/skills")));
+        assert!(path_exists(&home.path().join(".codex/skills/kdevkit")));
+    }
+
+    // The old `cmd_install_unknown_agent_errors` is gone: a stage takes
+    // `Option<Agent>`, so an invalid agent no longer type-checks here.
+    // The rejection is asserted where the string actually arrives —
+    // `validate_agent_rejects_unknown` in shared.rs.
 }
