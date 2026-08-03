@@ -974,12 +974,15 @@ dependency claim in Design actually holds.
   in `shared/agent.rs` derived from the manifest, so `--agent` parses
   identically across every verb, and the two verify stages differ only
   in which path they ask it for.
-- **Stage 1 returns a typed `Skill`, not a bool.** Content validation
-  answers yes/no today, and the runner separately greps the same
-  `SKILL.md` for the announce marker to decide whether the two
-  announce-only kinds can assert anything. Two readers of the same
-  bytes for the same reason; folding the announce contract into stage
-  1's output makes it the pipeline's data flow instead.
+- **Stage 1 returning a typed `Skill` was planned and NOT built.**
+  The intent was to fold the announce contract into content validation's
+  output, so the two verify stages consume it rather than re-reading the
+  file. As shipped, `check_content` still answers with a count and
+  `skill_announces()` re-reads `SKILL.md` per test. The duplication it
+  would have removed is real but cheap (a small file read, no
+  correctness consequence), and the change touches stage 1's signature
+  and every caller — so it is recorded here as deliberately deferred
+  rather than quietly dropped. Filed as a backlog item at closure.
 - **Kind derivation belongs to the fixture.** The five kinds are types
   (`harness/kind.rs`), but *which* kinds a fixture yields is fixture
   knowledge — a playback section implies playback, an enact section
