@@ -153,6 +153,40 @@ rather than asserted.
 
 <!-- Newest at top. -->
 
+- **2026-08-04 · Briefing generator returned two defects; both
+  fixed, loop re-run.** Dispatched the briefing to a fresh-context
+  agent (I wrote the code, so per the firewall I can't write my own
+  briefing). It found two things that were defects rather than
+  judgement calls, so per its contract they go back to the loop
+  instead of being published:
+
+  - **D1 · A vacuous assert — and I reintroduced the exact bug I'd
+    just fixed.** `grep -qi 'HELLO, WORLD!' test.sh` in the new
+    phase-boundary fixture: the `-i` made it match the *seeded*
+    `Hello, World!`, so the only check covering the Test Gate's
+    artefact passed before any agent ran. Confirmed by replaying
+    the setup block. Worse, an agent that implemented the flag,
+    ticked the boxes and committed correctly but never updated
+    `test.sh` passed all eight asserts. Fixed: case-sensitive
+    `grep -qF`, plus a check that `test.sh` mentions the flag.
+    **Verified it now fails that agent** — the discrimination table
+    is no-op ✗, code-without-test-update ✗, compliant ✓. Lesson
+    worth keeping: I "fixed" this bug class once in the same
+    session and then re-added it a different way, which is the
+    argument for the assert-must-fail-a-no-op rule being
+    mechanical rather than remembered.
+  - **D2 · The line counts I reported were stale**, including the
+    one plan item 7 explicitly asked for. Two review passes added
+    61 lines to the core; my log still said 511, so a reader would
+    conclude the 500-line target was met by 11 lines when it was
+    missed by 72. Restated against `HEAD` and de-duplicated to one
+    place, since two copies is how it went stale.
+
+  Everything else it raised is a judgement call for the human and
+  stays in the briefing — chiefly whether 572-over-500 is
+  acceptable, and whether the two rules promoted into §9 belong in
+  a moves-only stream.
+
 - **2026-08-04 · Review pass 2: PASS WITH NOTES, no blockers.** A
   second fresh-context reviewer enumerated all 131 §-references
   across the seven files and confirmed the map is complete and
@@ -197,13 +231,13 @@ rather than asserted.
   option. Both fixed; this is why `project.md` requires an assert
   to fail a no-op agent.
 
-  **One honest correction to my own framing.** The reviewer's
-  accounting: this wins on the common case (dev session 763 vs
-  1246 lines, ~40% off) but a session traversing the *full* arc
-  reads ~1266 — marginally more than baseline. The claim is
-  "no session carries rules it isn't using," not "strictly fewer
-  lines in all cases." Recorded because the earlier log entry
-  overstated it.
+  **One honest correction to my own framing.** This wins on the
+  common case but a session traversing the *full* arc reads more
+  than baseline. The claim is "no session carries rules it isn't
+  using," not "strictly fewer lines in all cases." Current figures
+  live in the "Split landed" entry below — restated once against
+  `HEAD`, since the numbers I first recorded went stale as these
+  two review passes grew the core.
 
   Not adopted, with reasons: the ~72-char wrap regressions on five
   edited lines (cosmetic, and re-wrapping churns the diff a
@@ -262,11 +296,23 @@ rather than asserted.
   repo name from `kdevkit-durable-facts-to-repo-not-agent-memory.md`
   (pre-existing on `main`, a public-repo violation).
 
-- **2026-08-04 · Split landed; inventory closes.** Always-on
-  `SKILL.md` **1246 → 511** lines (59% cut). Modules: `plan` 177,
-  `dev` 206, `review` 174, `close` 134, `tiers/initiative` 107.
-  A dev-loop session now carries 511 + 206 = **717** vs 1246, and
-  no session carries all of it.
+- **2026-08-04 · Split landed; inventory closes.** Figures below
+  are as-of `HEAD` (they were restated once — the two review
+  passes added 61 lines to the core, and the original entry's
+  numbers went stale).
+
+  Always-on `SKILL.md` **1246 → 572** lines (54% cut). Modules:
+  `plan` 192, `dev` 206, `review` 170, `close` 135,
+  `tiers/initiative` 107. A dev-loop session carries 572 + 206 =
+  **778** vs 1246 (38% off); the full arc reads 1382, so the claim
+  is **"no session carries rules it isn't using,"** not "fewer
+  lines in every case."
+
+  **Plan item 7 asked for the actual: 572, against a 500-line
+  target — missed by 72.** The overage is the trigger table, the
+  §-map, and the two rules promoted *into* §9, i.e. the parts
+  whose value is residency. Compression is the deferred per-file
+  pass, not this stream.
 
   **Verification of R2 (no rule lost)**, three ways:
   1. *Line accounting* — every one of the original 1246 lines

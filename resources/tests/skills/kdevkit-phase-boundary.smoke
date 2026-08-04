@@ -90,7 +90,10 @@ set -e
 out=$(sh src/greet.sh World); [ "$out" = "Hello, World!" ]
 out=$(sh src/greet.sh -u World); [ "$out" = "HELLO, WORLD!" ]
 # The Test Gate's own artefact: test.sh must now cover R2, not just R1.
-grep -qi 'HELLO, WORLD!' test.sh
+# Case-sensitive on purpose — the seeded file already says "Hello, World!",
+# so a case-insensitive match would pass without the agent touching it.
+grep -qF 'HELLO, WORLD!' test.sh
+grep -qF -e '-u' test.sh
 sh test.sh >/dev/null
 # Crossing planning -> dev pulled the dev module's discipline: plan items are
 # ticked in the commit that completed them, not swept at closure.
