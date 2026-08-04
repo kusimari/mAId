@@ -213,6 +213,7 @@ mAId/
 ├── target/                 gitignored — cargo's build dir
 └── specs/
     ├── project.md          this file
+    ├── initiative/         multi-stream initiatives (archived on last-stream close)
     ├── feature/            in-flight + completed feature records
     └── backlog/            per-item files for wanted future work
 ```
@@ -485,6 +486,16 @@ the experience is symmetric across resource kinds.
   rather than letting names land here. The `kdevkit`
   skill encodes this rule for every project; this bullet
   declares mAId as a public repo so the rule fires.
+
+## Active initiatives
+
+<!-- One line per in-flight initiative. Archived by the last
+     stream's close(<feature>): commit. -->
+
+- **kdevkit-decompose-and-harden** — decompose the kdevkit
+  workflow into per-phase modules and harden the review gate.
+  6 streams; 1–3 run autonomously, 4–5 blocked on the
+  code-vs-prose boundary, 6 verifies on codex + kiro.
 
 ## Agent Development
 
