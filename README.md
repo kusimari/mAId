@@ -92,7 +92,9 @@ just resources::install-skills codex    # or scope to one
 What it does:
 
 1. Validates `resources/content/` — each `skills/<name>/SKILL.md`
-   has the required frontmatter.
+   has the required frontmatter. Only `SKILL.md` is validated; a
+   skill may ship deferred modules beside it (see below) that ride
+   along on the same symlink.
 2. Creates `$HOME`-facing symlinks per the registry at the
    top of
    [`resources/build-tool/src/main.rs`](./resources/build-tool/src/main.rs).
@@ -173,6 +175,10 @@ the registration but leaves your allowlist in place.
   [`resources/build-tool/src/main.rs`](./resources/build-tool/src/main.rs).
 - Reference shape for a new skill:
   [`resources/content/skills/kdevkit/SKILL.md`](./resources/content/skills/kdevkit/SKILL.md)
+  — also the worked example of **deferred modules**: an always-on
+  `SKILL.md` plus `phases/`, `tiers/`, `setup.md`, `interviews.md`
+  that it reads on demand, so the file loaded every session stays
+  lean as the workflow grows
   (live siblings:
   [`notes/`](./resources/content/skills/notes/SKILL.md),
   [`writing-style/`](./resources/content/skills/writing-style/SKILL.md),

@@ -34,7 +34,11 @@ is the implementable contract; it should stand alone.
 
 1. **module-split** (`refactor/kdevkit-module-split`) — split
    `SKILL.md` by stage into loadable modules; decide and enforce
-   what stays always-on. Prereq: none.
+   what stays always-on. Prereq: none. **Shipped 2026-08-04**
+   (1246 → 572 always-on). Left open: the prose-compression pass
+   inside each module, tracked in
+   `backlog/kdevkit-refactor-shrink-always-on-context.md` — it has
+   no stream of its own and the core landed 72 lines over target.
 2. **phase-handoff** (`feat/kdevkit-phase-handoff`) — the
    checked-in spec as the phase handoff record; a stage runs in
    one session or its own. Prereq: 1.
@@ -167,7 +171,7 @@ These bind every stream.
 
 | Stream | Branch | CR | Status | Shipped | Learnings |
 |---|---|---|---|---|---|
-| 1 · module-split | `refactor/kdevkit-module-split` | — | planning | — | — |
+| 1 · module-split | `refactor/kdevkit-module-split` | [#40](https://github.com/kusimari/mAId/pull/40) | shipped | 2026-08-04 | Moves-only + a rule inventory made a prose refactor reviewable; the defects all landed in the *new* prose (a stale trigger row, a vacuous assert), not the moved text. Fresh-context reviewers caught what every deterministic gate missed. Shipped without the paid A/B — that gap is now the compression pass's precondition. |
 | 2 · phase-handoff | `feat/kdevkit-phase-handoff` | — | not started | — | — |
 | 3 · gate-packets | `feat/kdevkit-gate-packets` | — | not started | — | — |
 | 4 · deterministic-phasing | `feat/kdevkit-deterministic-phasing` | — | blocked (D-open-1) | — | — |

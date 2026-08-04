@@ -32,6 +32,17 @@ Two halves at the top level:
      deployed artefact; each tool auto-discovers them at its own
      skills path.
 
+     A skill may ship **deferred modules** beside its `SKILL.md` —
+     sibling files, or files under subdirectories — that the
+     always-on `SKILL.md` inline-Reads when a stated trigger
+     fires. `SKILL.md` stays the only validated and discovered
+     file; modules ride along because the registry symlinks the
+     skills *directory*, so adding one needs no build-tool change.
+     This is how an always-on file stays lean as a workflow grows:
+     new phase-specific rules land in a module, not in the file
+     loaded every session. `kdevkit` is the worked example
+     (`phases/`, `tiers/`, plus `setup.md` / `interviews.md`).
+
      Skills are mostly independent, but one may **dispatch another
      by role** rather than by name: the caller declares the role it
      needs, the fillers advertise that they fill it, and install (or
@@ -196,7 +207,8 @@ mAId/
 │   │   ├── Cargo.toml      deps: clap, anyhow; dev: tempfile
 │   │   └── src/main.rs     registry + content checks + symlink core + clap + tests
 │   ├── content/            the deployable skills (symlinked in)
-│   │   └── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
+│   │   ├── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
+│   │   └── skills/kdevkit/  SKILL.md core + phases/, tiers/, setup.md, interviews.md
 │   ├── browser/            browser-control MCP (not symlinked — runnable)
 │   │   ├── launch          allowlist-enforcing launcher; enters flake, execs chrome-devtools-mcp
 │   │   └── manage          data-driven MCP registrar (MCP_AGENTS table: claude/codex global, kiro per-sub-agent)
@@ -231,7 +243,7 @@ covering the content validator and the symlink state
 machine against a `tempfile`-fake `$HOME`, plus the kaimux
 crate's 53 unit tests against a tempdir `Store`. Fast
 (sub-second). No real `$HOME` side effects, no API credits.
-Load-bearing — this is the §8 Test Gate default. Includes
+Load-bearing — this is the kdevkit Test Gate default. Includes
 a structural integration test (`structural_install_to_real_directory_layout`)
 that runs a full install→status→uninstall round-trip in
 the fake $HOME, replacing the older bash structural smoke.
@@ -319,6 +331,17 @@ behavioral form for `enact` wherever the skill's correct action leaves
 an inspectable change; fall back to a judge narrative only when the
 output is irreducibly prose.
 
+**A skill's own loading is a load-bearing behavior too.** Where a skill
+defers content to modules (see Architecture), "reads the right module
+at the right moment" is a behavior that fails *silently* — the agent
+proceeds from memory and the output looks plausible. It therefore earns
+a fixture like any other: a `playback` that the right module is named
+per stage, and a behavioral `enact` that drives a stage transition and
+asserts the next stage's discipline shows up in the artefacts
+(`kdevkit-module-load`, `kdevkit-phase-boundary`). A wrong trigger is
+invisible to the deterministic gates, so this layer is the only one
+that can catch it.
+
 ### Writing a skill
 
 A skill has to survive two things. Design for both.
@@ -395,9 +418,9 @@ stop-with-error) where a compliant agent writes nothing. A
 behavioral assert must fail a no-op agent (pair a presence check
 with the absence check) or it proves nothing.
 
-The §8 Test Gate uses `just test` by default. SKILL.md
+kdevkit's Test Gate uses `just test` by default. SKILL.md
 prose revisions add `just resources::verify-skills` (judge mode)
-as their A/B evidence. The §9 close-out can run
+as their A/B evidence. kdevkit's close-out can run
 `just resources::status-skills` after an install to confirm
 symlinks resolved.
 
