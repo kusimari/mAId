@@ -91,7 +91,8 @@ Part of initiative: [[<name>]]
      ~15 lines: it carries what the next phase can't derive, not
      a summary of the work.
 
-     Phase:             which phase is live now.
+     Phase:             which phase is live now, or `closed` once
+                        closure has finished with the feature.
      Ready for:         the next phase, and what gates it.
      Carry forward:     what the next phase would otherwise have
                         to rediscover — a constraint found late, a
@@ -104,7 +105,7 @@ Part of initiative: [[<name>]]
      are READ from git and this spec at entry — don't copy them
      here and let them rot. This block is judgement only. -->
 
-- **Phase:** <planning | dev | review | closure>
+- **Phase:** <planning | dev | review | closure | closed>
 - **Ready for:** <next phase, and its gate>
 - **Carry forward:** <what the next phase must know>
 - **Deliberately left:** <what's unresolved, and why>

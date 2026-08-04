@@ -160,6 +160,62 @@ rather than assuming it ran.
 
 ## Session Log
 
+- **2026-08-04 · Code review: FAIL. Five blockers, all in my
+  fixtures, all the same class.** The reviewer's verdict was right
+  and the finding is uncomfortable: the fixture meant to prove the
+  headline behaviour was largely vacuous — it could not fail the
+  exact mistake the consolidation rule exists to prevent. Verified
+  each blocker empirically before fixing.
+
+  - **The "rationale survived" guard was vacuous.** I seeded the
+    load-bearing *why* in **two** places — inside the strippable D1
+    block *and* the Decision Log — then asserted it existed
+    somewhere. An agent that deleted the entire Design body passed.
+    Now seeded in exactly one strippable place, and the assert
+    requires it to have **relocated into the Decision Log**, which
+    is what the checklist actually specifies.
+  - **The R2 criterion was unsatisfiable.** `wc -l` cannot observe
+    a trailing newline through command substitution, so an agent
+    following the spec's own decided idiom got `1` where I demanded
+    `2`. Correct agents would have failed. Replaced with a
+    character count, where the natural implementation gives the
+    expected value and char-vs-word counts still differ.
+  - **`awk '\<dev\>'` is a GNU extension.** Under mawk or BusyBox
+    it matches nothing, so the strongest assert in two fixtures
+    would have *silently passed*. Now a portable character-class
+    pattern.
+  - **Every negative check was satisfiable by deletion.** "The
+    block no longer says planning" passes if the block has no
+    `Phase:` field at all. Each negative is now paired with a
+    positive existence check.
+  - **The consolidate fixture never checked the handoff** — and
+    planning→dev is precisely where the block is first authored, so
+    the invariant's genesis case was untested.
+
+  Also fixed: a seeded "constraint" that was **factually false**
+  (GNU sed does support `\+`, so a diligent agent would correctly
+  discover the handoff was lying, and the skill tells it to trust
+  the repo); an exact tick-count that would fail an agent
+  legitimately adding a slice; `Phase: closed` missing from the
+  template enum; no version bump. Added closure coverage for
+  clearing the block, and a `playback` for the two guardrails that
+  leave no artefact.
+
+  **The pattern is now unmistakable across two streams:** every
+  defect in this work has been an assertion that passes without the
+  agent doing anything. Writing the test after the behaviour is
+  what produces it, which is the argument the repo's own
+  test-first-per-slice backlog item makes. Worth acting on in a
+  later stream rather than continuing to catch these in review.
+
+  Re-verified all four fixtures against purpose-built
+  non-compliant agents — **consolidate**: no-op ✗,
+  not-consolidated ✗, rationale-deleted ✗, no-handoff ✗,
+  compliant ✓. **resume**: no-op ✗, stale ✗, Phase-deleted ✗,
+  breaks-R1 ✗, compliant ✓. **boundary**: no-op ✗, stale ✗,
+  Phase-deleted ✗, compliant ✓. **closure**: no-op ✗, left-at-review
+  ✗, block-deleted ✗, compliant ✓.
+
 - **2026-08-04 · Dev complete; dogfooded the feature on itself.**
   Six prose edits (template + checklist in `interviews.md`, the §5
   invariant, four module read/write points) and three fixtures.

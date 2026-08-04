@@ -338,9 +338,17 @@ proceeds from memory and the output looks plausible. It therefore earns
 a fixture like any other: a `playback` that the right module is named
 per stage, and a behavioral `enact` that drives a stage transition and
 asserts the next stage's discipline shows up in the artefacts
-(`kdevkit-module-load`, `kdevkit-phase-boundary`). A wrong trigger is
+(`kdevkit-module-load`, `kdevkit-phase-boundary`,
+`kdevkit-handoff-resume`, `kdevkit-consolidate`). A wrong trigger is
 invisible to the deterministic gates, so this layer is the only one
 that can catch it.
+
+The same applies to **state carried across a boundary**: a stale or
+missing handoff record fails silently too, and the agent proceeds
+plausibly from the wrong starting point. Assert on the artefact the
+boundary should have left, and pair every negative check with a
+positive one — "the block no longer says planning" passes if the
+block was deleted, which is not the behaviour wanted.
 
 ### Writing a skill
 

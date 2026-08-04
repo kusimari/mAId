@@ -1,7 +1,7 @@
 ---
 name: kdevkit
 description: 'Spec-driven dev on a repo with specs/: plan or start a feature, run the dev loop through quality/test/review gates, close one out ("ship it", "close it", "feature done", "plan this", "add to backlog"), or record a durable project fact. Four tiers (project/initiative/feature/backlog); three-phase feature branch, one squash-merge.'
-version: 4.0.0
+version: 4.1.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, initiative, public-repo]
 ---
 

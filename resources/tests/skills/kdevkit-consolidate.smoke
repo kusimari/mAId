@@ -42,16 +42,16 @@ Copied onto PATH.
   - `reviewer: host-native`
 MD
 cat > specs/feature/count-flag.md <<'MD'
-# Feature: -l flag counts lines instead of words
+# Feature: -c flag counts characters instead of words
 
 ## Feature Brief
-`wc.sh` gains a `-l` flag that counts lines rather than words.
+`wc.sh` gains a `-c` flag that counts characters rather than words.
 
 ## Requirements
 - R1. `wc.sh "a b c"` prints `3` as today.
-- R2. `wc.sh -l "$(printf 'a\nb')"` prints `2` — counts lines, not words,
-  so two newline-separated lines count as 2 even though they are 2 words too.
-  Use `wc.sh -l "$(printf 'one two\nthree')"` to tell them apart: `2`, not `3`.
+- R2. `wc.sh -c "hello"` prints `5` — counts characters, not words. Use a
+  multi-word input to tell the modes apart: `wc.sh -c "a b"` is `3`, while
+  `wc.sh "a b"` is `2`.
 
 ## Design
 
@@ -69,35 +69,38 @@ Three options were considered:
 **DECIDED: (a).** Revised after looking at the script — it is four lines
 long, so getopts would be more parsing code than program.
 
+(That reason is the only record of why extensibility was traded away; it
+exists nowhere else in this repo.)
+
 ### D2 · Which counter to use
 
-- **(a) `wc -l` / `wc -w`** — *recommended*, already on every box.
+- **(a) `wc -c` / `wc -w`** — *recommended*, already on every box.
 - **(b) Hand-rolled loop** — no dependency, but slower and more code.
 
 **DECIDED: (a).**
 
 ## Q&A from planning review
 
-**Q: Should `-l` and word-counting be combinable?**
+**Q: Should `-c` and word-counting be combinable?**
 A: No — out of scope, they are exclusive modes for now.
 
 **Q: What if the flag is passed twice?**
 A: Not worth handling; last one wins by accident and that is fine.
 
 ## Test Strategy
-`test.sh` asserts both R1 and R2, using a two-line/three-word input so a
-word-counting implementation cannot pass the R2 case.
+`test.sh` asserts both R1 and R2, using an input whose char count and word
+count differ so a word-counting implementation cannot pass the R2 case.
 
 ## Implementation Plan
-- [ ] 1 · Add `-l` handling to `src/wc.sh`.
+- [ ] 1 · Add `-c` handling to `src/wc.sh`.
 - [ ] 2 · Add the R2 case to `test.sh`.
 
 ## Session Log
 - Planning: three parsing options weighed, see D1.
 
 ## Decision Log
-- Chose the positional check over getopts because the script is four
-  lines and getopts would be more parsing code than program.
+- Named the flag `-c` rather than `--chars` to match the existing
+  single-dash convention.
 MD
 cat > src/wc.sh <<'MD'
 #!/bin/sh
@@ -121,8 +124,9 @@ git checkout -q -b feat/count-flag
 set -e
 # The build actually happened.
 out=$(sh src/wc.sh "a b c"); [ "$out" = "3" ]
-# Two lines, three words — so this distinguishes line-counting from word-counting.
-out=$(sh src/wc.sh -l "$(printf 'one two\nthree')"); [ "$out" = "2" ]
+# 3 chars vs 2 words on the same input, so this distinguishes the modes.
+out=$(sh src/wc.sh -c "a b"); [ "$out" = "3" ]
+out=$(sh src/wc.sh "a b"); [ "$out" = "2" ]
 sh test.sh >/dev/null
 # CONSOLIDATION: the superseded option lists are gone from the spec. The
 # decisions they produced must survive; the alternatives must not.
@@ -132,15 +136,33 @@ test -z "$(grep -F 'An environment variable' specs/feature/count-flag.md || true
 test -z "$(grep -F 'Hand-rolled loop' specs/feature/count-flag.md || true)"
 # The round-by-round Q&A block is gone too — it is a reply to a reviewer.
 test -z "$(grep -F 'Q&A from planning review' specs/feature/count-flag.md || true)"
-# RATIONALE SURVIVED: the load-bearing "chose X because Y" is still there.
-# This is the one thing consolidation must never delete.
-grep -qF 'getopts would be more parsing code than program' specs/feature/count-flag.md
+# RATIONALE SURVIVED, AND RELOCATED. The "why" was seeded ONLY inside the D1
+# option block that the checklist says to strip, so this is a real question:
+# it must still be in the spec, and it must now be in the Decision Log — the
+# checklist's "relocate, don't delete" rule. Deleting it is the one
+# unrecoverable mistake, so this is the fixture's most important assert.
+grep -qiE 'getopts|more parsing code' specs/feature/count-flag.md
+awk '/^## Decision Log/{f=1} f' specs/feature/count-flag.md | grep -qiE 'getopts|more parsing code'
+# Revision narration is stripped too — the diff and the thread carry that.
+test -z "$(grep -F 'Revised after looking at the script' specs/feature/count-flag.md || true)"
+test -z "$(grep -F 'Three options were considered' specs/feature/count-flag.md || true)"
+# The (a)/(b)/(c) lettering is gone: a shipped spec with lettered options is
+# an unmade decision.
+test -z "$(grep -E '^\s*-?\s*\*\*\([abc]\)' specs/feature/count-flag.md || true)"
 # The requirements and the decision itself are intact — consolidation strips
 # the deliberation, not the contract.
 grep -qF 'R2.' specs/feature/count-flag.md
 grep -qiE 'positional' specs/feature/count-flag.md
+# HANDOFF GENESIS: the seeded spec has no ## Handoff block, so crossing
+# planning -> dev must create one, naming the phase that is now live.
+[ "$(grep -c '^## Handoff' specs/feature/count-flag.md)" = 1 ]
+# It has a Phase field (not just prose), and it names dev rather than planning.
+# Portable pattern: \< is a GNU awk extension and silently matches nothing
+# under mawk/BusyBox, which would make this pass vacuously.
+awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase/' specs/feature/count-flag.md | grep -q .
+awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*dev([^a-zA-Z]|$)/' specs/feature/count-flag.md | grep -q .
 # A consolidate commit exists, separate from the dev work.
-git log --oneline base..feat/count-flag | grep -qiE 'consolidat'
+git log --oneline base..feat/count-flag | grep -qE 'plan\(count-flag\): consolidat'
 # And the spec still parses as a spec: one Requirements, one Design.
 [ "$(grep -c '^## Requirements' specs/feature/count-flag.md)" = 1 ]
 [ "$(grep -c '^## Design' specs/feature/count-flag.md)" = 1 ]
