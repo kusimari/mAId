@@ -494,6 +494,21 @@ In public-repo mode, any hit fails loud, surfaces lines, aborts.
 No commented-out code, debug prints, temp files, secrets, or
 credentials in commits.
 
+### Agent comment prefix
+
+**Every comment body the agent posts on a CR/PR starts with
+`[agent]:` on the first line.** No carve-outs by comment type —
+replies, one-word acks, resolved-thread notes. Comment bodies
+only: not the PR/CR description, not commit messages, not the
+diff.
+
+Resident because it fires in any phase that posts a comment —
+dev, review, or closure — and because the review tool threads by
+author, not content: when the agent posts under the human's
+identity, un-prefixed comments are indistinguishable from theirs.
+`phases/review.md` §7 carries the rationale, the human-side
+optionality, and the forward-only rule.
+
 ### Dispatch safety floor
 
 Binding whenever this skill hands work to another agent, tool, or

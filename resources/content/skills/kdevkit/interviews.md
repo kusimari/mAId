@@ -44,7 +44,7 @@ a sketch to validate after the fact.
 
 The interviews are scaffolding — the actual spec layout
 adapts to what the feature needs. The skill's strictness
-lives in the gates (§6 / §7 / §8), not in heading shape.
+lives in the gates (`phases/plan.md` §6 / `phases/dev.md` §7 / `phases/close.md` §8), not in heading shape.
 
 **These are your own checklist, not a questionnaire for the
 user.** Answer each from the grounding pass — `project.md`, the
@@ -127,8 +127,8 @@ Part of initiative: [[<name>]]
 
 <!-- Markdown task-list shape. One slice per item. Tick
      `- [ ]` to `- [x]` in the same commit that completes
-     the slice. Mid-slice work stays unchecked. The §8.1
-     reconcile sweep greps for unchecked boxes at closure. -->
+     the slice. Mid-slice work stays unchecked. The closure
+     reconcile sweep greps for unchecked boxes. -->
 
 - [ ] <slice 1>
 - [ ] <slice 2>

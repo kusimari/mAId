@@ -99,7 +99,7 @@ $SPEC_ROOT/initiative/<name>.md` and remove the line from
 `project.md`'s `## Active initiatives` index (the index is a
 bullet list; the Status table is the per-initiative file). No
 separate `close(<initiative>):` commit; the last stream's
-`close(<feature>):` does the work. See §10 for the table
+`close(<feature>):` does the work. See `interviews.md` for the table
 format.
 
 **4 · Commit + push.** Staged closure edits land in one or

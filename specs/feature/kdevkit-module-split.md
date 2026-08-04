@@ -153,8 +153,67 @@ rather than asserted.
 
 <!-- Newest at top. -->
 
-- **2026-08-04 · Code Review Gate: PASS WITH NOTES; two blockers
-  fixed.** Fresh-context reviewer (no feature spec, no session
+- **2026-08-04 · Review pass 2: PASS WITH NOTES, no blockers.** A
+  second fresh-context reviewer enumerated all 131 §-references
+  across the seven files and confirmed the map is complete and
+  nothing dangles. Fixed its four remaining finds: `close.md`'s
+  "see §10 for the table format" pointed at a file that doesn't
+  carry the format (it's in `interviews.md`); an unqualified
+  `§8.1` sat inside the *emitted* feature-file template, so it was
+  being copied into every generated user spec (de-§'d rather than
+  qualified — a user's spec shouldn't cite kdevkit internals); and
+  `interviews.md` / `setup.md` had stragglers.
+
+  **`setup.md` deserved a different fix than the others.** Its
+  reader is the fresh-context verify subagent, which by contract
+  receives `project.md` + `setup.md` only — never `SKILL.md`, so
+  the §-map is unavailable to it. Rewrote its four refs to be
+  self-contained ("the dev loop reads commands from it") instead
+  of file-qualified. Worth noting as a general rule: a module
+  dispatched without the core must not lean on the core's
+  cross-reference table.
+
+  Two more of its calls adopted:
+  - **Single-sourced the safety floor.** Pass 1 promoted it to §9
+    but left a near-verbatim copy in `review.md` — two copies that
+    could diverge. `review.md` now carries only the
+    briefing-specific delta and cites §9.
+  - **Promoted the `[agent]:` prefix to §9.** Same argument as the
+    safety floor: a one-line universal rule that fires in dev,
+    review *and* closure shouldn't cost a 176-line module read to
+    learn. Elaboration stays in the module.
+
+  Added the two tests it named as the real gaps:
+  `kdevkit-phase-boundary.smoke` (behavioral — seeds a reviewed
+  spec on a branch, gives only the planning→dev cue, asserts the
+  flag works, tests cover the new criterion, plan boxes are ticked
+  in the dev commit, and closure did *not* run) and the earlier
+  install assertion. **Verified the new fixture discriminates:**
+  no-op agent fails, spec-only-without-code fails, compliant
+  passes. Two of my own bugs surfaced doing that — an `[A-Z]`
+  alternative that matched the seeded `Hello` (a vacuous
+  assertion, exactly the retrofitted-test failure mode the repo
+  warns about) and `grep -F '- [ ]'` parsing the dash as an
+  option. Both fixed; this is why `project.md` requires an assert
+  to fail a no-op agent.
+
+  **One honest correction to my own framing.** The reviewer's
+  accounting: this wins on the common case (dev session 763 vs
+  1246 lines, ~40% off) but a session traversing the *full* arc
+  reads ~1266 — marginally more than baseline. The claim is
+  "no session carries rules it isn't using," not "strictly fewer
+  lines in all cases." Recorded because the earlier log entry
+  overstated it.
+
+  Not adopted, with reasons: the ~72-char wrap regressions on five
+  edited lines (cosmetic, and re-wrapping churns the diff a
+  reviewer is reading — worth a sweep in the per-file compression
+  pass instead); `plan.md`'s stale "single source of truth" claim
+  and the `code_review` defaults duplication (both pre-existing,
+  and touching them widens a moves-only stream).
+
+- **2026-08-04 · Code Review Gate pass 1: PASS WITH NOTES; two
+  blockers fixed.** Fresh-context reviewer (no feature spec, no session
   history) confirmed the move is byte-clean by reconstructing the
   old section ranges and diffing each module — but found the real
   defect this refactor could produce, which the rule inventory
