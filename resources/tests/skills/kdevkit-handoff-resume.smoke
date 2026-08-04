@@ -119,7 +119,14 @@ test -z "$(grep -F -e '- [ ]' specs/feature/trim-dashes.md || true)"
 [ "$(grep -cF -e '- [x]' specs/feature/trim-dashes.md)" -ge 3 ]
 # It did NOT re-plan: no new plan() commit on the branch, and the spec's
 # Requirements were not rewritten (R1/R2 survive verbatim).
-test -z "$(git log --oneline base..feat/trim-dashes | grep -E '^\w+ plan\(' || true)"
+test -z "$(git log --oneline base..feat/trim-dashes | grep -E '^[[:alnum:]]+ plan\(' || true)"
+# The agent COMMITTED its work. The setup already seeds one feat() commit, so
+# counting commit types would pass vacuously — instead require the tree to be
+# clean, which an agent that edited but never committed cannot satisfy.
+test -z "$(git status --porcelain)"
+# ...and require more than the single seeded commit, so the clean tree isn't
+# achieved by simply doing nothing at all.
+[ "$(git rev-list --count base..feat/trim-dashes)" -ge 2 ]
 grep -qF 'R2. `slug.sh "!Hello World!"`' specs/feature/trim-dashes.md
 # The handoff was rewritten in place — still exactly one block, and it no
 # longer says dev is live (dev finished; next is review or beyond).
@@ -127,7 +134,7 @@ grep -qF 'R2. `slug.sh "!Hello World!"`' specs/feature/trim-dashes.md
 # Portable patterns only: \< is a GNU awk extension that silently matches
 # nothing under mawk/BusyBox, which would make these pass vacuously.
 # A Phase field must still EXIST — deleting it would satisfy a bare negative.
-awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase/' specs/feature/trim-dashes.md | grep -q .
+awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /^- \*\*Phase:\*\*/' specs/feature/trim-dashes.md | grep -q .
 # ...and it must no longer name the phase that has finished.
 test -z "$(awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*dev([^a-zA-Z]|$)/' specs/feature/trim-dashes.md)"
 # The carried-forward constraint was respected, not rediscovered: the handoff

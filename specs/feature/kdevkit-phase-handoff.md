@@ -160,6 +160,59 @@ rather than assuming it ran.
 
 ## Session Log
 
+- **2026-08-04 · Review pass 2: FAIL again. Four more, and the
+  two sharpest were my *fixes* being nominal rather than real.**
+  Verified each empirically before fixing.
+
+  - **My "positive existence" checks matched the template's own
+    HTML comment.** Pass 1's fix was to pair every negative with a
+    positive — but `awk … /Phase/` is an unanchored substring, and
+    `interviews.md`'s commented-out field guide contains the word
+    `Phase:`. So deleting every field still satisfied it. Now
+    anchored on the emitted shape `^- **Phase:**`.
+  - **"Portability" comments sitting above unportable patterns.** I
+    converted the GNU `awk '\<x\>'` instances and missed `\s` and
+    `\w` in `grep -E`, which are the same class of GNU extension —
+    while adding a comment claiming portability. Under POSIX ERE the
+    lettered-option check matched nothing *with all five option
+    lines present*. Now `[[:space:]]` / `[[:alnum:]]`.
+  - **Closure never asserted `Phase: closed`** — only that it
+    stopped saying `review`. An agent leaving a maximally live
+    handoff (`Phase: closure`, `Ready for: squash-merge`) passed.
+  - **The Decision-Log awk range had no terminator**, so it slurped
+    to EOF; rationale parked in any trailing section counted as
+    "relocated into the Decision Log".
+  - **The consolidate fixture demanded `Phase: dev` in the final
+    tree** — unsatisfiable for an agent that reaches Push, since dev
+    rewrites the block to `review` on the way out. Correct agents
+    failed. Now accepts `dev|review`.
+  - **The resume fixture passed with zero commits.** My pass-2
+    "a dev commit exists" check was itself vacuous: the setup seeds
+    a `feat(slug)` commit. Replaced with a clean-tree check plus a
+    commit count above the seed.
+
+  Also added: deferred work must be filed before closure clears the
+  block; the template placeholder can't be pasted verbatim; the
+  Test-Gate artefact and plan-ticking checks the sibling fixtures
+  already had.
+
+  **The through-line across both passes and both streams is one
+  thing: I write asserts that pass without the agent acting, and I
+  do it again while fixing the last instance.** Six of the nine
+  findings in this stream are that. It is not a knowledge gap —
+  each fix was correct in intent — it is that verification-by-
+  reading cannot catch it, and I only find them by constructing the
+  non-compliant agent and running it. That construction is now part
+  of the work rather than a final check, and every matrix in this
+  log was produced that way.
+
+  Re-verified against purpose-built bypass agents, including the
+  reviewer's own: **consolidate** — no-op ✗, rationale-after-DL ✗,
+  placeholder-pasted ✗, compliant ✓. **closure** — no-op ✗,
+  live-handoff ✗, fields-deleted ✗, deferred-not-filed ✗,
+  compliant ✓. **resume** — no-op ✗, never-commits ✗, compliant ✓.
+  **boundary** — no-op ✗, compliant ✓.
+
 - **2026-08-04 · Code review: FAIL. Five blockers, all in my
   fixtures, all the same class.** The reviewer's verdict was right
   and the finding is uncomfortable: the fixture meant to prove the

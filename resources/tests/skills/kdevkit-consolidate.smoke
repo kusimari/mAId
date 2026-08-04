@@ -142,13 +142,13 @@ test -z "$(grep -F 'Q&A from planning review' specs/feature/count-flag.md || tru
 # checklist's "relocate, don't delete" rule. Deleting it is the one
 # unrecoverable mistake, so this is the fixture's most important assert.
 grep -qiE 'getopts|more parsing code' specs/feature/count-flag.md
-awk '/^## Decision Log/{f=1} f' specs/feature/count-flag.md | grep -qiE 'getopts|more parsing code'
+awk '/^## Decision Log/{f=1;next} /^## /{f=0} f' specs/feature/count-flag.md | grep -qiE 'getopts|more parsing code'
 # Revision narration is stripped too — the diff and the thread carry that.
 test -z "$(grep -F 'Revised after looking at the script' specs/feature/count-flag.md || true)"
 test -z "$(grep -F 'Three options were considered' specs/feature/count-flag.md || true)"
 # The (a)/(b)/(c) lettering is gone: a shipped spec with lettered options is
 # an unmade decision.
-test -z "$(grep -E '^\s*-?\s*\*\*\([abc]\)' specs/feature/count-flag.md || true)"
+test -z "$(grep -E '^[[:space:]]*-?[[:space:]]*\*\*\([abc]\)' specs/feature/count-flag.md || true)"
 # The requirements and the decision itself are intact — consolidation strips
 # the deliberation, not the contract.
 grep -qF 'R2.' specs/feature/count-flag.md
@@ -159,8 +159,17 @@ grep -qiE 'positional' specs/feature/count-flag.md
 # It has a Phase field (not just prose), and it names dev rather than planning.
 # Portable pattern: \< is a GNU awk extension and silently matches nothing
 # under mawk/BusyBox, which would make this pass vacuously.
-awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase/' specs/feature/count-flag.md | grep -q .
-awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*dev([^a-zA-Z]|$)/' specs/feature/count-flag.md | grep -q .
+awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /^- \*\*Phase:\*\*/' specs/feature/count-flag.md | grep -q .
+# The value must be one of the legal phases — and dev OR review is correct
+# here, because a dev phase that reaches Push rewrites it again on the way out.
+# Asserting `dev` alone would fail an agent that correctly completed the loop.
+awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*(dev|review)([^a-zA-Z]|$)/' specs/feature/count-flag.md | grep -q .
+# The block was genuinely authored, not pasted from the template placeholder.
+test -z "$(grep -F 'planning | dev | review' specs/feature/count-flag.md || true)"
+# Test-Gate artefact and plan ticking, as the sibling fixtures require.
+grep -qF 'src/wc.sh -c' test.sh
+grep -qF -e '- [x]' specs/feature/count-flag.md
+test -z "$(grep -F -e '- [ ]' specs/feature/count-flag.md || true)"
 # A consolidate commit exists, separate from the dev work.
 git log --oneline base..feat/count-flag | grep -qE 'plan\(count-flag\): consolidat'
 # And the spec still parses as a spec: one Requirements, one Design.

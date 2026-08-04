@@ -107,14 +107,14 @@ test -z "$(grep -F -e '- [ ]' specs/feature/uppercase-flag.md || true)"
 grep -qF -e '- [x]' specs/feature/uppercase-flag.md
 # Dev-phase commits exist and carry a conventional type — not a plan() commit,
 # which is what an agent still running the planning module would produce.
-git log --oneline feat/uppercase-flag | grep -qE '(feat|fix|refactor|test|chore)(\(|:)'
+git log --oneline feat/uppercase-flag | grep -qE ' (feat|fix|refactor|test|chore)(\(|:)'
 # Closure did NOT run: no explicit closure cue was given, so the branch must
 # still be unmerged and the spec not archived-in-place by a close() commit.
-test -z "$(git log --oneline feat/uppercase-flag | grep -E '^\w+ close\(' || true)"
+test -z "$(git log --oneline feat/uppercase-flag | grep -E '^[[:alnum:]]+ close\(' || true)"
 # The handoff was REWRITTEN, not appended: exactly one block, and it no longer
 # claims planning is live. A stale handoff is what a resuming agent acts on.
 [ "$(grep -c '^## Handoff' specs/feature/uppercase-flag.md)" = 1 ]
 # A Phase field must still EXIST — deleting it would satisfy a bare negative.
-awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase/' specs/feature/uppercase-flag.md | grep -q .
+awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /^- \*\*Phase:\*\*/' specs/feature/uppercase-flag.md | grep -q .
 # ...and it must no longer name planning, the phase that has finished.
 test -z "$(awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*planning([^a-zA-Z]|$)/' specs/feature/uppercase-flag.md)"
