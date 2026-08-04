@@ -1,7 +1,18 @@
 # Feature: kdevkit — decompose the workflow, harden the gates
 
-Status: **analysis** (pre-planning). This file is the live analysis +
-interaction record; it becomes the feature spec once shaping converges.
+Status: **consolidated → superseded as the contract.**
+
+**→ The implementable spec is
+`specs/initiative/kdevkit-decompose-and-harden.md`.** Read that to
+build. This file is retained as the **planning archive**: the
+research, the alternatives weighed, and the interaction record that
+produced those decisions. Nothing here is a requirement on its own
+— where the two disagree, the initiative spec wins.
+
+Consolidated 2026-08-04 per the user's steer that a spec must be
+implementable by someone who saw none of the discussion. That gap
+in kdevkit itself is now
+`specs/backlog/kdevkit-spec-consolidation-before-dev.md`.
 
 Branch: `feat/kdevkit-decompose-and-harden`
 Worktree: `maid-worktrees/kdevkit-decompose`
@@ -1390,70 +1401,57 @@ Closure keeps a final pass as the safety net. If it proves noisy
 we drop it; it's a cheap experiment, which is why I'd rather try
 it than design it further.
 
-### F7 · Streams — confirmed, with your ordering
+### F7 · Streams — settled (2026-08-04)
 
-D1 = initiative, and taking your stream list:
+Six streams; see the initiative spec for the authoritative list.
+Streams **1–3 run now and autonomously**; **4–5 are blocked** until
+1–3 close, because both turn on the code-vs-prose boundary
+(D-open-1) rather than on missing implementation; **6 is new** —
+run the decomposed workflow on **codex** and **kiro** to confirm it
+holds off Claude Code.
 
-1. **Module split + composition** — the stage split, and what
-   stays always-on.
-2. **Handoff between stages** — spec-as-handoff (R2), with a
-   stage runnable in one session or its own. Session = stage.
-3. **Separate context where it's right** — quality, review
-   briefing, code review as packets (F5), plus the reviewer-panel
-   changes (D2/D3).
-4. **Deterministic phasing** — phase transitions driven by code,
-   not by an agent remembering the top of a file.
-5. **Session orchestration** — the R2.2 / R5 question. Mechanism
-   undecided; kaimux may not be it.
+Stream 6 is the mission check, not a nicety: mAId exists to be
+tool-agnostic, so a decomposition that only works on one host is a
+regression however well it reads. Placed after stream 3 because
+1–3 are the portable surface, and before 4–5 so nothing
+tool-specific hardens first.
 
-One tension to flag rather than paper over: **stream 4 pulls
-against R5's "prose must stand alone."** If deterministic code
-owns phasing, then a user driving kdevkit bare gets a degraded
-workflow — and mAId's deploy invariant is "skills are plain
-markdown symlinks, no runtime." I don't think that kills stream 4;
-I think it bounds it: **code makes the phase transition reliable
-where it's present, and the prose still states the transition so
-the bare path works.** Same relationship as the briefing
-generator — the role is declared, the filler is optional. Worth
-settling early in stream 4 rather than discovering it at that
-stream's review.
+The tension noted earlier stands and is now the explicit gate on
+stream 4: **deterministic phasing pulls against "prose must stand
+alone."** Working position (D-open-1): answering a transition
+question is judgement → prose, must stand alone; collecting the
+observable state it's answered against is not → code, optional
+accelerator. Same relationship as the briefing generator — role
+declared, filler optional. Settle it at the head of stream 4 with
+the bare-path degradation spelled out.
 
-### F8 · Running the streams myself — yes, with two carve-outs [needs your call]
+### F8 · Autonomous execution — granted (2026-08-04)
 
-Short answer: **yes, I'll drive each stream end to end** — plan,
-spec, interviews answered from grounding, commits, push, PR,
-quality gates, `just test`, code review via fresh-context agents,
-briefing, reconcile, squash-merge, branch cleanup. That's a good
-experiment and I'd like to run it.
+**Streams 1–3 run as the human would, and merge unattended.**
+Coding agent of choice: **claude**. `just test` is authorized. Both
+carve-outs I raised are answered: the user granted unattended merge
+explicitly, and authorized running the test gate.
 
-Two places where playing the human isn't mine to grant, and I'd
-rather name them now than quietly fudge them:
+Recorded as a deliberate, scoped expansion of `project.md`'s
+"agentic runs ... **must** stop at `just test`" — for this
+initiative's streams 1–3 only. The general rule stands for other
+work, and the paid tri-tool `verify-skills` run is still not
+self-authorized: **stream 6 is where cross-tool evidence gets
+gathered**, on codex and kiro, which is the honest home for that
+spend.
 
-- **Paid tri-tool verification.** `project.md` is explicit:
-  "Agentic runs ... **must** stop at `just test`," because
-  spending API credits "is a human call," and the Justfile has a
-  `[confirm]` gate behind it. That's your rule and it's the *only*
-  real evidence a prose refactor didn't regress. I'm not going to
-  self-authorize it. **Pick one:** (a) pre-authorize a budget per
-  stream and I run `verify-skills` as part of the stream, or (b) I
-  stop at each stream's Test Gate with the exact command and you
-  run it. (a) is what makes the autonomy experiment real; (b) is
-  the current rule.
-- **Being the independent reviewer of my own work.** This feature
-  is *about* the maker-knowledge firewall — "a model reviewing its
-  own output reuses the reasoning that produced it." I can
-  dispatch genuinely fresh-context reviewers, which satisfies the
-  firewall mechanically, and I'll do that. But a stream where I
-  also give the human approval has no independent judgement in it,
-  and I shouldn't pretend otherwise. **Proposal:** I run
-  everything including the review gate and post the briefing plus
-  my reviewers' findings, then squash-merge on your one-word cue.
-  That keeps the human gate real while still testing whether the
-  *rest* runs autonomously — which is the actual question.
+Two things I'll keep doing even with approval granted, because
+they're the feature's own subject matter rather than gates on me:
+dispatch **genuinely fresh-context reviewers** (the
+maker-knowledge firewall is mechanical, not a courtesy), and
+**post the briefing plus reviewer findings on each stream's PR
+before merging** — so an unattended merge still leaves the evidence
+a human would have read. Autonomy without the artefact would make
+the experiment unfalsifiable.
 
-If you'd rather I merge without waiting, say so explicitly and
-I'll do it — but I want that on the record as your call rather
-than my assumption.
+The experiment's actual question — *can a large initiative run
+stream-by-stream without a human in each loop?* — is now testable,
+and the answer belongs in each stream's Learnings column.
 
 ## Folded-in backlogs
 
@@ -1596,6 +1594,18 @@ Recorded for traceability; no answer needed unless you disagree.
   rules, Anthropic context engineering, the oh-my-* harness
   family, gastown, BMAD v4/v6, Claude Code subagents, and
   CodeRabbit. Recorded findings 1–4 above.
+- **2026-08-04 · Feedback round 2: streams settled; spec
+  consolidated.** Streams 1–3 authorized to run autonomously with
+  unattended merge (claude as the coding agent, `just test`
+  allowed); 4–5 blocked until 1–3 close; stream 6 added to verify
+  on codex and kiro. Then the user named a **methodology gap**: we
+  planned in a PR and never cleaned the spec before implementing.
+  Acted on it rather than noting it — wrote
+  `specs/initiative/kdevkit-decompose-and-harden.md` as the
+  standalone implementable contract, demoted this file to planning
+  archive, and filed
+  `specs/backlog/kdevkit-spec-consolidation-before-dev.md` so
+  kdevkit grows the step it was missing (folds into stream 2).
 - **2026-08-04 · Feedback round 1 answered (F1–F8).** D1 = (a)
   initiative with the user's five-stream ordering; D2 = (a) retire
   the score; D3 = (a) now, (c) eval later; handoff record = the WIP
@@ -1621,6 +1631,21 @@ Recorded for traceability; no answer needed unless you disagree.
 ## Decision Log
 
 <!-- append: decision · rationale · alternatives rejected -->
+
+- **2026-08-04 · Consolidate into an initiative spec; keep this
+  file as the planning archive.** Rationale: a spec that only its
+  author can implement isn't a spec, and once phases run as
+  separate agents the dev agent reads it *without* the
+  conversation that disambiguates it — so iteration scars stop
+  being harmless and start being misleading. Alternatives
+  rejected: (a) rewrite this file in place — loses the research
+  and the reasoning behind several rules, which the shrink backlog
+  notes is load-bearing; (b) a `feature/<name>.planning.md`
+  sibling — §6 already refused `research.md` on the same grounds;
+  (c) note the gap and consolidate later — the next stream would
+  inherit the mess, which is exactly the failure being named.
+  The PR conversation remains the transcript; the spec stops
+  duplicating it.
 
 - **2026-08-04 · Four phases keep the actor axis; spec-kit's
   artifact axis is borrowed inside the plan phase only.**
