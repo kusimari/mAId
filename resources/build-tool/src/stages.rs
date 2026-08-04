@@ -402,8 +402,8 @@ pub fn cmd_verify(
         return Ok(0);
     }
 
-    let fixtures = load_fixtures(checkout, selection)?;
-    if fixtures.is_empty() {
+    let (fixtures, broken) = load_fixtures(checkout, selection)?;
+    if fixtures.is_empty() && broken.is_empty() {
         return Err(anyhow!(
             "no fixtures matched{}",
             selection
@@ -432,7 +432,12 @@ pub fn cmd_verify(
         .transpose()?;
 
     let before = snapshot_checkout(checkout);
-    let mut failures = 0usize;
+    // Each unparseable fixture is one failure, reported before any test
+    // runs so it is visible at the top rather than buried mid-sweep.
+    let mut failures = broken.len();
+    for why in &broken {
+        report("fixture", &Outcome::Fail(why.clone()));
+    }
     // The generated kinds are per-skill; several fixtures share a skill.
     let mut claimed = Vec::new();
 
@@ -504,7 +509,7 @@ fn report(name: &str, outcome: &Outcome) {
 
 /// Read every `.smoke` under `resources/tests/skills/`, in name order so
 /// two runs are diffable.
-fn load_fixtures(checkout: &Path, selection: &Selection) -> Result<Vec<Fixture>> {
+fn load_fixtures(checkout: &Path, selection: &Selection) -> Result<(Vec<Fixture>, Vec<String>)> {
     let dir = checkout.join("resources/tests/skills");
     let mut paths: Vec<PathBuf> = fs::read_dir(&dir)
         .with_context(|| format!("reading fixtures from {}", dir.display()))?
@@ -514,18 +519,29 @@ fn load_fixtures(checkout: &Path, selection: &Selection) -> Result<Vec<Fixture>>
         .collect();
     paths.sort();
 
-    paths
+    // A malformed fixture fails itself and the run continues, as bash did:
+    // aborting the sweep would let one typo cost forty minutes of paid
+    // agent time and return no results at all.
+    let (parsed, broken): (Vec<_>, Vec<_>) = paths
         .iter()
         .filter_map(|p| {
             let name = p.file_stem()?.to_string_lossy().to_string();
             selection.covers(&name).then_some((name, p))
         })
         .map(|(name, path)| {
-            let body =
-                fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-            Fixture::parse(&name, &body)
+            fs::read_to_string(path)
+                .with_context(|| format!("reading {}", path.display()))
+                .and_then(|body| Fixture::parse(&name, &body))
         })
-        .collect()
+        .partition(Result::is_ok);
+
+    Ok((
+        parsed.into_iter().map(Result::unwrap).collect(),
+        broken
+            .into_iter()
+            .map(|e| format!("{:#}", e.unwrap_err()))
+            .collect(),
+    ))
 }
 
 /// Stop early when the smoke stage's precondition is unmet, naming the
@@ -1394,4 +1410,52 @@ mod tests {
     // `Option<Agent>`, so an invalid agent no longer type-checks here.
     // The rejection is asserted where the string actually arrives —
     // `validate_agent_rejects_unknown` in shared.rs.
+
+    /// A malformed fixture fails itself; the sweep continues. Bash did
+    /// this, and aborting would let one typo cost a whole paid run.
+    #[test]
+    fn a_malformed_fixture_does_not_abort_the_others() {
+        let dir = TempDir::new().unwrap();
+        let skills = dir.path().join("resources/tests/skills");
+        fs::create_dir_all(&skills).unwrap();
+        fs::write(
+            skills.join("good.smoke"),
+            "skill: notes\n--- enact ---\ntask: t\nexpect: n\n",
+        )
+        .unwrap();
+        // No skill: field — unparseable.
+        fs::write(
+            skills.join("bad.smoke"),
+            "--- enact ---\ntask: t\nexpect: n\n",
+        )
+        .unwrap();
+
+        let selection = Selection::resolve(Stage::Check, None, None, None).unwrap();
+        let (parsed, broken) = load_fixtures(dir.path(), &selection).unwrap();
+
+        assert_eq!(parsed.len(), 1, "the good fixture must still load");
+        assert_eq!(parsed[0].name, "good");
+        assert_eq!(broken.len(), 1, "the bad one is reported, not fatal");
+        assert!(broken[0].contains("bad"), "{}", broken[0]);
+    }
+
+    /// The selector still scopes which fixtures are read at all.
+    #[test]
+    fn load_fixtures_honours_the_fixture_selector() {
+        let dir = TempDir::new().unwrap();
+        let skills = dir.path().join("resources/tests/skills");
+        fs::create_dir_all(&skills).unwrap();
+        for name in ["a", "b"] {
+            fs::write(
+                skills.join(format!("{name}.smoke")),
+                "skill: notes\n--- enact ---\ntask: t\nexpect: n\n",
+            )
+            .unwrap();
+        }
+        let selection = Selection::resolve(Stage::Check, Some("a"), None, None).unwrap();
+        let (parsed, broken) = load_fixtures(dir.path(), &selection).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].name, "a");
+        assert!(broken.is_empty());
+    }
 }

@@ -176,8 +176,8 @@ re-auth. Its shape differs from skills in two ways:
     operates on every member): `just test`, `just fmt`,
     `just fmt-check`, `just lint`, `just check`,
     `just ci` (full gate).
-  Each recipe is a one-liner over native cargo or a bash
-  fixture-runner — `just --list` shows the root verbs,
+  Each recipe is a thin wrapper over native cargo (the
+  kind-routing verb adds a shebang body) — `just --list` shows the root verbs,
   `just --list <module>` drills into a module. There is
   no installed binary on `$PATH`; the build-tool is
   invoked through `cargo run -p build-tool` from the
@@ -198,7 +198,7 @@ mAId/
 ├── resources/
 │   ├── Justfile            `resources::*` verb surface (install/uninstall/status/verify)
 │   ├── build-tool/         Rust crate — the pipeline (check/install/uninstall/status/smoke)
-│   │   ├── Cargo.toml      deps: clap, anyhow; dev: tempfile
+│   │   ├── Cargo.toml      deps: clap, anyhow, gray_matter, serde, tempfile
 │   │   ├── src/main.rs     the shim: clap surface + dispatch
 │   │   ├── src/lib.rs      module wiring + the pipeline doc comment
 │   │   ├── src/shared.rs   Agent, REGISTRY, roots — what every stage speaks

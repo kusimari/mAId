@@ -50,20 +50,22 @@ check-skills agent="" *FLAGS:
 smoke-skills agent="" *FLAGS:
     cargo run -p build-tool --release --quiet -- smoke {{ if agent != "" { "--agent " + agent } else { "" } }} {{ FLAGS }}
 
+# One `verify` invocation, not two lines: just runs recipe lines in
+# separate shells and aborts at the first non-zero exit, so a two-line
+# recipe would skip the smoke stage on any check failure — exactly the
+# fail-fast the binary `verify` exists to prevent.
 # Both stages: pre-install checks, then post-install smoke.
 [confirm("This costs API credits and takes minutes. Continue? (y/N)")]
 [no-cd]
 verify-skills agent="":
-    cargo run -p build-tool --release --quiet -- check {{ if agent != "" { "--agent " + agent } else { "" } }}
-    cargo run -p build-tool --release --quiet -- smoke {{ if agent != "" { "--agent " + agent } else { "" } }}
+    cargo run -p build-tool --release --quiet -- verify {{ if agent != "" { "--agent " + agent } else { "" } }}
 
 # e.g. `just resources::verify-skills-one kdevkit-planning`
 # Drive a single fixture through both stages, optionally scoped to one agent.
 [confirm("This costs API credits and takes minutes. Continue? (y/N)")]
 [no-cd]
 verify-skills-one name agent="":
-    cargo run -p build-tool --release --quiet -- check "{{ name }}" {{ if agent != "" { "--agent " + agent } else { "" } }}
-    cargo run -p build-tool --release --quiet -- smoke "{{ name }}" {{ if agent != "" { "--agent " + agent } else { "" } }}
+    cargo run -p build-tool --release --quiet -- verify "{{ name }}" {{ if agent != "" { "--agent " + agent } else { "" } }}
 
 # Run one kind of skill test across every skill. The five kinds are two
 # axes composed — explicit/implicit reach x announce/recite/perform — and
@@ -96,8 +98,7 @@ verify-skills-kind kind agent="":
 # implicit prompts must leak no skill name, path, or marker. Free.
 [no-cd]
 verify-skills-dry name="":
-    cargo run -p build-tool --release --quiet -- check {{ if name != "" { name } else { "" } }} --dry-run
-    cargo run -p build-tool --release --quiet -- smoke {{ if name != "" { name } else { "" } }} --dry-run
+    cargo run -p build-tool --release --quiet -- verify {{ if name != "" { name } else { "" } }} --dry-run
 
 # ── browser-control MCP ──────────────────────────────────────────
 # Register Google's chrome-devtools-mcp with the installed agent

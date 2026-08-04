@@ -191,9 +191,13 @@ pub struct Fixture {
 }
 
 impl Fixture {
-    /// Parse a `.smoke` file. `name` is the basename without extension;
-    /// every malformed shape is an error naming the fixture, since a
-    /// silently-skipped fixture reads as a pass.
+    /// Parse a `.smoke` file. `name` is the basename without extension,
+    /// and every malformed shape is an error naming it — a fixture that
+    /// asserts nothing must not be mistaken for one that passed.
+    ///
+    /// The caller decides how loud that is: bash failed the one fixture
+    /// and carried on, which keeps a typo from costing a whole paid
+    /// sweep. See `load_fixtures`.
     pub fn parse(name: &str, body: &str) -> Result<Fixture> {
         let header = header(body);
         let skill = field(&header, "skill")
