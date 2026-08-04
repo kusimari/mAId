@@ -1066,6 +1066,18 @@ the handoff lives as a section of the feature spec, not a new
 file. BMAD v6's 800–1500-token epic-context budget is a useful
 size target.
 
+**Confirmed by the user (2026-08-04), with two consequences worth
+stating.** The spec being *checked in* is the load-bearing
+property: every phase gets the handoff for free, and a session can
+die or be restarted without losing what crossed the last boundary.
+So the rule is **each phase writes its state into the spec before
+handing on** — the write is part of the phase, not a courtesy at
+the end. Which means an *un*written handoff is itself a signal: a
+phase that ended without one didn't finish. That gives us
+something cheap to assert in a fixture, and it's the same
+"artefacts are the evidence" property `project.md` already relies
+on for kdevkit.
+
 ### R3 · A reviewer panel with a project-owned registry (the hardening fix)
 
 **Revised after the panel research** — two changes from my first
@@ -1206,6 +1218,243 @@ The kaimux lineage work (Finding 4) is therefore a **sibling
 stream, not a blocker** — which makes this whole thing an
 initiative with ordered streams rather than one feature branch.
 
+## Feedback round 1 — responses (2026-08-04)
+
+User review on the full spec. Answering in order; the two open
+asks are marked **[needs your call]**.
+
+### F1 · Where project-idiomatic style lives
+
+Agreed this is under-specified today — "conventions" is doing too
+much work. The layer split already in §2 answers *where*, once we
+name the section instead of leaving it implied:
+
+- **`AGENTS.md` → the rule, stated flatly.** "Prefer iterator
+  chains over hand-rolled mutable loops." "Constructors are
+  private; build through the factory." This is the operational
+  layer, it's what the wider ecosystem already reads (CodeRabbit
+  ingests `**/AGENTS.md` by default), and §2 already assigns "code
+  style" here.
+- **`project.md` → the *why*, and only where it constrains future
+  work.** "Functional style because the state machine is the
+  correctness argument, and mutable accumulation is where the last
+  three bugs came from." §8.2's "binding decisions bubble up as
+  rationale" is already the mechanism.
+- **No new file.** A project that *already* keeps a
+  `CONTRIBUTING.md` or a style guide may point at it, but kdevkit
+  should not invent a third home — §6 refused `research.md` on the
+  same grounds, and a third layer is a third thing to keep in
+  sync. See F5 for how it reaches the reviewer.
+
+The rule of thumb that keeps them apart: **if removing the line
+would change what the agent writes, it's an AGENTS.md rule; if it
+would change what the agent *decides*, it's project.md
+rationale.** That's BMAD v6's pruning test applied to the split.
+
+### F2 · spec-kit's sequence vs ours — critique and recommendation
+
+Their chain is `constitution → specify → plan → tasks →
+implement` (plus `clarify`, `analyze`, `checklist`, `converge`).
+Ours is `plan → dev → review → closure`.
+
+**The real difference is the axis they cut on.** spec-kit's
+boundaries are **artifact** boundaries — each step emits a new
+document. Ours are **actor** boundaries — agent plans, agent
+builds, *human* reviews, agent closes.
+
+**For our purpose the actor axis is the right one**, because the
+actor change *is* the context change. That's what BMAD v4 was
+getting at with role bleed, and it's why their `specify → plan →
+tasks` split doesn't buy isolation: all three are the same actor
+doing the same kind of thinking, so a fresh context between them
+mostly costs re-grounding. Conversely their chain has **no review
+phase and no closure phase at all** — no human gate, no merge, no
+spec-vs-code reconciliation. That's a genuine gap on their side,
+and it's most of what kdevkit §7–§8 is.
+
+Two things worth taking anyway:
+
+1. **Artifact granularity *inside* our plan phase.** Their
+   `specify` (what/why) vs `plan` (how) vs `tasks` (breakdown) is
+   exactly our Requirements / Design / Implementation Plan — and
+   exactly the requirements smell test's own distinction. We
+   already have the sections; what we lack is their *ordering
+   discipline* being checkable. Cheap win: the Planning Review
+   Gate asserts the three are distinct and consistent, rather than
+   trusting the interviews produced them.
+2. **Their quality commands are cross-cutting verbs, not
+   phases** — `clarify` before planning, `analyze` before
+   implement, `converge` against the code. Modelling those as
+   *phases* would be the mistake; modelling them as checks
+   invocable at any boundary is right, and that's what F6 does
+   with `converge`.
+
+**Recommendation: keep the four phases as-is** (they're actor
+boundaries, which is what decomposition needs), borrow the
+in-plan artifact discipline as a Planning Review assertion, and
+add their verbs as boundary checks rather than steps. No change to
+D1's stream list.
+
+### F3 · What the comment-prefix convention is
+
+It's the `[agent]:` rule (§7, 52 lines) — every comment body the
+agent posts on a CR/PR starts with `[agent]:`. It exists because
+when the agent drives the review surface under *your* identity —
+the normal case for host review CLIs bound to your account — the
+review tool threads by **author, not content**, so your review
+notes and the agent's replies land flat in one timeline,
+indistinguishable. The prefix is a grep-able substitute for
+threading. Human side is optional by design; the discipline is the
+agent's.
+
+It belongs in the **review module**, since that's the only phase
+that posts comments. Flagging one thing: at 52 lines for a
+one-line rule it's the clearest compression candidate in the
+whole file — the rule is one sentence, the rest is rationale and
+per-tool examples that can move behind the module.
+
+### F4 · Phase loop-back — one criterion, no matrix
+
+Agreed we need this, and it should stay a judgement rather than a
+table. **Any phase may return to any earlier phase. The criterion
+is: at which layer did the fault enter?** Return there, not to
+where it surfaced.
+
+That's BMAD v6's rule, and it's the whole judge: "If the
+implementation is wrong because the intent was wrong, patching the
+code is the wrong fix. If the code is wrong because the spec was
+weak, patching the diff is also the wrong fix."
+
+So — a wrong requirement found in review returns to **plan**; a
+correct plan built wrong returns to **dev**; a green diff that
+doesn't match the plan is the `converge` check (F6) and returns to
+whichever of the two is actually wrong. The return writes **one
+line in the handoff record**: what entered where, and why we're
+going back. That's the accountability, and it's also what stops a
+loop-back being silent scope creep (§9 already forbids silent plan
+amendments).
+
+Note this makes the phases a **cycle with a declared re-entry
+rule**, not a pipeline — which matches how you described the
+feature loop in the brief ("even if we go back and forth").
+
+### F5 · R3 as a packet — yes, and it generalizes
+
+You've named the thing that should be uniform. The review briefing
+already works this way, and it should be the pattern for every
+dispatched gate: **assemble a packet, dispatch, take the result
+back, act on it in the loop.** Nothing else travels.
+
+| Gate | Packet in | Result out | Consumer |
+|---|---|---|---|
+| Code review (per lens) | `project.md` invariants + `AGENTS.md` style rules + diff + the lens's charge | findings + severity | dev loop fixes |
+| Review briefing | spec + diff | the briefing | the human running the session |
+| Structural verify | `project.md` + `setup.md` + tree listing | clean/drift + findings | main applies edits |
+
+Answering the question directly: **the conventions travel in the
+packet, harvested from `AGENTS.md` + `project.md` — not a new
+`CONTRIBUTING.md`, and not the session.** A project that already
+has such a file can point at it, and the packet includes it; we
+don't create one. That keeps F1's two homes canonical and gives
+the reviewer exactly what the research said it needs (state the
+conventions, don't make the reviewer infer them).
+
+The property you're protecting — "the quality gate can run
+independent without the whole session baggage" — is already
+kdevkit's stated contract, but today it's asserted in prose and
+nothing enforces it. Two things make it real: the packet is
+**enumerated** (what's in it and what's excluded, as §7's
+Receives/Excluded already does), and the result comes back as a
+**file** rather than a return value, since the Agent tool has no
+structured return and the parent may paraphrase. That also makes
+the packet inspectable and testable, which is how we'd ever prove
+the gate ran clean.
+
+### F6 · R4, concretely
+
+The suggestion, minimally: **move the reconcile that already
+exists at §8.1 earlier, and make it a check instead of a closure
+sweep.**
+
+Today closure greps the Implementation Plan for unticked `- [ ]`
+boxes and resolves them. That same comparison — plan items and
+Requirements against the actual diff — run at the **end of dev,
+before review**, is the drift detector. It answers "does the diff
+still match what we said we'd build?" while it's still cheap to
+act on, instead of at the merge boundary where the only options
+are backfill or defer.
+
+No new mechanism: it's the §8.1 sweep, relocated and re-aimed, and
+it feeds F4 (what it finds determines which phase to return to).
+Closure keeps a final pass as the safety net. If it proves noisy
+we drop it; it's a cheap experiment, which is why I'd rather try
+it than design it further.
+
+### F7 · Streams — confirmed, with your ordering
+
+D1 = initiative, and taking your stream list:
+
+1. **Module split + composition** — the stage split, and what
+   stays always-on.
+2. **Handoff between stages** — spec-as-handoff (R2), with a
+   stage runnable in one session or its own. Session = stage.
+3. **Separate context where it's right** — quality, review
+   briefing, code review as packets (F5), plus the reviewer-panel
+   changes (D2/D3).
+4. **Deterministic phasing** — phase transitions driven by code,
+   not by an agent remembering the top of a file.
+5. **Session orchestration** — the R2.2 / R5 question. Mechanism
+   undecided; kaimux may not be it.
+
+One tension to flag rather than paper over: **stream 4 pulls
+against R5's "prose must stand alone."** If deterministic code
+owns phasing, then a user driving kdevkit bare gets a degraded
+workflow — and mAId's deploy invariant is "skills are plain
+markdown symlinks, no runtime." I don't think that kills stream 4;
+I think it bounds it: **code makes the phase transition reliable
+where it's present, and the prose still states the transition so
+the bare path works.** Same relationship as the briefing
+generator — the role is declared, the filler is optional. Worth
+settling early in stream 4 rather than discovering it at that
+stream's review.
+
+### F8 · Running the streams myself — yes, with two carve-outs [needs your call]
+
+Short answer: **yes, I'll drive each stream end to end** — plan,
+spec, interviews answered from grounding, commits, push, PR,
+quality gates, `just test`, code review via fresh-context agents,
+briefing, reconcile, squash-merge, branch cleanup. That's a good
+experiment and I'd like to run it.
+
+Two places where playing the human isn't mine to grant, and I'd
+rather name them now than quietly fudge them:
+
+- **Paid tri-tool verification.** `project.md` is explicit:
+  "Agentic runs ... **must** stop at `just test`," because
+  spending API credits "is a human call," and the Justfile has a
+  `[confirm]` gate behind it. That's your rule and it's the *only*
+  real evidence a prose refactor didn't regress. I'm not going to
+  self-authorize it. **Pick one:** (a) pre-authorize a budget per
+  stream and I run `verify-skills` as part of the stream, or (b) I
+  stop at each stream's Test Gate with the exact command and you
+  run it. (a) is what makes the autonomy experiment real; (b) is
+  the current rule.
+- **Being the independent reviewer of my own work.** This feature
+  is *about* the maker-knowledge firewall — "a model reviewing its
+  own output reuses the reasoning that produced it." I can
+  dispatch genuinely fresh-context reviewers, which satisfies the
+  firewall mechanically, and I'll do that. But a stream where I
+  also give the human approval has no independent judgement in it,
+  and I shouldn't pretend otherwise. **Proposal:** I run
+  everything including the review gate and post the briefing plus
+  my reviewers' findings, then squash-merge on your one-word cue.
+  That keeps the human gate real while still testing whether the
+  *rest* runs autonomously — which is the actual question.
+
+If you'd rather I merge without waiting, say so explicitly and
+I'll do it — but I want that on the record as your call rather
+than my assumption.
+
 ## Folded-in backlogs
 
 | Backlog | Disposition |
@@ -1225,57 +1474,56 @@ inline on the PR** — one line each is enough ("D1: b", or
 
 ### D1 · Scope — one feature, or an initiative with streams?
 
-The biggest call, and it shapes everything downstream.
+**DECIDED (2026-08-04): (a) initiative**, with the user's own
+five-stream ordering. See **F7** for the stream list and the
+prose-vs-code tension in stream 4. Autonomy of execution is
+answered in **F8** (two carve-outs need a reply).
+
+<details>
+<summary>Original options</summary>
 
 - **(a) Initiative, 3–4 ordered streams** — *my recommendation.*
-  (1) stage split + router, (2) handoff record, (3) reviewer panel
-  + eval, (4) kaimux session lineage. Each ships, gets A/B'd, and
-  squash-merges on its own. Fits §10's own trigger: sequential
-  dependency between branches, not just size — stream 3 genuinely
-  needs stream 1's dev-phase file to exist first.
+  Each ships, gets A/B'd, and squash-merges on its own. Fits §10's
+  own trigger: sequential dependency between branches, not just
+  size — the panel stream genuinely needs the dev module to exist
+  first.
 - **(b) One feature, decomposition only** — land R1+R2, file the
   panel and kaimux work back to backlog. Smallest diff, fastest
-  evidence, but defers the hardening half of your brief.
+  evidence, but defers the hardening half of the brief.
 - **(c) One feature, everything** — biggest diff on the repo's
   most critical skill, and an A/B regression becomes hard to
-  attribute to a cause. I'd argue against.
+  attribute to a cause. Argued against.
+
+</details>
 
 ### D2 · Does the 0–100 score survive?
 
-Today the gate is `score >= threshold`. The panel research says a
-numeric/rich verdict makes the same diff "flap between labels
-across runs" because the model is running a soft classifier, and
-every panel implementation surveyed uses severities instead.
-
-- **(a) Retire the score for severities** — *my recommendation.*
-  `fail_on: high` + strictest-wins, computed in code. **Breaking
-  change** to the `kdevkit` block (`threshold` disappears), so it
-  needs a migration note and a `project.md` edit here.
-- **(b) Keep the score, add severities alongside** — lenses report
-  severities, synthesis still emits a score. Non-breaking, existing
-  configs keep working, but retains the mechanism the evidence
-  warns about.
-- **(c) Keep the score as-is** — least churn; leaves the known
-  flapping problem in the one gate that's supposed to be the
-  hardening.
+**DECIDED (2026-08-04): (a) — retire the score for severities.**
+`fail_on: high` + strictest-wins computed in code. This is a
+**breaking change** to the `kdevkit` block (`threshold`
+disappears), so stream 3 owes: a migration note, the `project.md`
+edit in this repo, and a read of any other project pinning
+`threshold`. Rationale: a numeric verdict makes the same diff
+"flap between labels across runs" because the model is running a
+soft classifier; every panel implementation surveyed uses
+severities.
 
 ### D3 · Panel shape — how do lenses actually run?
 
-- **(a) Three named perspectives inside one agent** — *my
-  recommendation.* correctness / security / comment-hygiene, with
-  the mandated `## What's Missing` contract. This is the shape the
-  only near-controlled A/B actually supports ("structured output
-  templates are the active ingredient"), and it costs ~1 dispatch
-  instead of N. Fan out later, per lens, where independence is
-  proven.
-- **(b) Fan out N parallel subagents now** — closer to gastown's
-  convoy, genuinely independent contexts, findings to files. But
-  N × `retry_budget` per slice, with no evidence it beats (a).
-- **(c) Build the eval harness first, then decide** — port
-  `quorum`'s ~200-line harness (planted defects + clean-diff
-  false-alarm baselines) and let it choose. Slowest to a shipped
-  gate; but it's the only way to *know*, and per R3 we need it
-  eventually regardless.
+**DECIDED (2026-08-04): start with (a), expect (c) later.** Ship
+three named perspectives inside one agent — correctness /
+security / comment-hygiene — with the mandated `## What's
+Missing` contract, which is what the only near-controlled A/B
+supports. Then port `quorum`'s ~200-line eval harness (planted
+defects + clean-diff false-alarm baselines) once the panel is
+live, and let it decide whether to fan out to N subagents (b).
+
+Consequence for stream 3: **design the lens contract so fanning
+out later is a dispatch change, not a rewrite.** Each lens's
+charge, its output file, and the aggregation step should be
+separable from whether they run in one agent or N — the packet
+shape (F5) is what makes that hold. The eval is then the thing
+that justifies the extra cost, rather than instinct.
 
 ---
 
@@ -1287,14 +1535,17 @@ Recorded for traceability; no answer needed unless you disagree.
    flags §9's Conventional Commits, public-repo hygiene, and Review
    Gates as plausibly irreducible. Cursor's 500-line ceiling is the
    target for the residual.
-2. **Prose-driven or code-driven phase transitions?** *Leaning
-   prose-first (R5):* code owns what isn't a judgement call, but
-   the prose must stand alone or the markdown-symlink deploy
-   invariant breaks.
-3. **Where does the handoff record live?** *Leaning a section of
-   the feature spec* — §6 already refused a `research.md`, so the
-   bias is against new artefacts. BMAD v6's 800–1500-token budget
-   is the size target.
+2. **Prose-driven or code-driven phase transitions?** *Settled by
+   D1's stream 4 — code-driven, but bounded.* The prose still
+   states the transition so the bare path works; code makes it
+   reliable where present. Tension flagged in **F7**; settle it at
+   the head of stream 4, not at its review.
+3. **Where does the handoff record live?** *Settled (2026-08-04,
+   user):* the **WIP feature spec**. Being checked in is the point
+   — every phase gets it, and a session can be restarted without
+   loss between phases. Implies each phase **writes its state into
+   the spec before handing on** (R2). BMAD v6's 800–1500-token
+   budget is the size target for the block.
 4. **Panel cost scaling.** Does the ceremony lane also scale panel
    size? *Proposed: yes, gated on the LLM-free path-risk check.*
 5. **One skill or several?** *Leaning one dispatching skill with
@@ -1345,6 +1596,16 @@ Recorded for traceability; no answer needed unless you disagree.
   rules, Anthropic context engineering, the oh-my-* harness
   family, gastown, BMAD v4/v6, Claude Code subagents, and
   CodeRabbit. Recorded findings 1–4 above.
+- **2026-08-04 · Feedback round 1 answered (F1–F8).** D1 = (a)
+  initiative with the user's five-stream ordering; D2 = (a) retire
+  the score; D3 = (a) now, (c) eval later; handoff record = the WIP
+  spec. New material: where idiomatic style lives (F1), a critique
+  of spec-kit's artifact-axis vs our actor-axis phases (F2), the
+  loop-back criterion (F4), and the packet pattern generalized
+  across all dispatched gates (F5). Two carve-outs await the user
+  in F8 (paid tri-tool verification; who gives human approval).
+  Reverted `c82c857` earlier at the user's request so feedback
+  could be holistic rather than one-off.
 - **2026-08-03 · Panel research returned late; R3 revised.** The
   fourth thread (eight panel implementations + vendor configs)
   completed after the first summary and **changed two design
@@ -1360,6 +1621,38 @@ Recorded for traceability; no answer needed unless you disagree.
 ## Decision Log
 
 <!-- append: decision · rationale · alternatives rejected -->
+
+- **2026-08-04 · Four phases keep the actor axis; spec-kit's
+  artifact axis is borrowed inside the plan phase only.**
+  Rationale: the actor change *is* the context change, which is
+  what decomposition needs (BMAD's role-bleed argument);
+  spec-kit's `specify → plan → tasks` are one actor doing one kind
+  of thinking, so a boundary there costs re-grounding and buys no
+  isolation. Their chain also has no review or closure phase at
+  all. Alternative rejected: adopt their five-step chain — would
+  fragment planning and lose the human gate that §7–§8 exists for.
+  Borrowed instead: their in-plan artifact distinction, as a
+  Planning Review assertion, and their quality verbs as boundary
+  checks rather than phases.
+
+- **2026-08-04 · Phase loop-back keyed on where the fault entered,
+  not a per-phase matrix.** Rationale: one judgement generalizes to
+  every pair, and it's already BMAD v6's rule ("if the code is
+  wrong because the spec was weak, patching the diff is also the
+  wrong fix"). Costs one line in the handoff record naming what
+  entered where. Alternative rejected: an explicit
+  from-phase → to-phase table — more prose, and it would go stale
+  the moment a module is added.
+
+- **2026-08-04 · Every dispatched gate takes an enumerated packet
+  and returns a file.** Rationale: user's framing — the gate must
+  run "independent without the whole session baggage," as the
+  review briefing already does. Files rather than return values
+  because the Agent tool has no structured return and the parent
+  "may summarize it," so a prose contract is unenforceable; files
+  are also inspectable and testable. Alternative rejected: trust
+  the return value with a stricter prose contract — the exact
+  failure the research documents.
 
 - **2026-08-03 · Analysis captured in the feature file from the
   start, not in chat.** Rationale: user asked for it explicitly,
