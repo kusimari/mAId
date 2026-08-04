@@ -213,6 +213,7 @@ mAId/
 ├── target/                 gitignored — cargo's build dir
 └── specs/
     ├── project.md          this file
+    ├── initiative/         multi-stream initiatives (archived on last-stream close)
     ├── feature/            in-flight + completed feature records
     └── backlog/            per-item files for wanted future work
 ```
