@@ -1,0 +1,123 @@
+skill: kdevkit
+tools: claude,kiro,codex
+--- enact ---
+task: Pick this feature back up and take it as far as you can. Do the work now in this repo.
+--- setup ---
+git init -q -b base
+git config user.email dev@example.com
+git config user.name dev
+mkdir -p specs/feature src
+cat > AGENTS.md <<'MD'
+# slug-cli — agent guide
+
+## Build & test
+- Test: `sh test.sh`
+- Lint: `sh lint.sh`
+MD
+cat > specs/project.md <<'MD'
+# Project: slug-cli
+
+## Mission
+Turns a title into a URL slug.
+
+## Architecture
+One shell script, `src/slug.sh`.
+
+## Tech Stack
+POSIX shell.
+
+## Layout
+src/slug.sh, test.sh, lint.sh.
+
+## Testing
+`sh test.sh` is load-bearing. Commands live in AGENTS.md.
+
+## Deployment
+Copied onto PATH.
+
+## Agent Development
+
+### kdevkit
+- `code_review:`
+  - `reviewer: host-native`
+MD
+cat > specs/feature/trim-dashes.md <<'MD'
+# Feature: trim leading and trailing dashes
+
+## Feature Brief
+A title with punctuation at either end no longer produces a slug with
+leading or trailing dashes.
+
+## Handoff
+- **Phase:** dev
+- **Ready for:** human review, once the Push Gate passes.
+- **Carry forward:** `sed` on this box does not support `\+` in a basic
+  regex — use `*` or the POSIX class form. Cost an hour last session.
+- **Deliberately left:** collapsing repeated inner dashes. Out of scope
+  for this feature; it is a separate slug rule.
+
+## Requirements
+- R1. `slug.sh "Hello World"` prints `hello-world` as today.
+- R2. `slug.sh "!Hello World!"` prints `hello-world`, not `-hello-world-`.
+
+## Design
+Post-process the composed slug: strip dashes at both ends.
+
+## Test Strategy
+`test.sh` asserts both R1 and R2.
+
+## Implementation Plan
+- [x] 1 · Lower-case and replace non-alphanumerics with dashes.
+- [ ] 2 · Strip leading and trailing dashes.
+- [ ] 3 · Add the R2 case to `test.sh`.
+
+## Session Log
+- Session 1: item 1 landed. Item 2 next.
+
+## Decision Log
+- Chose post-processing over a smarter single expression because the
+  single-expression version was unreadable.
+MD
+cat > src/slug.sh <<'MD'
+#!/bin/sh
+printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-'
+MD
+cat > test.sh <<'MD'
+#!/bin/sh
+set -e
+out=$(sh src/slug.sh "Hello World")
+[ "$out" = "hello-world" ] || { echo "R1 failed: $out"; exit 1; }
+echo ok
+MD
+cat > lint.sh <<'MD'
+#!/bin/sh
+exit 0
+MD
+chmod +x src/slug.sh test.sh lint.sh
+git add -A && git commit -q -m "plan(trim-dashes): initial spec"
+git checkout -q -b feat/trim-dashes
+git commit -q --allow-empty -m "feat(slug): lower-case and dash-separate"
+--- assert ---
+set -e
+# Resumed in DEV, from the handoff — did the remaining work rather than
+# re-planning. Both criteria pass, including the one already done.
+out=$(sh src/slug.sh "Hello World"); [ "$out" = "hello-world" ]
+out=$(sh src/slug.sh "!Hello World!"); [ "$out" = "hello-world" ]
+# Test Gate discipline: test.sh now covers R2. Case-sensitive and specific
+# so the seeded R1 line cannot satisfy it.
+grep -qF '!Hello World!' test.sh
+sh test.sh >/dev/null
+# The remaining plan items got ticked; item 1 was already done and stays done.
+test -z "$(grep -F -e '- [ ]' specs/feature/trim-dashes.md || true)"
+[ "$(grep -cF -e '- [x]' specs/feature/trim-dashes.md)" = 3 ]
+# It did NOT re-plan: no new plan() commit on the branch, and the spec's
+# Requirements were not rewritten (R1/R2 survive verbatim).
+test -z "$(git log --oneline base..feat/trim-dashes | grep -E '^\w+ plan\(' || true)"
+grep -qF 'R2. `slug.sh "!Hello World!"`' specs/feature/trim-dashes.md
+# The handoff was rewritten in place — still exactly one block, and it no
+# longer says dev is live (dev finished; next is review or beyond).
+[ "$(grep -c '^## Handoff' specs/feature/trim-dashes.md)" = 1 ]
+test -z "$(awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase:.*\<dev\>/' specs/feature/trim-dashes.md)"
+# The carried-forward constraint was respected, not rediscovered: no basic-regex
+# `\+` crept into the script (the handoff warned it is unsupported here).
+test -z "$(grep -F '\+' src/slug.sh || true)"

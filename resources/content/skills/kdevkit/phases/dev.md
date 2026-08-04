@@ -12,6 +12,14 @@ with code already in progress. The human-review side of the loop
 
 ## 7 · Dev loop (self-run gates)
 
+**On entry, read the spec's `## Handoff` block** (§5), then derive
+the rest from the repo: current branch, which Implementation Plan
+items are still `- [ ]`, what the last commits did, whether a
+review is open with findings. The block tells you what planning
+decided to carry forward and what it left; the repo tells you where
+the work actually is. Where they disagree, trust the repo — and say
+so, because a stale block means the previous phase was interrupted.
+
 Apply after any coherent unit of implementation work. The
 loop runs autonomously between gates — no per-step prompts.
 
@@ -203,4 +211,17 @@ passes. After exhausting `retry_budget`, behavior splits on
 
 Only push after Quality + Test + Code Review pass (the latter
 per `authority`).
+
+### Leaving dev
+
+After Push, **rewrite the `## Handoff` block** (§5) before handing
+to human review. From dev, the fields that carry weight are *Carry
+forward* — a reviewer-relevant risk the diff doesn't show on its
+face, a gate that passed only after a fix worth knowing about — and
+*Deliberately left*: work moved to backlog, a residual a soft
+`authority` allowed through, a plan item ticked with a caveat.
+
+Then read `phases/review.md`. The briefing it describes is
+generated from the spec and the diff, so a stale handoff is a stale
+briefing.
 

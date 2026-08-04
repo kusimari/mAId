@@ -83,6 +83,32 @@ template below, then return to `phases/plan.md` §6's Plan-commit rule
 Part of initiative: [[<name>]]
 -->
 
+## Handoff
+
+<!-- Rewritten at every phase boundary by the phase that is
+     ENDING; read on entry by the phase that is starting. Not a
+     log — replace the whole block, don't append. Keep it under
+     ~15 lines: it carries what the next phase can't derive, not
+     a summary of the work.
+
+     Phase:             which phase is live now.
+     Ready for:         the next phase, and what gates it.
+     Carry forward:     what the next phase would otherwise have
+                        to rediscover — a constraint found late, a
+                        finding still open, a trap.
+     Deliberately left: what was NOT done and why, so the next
+                        phase doesn't redo the decision or mistake
+                        the gap for an oversight.
+
+     Derivable facts (branch, unticked plan items, gate results)
+     are READ from git and this spec at entry — don't copy them
+     here and let them rot. This block is judgement only. -->
+
+- **Phase:** <planning | dev | review | closure>
+- **Ready for:** <next phase, and its gate>
+- **Carry forward:** <what the next phase must know>
+- **Deliberately left:** <what's unresolved, and why>
+
 ## Requirements
 
 <!-- The experience layer — what the user touches and
@@ -146,6 +172,57 @@ Part of initiative: [[<name>]]
 
 <!-- append: decision · rationale · alternatives rejected -->
 ```
+
+## Consolidation checklist (planning → dev)
+
+Fires once, at the planning → dev boundary, before the dev loop
+starts. The spec stops being the record of *how the plan was
+reached* and becomes the contract the dev phase builds from — a
+reader who saw none of the discussion must be able to implement
+from it.
+
+**Why it can't wait for closure:** once phases run as separate
+agents, the dev agent reads the spec *without* the conversation
+that disambiguates it. An unresolved option list is then
+indistinguishable from a requirement, so the agent may build the
+thing that was argued against.
+
+Strip:
+
+- **Superseded options.** Keep the decision, drop the lettered
+  alternatives and the "recommended" markers. `(a)/(b)/(c)` in a
+  shipped spec is an unmade decision.
+- **Round-by-round Q&A.** A reply to a reviewer belongs in the
+  PR/CR thread; the *rule it settled* belongs in the spec body.
+- **Revision narration.** "Revised after research", "changed from
+  X" — the diff and the thread carry that.
+
+Keep, and state as decisions:
+
+- Every settled decision in the imperative — what the build does,
+  not what was considered.
+- **Rationale that constrains future work.** Relocate it to the
+  Decision Log rather than deleting it; §8 closure is what
+  promotes the binding ones into `project.md`. Deleting a *why*
+  that a later feature needs is the one unrecoverable mistake
+  here.
+- Open questions, clearly separated from settled ones, with an
+  owner. A reader must be able to tell "build this" from "don't
+  build this yet".
+
+**The archive is the PR/CR conversation** — it already holds the
+discussion durably, so don't copy it into the repo. No
+`<feature>.planning.md`, no `## Planning Archive` section.
+
+Then commit as `plan(<feature>): consolidate spec` so the rewrite
+is reviewable as its own act, and rewrite the review body from the
+consolidated spec (a reviewer reading the pre-consolidation body
+is reading a stale artefact).
+
+**Right-size it.** A change with no iteration to consolidate skips
+this — there is nothing to strip. The test is whether the spec
+carries alternatives, Q&A, or revision narration; if it doesn't,
+move on.
 
 ## Backlog item template
 

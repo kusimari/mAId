@@ -12,6 +12,13 @@ sufficient (`SKILL.md` §9, no premature closure).
 
 ## 8 · Closure
 
+**On entry, read the spec's `## Handoff` block** (§5) — review wrote
+it on the closure cue, and its *Carry forward* names what closure
+must reconcile: a comment accepted but deferred, a follow-up
+promised in the thread. Closure sweeps the spec, not the review
+conversation, so that block is the only place such a promise
+survives.
+
 Closes the **feature loop**. Trigger: an explicit cue —
 `"feature done"` / `"close it"` / `"ship it"` / `"merge it"`.
 
@@ -31,8 +38,16 @@ in checkbox shape: literal grep for `- [ ]` markers; tick to
 `- [x]` if quietly done, or move out (backlog or follow-up
 feature). Implementation Plan items in older prose-numbered
 shape: read each and resolve. Then sweep open Decision Log
-entries and unresolved questions the same way. The merged
-spec is "done in place" — do not move directories. Stage
+entries and unresolved questions the same way.
+
+**Clear the `## Handoff` block** — replace its fields with
+`Phase: closed`. The feature is done, so a live handoff pointing at
+a next phase is a lie the next reader will act on; and anything in
+*Carry forward* that is still true belongs in a backlog item or a
+`project.md` edit (steps 2–3), not in a spec nobody will re-enter.
+Resolve it before clearing it.
+
+The merged spec is "done in place" — do not move directories. Stage
 edits.
 
 **2 · Persistent-layer verify (per touched section).** Closure

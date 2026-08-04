@@ -368,6 +368,42 @@ ticked spec is part of the dev commit, not a closure-time
 sweep. §8.1 reconcile is the safety net for slices ticked
 late or missed; the live discipline lives here.
 
+### The spec is the handoff record (always-on)
+
+**A phase writes its `## Handoff` block into the feature spec
+before the boundary it is crossing. A phase that ended without one
+did not finish.**
+
+That is the whole invariant, and it is what makes the phase modules
+independently runnable: the spec is checked in, so the next phase —
+a fresh agent, a new session tomorrow, or the same thread
+continuing — gets what it needs without the conversation that
+produced it. A session can die mid-feature and lose nothing that
+crossed the last boundary.
+
+Two rules that keep it honest:
+
+- **Rewrite the block, never append.** It carries current state,
+  not history. History has homes already: the Session Log for
+  observations, the Decision Log for choices, the PR/CR thread for
+  discussion. A handoff that accumulates becomes a second Session
+  Log — the exact bloat the module split exists to remove.
+- **Only judgement goes in it.** What the next phase can *derive*
+  it must derive, at entry, from git and the spec: the branch,
+  which plan items are ticked, which gates ran, what findings are
+  open. Copying those into prose is how a spec starts lying. The
+  block carries what cannot be read off the repo — a constraint
+  found late, a trap, why something was left.
+
+**On entry to any phase, read the block first**, then derive the
+rest. If it names a different phase than the one you are about to
+run, trust the repo over the block and say so — a stale handoff
+means the previous phase was interrupted, which is itself the most
+useful thing to know.
+
+The template and field semantics are in `interviews.md`; each phase
+module states where in its own flow the write happens.
+
 ### Initiative-stream auto-link
 
 When this feature is a stream of an active initiative, §6

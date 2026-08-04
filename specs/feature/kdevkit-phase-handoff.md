@@ -113,45 +113,82 @@ rather than assuming it ran.
 
 ## Implementation Plan
 
-- [ ] 1 · Add the `## Handoff` block + field semantics to the
+- [x] 1 · Add the `## Handoff` block + field semantics to the
       feature file template in `interviews.md`.
-- [ ] 2 · Add the consolidation checklist to `interviews.md`
+- [x] 2 · Add the consolidation checklist to `interviews.md`
       (what to strip, what to keep, what to relocate).
-- [ ] 3 · `SKILL.md` §5: the always-on invariant — a phase writes
+- [x] 3 · `SKILL.md` §5: the always-on invariant — a phase writes
       its handoff before the boundary; an absent handoff means the
       phase did not finish.
-- [ ] 4 · `phases/plan.md`: consolidate + write handoff as the
+- [x] 4 · `phases/plan.md`: consolidate + write handoff as the
       last steps before the planning→dev cue; extend the
       Plan-commit rule's numbered sequence.
-- [ ] 5 · `phases/dev.md`: read the handoff on entry; write one at
+- [x] 5 · `phases/dev.md`: read the handoff on entry; write one at
       dev→review.
-- [ ] 6 · `phases/review.md`: read on entry; write at
+- [x] 6 · `phases/review.md`: read on entry; write at
       review→closure.
-- [ ] 7 · `phases/close.md`: read on entry; §8.1 reconcile also
+- [x] 7 · `phases/close.md`: read on entry; §8.1 reconcile also
       clears the handoff (the feature is done; a live handoff
       would be stale).
-- [ ] 8 · Extend `kdevkit-phase-boundary.smoke` with the R1
+- [x] 8 · Extend `kdevkit-phase-boundary.smoke` with the R1
       assertion.
-- [ ] 9 · New `kdevkit-handoff-resume.smoke` (R2, R3).
-- [ ] 10 · New `kdevkit-consolidate.smoke` (R5, R6).
-- [ ] 11 · Gates + `verify-skills-dry`; confirm every new fixture
+- [x] 9 · New `kdevkit-handoff-resume.smoke` (R2, R3).
+- [x] 10 · New `kdevkit-consolidate.smoke` (R5, R6).
+- [x] 11 · Gates + `verify-skills-dry`; confirm every new fixture
       fails a no-op agent.
-- [ ] 12 · Close the consolidation backlog item; note in
+- [x] 12 · Close the consolidation backlog item; note in
       `project.md` if the spec-template shape is described there.
 
 ## Handoff
 
-- **Phase:** planning
-- **Ready for:** dev, once the Planning Review Gate is open.
-- **Carry forward:** the derivable-vs-judgement split in Design is
-  the seam stream 4 will build on — keep it explicit in the prose,
-  not just in this spec.
-- **Deliberately left:** orchestration (streams 4–5). Also whether
-  `## Handoff` should be *removed* at closure or kept as a record —
-  plan item 7 assumes cleared; revisit if the fixture argues
-  otherwise.
+- **Phase:** dev — complete, gates green.
+- **Ready for:** human review; the Agent-dev Review Gate is next.
+- **Carry forward:** three fixture bugs surfaced while proving
+  discrimination, all mine, all the same class — an assertion that
+  passes without the agent doing anything. Two were unreachable
+  criteria (`wc -l` can't see a trailing newline through command
+  substitution) and one was assuming git's default branch name.
+  The seeded repos now name their base branch explicitly. A
+  reviewer should weigh whether every new assert really fails a
+  no-op, since that is where I keep erring.
+- **Deliberately left:** the closure-clears-handoff question from
+  planning is now decided — `phases/close.md` sets
+  `Phase: closed` rather than deleting the block, so a merged spec
+  reads as finished rather than as missing a section. No fixture
+  covers closure clearing it; the closure fixture is untouched by
+  this stream.
 
 ## Session Log
+
+- **2026-08-04 · Dev complete; dogfooded the feature on itself.**
+  Six prose edits (template + checklist in `interviews.md`, the §5
+  invariant, four module read/write points) and three fixtures.
+  This spec now carries its own `## Handoff` block, written by the
+  phase that just ended — the feature applied to its own delivery.
+
+  **Fixture discrimination is where the work actually was.** Every
+  new assert was run against a purpose-built non-compliant agent,
+  and three of my own assertions failed that check before passing
+  it:
+  - `wc -l` cannot observe a trailing newline through command
+    substitution, so the R2 criterion I first wrote was
+    *unsatisfiable* — no agent could have passed it. Replaced with
+    a two-line/three-word input that also distinguishes
+    line-counting from word-counting.
+  - Both new fixtures assumed `git init` produces `main`; it
+    produces `master` here, so a `main..branch` range silently
+    errored and the assertion never ran. Fixed by seeding with
+    `git init -b base` and anchoring on that.
+  - The boundary fixture's new handoff check needed to catch an
+    agent that does the work but leaves the block stale — verified
+    it does.
+
+  Final matrices: **boundary** — no-op ✗, stale-handoff ✗,
+  compliant ✓. **resume** — no-op ✗, stale-handoff ✗, re-planned ✗,
+  compliant ✓. **consolidate** — no-op ✗, not-consolidated ✗,
+  rationale-deleted ✗, compliant ✓.
+
+  Gates: `fmt-check`, `lint`, 98 tests, full dry-run — green.
 
 - **2026-08-04 · Stream 2 opened.** Grounded on `main` @ `34ad980`
   (stream 1 merged): read the core's boundary-crossing prose, the

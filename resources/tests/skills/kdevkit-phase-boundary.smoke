@@ -57,6 +57,12 @@ Parse `-u` as the first argument; pipe the composed line through `tr`.
 ## Test Strategy
 `test.sh` asserts both R1 and R2.
 
+## Handoff
+- **Phase:** planning
+- **Ready for:** dev, once the plan is approved.
+- **Carry forward:** `tr` is available; no new dependency needed.
+- **Deliberately left:** long-form `--upper` alias — `-u` only for now.
+
 ## Implementation Plan
 - [ ] 1 · Add `-u` parsing to `src/greet.sh`.
 - [ ] 2 · Add the R2 case to `test.sh`.
@@ -105,3 +111,7 @@ git log --oneline feat/uppercase-flag | grep -qE '(feat|fix|refactor|test|chore)
 # Closure did NOT run: no explicit closure cue was given, so the branch must
 # still be unmerged and the spec not archived-in-place by a close() commit.
 test -z "$(git log --oneline feat/uppercase-flag | grep -E '^\w+ close\(' || true)"
+# The handoff was REWRITTEN, not appended: exactly one block, and it no longer
+# claims planning is live. A stale handoff is what a resuming agent acts on.
+[ "$(grep -c '^## Handoff' specs/feature/uppercase-flag.md)" = 1 ]
+test -z "$(awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase:.*planning/' specs/feature/uppercase-flag.md)"
