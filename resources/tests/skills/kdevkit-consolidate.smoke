@@ -141,14 +141,14 @@ test -z "$(grep -F 'Q&A from planning review' specs/feature/count-flag.md || tru
 # it must still be in the spec, and it must now be in the Decision Log — the
 # checklist's "relocate, don't delete" rule. Deleting it is the one
 # unrecoverable mistake, so this is the fixture's most important assert.
-grep -qiE 'more parsing code|than program' specs/feature/count-flag.md
-awk '/^## Decision Log/{f=1;next} /^## /{f=0} f' specs/feature/count-flag.md | grep -qiE 'more parsing code|than program'
+grep -qiE 'getopts|parsing' specs/feature/count-flag.md
+awk '/^## Decision Log/{f=1;next} /^## /{f=0} f' specs/feature/count-flag.md | grep -qiE '(getopts|parsing|parser).*(more|longer|outweigh|than|lines)|(more|longer|outweigh|than|lines).*(getopts|parsing|parser)'
 # Revision narration is stripped too — the diff and the thread carry that.
 test -z "$(grep -F 'Revised after looking at the script' specs/feature/count-flag.md || true)"
 test -z "$(grep -F 'Three options were considered' specs/feature/count-flag.md || true)"
 # The (a)/(b)/(c) lettering is gone: a shipped spec with lettered options is
 # an unmade decision.
-test -z "$(grep -E '^[[:space:]]*-?[[:space:]]*\*\*\([abc]\)' specs/feature/count-flag.md || true)"
+test -z "$(grep -E '^[[:space:]]*-?[[:space:]]*(\*\*)?\([abc]\)' specs/feature/count-flag.md || true)"
 # The requirements and the decision itself are intact — consolidation strips
 # the deliberation, not the contract.
 grep -qF 'R2.' specs/feature/count-flag.md

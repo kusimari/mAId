@@ -160,6 +160,52 @@ rather than assuming it ran.
 
 ## Session Log
 
+- **2026-08-04 · Review pass 4: PASS WITH NOTES, no blockers — and
+  the polarity flipped.** The reviewer replayed all four fixtures
+  against a no-op, a compliant agent, and 30 narrowly non-compliant
+  ones: every assert discriminates, none is vacuous, none is
+  unsatisfiable. It could not construct an agent that does no real
+  work and passes. The vacuous-assert failure mode is **eliminated,
+  not relocated** — three passes' worth of bypasses (no-op,
+  deleted-block, placeholder, junk value, appended block, prose-only,
+  Phase-only, un-consolidated) all fail.
+
+  What remained was the *opposite* error, which I then fixed: asserts
+  a **compliant** agent could fail.
+
+  - **Anchored on fragments of the seed, not whole clauses.** My
+    anti-relabel check matched any mention of "Push Gate", so a
+    correct re-authored field saying "Quality, Test and Push Gates
+    are green" **failed**. Now anchored on the seed's full clause, and
+    whole-file rather than per-line so a rewrap can't slip past.
+  - **The rationale check was a two-phrase whitelist.** Four faithful
+    paraphrases ("would be longer than the program", "12 lines of
+    parsing for a four-line script") all failed. Now requires
+    getopts/parsing near a size comparison, which accepts paraphrase
+    and still catches deletion.
+  - **The backlog check demanded the seed's exact stem**, so a
+    correct filing titled "repeating due dates" failed. Widened to
+    recur|repeat|schedul.
+  - **`[ -s "$(ls specs/backlog/* | head -1)" ]` tested an arbitrary
+    file** — an unrelated empty scratch file sorting first failed a
+    compliant agent, and it added no discrimination the content grep
+    didn't already have. Dropped.
+  - **The relabel bypass was closed on resume but not mirrored onto
+    closure**, where the same seeded-fields shape made it live. Now
+    mirrored.
+  - **The lettered-option guard required the bolded form**, though
+    the rule is about the lettering. Unbolded `- (a) …` now caught.
+
+  Every fix re-verified in both directions: paraphrases and varied
+  phrasings pass, deletion and relabel fail.
+
+  **One methodology note worth keeping:** a bug in my *verification
+  harness* (a `$1` that never reached a heredoc) made three
+  paraphrase probes look like fixture failures. The fixture was
+  right; my probe was broken. Adversarial probing has its own
+  correctness problem, so a probe that reports failure needs the same
+  scepticism as the code under test.
+
 - **2026-08-04 · Review pass 3: FAIL. Fixed, and one finding
   changed the prose rather than the test.**
 

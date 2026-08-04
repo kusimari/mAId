@@ -116,12 +116,15 @@ test -z "$(awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*review(
 # ...and it must positively say `closed`. Without this an agent can leave a
 # maximally LIVE handoff (Phase: closure, Ready for: squash-merge) and pass.
 awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*closed([^a-zA-Z]|$)/' "$spec" | grep -q .
+# Not a one-token relabel: close.md says replace its FIELDS, so review's
+# values must be gone too, not just the Phase label flipped.
+test -z "$(grep -F 'closure on the cue' "$spec" || true)"
+test -z "$(grep -F 'nothing outstanding from review' "$spec" || true)"
 # Deliberately-left work was resolved before clearing, not silently dropped:
 # the seeded block defers "recurring due dates", so a backlog item must exist.
-# Content, not just a filename: an empty specs/backlog/recur.md would satisfy
-# a name-only check while filing nothing.
-grep -rqi 'recur' specs/backlog/ 2>/dev/null
-[ -s "$(ls specs/backlog/* 2>/dev/null | head -1)" ]
+# Content, not just a filename: an empty file would satisfy a name-only check
+# while filing nothing. Accepts a faithful retitling (repeat/schedule).
+grep -rqiE 'recur|repeat|schedul' specs/backlog/ 2>/dev/null
 # A closure commit exists on top of the implementation commit.
 git log --no-decorate --oneline | grep -qiE 'close\(|close:|closure'
 # Closure does not move the spec out of feature/ (done in place).

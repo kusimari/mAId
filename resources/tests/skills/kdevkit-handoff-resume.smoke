@@ -145,8 +145,12 @@ test -z "$(awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*dev([^a
 # Not a one-token relabel: the other fields moved on too. Flipping `Phase:`
 # while leaving dev's `Ready for:` and `Carry forward:` in place is the stale
 # record the rule exists to prevent, and it reads as current.
-test -z "$(awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Ready for.*Push Gate/' specs/feature/trim-dashes.md)"
-test -z "$(awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /blanket/' specs/feature/trim-dashes.md)"
+# Anchor on the seed's whole clause, not a fragment: a compliant agent may
+# legitimately mention the Push Gate in a re-authored field, so only the
+# copied-verbatim text indicates a relabel. Whole-file grep, since a rewrap
+# could split the clause across lines.
+test -z "$(grep -F 'once the Push Gate passes' specs/feature/trim-dashes.md || true)"
+test -z "$(grep -F 'that is how the first attempt failed last session' specs/feature/trim-dashes.md || true)"
 # The carried-forward constraint was respected, not rediscovered: the handoff
 # warned that a blanket dash-delete breaks R1. R1 passing above already proves
 # the separator survived, so assert the specific trap was avoided.
