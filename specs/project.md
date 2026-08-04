@@ -331,6 +331,17 @@ behavioral form for `enact` wherever the skill's correct action leaves
 an inspectable change; fall back to a judge narrative only when the
 output is irreducibly prose.
 
+**A skill's own loading is a load-bearing behavior too.** Where a skill
+defers content to modules (see Architecture), "reads the right module
+at the right moment" is a behavior that fails *silently* — the agent
+proceeds from memory and the output looks plausible. It therefore earns
+a fixture like any other: a `playback` that the right module is named
+per stage, and a behavioral `enact` that drives a stage transition and
+asserts the next stage's discipline shows up in the artefacts
+(`kdevkit-module-load`, `kdevkit-phase-boundary`). A wrong trigger is
+invisible to the deterministic gates, so this layer is the only one
+that can catch it.
+
 ### Writing a skill
 
 A skill has to survive two things. Design for both.

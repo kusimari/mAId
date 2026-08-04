@@ -1,11 +1,30 @@
 ---
 name: kdevkit-refactor-shrink-always-on-context
-description: kdevkit's always-on SKILL.md is ~1250 lines and grows with every feature. Three candidate refactors, from cheapest to most structural — (1) compress the prose itself, (2) split by tier and by feature stage the way setup.md/interviews.md were split, (3) do (2) but with a code wrapper driving stage and loop transitions instead of prose. Pick one, or sequence them.
+description: Option 2 (split by stage) shipped as initiative stream 1 — the always-on SKILL.md is 1246 -> 572 lines. What remains is option 1 (compress the prose inside each resulting module, now that each is small enough to judge) and option 3 (code-driven stage transitions, which is initiative stream 4). This item now tracks the compression pass, which has no stream of its own.
 metadata:
   type: backlog
 ---
 
 # kdevkit — shrink the always-on context
+
+> **Partly shipped, 2026-08-04.** Option 2 landed as stream 1 of the
+> `kdevkit-decompose-and-harden` initiative: `SKILL.md` is 1246 → 572
+> lines, with `phases/{plan,dev,review,close}.md` and
+> `tiers/initiative.md` loaded on demand. Option 3 is that
+> initiative's stream 4 (blocked on the code-vs-prose boundary).
+>
+> **What this item still tracks: option 1, the compression pass** —
+> and it is the piece with no owner. The core landed at 572 against
+> the 500-line target, and the split deliberately deferred
+> compressing prose *inside* each module so that moves stayed
+> verifiable against a rule inventory. Each file is now small enough
+> to judge, which is the precondition option 1 was waiting for.
+>
+> The "how is the refactor verified" question below is answered:
+> the four `kdevkit-*.smoke` fixtures plus two new ones
+> (`kdevkit-module-load`, `kdevkit-phase-boundary`) are the A/B set.
+> Stream 1 shipped without that paid run; a compression pass should
+> not.
 
 ## What
 
