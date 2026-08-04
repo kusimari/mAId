@@ -10,7 +10,7 @@ with code already in progress. The human-review side of the loop
 (briefing, CR/PR comment conventions, the agent-dev gate) lives in
 `phases/review.md` and fires after Push.
 
-## Dev loop
+## 7 · Dev loop (self-run gates)
 
 Apply after any coherent unit of implementation work. The
 loop runs autonomously between gates — no per-step prompts.

@@ -15,7 +15,8 @@ sufficient (`SKILL.md` §9, no premature closure).
 Closes the **feature loop**. Trigger: an explicit cue —
 `"feature done"` / `"close it"` / `"ship it"` / `"merge it"`.
 
-The closure cycle reuses §7's **comment-prefix convention** for
+The closure cycle reuses `phases/review.md` §7's **comment-prefix
+convention** for
 any agent-authored CR/PR comments posted during reconcile or
 the Closure Review Gate.
 

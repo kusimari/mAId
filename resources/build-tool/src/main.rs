@@ -1103,6 +1103,14 @@ mod tests {
                 .join("resources/content/skills/example/SKILL.md"),
             "---\nname: example\ndescription: a sample skill\n---\nbody.\n",
         );
+        // A deferred module in a subdirectory: not validated, not registered,
+        // reachable only because the registry links the skill *directory*.
+        write(
+            &checkout
+                .path()
+                .join("resources/content/skills/example/phases/dev.md"),
+            "# deferred module\n",
+        );
         let home = TempDir::new().unwrap();
 
         assert_eq!(
@@ -1125,6 +1133,18 @@ mod tests {
             assert!(
                 home.path().join(tool_skills).exists(),
                 "skill not visible via {tool_skills}"
+            );
+        }
+        // Deferred modules must resolve through every tool's path too — a
+        // skill that loads them on demand is broken if only SKILL.md arrives.
+        for tool_module in [
+            ".claude/skills/example/phases/dev.md",
+            ".kiro/steering/skills/example/phases/dev.md",
+            ".codex/skills/example/phases/dev.md",
+        ] {
+            assert!(
+                home.path().join(tool_module).exists(),
+                "deferred module not visible via {tool_module}"
             );
         }
 

@@ -1,4 +1,19 @@
-## Feature planning
+# kdevkit — planning phase (stage module)
+
+Carries §6: the four interviews, the requirements smell test, the
+design-time reach-for-what-exists rule, the Plan-commit ordering,
+and the Planning Review Gate.
+
+**Read this when** a feature is being planned — entering a feature
+with no spec on disk, or with a spec the user has not reviewed yet
+(`SKILL.md` §3). Stop when the planning → dev cue fires; read
+`phases/dev.md` then.
+
+Interview prompts and the feature file template live in
+`interviews.md`; this module says when to reach for them and what
+order the phase runs in.
+
+## 6 · Feature planning
 
 Trigger: a populated spec lacks the user's review (§3
 spec-already-drafted rule), or `<feature>` is being started

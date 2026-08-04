@@ -73,7 +73,7 @@ organised by skill. Keys under `kdevkit`:
   recommendation (see SKILL.md §4).
 - `planning_phase: true|false` (default `true`) — three-phase
   feature branch (planning → dev → closure) per
-  SKILL.md §5/§6/§7/§8. Set `false` to skip §6 Planning and
+  SKILL.md §5 and the phase modules. Set `false` to skip §6 Planning (`phases/plan.md`) and
   let spec edits ride with the first dev commit.
 - `code_review:` — nested block configuring the §7 Code Review
   Gate. All keys optional; defaults below.
@@ -164,7 +164,7 @@ Alongside the prompt, surface a one-line note (outside the
 blockquote so it isn't read as a reply option): _"This skill
 prefixes agent-authored CR/PR comments with `[agent]:` so
 review threads stay disambiguable when builder and reviewer
-share an identity (see SKILL.md §7); your own comments don't
+share an identity (see `phases/review.md` §7); your own comments don't
 need a prefix."_
 
 Then **sticky-write** the answer to `project.md`'s `## Agent
@@ -184,7 +184,7 @@ above as the appended one-liner.
 
 ## Optional `## Active initiatives` index
 
-When in-flight initiatives exist (see SKILL.md §10),
+When in-flight initiatives exist (see `tiers/initiative.md` §10),
 `project.md` MAY carry an `## Active initiatives` index near
 the bottom — one line per initiative, removed at last-stream
 close:

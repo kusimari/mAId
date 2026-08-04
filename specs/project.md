@@ -207,8 +207,8 @@ mAId/
 │   │   ├── Cargo.toml      deps: clap, anyhow; dev: tempfile
 │   │   └── src/main.rs     registry + content checks + symlink core + clap + tests
 │   ├── content/            the deployable skills (symlinked in)
-│   │   └── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
-│   │       └── kdevkit/    SKILL.md core + phases/*.md, tiers/*.md, setup.md, interviews.md
+│   │   ├── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
+│   │   └── skills/kdevkit/  SKILL.md core + phases/, tiers/, setup.md, interviews.md
 │   ├── browser/            browser-control MCP (not symlinked — runnable)
 │   │   ├── launch          allowlist-enforcing launcher; enters flake, execs chrome-devtools-mcp
 │   │   └── manage          data-driven MCP registrar (MCP_AGENTS table: claude/codex global, kiro per-sub-agent)
@@ -243,7 +243,7 @@ covering the content validator and the symlink state
 machine against a `tempfile`-fake `$HOME`, plus the kaimux
 crate's 53 unit tests against a tempdir `Store`. Fast
 (sub-second). No real `$HOME` side effects, no API credits.
-Load-bearing — this is the §8 Test Gate default. Includes
+Load-bearing — this is the kdevkit Test Gate default. Includes
 a structural integration test (`structural_install_to_real_directory_layout`)
 that runs a full install→status→uninstall round-trip in
 the fake $HOME, replacing the older bash structural smoke.
@@ -407,9 +407,9 @@ stop-with-error) where a compliant agent writes nothing. A
 behavioral assert must fail a no-op agent (pair a presence check
 with the absence check) or it proves nothing.
 
-The §8 Test Gate uses `just test` by default. SKILL.md
+kdevkit's Test Gate uses `just test` by default. SKILL.md
 prose revisions add `just resources::verify-skills` (judge mode)
-as their A/B evidence. The §9 close-out can run
+as their A/B evidence. kdevkit's close-out can run
 `just resources::status-skills` after an install to confirm
 symlinks resolved.
 

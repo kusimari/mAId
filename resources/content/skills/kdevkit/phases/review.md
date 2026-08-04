@@ -10,6 +10,8 @@ iterates. Also read it before posting *any* comment on a CR/PR,
 since the prefix convention governs every comment the agent
 authors.
 
+## 7 · Human review (the other half of the dev loop)
+
 ### Comment-prefix convention
 
 When the agent operates the CR/PR review surface under the
@@ -133,8 +135,8 @@ not be able to widen a briefing generator's authority.
 may report things that should simply be *fixed* rather than
 published — the briefing fires at dev-loop completion, so a
 defect means the loop is not actually complete. Treat those as
-the next implementation slice (apply "Re-pin on reactive
-change"), re-run the affected gates, and regenerate the briefing
+the next implementation slice (apply `phases/dev.md`'s "Re-pin on
+reactive change"), re-run the affected gates, and regenerate the briefing
 on the fixed work. **Publish a briefing that describes finished
 work, not one that documents its own loose ends.**
 

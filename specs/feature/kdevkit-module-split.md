@@ -153,6 +153,56 @@ rather than asserted.
 
 <!-- Newest at top. -->
 
+- **2026-08-04 · Code Review Gate: PASS WITH NOTES; two blockers
+  fixed.** Fresh-context reviewer (no feature spec, no session
+  history) confirmed the move is byte-clean by reconstructing the
+  old section ranges and diffing each module — but found the real
+  defect this refactor could produce, which the rule inventory
+  could not: **the §-number cross-reference web no longer
+  resolved.**
+
+  1. *§-map wrong and incomplete.* I claimed "§7 dev" while §7 is
+     split across `dev.md` *and* `review.md`, so core pointers to
+     the Agent-dev Review Gate and Review Briefing sent readers to
+     the wrong file. Fixed: a §→file table (noting §7 spans two
+     files), § numbers restored on the demoted headings so search
+     resolves uniformly, and every core `see §7` now names a file.
+  2. *~15 stale `SKILL.md §N` refs in `setup.md` / `interviews.md`.*
+     These name the *filename*, so the "original layout" escape
+     hatch didn't cover them. Worst were two "return to SKILL.md
+     §6's Plan-commit rule" pointers — the ordering rule the old
+     file worked hardest to make unmissable. All repointed.
+
+  Also fixed from that review: the diagram implied a fourth phase
+  while the text says three (now shown as the back half of dev,
+  with the reason stated); `plan.md` was the only module without a
+  header/trigger; dangling cross-module pointers in `close.md` and
+  `review.md`; a malformed `project.md` tree entry; three
+  pre-existing wrong § refs in `project.md`; README not mentioning
+  deferred modules.
+
+  **Two findings I acted on beyond the minimum**, because the
+  reviewer's reasoning was better than my original call:
+  - **The dispatch safety floor is now resident in §9.** It had
+    moved into `review.md`, and it is precisely the rule meant to
+    stop prompt-injected diff content widening a dispatched tool's
+    authority — a rule that only loads if you remembered to load it
+    is the wrong shape. Generalized it from briefing-specific to
+    any dispatch, with `review.md` keeping the elaboration.
+  - **`§9 outranks any module`**, stated explicitly. A module is
+    read *after* the core, so recency would otherwise favour it —
+    `project.md` itself says precedence is what holds.
+
+  Added the two tests the reviewer identified as missing: the
+  structural install test now asserts a subdirectory module
+  resolves through all three tool paths (verified it fails when it
+  doesn't), and `kdevkit-module-load.smoke` covers module-loading —
+  now the skill's central mechanic and previously untested.
+
+  Unrelated but caught by the marker grep: scrubbed an internal
+  repo name from `kdevkit-durable-facts-to-repo-not-agent-memory.md`
+  (pre-existing on `main`, a public-repo violation).
+
 - **2026-08-04 · Split landed; inventory closes.** Always-on
   `SKILL.md` **1246 → 511** lines (59% cut). Modules: `plan` 177,
   `dev` 206, `review` 174, `close` 134, `tiers/initiative` 107.
