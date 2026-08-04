@@ -339,7 +339,7 @@ a fixture like any other: a `playback` that the right module is named
 per stage, and a behavioral `enact` that drives a stage transition and
 asserts the next stage's discipline shows up in the artefacts
 (`kdevkit-module-load`, `kdevkit-phase-boundary`,
-`kdevkit-handoff-resume`, `kdevkit-consolidate`). A wrong trigger is
+`kdevkit-handoff-resume`, `kdevkit-consolidate`, `kdevkit-closure`). A wrong trigger is
 invisible to the deterministic gates, so this layer is the only one
 that can catch it.
 

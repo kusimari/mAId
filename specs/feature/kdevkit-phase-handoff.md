@@ -160,6 +160,60 @@ rather than assuming it ran.
 
 ## Session Log
 
+- **2026-08-04 · Review pass 3: FAIL. Fixed, and one finding
+  changed the prose rather than the test.**
+
+  - **I asserted an artefact the prose never required.** Pass 2's
+    closure check demanded a backlog item for *Deliberately left*
+    work, but `phases/close.md` scoped that obligation to *Carry
+    forward* only — so a fully compliant agent **failed**. Fixed by
+    changing the *rule*, not the test: deferred-but-still-wanted
+    work is exactly what closure loses, and "out of scope for this
+    feature" is not "nobody wants it." The test was right about the
+    behaviour and wrong to assert it unilaterally.
+  - **The one-token relabel bypass.** Flipping `Phase: dev` →
+    `review` while leaving dev's `Ready for:` and `Carry forward:`
+    in place passed everything — and that *is* the stale-record
+    state the feature exists to prevent. §5 now requires every
+    field re-authored, not just the label, and two asserts check the
+    old field values are gone.
+  - **The template placeholder passed three of four fixtures.**
+    `<planning | dev | review | closure | closed>` satisfies both a
+    `^- **Phase:**` existence check and a negative for any single
+    phase, because `[^a-zA-Z]*` can't span the intervening words.
+    Only consolidate had the guard; all four have it now, plus a
+    legal-value check.
+  - **`ls | grep` matched a zero-byte file**, so an empty
+    `specs/backlog/recur.md` counted as filing the work.
+  - **`grep -qiE 'getopts|...'`** was satisfied by the bare token
+    `getopts` with the rationale deleted — the alternation now
+    requires the reasoning clause.
+  - **`git log --oneline` is decoration-sensitive**: under an
+    inherited `log.decorate=full` the `^<sha> close(` anchor never
+    matches, silently passing. Now `--no-decorate`.
+
+  Also fixed two prose contradictions the reviewer found:
+  `planning_phase: false` told the agent both to make a separate
+  `plan()` commit and to fold spec edits into the dev commit; and
+  `review.md` never named the value it writes, leaving `closure`
+  in the enum but written by nobody.
+
+  **Three passes, and the same failure mode each time.** Not the
+  same *instance* — each fix was correct in intent — but the same
+  class: an assertion satisfiable without the agent doing the work,
+  including two cases where the fix itself was nominal. I now
+  believe reading cannot catch this and only constructing the
+  adversarial agent can, so that construction is the work. Every
+  matrix below was produced that way, and the bypasses are the
+  reviewers' own.
+
+  Final: **boundary** — no-op ✗, TBD-value ✗, placeholder ✗,
+  compliant ✓. **resume** — no-op ✗, relabel ✗, placeholder ✗,
+  never-commits ✗, compliant ✓. **consolidate** — no-op ✗,
+  bare-token ✗, rationale-after-DL ✗, placeholder ✗, compliant ✓.
+  **closure** — no-op ✗, live-handoff ✗, fields-deleted ✗,
+  empty-backlog ✗, no-backlog ✗, compliant ✓.
+
 - **2026-08-04 · Review pass 2: FAIL again. Four more, and the
   two sharpest were my *fixes* being nominal rather than real.**
   Verified each empirically before fixing.

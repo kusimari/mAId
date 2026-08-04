@@ -141,8 +141,8 @@ test -z "$(grep -F 'Q&A from planning review' specs/feature/count-flag.md || tru
 # it must still be in the spec, and it must now be in the Decision Log — the
 # checklist's "relocate, don't delete" rule. Deleting it is the one
 # unrecoverable mistake, so this is the fixture's most important assert.
-grep -qiE 'getopts|more parsing code' specs/feature/count-flag.md
-awk '/^## Decision Log/{f=1;next} /^## /{f=0} f' specs/feature/count-flag.md | grep -qiE 'getopts|more parsing code'
+grep -qiE 'more parsing code|than program' specs/feature/count-flag.md
+awk '/^## Decision Log/{f=1;next} /^## /{f=0} f' specs/feature/count-flag.md | grep -qiE 'more parsing code|than program'
 # Revision narration is stripped too — the diff and the thread carry that.
 test -z "$(grep -F 'Revised after looking at the script' specs/feature/count-flag.md || true)"
 test -z "$(grep -F 'Three options were considered' specs/feature/count-flag.md || true)"
@@ -171,7 +171,7 @@ grep -qF 'src/wc.sh -c' test.sh
 grep -qF -e '- [x]' specs/feature/count-flag.md
 test -z "$(grep -F -e '- [ ]' specs/feature/count-flag.md || true)"
 # A consolidate commit exists, separate from the dev work.
-git log --oneline base..feat/count-flag | grep -qE 'plan\(count-flag\): consolidat'
+git log --no-decorate --oneline base..feat/count-flag | grep -qE 'plan\(count-flag\): consolidat'
 # And the spec still parses as a spec: one Requirements, one Design.
 [ "$(grep -c '^## Requirements' specs/feature/count-flag.md)" = 1 ]
 [ "$(grep -c '^## Design' specs/feature/count-flag.md)" = 1 ]

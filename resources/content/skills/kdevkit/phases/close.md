@@ -42,10 +42,21 @@ entries and unresolved questions the same way.
 
 **Clear the `## Handoff` block** — replace its fields with
 `Phase: closed`. The feature is done, so a live handoff pointing at
-a next phase is a lie the next reader will act on; and anything in
-*Carry forward* that is still true belongs in a backlog item or a
-`project.md` edit (steps 2–3), not in a spec nobody will re-enter.
-Resolve it before clearing it.
+a next phase is a lie the next reader will act on.
+
+**Resolve it before clearing it.** The block is the last place two
+kinds of live information exist, and closure is where they are
+otherwise lost:
+
+- *Carry forward* still true → a backlog item, or a `project.md`
+  edit where it constrains future work (steps 2–3).
+- *Deliberately left* naming work that is still wanted → a backlog
+  item. "Out of scope for this feature" is not the same as "nobody
+  wants it," and this spec is about to stop being read.
+
+Clearing the block without doing that discards the only record.
+Where an entry is genuinely finished or genuinely unwanted, say so
+in the closure commit and clear it.
 
 The merged spec is "done in place" — do not move directories. Stage
 edits.

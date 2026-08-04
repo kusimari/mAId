@@ -383,8 +383,11 @@ crossed the last boundary.
 
 Two rules that keep it honest:
 
-- **Rewrite the block, never append.** It carries current state,
-  not history. History has homes already: the Session Log for
+- **Rewrite the block, never append — and re-author every field,
+  not just `Phase:`.** Relabelling the phase while leaving
+  `Ready for:` and `Carry forward:` as the previous phase wrote
+  them produces exactly the stale record this exists to prevent,
+  and it reads as current. It carries current state, not history. History has homes already: the Session Log for
   observations, the Decision Log for choices, the PR/CR thread for
   discussion. A handoff that accumulates becomes a second Session
   Log — the exact bloat the module split exists to remove.

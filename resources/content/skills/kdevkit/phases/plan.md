@@ -186,8 +186,10 @@ paths — fresh-from-interviews and spec-on-disk (§3); §3 cites it
 rather than duplicating.
 
 Skip steps 3–6 if `planning_phase: false` (§2) — spec edits ride
-with the first dev commit. Step 7 still applies: even with no
-planning gate, dev needs a handoff to resume from.
+with the first dev commit. Step 7's **handoff still applies** (dev
+needs something to resume from) but rides that same commit rather
+than a separate `plan()` one; there is nothing to consolidate,
+since no planning iteration happened.
 
 ### Leaving planning
 

@@ -171,7 +171,9 @@ content: **Approach** (bullets covering the changes).
 
 ### Leaving review
 
-On the dev → closure cue, **rewrite the `## Handoff` block** (§5).
+On the dev → closure cue, **rewrite the `## Handoff` block** (§5)
+with `Phase: closure` — the phase now starting. (Closure itself
+clears it to `Phase: closed` when it is done.)
 From review, *Carry forward* is what closure must reconcile — a
 review comment accepted but deferred, a follow-up promised in the
 thread — and *Deliberately left* is anything the reviewer raised

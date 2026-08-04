@@ -109,14 +109,20 @@ grep -qF -- '- [x]' "$spec"
 # under mawk, which would make this pass vacuously.
 [ "$(grep -c '^## Handoff' "$spec")" = 1 ]
 awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /^- \*\*Phase:\*\*/' "$spec" | grep -q .
+# The block was authored, not pasted: the template placeholder lists every
+# legal value on one line, which would satisfy a naive negative check.
+test -z "$(grep -F 'planning | dev | review' "$spec" || true)"
 test -z "$(awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*review([^a-zA-Z]|$)/' "$spec")"
 # ...and it must positively say `closed`. Without this an agent can leave a
 # maximally LIVE handoff (Phase: closure, Ready for: squash-merge) and pass.
 awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*closed([^a-zA-Z]|$)/' "$spec" | grep -q .
 # Deliberately-left work was resolved before clearing, not silently dropped:
 # the seeded block defers "recurring due dates", so a backlog item must exist.
-ls specs/backlog/ 2>/dev/null | grep -qi 'recur' 
+# Content, not just a filename: an empty specs/backlog/recur.md would satisfy
+# a name-only check while filing nothing.
+grep -rqi 'recur' specs/backlog/ 2>/dev/null
+[ -s "$(ls specs/backlog/* 2>/dev/null | head -1)" ]
 # A closure commit exists on top of the implementation commit.
-git log --oneline | grep -qiE 'close\(|close:|closure'
+git log --no-decorate --oneline | grep -qiE 'close\(|close:|closure'
 # Closure does not move the spec out of feature/ (done in place).
 test -f specs/feature/add-due-dates.md

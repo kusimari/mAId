@@ -119,7 +119,7 @@ test -z "$(grep -F -e '- [ ]' specs/feature/trim-dashes.md || true)"
 [ "$(grep -cF -e '- [x]' specs/feature/trim-dashes.md)" -ge 3 ]
 # It did NOT re-plan: no new plan() commit on the branch, and the spec's
 # Requirements were not rewritten (R1/R2 survive verbatim).
-test -z "$(git log --oneline base..feat/trim-dashes | grep -E '^[[:alnum:]]+ plan\(' || true)"
+test -z "$(git log --no-decorate --oneline base..feat/trim-dashes | grep -E '^[[:alnum:]]+ plan\(' || true)"
 # The agent COMMITTED its work. The setup already seeds one feat() commit, so
 # counting commit types would pass vacuously — instead require the tree to be
 # clean, which an agent that edited but never committed cannot satisfy.
@@ -135,8 +135,18 @@ grep -qF 'R2. `slug.sh "!Hello World!"`' specs/feature/trim-dashes.md
 # nothing under mawk/BusyBox, which would make these pass vacuously.
 # A Phase field must still EXIST — deleting it would satisfy a bare negative.
 awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /^- \*\*Phase:\*\*/' specs/feature/trim-dashes.md | grep -q .
+# The block was authored, not pasted: the template placeholder lists every
+# legal value on one line, which would satisfy a naive negative check.
+test -z "$(grep -F 'planning | dev | review' specs/feature/trim-dashes.md || true)"
+# ...and the value is a legal phase, not junk like TBD.
+awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*(review|closure)([^a-zA-Z]|$)/' specs/feature/trim-dashes.md | grep -q .
 # ...and it must no longer name the phase that has finished.
 test -z "$(awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*dev([^a-zA-Z]|$)/' specs/feature/trim-dashes.md)"
+# Not a one-token relabel: the other fields moved on too. Flipping `Phase:`
+# while leaving dev's `Ready for:` and `Carry forward:` in place is the stale
+# record the rule exists to prevent, and it reads as current.
+test -z "$(awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Ready for.*Push Gate/' specs/feature/trim-dashes.md)"
+test -z "$(awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /blanket/' specs/feature/trim-dashes.md)"
 # The carried-forward constraint was respected, not rediscovered: the handoff
 # warned that a blanket dash-delete breaks R1. R1 passing above already proves
 # the separator survived, so assert the specific trap was avoided.
