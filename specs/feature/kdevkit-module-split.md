@@ -127,24 +127,24 @@ rather than asserted.
 
 ## Implementation Plan
 
-- [ ] 1 · Rule inventory of today's `SKILL.md`: every `##`/`###`
+- [x] 1 · Rule inventory of today's `SKILL.md`: every `##`/`###`
       block, its line count, its stage, and whether it is
       always-on or stage-scoped. This is the contract for the move.
-- [ ] 2 · Create `phases/plan.md` from §6; leave the core citing
+- [x] 2 · Create `phases/plan.md` from §6; leave the core citing
       it with a trigger.
-- [ ] 3 · Create `phases/dev.md` from §7's quality/test/code-review
+- [x] 3 · Create `phases/dev.md` from §7's quality/test/code-review
       and dev-time rules.
-- [ ] 4 · Create `phases/review.md` from §7's briefing,
+- [x] 4 · Create `phases/review.md` from §7's briefing,
       comment-prefix convention, and agent-dev gate.
-- [ ] 5 · Create `phases/close.md` from §8.
-- [ ] 6 · Create `tiers/initiative.md` from §10.
-- [ ] 7 · Rewrite the core: detection, entry mode, stage triggers,
+- [x] 5 · Create `phases/close.md` from §8.
+- [x] 6 · Create `tiers/initiative.md` from §10.
+- [x] 7 · Rewrite the core: detection, entry mode, stage triggers,
       §9 cross-cutting. Target under 500 lines; report the actual.
-- [ ] 8 · Verify the inventory: every rule in exactly one place,
+- [x] 8 · Verify the inventory: every rule in exactly one place,
       every module has a trigger, nothing orphaned.
-- [ ] 9 · `just test`; install and `status-skills` to confirm
+- [x] 9 · `just test`; install and `status-skills` to confirm
       symlinks resolve.
-- [ ] 10 · Update `project.md` Layout if the skill's file shape is
+- [x] 10 · Update `project.md` Layout if the skill's file shape is
       described there; update the skill's own "Multi-file shape"
       and "Skill-file placement" sections, which currently name
       three files.
@@ -152,6 +152,43 @@ rather than asserted.
 ## Session Log
 
 <!-- Newest at top. -->
+
+- **2026-08-04 · Split landed; inventory closes.** Always-on
+  `SKILL.md` **1246 → 511** lines (59% cut). Modules: `plan` 177,
+  `dev` 206, `review` 174, `close` 134, `tiers/initiative` 107.
+  A dev-loop session now carries 511 + 206 = **717** vs 1246, and
+  no session carries all of it.
+
+  **Verification of R2 (no rule lost)**, three ways:
+  1. *Line accounting* — every one of the original 1246 lines
+     assigned to exactly one destination, no gaps or overlaps
+     (checked programmatically).
+  2. *Heading diff* — all 48 original `##`/`###` headings present
+     in exactly one new file, with two expected exceptions:
+     `Multi-file shape` was deliberately replaced by the new
+     module table, and `Initiative-stream auto-link` appears
+     twice — as it did in the original (a §5 pointer plus the §6
+     rule), preserved as-is.
+  3. *Rule spot-check* — 12 load-bearing rules confirmed present
+     by literal match: Plan-commit ordering, reviewer-is-not-the-
+     implementer, asking-is-the-artifact, `--force-with-lease`,
+     no-premature-closure, `[agent]:` prefix, briefing safety
+     floor, re-pin, test retry budget, public-repo abort,
+     worktree-teardown-offer-only, last-stream archive.
+
+  Line-level diff shows 42 old lines absent — all of them the
+  meta-prose I intentionally rewrote (old "Multi-file shape"
+  describing three files, the preamble's reading-order sentence,
+  the stale placement rule). Zero workflow rules among them.
+
+  Gates: `just fmt-check` clean, `just lint` clean, `just test`
+  **98 passed**. Install validated 5 content files — sibling
+  modules correctly *not* parsed, confirming the design
+  assumption. `install-skills` **refused** to take over
+  `~/.claude/skills` because it points at the primary checkout;
+  that is the guardrail working, so I did not `--force` it.
+  Verified module resolution through an equivalent temp symlink
+  instead.
 
 - **2026-08-04 · Stream 1 opened.** Grounded before planning:
   read `SKILL.md` in full, `setup.md` / `interviews.md` headers
