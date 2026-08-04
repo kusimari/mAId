@@ -153,6 +153,24 @@ rather than asserted.
 
 <!-- Newest at top. -->
 
+- **2026-08-04 · Briefing round 2: one new defect (D3), fixed.**
+  Regenerating the briefing on the fixed work surfaced something
+  the earlier passes missed — and it is the failure mode this
+  stream's own Design section names as primary, so worth recording
+  plainly. The core's trigger row for `phases/review.md` still
+  said the `[agent]:` prefix rule "lives there," written when the
+  split first landed and never updated when a later commit
+  promoted that rule into always-on §9. So the table told an agent
+  to read a 170-line module for a rule already in its context —
+  **partly un-doing the promotion it was meant to complement.**
+  Fixed: the row now says the rule is resident in §9 and the
+  module carries the rationale.
+
+  Two lessons: promoting a rule needs a sweep of everything that
+  *pointed* at its old home, not just the two sites holding the
+  text; and a wrong trigger really is invisible to every gate on
+  this branch — no test caught this, a fresh reader did.
+
 - **2026-08-04 · Briefing generator returned two defects; both
   fixed, loop re-run.** Dispatched the briefing to a fresh-context
   agent (I wrote the code, so per the firewall I can't write my own

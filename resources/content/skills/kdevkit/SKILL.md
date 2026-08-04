@@ -66,7 +66,7 @@ don't.
 |---|---|
 | `phases/plan.md` | A feature is being planned: no spec on disk, or a spec the user hasn't reviewed yet (§3). Stop when the planning → dev cue fires. |
 | `phases/dev.md` | Implementation work is in flight: the planning → dev cue has fired, or you resume on a branch with code in progress. |
-| `phases/review.md` | Green work is going in front of a human: after the Push Gate, and while review iterates. **Also before posting any CR/PR comment** — the `[agent]:` prefix rule lives there. |
+| `phases/review.md` | Green work is going in front of a human: after the Push Gate, and while review iterates. (The `[agent]:` prefix rule itself is resident in §9 — read this module for its rationale and the human-side optionality.) |
 | `phases/close.md` | The closure cue has fired: `"close it"` / `"ship it"` / `"merge it"` / `"feature done"`. |
 | `tiers/initiative.md` | An initiative is in play: `$SPEC_ROOT/initiative/` exists and the work references one, an initiative verb fires, or the feature spec carries `Part of initiative:`. Applies during any phase. |
 | `setup.md` | Project genesis, or `project.md` drifted from the schema (§2). |
