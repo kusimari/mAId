@@ -1,7 +1,7 @@
 ---
 name: kreviewkit
 description: 'Brief a human before they review a change — "review what was done", "prep this for review", "brief the review", "summarise this change for a reviewer". Independent review-briefing tool: read-only reviewer turns a spec + diff into the briefing a reviewer reads first. Becomes the PR/CR body; not a scoring gate. Opens with `[kreviewkit] applies`.'
-version: 1.0.0
+version: 1.1.0
 tags: [review, pr, cr, briefing, reviewer, spec, diff, independent]
 ---
 
@@ -150,36 +150,63 @@ finding the human needs.
 Four sections, in this order. This is the PR/CR body — clean prose, no
 `[kreviewkit] applies` marker, no meta-commentary about being an AI.
 
-### Don't restate the inputs
+### Write for a reviewer who has not read the spec
 
-**The reviewer has the spec and the diff.** Both are in the review.
-Re-describing what the spec already says is wasted words that pad the
-briefing and bury the parts only you can supply.
+**Assume the reader is competent but unfamiliar.** They opened the PR
+body; the spec is a file they would have to go and find, and most
+reviewers won't before forming a first impression. A briefing that only
+makes sense to someone already holding the spec has failed the person it
+was written for — and that failure is silent, because it reads as
+admirably dense to anyone who *is* familiar.
 
-Your value is the **delta between intent and artefact** — what can only
-be learned by holding the spec, the diff, and the surrounding code
-against each other. Everything below is either that delta, or the
-minimum orientation needed to make the delta legible.
+So §1 **does** summarise: the feature, the design, and the tests, in
+plain terms, before any delta. That is the orientation the rest depends
+on. Then compress hard everywhere after it.
 
-So: no section-by-section recap of the spec, no file-by-file recitation
-of the diff, no restatement of requirements the reviewer can read. Cite
-the spec only where the diff meets it, diverges from it, or leaves it
-unaddressed.
+Your distinctive value is still the **delta between intent and
+artefact** — what can only be learned by holding the spec, the diff, and
+the surrounding code against each other. Sections 2–4 are that delta and
+nothing else.
 
-### 1 · Playback — the shape of what landed
+Two failure modes, and the second is the one that actually happens:
 
-Orientation only: enough for a reviewer to hold the change in their
-head before they open a file. A few sentences on **what the change
-does** and **where its risk concentrates** — not a summary of the spec's
-capability statement, which they already have.
+- **Padding.** A section-by-section recap of the spec, a file-by-file
+  recitation of the diff, requirements restated at length. Wastes the
+  reader's attention and buries the findings.
+- **Density that presumes context.** Opening on design amendments,
+  superseded alternatives, or "the reach axis was already the install
+  boundary" — each true, none legible to someone meeting the feature for
+  the first time. If a sentence would make a newcomer stop and
+  re-read, it belongs after the orientation, not in it.
 
-Then the **load-bearing design decisions** — but only those the diff
-*reveals*: a decision the code embodies, an alternative that was
-weighed (mine the Decision Log), a choice a reviewer would otherwise
-have to reverse-engineer. Skip any decision the spec already states
-plainly and the diff simply implements; that is reading, not briefing.
+The test: **could a competent engineer who has never seen this project
+read §1 and correctly say what shipped and why?** If not, §1 is too
+dense, whatever its length.
 
-If this section runs long, it is almost certainly restating the spec.
+### 1 · Playback — what shipped, for someone meeting it cold
+
+The orientation everything else rests on. Four things, in this order,
+each as short as it can be while still landing:
+
+1. **The feature.** What can someone now do that they couldn't, in one
+   or two sentences of plain language. No jargon the spec introduced.
+2. **The spec, in brief.** What was asked for — the shape of the
+   requirement, not its clauses.
+3. **The design, and what moved while building it.** How it was built,
+   then the honest part: where implementation diverged from the plan and
+   why. Amendments, superseded approaches, decisions the code embodies
+   that the spec argued differently (mine the Decision Log). This is the
+   half a reviewer cannot reconstruct alone, and it only makes sense
+   *after* 1 and 2 — which is why it is third, not first.
+4. **How it's tested.** Which layers, what they prove, and — plainly —
+   what remains unproven.
+
+Then one sentence on **where risk concentrates**, which sets up §3.
+
+Length guidance: this section earns more words than the others, but
+every sentence must do work. If it reads like the spec's table of
+contents, cut it. If a newcomer would need the spec open to follow it,
+it is in the wrong order — orientation first, delta second.
 
 ### 2 · Spec ↔ diff reconciliation
 
