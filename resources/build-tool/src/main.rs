@@ -14,6 +14,7 @@
 //! is all of them.
 
 use anyhow::Result;
+use build_tool::deploy::{NoDeploy, Symlinks};
 use build_tool::harness::{Selection, Stage};
 use build_tool::shared::{home_dir, repo_root, usage, validate_agent, validate_agents, UsageError};
 use build_tool::stages;
@@ -117,15 +118,28 @@ fn main() -> ExitCode {
 /// validated values and never sees a raw CLI string.
 fn run(cli: Cli) -> Result<u8> {
     let root = repo_root()?;
-    let home = home_dir()?;
+    // How skills reach the agents. The only place this choice is made:
+    // everything below declares what it wants and this decides how. When
+    // an agent grows its own install command, a different `Deploy` impl
+    // goes here and nothing downstream changes.
+    //
+    // Resolved lazily, because `check` must work with no $HOME at all —
+    // it carries each skill inline, so requiring a home would reintroduce
+    // the coupling that stage exists to avoid.
+    let target = || -> Result<Symlinks> {
+        Ok(Symlinks {
+            home: home_dir()?,
+            checkout: root.clone(),
+        })
+    };
     match cli.cmd {
         Cmd::Install {
             dry_run,
             force,
             agent,
         } => stages::cmd_install(
-            &home,
-            &root,
+            &target()?,
+            &root.join("resources/content"),
             dry_run,
             force,
             validate_agent(agent.as_deref())?,
@@ -135,25 +149,23 @@ fn run(cli: Cli) -> Result<u8> {
             force,
             agent,
         } => stages::cmd_uninstall(
-            &home,
-            &root,
+            &target()?,
             dry_run,
             force,
             validate_agent(agent.as_deref())?,
         ),
-        Cmd::Status { agent } => {
-            stages::cmd_status(&home, &root, validate_agent(agent.as_deref())?)
-        }
-        Cmd::Check(args) => verify(Stage::Check, args, &home, &root, false),
-        Cmd::Smoke(args) => verify(Stage::Smoke, args, &home, &root, false),
+        Cmd::Status { agent } => stages::cmd_status(&target()?, validate_agent(agent.as_deref())?),
+        // check needs no deployment, so it never resolves $HOME.
+        Cmd::Check(args) => verify(Stage::Check, args, &NoDeploy, &root, false),
+        Cmd::Smoke(args) => verify(Stage::Smoke, args, &target()?, &root, false),
         Cmd::Verify(args) => {
             // Both stages, and the second runs even when the first fails:
             // a 40-minute sweep that stops a third of the way in is a
             // different tool from one that reports everything. The
             // check-passes/smoke-fails split is the diagnostic this
             // feature is largely justified by, so both halves must run.
-            let check = verify(Stage::Check, clone_args(&args), &home, &root, true)?;
-            let smoke = verify(Stage::Smoke, args, &home, &root, true)?;
+            let check = verify(Stage::Check, clone_args(&args), &NoDeploy, &root, true)?;
+            let smoke = verify(Stage::Smoke, args, &target()?, &root, true)?;
             Ok(check.max(smoke))
         }
     }
@@ -176,7 +188,7 @@ fn clone_args(a: &VerifyArgs) -> VerifyArgs {
 fn verify(
     stage: Stage,
     args: VerifyArgs,
-    home: &Path,
+    target: &impl build_tool::deploy::Deploy,
     root: &Path,
     both_stages_run: bool,
 ) -> Result<u8> {
@@ -199,5 +211,5 @@ fn verify(
                 "--stressed needs resources/tests/conversational-stream.txt: {e}"
             ))
         })?;
-    stages::cmd_verify(home, root, &selection, args.dry_run, stress.as_deref())
+    stages::cmd_verify(target, root, &selection, args.dry_run, stress.as_deref())
 }
