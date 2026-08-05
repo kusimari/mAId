@@ -807,6 +807,79 @@ pub enum Assertion {
     },
 }
 
+/// Everything one test run needs, decided before anything is executed.
+///
+/// Building this is pure, so the whole of "what should this test do" is
+/// inspectable — and testable — without a process. `stages` then does
+/// only the effectful half: run it, score it, report it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Plan {
+    pub name: String,
+    /// Which skill is under test — carried so a structural check need not
+    /// reconstruct it from the prompt it is checking.
+    pub skill: String,
+    pub kind: Kind,
+    pub agent: Agent,
+    /// The prompt as it will be sent, stress prefix already applied.
+    pub prompt: String,
+    pub assertion: Assertion,
+}
+
+/// Why a (fixture, kind, agent) triple yields no plan. A skip is a
+/// decision, not a failure, so it carries its reason rather than being
+/// silently absent.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Skipped(pub String);
+
+/// Decide everything about one test: whether it applies, what to ask,
+/// and how the answer will be judged.
+///
+/// The one place those four decisions live. Reading it top to bottom is
+/// the whole contract for a test run.
+pub fn plan_one(
+    fixture: &Fixture,
+    kind: Kind,
+    agent: Agent,
+    body: &str,
+    stress: Option<&str>,
+) -> std::result::Result<Plan, Skipped> {
+    // 1. A marker-only kind proves nothing for a skill that promises no
+    //    marker; its artefacts prove it instead.
+    applicable(kind, body, &fixture.skill).map_err(Skipped)?;
+
+    // 2. Where the task comes from: authored for the three fixture kinds,
+    //    synthesised for the two generated ones.
+    let task = match kind.announce_only() {
+        true => generated_task(kind, fixture),
+        false => fixture.section_for(kind).map(|s| s.task.clone()),
+    }
+    .ok_or_else(|| Skipped(format!("no task source for {}", kind.name())))?;
+
+    // 3. The prompt, and the stress prefix if one was asked for.
+    let prompt = match stress {
+        Some(prefix) => format!("{prefix}\n{}", prompt(kind, &fixture.skill, body, &task)),
+        None => prompt(kind, &fixture.skill, body, &task),
+    };
+
+    Ok(Plan {
+        skill: fixture.skill.clone(),
+        // Generated kinds are named per skill, authored ones per fixture.
+        name: test_name(
+            match kind.announce_only() {
+                true => &fixture.skill,
+                false => &fixture.name,
+            },
+            kind,
+            agent,
+        ),
+        kind,
+        agent,
+        prompt,
+        // 4. How the reply or the workdir will be judged.
+        assertion: assertion_for(fixture, kind, announces(body, &fixture.skill)),
+    })
+}
+
 /// Decide what a given kind of a given fixture asserts.
 ///
 /// An assert block makes the enact/integration kinds artefact-based; the
@@ -2371,5 +2444,119 @@ FAIL — omits the guardrail entirely";
         assert_eq!(smoke.kinds, vec![Kind::Discovery]);
         // Between them they cover everything asked for, exactly once.
         assert_eq!(check.kinds.len() + smoke.kinds.len(), 2);
+    }
+
+    // ── planning · the whole of "what should this test do" ────────
+
+    /// Planning is pure, so every decision a test run makes is
+    /// inspectable without starting a process.
+    #[test]
+    fn a_plan_carries_everything_needed_to_run_a_test() {
+        let f = fx("skill: notes\n--- enact ---\ntask: file it\nexpect: n\n").unwrap();
+        let plan = plan_one(
+            &f,
+            Kind::Enact,
+            Agent::Claude,
+            "[notes] applies\nbody",
+            None,
+        )
+        .unwrap();
+        assert_eq!(plan.skill, "notes");
+        assert_eq!(plan.kind, Kind::Enact);
+        assert_eq!(plan.agent, Agent::Claude);
+        assert!(plan.prompt.contains("file it"));
+        assert!(plan.prompt.contains("body"), "the skill travels with it");
+        assert_eq!(
+            plan.name, "t enact via claude",
+            "authored kinds use the FIXTURE name"
+        );
+    }
+
+    /// A marker-only kind against a marker-less skill is a skip with a
+    /// reason, not a failure and not a silent absence.
+    #[test]
+    fn planning_skips_an_announce_kind_for_a_marker_less_skill() {
+        let f = fx("skill: kdevkit\n--- enact ---\ntask: t\nexpect: n\n").unwrap();
+        let err =
+            plan_one(&f, Kind::Activation, Agent::Claude, "no marker here", None).unwrap_err();
+        assert!(err.0.contains("artefacts prove it"), "{}", err.0);
+        // The artefact kinds still plan fine for the same skill.
+        assert!(plan_one(&f, Kind::Enact, Agent::Claude, "no marker here", None).is_ok());
+    }
+
+    /// The stress prefix is applied at planning time, so the prompt a
+    /// plan carries is exactly what will be sent.
+    #[test]
+    fn planning_applies_the_stress_prefix() {
+        let f = fx("skill: notes\n--- enact ---\ntask: t\nexpect: n\n").unwrap();
+        let plain = plan_one(&f, Kind::Enact, Agent::Claude, "[notes] applies", None).unwrap();
+        let stressed = plan_one(
+            &f,
+            Kind::Enact,
+            Agent::Claude,
+            "[notes] applies",
+            Some("PREFIX"),
+        )
+        .unwrap();
+        assert!(!plain.prompt.starts_with("PREFIX"));
+        assert!(stressed.prompt.starts_with("PREFIX"));
+        assert!(stressed.prompt.len() > plain.prompt.len());
+    }
+
+    /// Generated kinds are named per skill, authored kinds per fixture —
+    /// several fixtures share one skill.
+    #[test]
+    fn plan_names_follow_the_kind_not_the_file() {
+        let f = fx("skill: notes\n--- enact ---\ntask: t\nexpect: n\n").unwrap();
+        let generated =
+            plan_one(&f, Kind::Activation, Agent::Kiro, "[notes] applies", None).unwrap();
+        let authored = plan_one(&f, Kind::Enact, Agent::Kiro, "[notes] applies", None).unwrap();
+        // The fixture is named "t" and the skill "notes": a generated kind
+        // names the skill (one per skill, however many fixtures), an
+        // authored kind names the fixture (one per fixture).
+        assert_eq!(generated.name, "skill:notes activation via kiro");
+        assert_eq!(authored.name, "t enact via kiro");
+    }
+
+    /// A fixture with an assert block plans a behavioral assertion; one
+    /// without plans a reply assertion. Decided once, at planning time.
+    #[test]
+    fn planning_chooses_the_assertion_shape() {
+        let behavioral =
+            fx("skill: notes\n--- enact ---\ntask: t\n--- assert ---\ntest -f x\n").unwrap();
+        let reply = fx("skill: notes\n--- enact ---\ntask: t\nexpect: narr\n").unwrap();
+        let b = plan_one(
+            &behavioral,
+            Kind::Enact,
+            Agent::Claude,
+            "[notes] applies",
+            None,
+        )
+        .unwrap();
+        let r = plan_one(&reply, Kind::Enact, Agent::Claude, "[notes] applies", None).unwrap();
+        assert!(matches!(b.assertion, Assertion::Behavioral { .. }));
+        assert!(matches!(r.assertion, Assertion::Reply { .. }));
+    }
+
+    /// A planned prompt always satisfies its own structural check — the
+    /// dry-run path can never disagree with what planning produced.
+    #[test]
+    fn every_planned_prompt_passes_its_own_structural_check() {
+        let f = fx("skill: notes\ntools: claude,kiro,codex\n\
+                    --- playback ---\ntask: q\nexpect: n\n\
+                    --- enact ---\ntask: t\nexpect: n\n")
+        .unwrap();
+        for kind in Kind::ALL {
+            for agent in Agent::ALL {
+                if let Ok(plan) = plan_one(&f, *kind, *agent, "[notes] applies\nbody", None) {
+                    assert!(
+                        check_prompt(plan.kind, &plan.skill, &plan.prompt).is_ok(),
+                        "{} via {}",
+                        kind.name(),
+                        agent.name()
+                    );
+                }
+            }
+        }
     }
 }

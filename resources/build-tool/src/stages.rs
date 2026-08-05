@@ -12,10 +12,9 @@
 
 use crate::deploy::Deploy;
 use crate::harness::{
-    agent_available, announces, applicable, assertion_for, check_prompt, detect_leak, dump_path,
-    generated_task, invocation, judge_agent, judge_prompt, plan_tests, prompt, read_verdict,
-    score_reply, snapshot_checkout, test_name, Assertion, Authority, Fixture, Kind as TestKind,
-    Outcome, Reach, Selection, Stage, Verdict,
+    agent_available, check_prompt, detect_leak, dump_path, invocation, judge_agent, judge_prompt,
+    plan_one, plan_tests, read_verdict, score_reply, snapshot_checkout, test_name, Assertion,
+    Authority, Fixture, Kind as TestKind, Outcome, Plan, Reach, Selection, Skipped, Stage, Verdict,
 };
 use crate::shared::{checkout_skill, Agent};
 use anyhow::{anyhow, Context, Result};
@@ -229,20 +228,35 @@ pub fn cmd_verify(
     let mut claimed = Vec::new();
 
     for fixture in &fixtures {
+        // The skill's text, read once per fixture. An explicit prompt
+        // carries it inline, so a check test installs nothing; an implicit
+        // one needs it only to know whether a marker may be asserted.
+        let body = match fs::read_to_string(checkout_skill(checkout, &fixture.skill)) {
+            Ok(body) => body,
+            Err(e) => {
+                report(
+                    "fixture",
+                    &Outcome::Fail(format!("cannot read {}: {e}", fixture.skill)),
+                );
+                failures += 1;
+                continue;
+            }
+        };
+
         for (kind, agent) in plan_tests(fixture, selection, &mut claimed) {
-            let name = test_name(
-                if kind.announce_only() {
-                    &fixture.skill
-                } else {
-                    &fixture.name
-                },
-                kind,
-                agent,
-            );
-            let outcome = run_one(
-                fixture, kind, agent, checkout, dry_run, stressed, judge, &name,
-            );
-            report(&name, &outcome);
+            // Decide everything first (pure), then do it (effectful).
+            let plan = match plan_one(fixture, kind, agent, &body, stressed) {
+                Ok(plan) => plan,
+                Err(Skipped(why)) => {
+                    report(&test_name_for(fixture, kind, agent), &Outcome::Skip(why));
+                    continue;
+                }
+            };
+            let outcome = match dry_run {
+                true => check_plan(&plan),
+                false => execute(&plan, judge),
+            };
+            report(&plan.name, &outcome);
             if matches!(outcome, Outcome::Fail(_)) {
                 failures += 1;
             }
@@ -351,74 +365,45 @@ fn require_installed(target: &impl Deploy, selection: &Selection) -> Result<()> 
     ))
 }
 
-/// Run one (fixture, kind, agent) test.
-#[allow(clippy::too_many_arguments)]
-fn run_one(
-    fixture: &Fixture,
-    kind: TestKind,
-    agent: Agent,
-    checkout: &Path,
-    dry_run: bool,
-    stressed: Option<&str>,
-    judge: Option<Agent>,
-    label: &str,
-) -> Outcome {
-    // The skill's text, read once. An explicit prompt carries it inline —
-    // so a check test installs nothing — and an implicit prompt only needs
-    // it to know whether a marker may be asserted.
-    let body = match fs::read_to_string(checkout_skill(checkout, &fixture.skill)) {
-        Ok(body) => body,
-        Err(e) => return Outcome::Fail(format!("cannot read {}: {e}", fixture.skill)),
-    };
+/// Name a test that was skipped before its plan existed.
+fn test_name_for(fixture: &Fixture, kind: TestKind, agent: Agent) -> String {
+    test_name(
+        match kind.announce_only() {
+            true => &fixture.skill,
+            false => &fixture.name,
+        },
+        kind,
+        agent,
+    )
+}
 
-    // A skill with no announce contract cannot be proven by a marker.
-    if let Err(why) = applicable(kind, &body, &fixture.skill) {
-        return Outcome::Skip(why);
+/// Check a plan structurally, without calling an agent. Free.
+fn check_plan(plan: &Plan) -> Outcome {
+    match check_prompt(plan.kind, &plan.skill, &plan.prompt) {
+        Ok(()) => Outcome::Pass(match plan.kind.reach() {
+            Reach::Explicit => "dry: carries the skill".into(),
+            Reach::Implicit => "dry: names no skill".into(),
+        }),
+        Err(e) => Outcome::Fail(format!("dry: {e}")),
     }
+}
 
-    // Unreachable in practice: plan_tests only yields kinds this fixture
-    // supplies a task for. Kept as a skip rather than an unwrap so a
-    // future kind that forgets its task source degrades visibly instead
-    // of panicking mid-sweep.
-    let task = match kind {
-        TestKind::Activation | TestKind::Discovery => generated_task(kind, fixture),
-        _ => fixture.section_for(kind).map(|s| s.task.clone()),
-    };
-    let Some(task) = task else {
-        return Outcome::Skip(format!("no task source for {}", kind.name()));
-    };
-
-    let base = prompt(kind, &fixture.skill, &body, &task);
-    if dry_run {
-        return match check_prompt(kind, &fixture.skill, &base) {
-            Ok(()) => Outcome::Pass(match kind.reach() {
-                Reach::Explicit => "dry: carries the skill".into(),
-                Reach::Implicit => "dry: names no skill".into(),
-            }),
-            Err(e) => Outcome::Fail(format!("dry: {e}")),
-        };
+/// Run a plan against its agent and score the result.
+fn execute(plan: &Plan, judge: Option<Agent>) -> Outcome {
+    if !agent_available(plan.agent) {
+        return Outcome::Fail(format!("{} required but not on PATH", plan.agent.name()));
     }
-
-    if !agent_available(agent) {
-        return Outcome::Fail(format!("{} required but not on PATH", agent.name()));
-    }
-
-    let full = match stressed {
-        Some(prefix) => format!("{prefix}\n{base}"),
-        None => base,
-    };
-
-    match assertion_for(fixture, kind, announces(&body, &fixture.skill)) {
+    match &plan.assertion {
         Assertion::Behavioral { setup, assert } => {
-            run_behavioral(agent, &full, &setup, &assert, label)
+            run_behavioral(plan.agent, &plan.prompt, setup, assert, &plan.name)
         }
         Assertion::Reply { substr, narrative } => run_reply(
-            agent,
-            &full,
+            plan.agent,
+            &plan.prompt,
             substr.as_deref(),
             narrative.as_deref(),
             judge,
-            label,
+            &plan.name,
         ),
     }
 }
