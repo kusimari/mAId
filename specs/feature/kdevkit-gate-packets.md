@@ -221,17 +221,17 @@ review-time discovery.
 
 ## Handoff
 
-- **Phase:** dev — complete, gates green.
-- **Ready for:** human review; the Agent-dev Review Gate is next.
-- **Carry forward:** the fixture was probed for both false-negatives
-  (four bypass shapes) and one false-positive (a legitimate gotcha
-  comment tripping the comment-hygiene grep) before being trusted —
-  the false-positive was caught and fixed. A reviewer should assume
-  more false-positive shapes exist in that grep and treat it as a
-  crude proxy, not a real comment-hygiene checker.
-- **Deliberately left:** the N-parallel-dispatch shape (D3(b)) and
-  the planted-defect eval (D3(c)) — both explicitly deferred per
-  the Decision Log, gated on evidence this stream doesn't build.
+- **Phase:** closed.
+- **Ready for:** merged.
+- **Carry forward:** the comment-hygiene lens's fixture check is a
+  crude proxy (word co-occurrence in a clause), documented as such.
+  Streams 4-6 or a future compression pass should not mistake it
+  for a real comment-quality checker if reused elsewhere.
+- **Deliberately left:** the paid tri-tool A/B for streams 1-3 —
+  same open gap carried forward from streams 1 and 2, not repeated
+  per-stream. R8's "functional" Test Strategy row shipped as
+  recitation-only, named rather than hidden; upgrading it to real
+  behavioral coverage is deferred to the eval work (D3(c)).
 
 ## Session Log
 
