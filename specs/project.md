@@ -32,6 +32,17 @@ Two halves at the top level:
      deployed artefact; each tool auto-discovers them at its own
      skills path.
 
+     A skill may ship **deferred modules** beside its `SKILL.md` —
+     sibling files, or files under subdirectories — that the
+     always-on `SKILL.md` inline-Reads when a stated trigger
+     fires. `SKILL.md` stays the only validated and discovered
+     file; modules ride along because the registry symlinks the
+     skills *directory*, so adding one needs no build-tool change.
+     This is how an always-on file stays lean as a workflow grows:
+     new phase-specific rules land in a module, not in the file
+     loaded every session. `kdevkit` is the worked example
+     (`phases/`, `tiers/`, plus `setup.md` / `interviews.md`).
+
      Skills are mostly independent, but one may **dispatch another
      by role** rather than by name: the caller declares the role it
      needs, the fillers advertise that they fill it, and install (or
@@ -222,7 +233,8 @@ mAId/
 │   │   ├── src/stages.rs   content → check → install → smoke
 │   │   └── tests/integration.rs  cross-stage tests against the real repo
 │   ├── content/            the deployable skills (symlinked in)
-│   │   └── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
+│   │   ├── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
+│   │   └── skills/kdevkit/  SKILL.md core + phases/, tiers/, setup.md, interviews.md
 │   ├── browser/            browser-control MCP (not symlinked — runnable)
 │   │   ├── launch          allowlist-enforcing launcher; enters flake, execs chrome-devtools-mcp
 │   │   └── manage          data-driven MCP registrar (MCP_AGENTS table: claude/codex global, kiro per-sub-agent)
@@ -239,6 +251,7 @@ mAId/
 ├── target/                 gitignored — cargo's build dir
 └── specs/
     ├── project.md          this file
+    ├── initiative/         multi-stream initiatives (archived on last-stream close)
     ├── feature/            in-flight + completed feature records
     └── backlog/            per-item files for wanted future work
 ```
@@ -256,7 +269,7 @@ covering the content validator and the symlink state
 machine against a `tempfile`-fake `$HOME`, plus the kaimux
 crate's 53 unit tests against a tempdir `Store`. Fast
 (sub-second). No real `$HOME` side effects, no API credits.
-Load-bearing — this is the §8 Test Gate default. `deploy.rs` carries
+Load-bearing — this is the kdevkit Test Gate default. `deploy.rs` carries
 the structural coverage: a full install→status→uninstall round-trip in
 a fake `$HOME`, `--force` semantics per state, and `FanOut` orphan
 reaping and deployment detection — the tests most sensitive to a
@@ -361,6 +374,25 @@ behavioral form for `enact` wherever the skill's correct action leaves
 an inspectable change; fall back to a judge narrative only when the
 output is irreducibly prose.
 
+**A skill's own loading is a load-bearing behavior too.** Where a skill
+defers content to modules (see Architecture), "reads the right module
+at the right moment" is a behavior that fails *silently* — the agent
+proceeds from memory and the output looks plausible. It therefore earns
+a fixture like any other: a `playback` that the right module is named
+per stage, and a behavioral `enact` that drives a stage transition and
+asserts the next stage's discipline shows up in the artefacts
+(`kdevkit-module-load`, `kdevkit-phase-boundary`,
+`kdevkit-handoff-resume`, `kdevkit-consolidate`, `kdevkit-closure`). A wrong trigger is
+invisible to the deterministic gates, so this layer is the only one
+that can catch it.
+
+The same applies to **state carried across a boundary**: a stale or
+missing handoff record fails silently too, and the agent proceeds
+plausibly from the wrong starting point. Assert on the artefact the
+boundary should have left, and pair every negative check with a
+positive one — "the block no longer says planning" passes if the
+block was deleted, which is not the behaviour wanted.
+
 ### Writing a skill
 
 A skill has to survive two things. Design for both.
@@ -437,10 +469,10 @@ stop-with-error) where a compliant agent writes nothing. A
 behavioral assert must fail a no-op agent (pair a presence check
 with the absence check) or it proves nothing.
 
-The §8 Test Gate uses `just test` by default. SKILL.md
+kdevkit's Test Gate uses `just test` by default. SKILL.md
 prose revisions add `just resources::check-skills` (judge mode)
 as their A/B evidence — the pre-install stage is the one that
-isolates content, so it is the honest A/B. The §9 close-out can run
+isolates content, so it is the honest A/B. kdevkit's close-out can run
 `just resources::status-skills` after an install to confirm
 symlinks resolved.
 
@@ -533,6 +565,16 @@ the experience is symmetric across resource kinds.
   rather than letting names land here. The `kdevkit`
   skill encodes this rule for every project; this bullet
   declares mAId as a public repo so the rule fires.
+
+## Active initiatives
+
+<!-- One line per in-flight initiative. Archived by the last
+     stream's close(<feature>): commit. -->
+
+- **kdevkit-decompose-and-harden** — decompose the kdevkit
+  workflow into per-phase modules and harden the review gate.
+  6 streams; 1–3 run autonomously, 4–5 blocked on the
+  code-vs-prose boundary, 6 verifies on codex + kiro.
 
 ## Agent Development
 

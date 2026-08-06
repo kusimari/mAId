@@ -31,8 +31,8 @@ the correction contradicts an existing line in a repo doc, fix that line
 
 ## Why
 
-Observed failure (BeehiveMono, 2026-07-27): the agent learned "pushing
-BeehiveMono branches/CRs is fine — the never-push rule is only for nested
+Observed failure (a monorepo, 2026-07-27): the agent learned "pushing
+branches/CRs in this repo is fine — the never-push rule is only for nested
 product repos" and wrote it to its **private auto-memory**. The user
 corrected: *"don't write to your memory. write to agents or project md
 file."* The fact was per-repo working-style, so it belonged in

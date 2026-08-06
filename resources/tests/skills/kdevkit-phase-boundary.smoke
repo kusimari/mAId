@@ -1,0 +1,125 @@
+skill: kdevkit
+tools: claude,kiro,codex
+--- enact ---
+task: The spec for this feature is written and I've read it — spec looks good, start the build. Implement it, then get it ready for me to look at. Do the work now in this repo.
+--- setup ---
+git init -q
+git config user.email dev@example.com
+git config user.name dev
+mkdir -p specs/feature src
+cat > AGENTS.md <<'MD'
+# greet-cli — agent guide
+
+## Build & test
+- Test: `sh test.sh`
+- Lint: `sh lint.sh`
+MD
+cat > specs/project.md <<'MD'
+# Project: greet-cli
+
+## Mission
+A tiny shell greeting tool.
+
+## Architecture
+One shell script, `src/greet.sh`.
+
+## Tech Stack
+POSIX shell.
+
+## Layout
+src/greet.sh, test.sh, lint.sh.
+
+## Testing
+`sh test.sh` is load-bearing. Commands live in AGENTS.md.
+
+## Deployment
+Copied onto PATH.
+
+## Agent Development
+
+### kdevkit
+- `code_review:`
+  - `reviewer: host-native`
+MD
+cat > specs/feature/uppercase-flag.md <<'MD'
+# Feature: uppercase flag
+
+## Feature Brief
+`greet.sh` gains a `-u` flag that upper-cases the greeting.
+
+## Requirements
+- R1. `greet.sh World` prints `Hello, World!` as today.
+- R2. `greet.sh -u World` prints `HELLO, WORLD!`.
+
+## Design
+Parse `-u` as the first argument; pipe the composed line through `tr`.
+
+## Test Strategy
+`test.sh` asserts both R1 and R2.
+
+## Handoff
+- **Phase:** planning
+- **Ready for:** dev, once the plan is approved.
+- **Carry forward:** `tr` is available; no new dependency needed.
+- **Deliberately left:** long-form `--upper` alias — `-u` only for now.
+
+## Implementation Plan
+- [ ] 1 · Add `-u` parsing to `src/greet.sh`.
+- [ ] 2 · Add the R2 case to `test.sh`.
+
+## Session Log
+
+## Decision Log
+MD
+cat > src/greet.sh <<'MD'
+#!/bin/sh
+echo "Hello, $1!"
+MD
+cat > test.sh <<'MD'
+#!/bin/sh
+set -e
+out=$(sh src/greet.sh World)
+[ "$out" = "Hello, World!" ] || { echo "R1 failed: $out"; exit 1; }
+echo ok
+MD
+cat > lint.sh <<'MD'
+#!/bin/sh
+exit 0
+MD
+chmod +x src/greet.sh test.sh lint.sh
+git add -A && git commit -q -m "plan(uppercase-flag): initial spec"
+git checkout -q -b feat/uppercase-flag
+--- assert ---
+set -e
+# The dev phase actually ran: the flag works and the old behavior is intact.
+# A no-op agent fails the -u case; a careless one regresses the R1 case.
+out=$(sh src/greet.sh World); [ "$out" = "Hello, World!" ]
+out=$(sh src/greet.sh -u World); [ "$out" = "HELLO, WORLD!" ]
+# The Test Gate's own artefact: test.sh must now cover R2, not just R1.
+# Case-sensitive on purpose — the seeded file already says "Hello, World!",
+# so a case-insensitive match would pass without the agent touching it.
+grep -qF 'HELLO, WORLD!' test.sh
+grep -qF -e '-u' test.sh
+sh test.sh >/dev/null
+# Crossing planning -> dev pulled the dev module's discipline: plan items are
+# ticked in the commit that completed them, not swept at closure.
+test -z "$(grep -F -e '- [ ]' specs/feature/uppercase-flag.md || true)"
+grep -qF -e '- [x]' specs/feature/uppercase-flag.md
+# Dev-phase commits exist and carry a conventional type — not a plan() commit,
+# which is what an agent still running the planning module would produce.
+git log --no-decorate --oneline feat/uppercase-flag | grep -qE ' (feat|fix|refactor|test|chore)(\(|:)'
+# Closure did NOT run: no explicit closure cue was given, so the branch must
+# still be unmerged and the spec not archived-in-place by a close() commit.
+test -z "$(git log --no-decorate --oneline feat/uppercase-flag | grep -E '^[[:alnum:]]+ close\(' || true)"
+# The handoff was REWRITTEN, not appended: exactly one block, and it no longer
+# claims planning is live. A stale handoff is what a resuming agent acts on.
+[ "$(grep -c '^## Handoff' specs/feature/uppercase-flag.md)" = 1 ]
+# A Phase field must still EXIST — deleting it would satisfy a bare negative.
+awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /^- \*\*Phase:\*\*/' specs/feature/uppercase-flag.md | grep -q .
+# The block was authored, not pasted: the template placeholder lists every
+# legal value on one line, which would satisfy a naive negative check.
+test -z "$(grep -F 'planning | dev | review' specs/feature/uppercase-flag.md || true)"
+# ...and the value is a legal phase, not junk like TBD.
+awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*(dev|review)([^a-zA-Z]|$)/' specs/feature/uppercase-flag.md | grep -q .
+# ...and it must no longer name planning, the phase that has finished.
+test -z "$(awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*planning([^a-zA-Z]|$)/' specs/feature/uppercase-flag.md)"

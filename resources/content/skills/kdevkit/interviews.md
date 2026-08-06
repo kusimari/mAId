@@ -12,7 +12,7 @@ neither `feature/` nor `backlog/` has the file). One per
 topic; skip what existing project context already answers.
 Order matters: tests sit immediately after requirements so
 success criteria are declared before the design converges —
-the dev loop (SKILL.md §7) then has a verifiable target, not
+the dev loop (`phases/dev.md` §7) then has a verifiable target, not
 a sketch to validate after the fact.
 
 1. **Requirements (the experience layer).** How does the
@@ -22,7 +22,7 @@ a sketch to validate after the fact.
    the agent recognises and the artefacts it produces. For a
    service, request shape and response. Library names,
    internal file paths, function/schema names, and protocol
-   verbs go in Design — not here. (See SKILL.md §6's
+   verbs go in Design — not here. (See `phases/plan.md` §6's
    Requirements smell test.)
 2. **Test strategy.** Per `project.md`'s Testing section:
    which layers fire for this change, what are the success
@@ -35,7 +35,7 @@ a sketch to validate after the fact.
 3. **Design.** Lead with rationale — why this shape, what
    was considered and rejected, including **what well-known
    library or language idiom already does this job** (name it
-   before designing a hand-rolled alternative; see SKILL.md §6
+   before designing a hand-rolled alternative; see `phases/plan.md` §6
    "Reach for what exists"). Then the technical approach:
    components, interactions, trade-offs. A reader shouldn't
    reach the end of Design before learning why it's shaped
@@ -44,7 +44,7 @@ a sketch to validate after the fact.
 
 The interviews are scaffolding — the actual spec layout
 adapts to what the feature needs. The skill's strictness
-lives in the gates (§6 / §7 / §8), not in heading shape.
+lives in the gates (`phases/plan.md` §6 / `phases/dev.md` §7 / `phases/close.md` §8), not in heading shape.
 
 **These are your own checklist, not a questionnaire for the
 user.** Answer each from the grounding pass — `project.md`, the
@@ -57,7 +57,7 @@ cannot infer becomes an open question *recorded in the spec*,
 not a blocking prompt.
 
 After the four interviews, write the feature spec from the
-template below, then return to SKILL.md §6's Plan-commit rule
+template below, then return to `phases/plan.md` §6's Plan-commit rule
 (commit + push + open Planning Review Gate).
 
 ## Feature file template
@@ -78,10 +78,37 @@ template below, then return to SKILL.md §6's Plan-commit rule
 
 <one paragraph — the new capability>
 
-<!-- Optional, populated by SKILL.md §6 auto-link when this
+<!-- Optional, populated by phases/plan.md §6 auto-link when this
      feature is a stream of an active initiative:
 Part of initiative: [[<name>]]
 -->
+
+## Handoff
+
+<!-- Rewritten at every phase boundary by the phase that is
+     ENDING; read on entry by the phase that is starting. Not a
+     log — replace the whole block, don't append. Keep it under
+     ~15 lines: it carries what the next phase can't derive, not
+     a summary of the work.
+
+     Phase:             which phase is live now, or `closed` once
+                        closure has finished with the feature.
+     Ready for:         the next phase, and what gates it.
+     Carry forward:     what the next phase would otherwise have
+                        to rediscover — a constraint found late, a
+                        finding still open, a trap.
+     Deliberately left: what was NOT done and why, so the next
+                        phase doesn't redo the decision or mistake
+                        the gap for an oversight.
+
+     Derivable facts (branch, unticked plan items, gate results)
+     are READ from git and this spec at entry — don't copy them
+     here and let them rot. This block is judgement only. -->
+
+- **Phase:** <planning | dev | review | closure | closed>
+- **Ready for:** <next phase, and its gate>
+- **Carry forward:** <what the next phase must know>
+- **Deliberately left:** <what's unresolved, and why>
 
 ## Requirements
 
@@ -91,7 +118,7 @@ Part of initiative: [[<name>]]
      recognises and the artefacts it produces. Service:
      request shape and response.
 
-     Smell test (SKILL.md §6): library names, internal
+     Smell test (`phases/plan.md` §6): library names, internal
      file paths, function/schema names, and protocol verbs
      belong in Design, not here.
 
@@ -127,8 +154,8 @@ Part of initiative: [[<name>]]
 
 <!-- Markdown task-list shape. One slice per item. Tick
      `- [ ]` to `- [x]` in the same commit that completes
-     the slice. Mid-slice work stays unchecked. The §8.1
-     reconcile sweep greps for unchecked boxes at closure. -->
+     the slice. Mid-slice work stays unchecked. The closure
+     reconcile sweep greps for unchecked boxes. -->
 
 - [ ] <slice 1>
 - [ ] <slice 2>
@@ -147,13 +174,64 @@ Part of initiative: [[<name>]]
 <!-- append: decision · rationale · alternatives rejected -->
 ```
 
+## Consolidation checklist (planning → dev)
+
+Fires once, at the planning → dev boundary, before the dev loop
+starts. The spec stops being the record of *how the plan was
+reached* and becomes the contract the dev phase builds from — a
+reader who saw none of the discussion must be able to implement
+from it.
+
+**Why it can't wait for closure:** once phases run as separate
+agents, the dev agent reads the spec *without* the conversation
+that disambiguates it. An unresolved option list is then
+indistinguishable from a requirement, so the agent may build the
+thing that was argued against.
+
+Strip:
+
+- **Superseded options.** Keep the decision, drop the lettered
+  alternatives and the "recommended" markers. `(a)/(b)/(c)` in a
+  shipped spec is an unmade decision.
+- **Round-by-round Q&A.** A reply to a reviewer belongs in the
+  PR/CR thread; the *rule it settled* belongs in the spec body.
+- **Revision narration.** "Revised after research", "changed from
+  X" — the diff and the thread carry that.
+
+Keep, and state as decisions:
+
+- Every settled decision in the imperative — what the build does,
+  not what was considered.
+- **Rationale that constrains future work.** Relocate it to the
+  Decision Log rather than deleting it; §8 closure is what
+  promotes the binding ones into `project.md`. Deleting a *why*
+  that a later feature needs is the one unrecoverable mistake
+  here.
+- Open questions, clearly separated from settled ones, with an
+  owner. A reader must be able to tell "build this" from "don't
+  build this yet".
+
+**The archive is the PR/CR conversation** — it already holds the
+discussion durably, so don't copy it into the repo. No
+`<feature>.planning.md`, no `## Planning Archive` section.
+
+Then commit as `plan(<feature>): consolidate spec` so the rewrite
+is reviewable as its own act, and rewrite the review body from the
+consolidated spec (a reviewer reading the pre-consolidation body
+is reading a stale artefact).
+
+**Right-size it.** A change with no iteration to consolidate skips
+this — there is nothing to strip. The test is whether the spec
+carries alternatives, Q&A, or revision narration; if it doesn't,
+move on.
+
 ## Backlog item template
 
 When the user describes wanted-but-not-now work, write to
 `$SPEC_ROOT/backlog/<item-name>.md` using this template. One
 file per item; never consolidate into a single `FIXES.md` or
 `TODO.md`. Closure-time cleanup of resolved items lives in
-SKILL.md §8 step 3.
+`phases/close.md` §8 step 3.
 
 ```markdown
 # Backlog: <item-name>
@@ -179,7 +257,7 @@ using the feature file template above.
 ## Initiative file template
 
 When the user runs the `start initiative <name>` verb (see
-SKILL.md §10), write `$SPEC_ROOT/initiative/<name>.md` from
+`tiers/initiative.md` §10), write `$SPEC_ROOT/initiative/<name>.md` from
 this template:
 
 ```markdown
@@ -231,14 +309,14 @@ After the three interviews, write the file from the template
 above, append a one-line entry to `project.md`'s
 `## Active initiatives` index, and commit as
 `plan(<initiative>): initial spec`. Open the Planning Review
-Gate per SKILL.md §6 / §9; the gate's phase-specific body
+Gate per `phases/plan.md` §6 / SKILL.md §9; the gate's phase-specific body
 content is **Why** + **Streams** + **Decisions taken at the
 initiative level**.
 
 ## "stream `<n>` for `<initiative>`" template-fill steps
 
 When the user runs the `stream <n> for <initiative>` verb
-(see SKILL.md §10), write the new feature spec using the
+(see `tiers/initiative.md` §10), write the new feature spec using the
 feature file template above with these populated:
 
 - `## Git Setup > Branch:` — the stream's named branch from
@@ -246,11 +324,11 @@ feature file template above with these populated:
 - `## Git Setup > Base:` — `main` (current commit-ish) unless
   the parent initiative declares a different base.
 - The optional `Part of initiative: [[<initiative>]]` line —
-  populated automatically (per SKILL.md §6 auto-link rule).
+  populated automatically (per `phases/plan.md` §6 auto-link rule).
 - The four-interview content (Requirements / Test Strategy /
   Design / Implementation Plan) — fill via the four interviews
   above, scoped to this stream's intent (the parent
   initiative's stream entry is the seed).
 
-After the spec is written, return to SKILL.md §6's
+After the spec is written, return to `phases/plan.md` §6's
 Plan-commit rule.

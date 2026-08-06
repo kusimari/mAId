@@ -57,7 +57,7 @@ When creating `project.md`, probe ecosystem markers
 (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`,
 `Makefile`, `deno.json`) and CI files (`.github/workflows/*`,
 `.gitlab-ci.yml` — verbatim) for the toolchain; confirm in
-one batch; write Testing as prose — §7 reads commands from it
+one batch; write Testing as prose — the dev loop reads commands from it
 at run time.
 
 Append the **Code-review setup prompt** (below) as a one-liner
@@ -73,9 +73,9 @@ organised by skill. Keys under `kdevkit`:
   recommendation (see SKILL.md §4).
 - `planning_phase: true|false` (default `true`) — three-phase
   feature branch (planning → dev → closure) per
-  SKILL.md §5/§6/§7/§8. Set `false` to skip §6 Planning and
+  SKILL.md §5 and the phase modules. Set `false` to skip §6 Planning (`phases/plan.md`) and
   let spec edits ride with the first dev commit.
-- `code_review:` — nested block configuring the §7 Code Review
+- `code_review:` — nested block configuring the dev loop's Code Review
   Gate. All keys optional; defaults below.
 
   ```yaml
@@ -110,7 +110,7 @@ organised by skill. Keys under `kdevkit`:
   block sticks — the question doesn't re-fire next session.
 
 - `review_brief:` — nested block naming the briefing generator
-  for §7's Review Briefing. All keys optional; the block itself
+  for the Review Briefing. All keys optional; the block itself
   is optional and **absent means off**, so unlike `code_review:`
   it fires no setup prompt.
 
@@ -150,7 +150,7 @@ organised by skill. Keys under `kdevkit`:
 ## Code-review setup prompt
 
 When `kdevkit.code_review:` is missing from `project.md`,
-fire a one-line prompt on session entry — the §7 Code Review
+fire a one-line prompt on session entry — the Code Review
 Gate is the only gate that reads the config, but firing on
 entry (regardless of fresh / continue / pick-up mode) keeps
 the prompt out of the dev loop:
@@ -164,7 +164,7 @@ Alongside the prompt, surface a one-line note (outside the
 blockquote so it isn't read as a reply option): _"This skill
 prefixes agent-authored CR/PR comments with `[agent]:` so
 review threads stay disambiguable when builder and reviewer
-share an identity (see SKILL.md §7); your own comments don't
+share an identity (see `phases/review.md` §7); your own comments don't
 need a prefix."_
 
 Then **sticky-write** the answer to `project.md`'s `## Agent
@@ -184,7 +184,7 @@ above as the appended one-liner.
 
 ## Optional `## Active initiatives` index
 
-When in-flight initiatives exist (see SKILL.md §10),
+When in-flight initiatives exist (see `tiers/initiative.md` §10),
 `project.md` MAY carry an `## Active initiatives` index near
 the bottom — one line per initiative, removed at last-stream
 close:

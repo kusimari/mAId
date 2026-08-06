@@ -1,0 +1,157 @@
+skill: kdevkit
+tools: claude,kiro,codex
+--- playback ---
+task: Explain how the handoff between phases works in this workflow: where the record lives, who writes it and when, what belongs in it versus what you work out for yourself, and what you do if you pick up a feature and the record says a different phase than the one the repo looks like it is in.
+expect: A correct answer covers five things. (1) WHERE: the handoff lives in the feature spec itself — a `## Handoff` section — not a separate file, and it is checked in, which is what lets a different agent or a later session pick the work up. (2) WHO/WHEN: the phase that is ENDING writes it, before the boundary is crossed; the phase that is starting reads it on entry. A phase that ended without writing one did not finish. (3) REWRITTEN, NOT APPENDED: it is one block replaced in place, carrying current state rather than history — it must not accumulate entries or become a second log. History has other homes: the Session Log for observations, the Decision Log for choices, the PR/CR conversation for discussion. (4) JUDGEMENT ONLY: it carries what the next phase cannot work out for itself — a constraint discovered late, a trap, an open finding, why something was deliberately left undone. Facts that are DERIVABLE are derived instead, at entry, from git and the spec: the branch, which plan items are still unticked, which gates ran, what findings are open. Copying derivable facts into the block is how a spec starts lying, because they go stale. (5) STALE BLOCK: if it names a different phase than the repo suggests, trust the repo over the block and say so — a stale handoff means the previous phase was interrupted, which is itself useful information. Wrong answers: putting the handoff in a new file or a separate artefact; appending timestamped entries; having the INCOMING phase write it; copying branch names, gate results or plan status into it as prose; silently trusting a stale block over the repo's actual state; or treating it as optional for a single-session feature. Judge coverage of location, who-writes-when, rewrite-not-append, the judgement-vs-derived split, and the stale-block rule. An answer more precise than this narrative — naming the four fields, or that closure clears it — is correct, not wrong.
+
+--- enact ---
+task: Pick this feature back up and take it as far as you can. Do the work now in this repo.
+--- setup ---
+git init -q -b base
+git config user.email dev@example.com
+git config user.name dev
+mkdir -p specs/feature src
+cat > AGENTS.md <<'MD'
+# slug-cli — agent guide
+
+## Build & test
+- Test: `sh test.sh`
+- Lint: `sh lint.sh`
+MD
+cat > specs/project.md <<'MD'
+# Project: slug-cli
+
+## Mission
+Turns a title into a URL slug.
+
+## Architecture
+One shell script, `src/slug.sh`.
+
+## Tech Stack
+POSIX shell.
+
+## Layout
+src/slug.sh, test.sh, lint.sh.
+
+## Testing
+`sh test.sh` is load-bearing. Commands live in AGENTS.md.
+
+## Deployment
+Copied onto PATH.
+
+## Agent Development
+
+### kdevkit
+- `code_review:`
+  - `reviewer: host-native`
+MD
+cat > specs/feature/trim-dashes.md <<'MD'
+# Feature: trim leading and trailing dashes
+
+## Feature Brief
+A title with punctuation at either end no longer produces a slug with
+leading or trailing dashes.
+
+## Handoff
+- **Phase:** dev
+- **Ready for:** human review, once the Push Gate passes.
+- **Carry forward:** strip dashes only at the ENDS. A blanket `tr -d '-'`
+  also eats the separator dashes and silently breaks R1 — that is how the
+  first attempt failed last session.
+- **Deliberately left:** collapsing repeated inner dashes. Out of scope
+  for this feature; it is a separate slug rule.
+
+## Requirements
+- R1. `slug.sh "Hello World"` prints `hello-world` as today.
+- R2. `slug.sh "!Hello World!"` prints `hello-world`, not `-hello-world-`.
+
+## Design
+Post-process the composed slug: strip dashes at both ends.
+
+## Test Strategy
+`test.sh` asserts both R1 and R2.
+
+## Implementation Plan
+- [x] 1 · Lower-case and replace non-alphanumerics with dashes.
+- [ ] 2 · Strip leading and trailing dashes.
+- [ ] 3 · Add the R2 case to `test.sh`.
+
+## Session Log
+- Session 1: item 1 landed. Item 2 next.
+
+## Decision Log
+- Chose post-processing over a smarter single expression because the
+  single-expression version was unreadable.
+MD
+cat > src/slug.sh <<'MD'
+#!/bin/sh
+printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-'
+MD
+cat > test.sh <<'MD'
+#!/bin/sh
+set -e
+out=$(sh src/slug.sh "Hello World")
+[ "$out" = "hello-world" ] || { echo "R1 failed: $out"; exit 1; }
+echo ok
+MD
+cat > lint.sh <<'MD'
+#!/bin/sh
+exit 0
+MD
+chmod +x src/slug.sh test.sh lint.sh
+git add -A && git commit -q -m "plan(trim-dashes): initial spec"
+git checkout -q -b feat/trim-dashes
+git commit -q --allow-empty -m "feat(slug): lower-case and dash-separate"
+--- assert ---
+set -e
+# Resumed in DEV, from the handoff — did the remaining work rather than
+# re-planning. Both criteria pass, including the one already done.
+out=$(sh src/slug.sh "Hello World"); [ "$out" = "hello-world" ]
+out=$(sh src/slug.sh "!Hello World!"); [ "$out" = "hello-world" ]
+# Test Gate discipline: test.sh now covers R2. Case-sensitive and specific
+# so the seeded R1 line cannot satisfy it.
+grep -qF '!Hello World!' test.sh
+sh test.sh >/dev/null
+# The remaining plan items got ticked; item 1 was already done and stays done.
+test -z "$(grep -F -e '- [ ]' specs/feature/trim-dashes.md || true)"
+# At least the three planned slices are ticked. Not an exact count: the dev
+# loop legitimately permits adding a slice, and that must not fail the test.
+[ "$(grep -cF -e '- [x]' specs/feature/trim-dashes.md)" -ge 3 ]
+# It did NOT re-plan: no new plan() commit on the branch, and the spec's
+# Requirements were not rewritten (R1/R2 survive verbatim).
+test -z "$(git log --no-decorate --oneline base..feat/trim-dashes | grep -E '^[[:alnum:]]+ plan\(' || true)"
+# The agent COMMITTED its work. The setup already seeds one feat() commit, so
+# counting commit types would pass vacuously — instead require the tree to be
+# clean, which an agent that edited but never committed cannot satisfy.
+test -z "$(git status --porcelain)"
+# ...and require more than the single seeded commit, so the clean tree isn't
+# achieved by simply doing nothing at all.
+[ "$(git rev-list --count base..feat/trim-dashes)" -ge 2 ]
+grep -qF 'R2. `slug.sh "!Hello World!"`' specs/feature/trim-dashes.md
+# The handoff was rewritten in place — still exactly one block, and it no
+# longer says dev is live (dev finished; next is review or beyond).
+[ "$(grep -c '^## Handoff' specs/feature/trim-dashes.md)" = 1 ]
+# Portable patterns only: \< is a GNU awk extension that silently matches
+# nothing under mawk/BusyBox, which would make these pass vacuously.
+# A Phase field must still EXIST — deleting it would satisfy a bare negative.
+awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /^- \*\*Phase:\*\*/' specs/feature/trim-dashes.md | grep -q .
+# The block was authored, not pasted: the template placeholder lists every
+# legal value on one line, which would satisfy a naive negative check.
+test -z "$(grep -F 'planning | dev | review' specs/feature/trim-dashes.md || true)"
+# ...and the value is a legal phase, not junk like TBD.
+awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*(review|closure)([^a-zA-Z]|$)/' specs/feature/trim-dashes.md | grep -q .
+# ...and it must no longer name the phase that has finished.
+test -z "$(awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*dev([^a-zA-Z]|$)/' specs/feature/trim-dashes.md)"
+# Not a one-token relabel: the other fields moved on too. Flipping `Phase:`
+# while leaving dev's `Ready for:` and `Carry forward:` in place is the stale
+# record the rule exists to prevent, and it reads as current.
+# Anchor on the seed's whole clause, not a fragment: a compliant agent may
+# legitimately mention the Push Gate in a re-authored field, so only the
+# copied-verbatim text indicates a relabel. Whole-file grep, since a rewrap
+# could split the clause across lines.
+test -z "$(grep -F 'once the Push Gate passes' specs/feature/trim-dashes.md || true)"
+test -z "$(grep -F 'that is how the first attempt failed last session' specs/feature/trim-dashes.md || true)"
+# The carried-forward constraint was respected, not rediscovered: the handoff
+# warned that a blanket dash-delete breaks R1. R1 passing above already proves
+# the separator survived, so assert the specific trap was avoided.
+test -z "$(grep -E "tr +-d +['\"]?-" src/slug.sh || true)"
