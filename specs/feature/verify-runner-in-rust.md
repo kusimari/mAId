@@ -744,6 +744,40 @@ dependency claim in Design actually holds.
 
 ## Session Log
 
+- **2026-08-06** · **Both stages executed for real — the design works.**
+  This is the evidence the feature was missing.
+  - **`check` (pre-install, 55 tests): 50 pass, 2 fail, 3 expected skips.**
+    Ran with **no deployment at all**, which is the claim the two-stage
+    split rests on. The two failures are codex-only and reproduce
+    identically on the pre-refactor runner (`03dcd2c`), so neither comes
+    from this work — filed as
+    `specs/backlog/codex-behavioral-fixture-strictness.md`.
+  - **`smoke` (post-install, 28 tests on claude+codex): 21 pass, 5 fail,
+    2 skips.** All five are triggering, not content: three discovery and
+    two integration, and in every case the paired explicit kind passed.
+    That is the diagnostic pair working — filed as
+    `specs/backlog/smoke-stage-trigger-failures.md`. Structurally
+    untouched by the inline-skill change, since implicit prompts are
+    `format!("{task}\n")` in both versions.
+  - **kiro cannot smoke-test under a redirected `$HOME`** (no
+    credentials; it spins on "Logging in..." and exits 1). My exit-code
+    fix correctly reported that as an *invocation* failure rather than
+    blaming the skill — the first time that fix paid off unprompted.
+    A real kiro smoke run is therefore attended.
+  - **Execution proven, not just recall.** `notes-topic-no-stub enact`
+    (artefact assertions: file written, frontmatter set, `[[wadler]]`
+    left dangling, existing page byte-identical) passes **3/3 on claude
+    and 2/2 on codex** with the skill passed inline. The path form scores
+    the same 3/3 — the two are indistinguishable on the kind that proves
+    execution.
+  - **Correcting an earlier claim in this log:** the "path 3/3 vs inline
+    5/7" comparison was on `activation`, an announce-only kind whose task
+    is "say what this skill lets me do". It measures marker adherence,
+    never execution, so it could not answer whether inline skills work.
+    Worse, my first path-form sample was invalid — `git stash` on an
+    already-clean tree stashed nothing, so both halves ran the same
+    inline code. Redone via a worktree at the pre-refactor commit.
+
 - **2026-08-03** · Build complete; all nine slices shipped. Relocation
   slices landed with the 45-test count intact, then the harness and the
   two verify stages. Final gate: `just ci` green, 149 build-tool tests
