@@ -49,35 +49,29 @@ pub fn check_content(content_dir: &Path) -> Result<usize, Vec<String>> {
     }
 }
 
+/// Validate one SKILL.md: readable, `---`-fenced YAML frontmatter, and
+/// `name` + `description` both non-empty. Errors name the file, since a
+/// caller reports them as a list across the whole tree.
+///
+/// Defers to gray_matter for the envelope and serde for the schema — the
+/// in-function struct IS the schema.
 fn check_one_skill(path: &Path) -> Result<(), String> {
-    fs::read_to_string(path)
-        .map_err(|e| format!("{}: cannot read: {e}", path.display()))
-        .and_then(|body| {
-            check_skill_frontmatter(&body).map_err(|e| format!("{}: {e}", path.display()))
-        })
-}
-
-/// Validate a SKILL.md's YAML frontmatter: `---` fence + `name` and
-/// `description` fields, both non-empty. Implementation defers to
-/// gray_matter (envelope) + serde (schema) — the schema is the
-/// in-function struct.
-fn check_skill_frontmatter(content: &str) -> Result<(), String> {
     #[derive(serde::Deserialize)]
-    struct SkillFrontmatter {
+    struct Frontmatter {
         name: String,
         description: String,
     }
 
-    gray_matter::Matter::<gray_matter::engine::YAML>::new()
-        .parse::<SkillFrontmatter>(content)
-        .map_err(|e| e.to_string())?
+    let at = |e: String| format!("{}: {e}", path.display());
+    let body = fs::read_to_string(path).map_err(|e| at(format!("cannot read: {e}")))?;
+    let fm = gray_matter::Matter::<gray_matter::engine::YAML>::new()
+        .parse::<Frontmatter>(&body)
+        .map_err(|e| at(e.to_string()))?
         .data
-        .ok_or_else(|| "missing or unterminated YAML frontmatter".to_string())
-        .and_then(|fm| {
-            (!fm.name.trim().is_empty() && !fm.description.trim().is_empty())
-                .then_some(())
-                .ok_or_else(|| "name and description must be non-empty".into())
-        })
+        .ok_or_else(|| at("missing or unterminated YAML frontmatter".into()))?;
+    (!fm.name.trim().is_empty() && !fm.description.trim().is_empty())
+        .then_some(())
+        .ok_or_else(|| at("name and description must be non-empty".into()))
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -578,6 +572,14 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// Validate frontmatter through the real file path, as production does.
+    fn frontmatter_of(body: &str) -> Result<(), String> {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path().join("SKILL.md");
+        fs::write(&p, body).unwrap();
+        check_one_skill(&p)
+    }
+
     fn write(p: &Path, s: &str) {
         if let Some(parent) = p.parent() {
             fs::create_dir_all(parent).unwrap();
@@ -646,13 +648,13 @@ mod tests {
 
     #[test]
     fn frontmatter_minimal_ok() {
-        assert!(check_skill_frontmatter("---\nname: foo\ndescription: bar\n---\nbody.\n").is_ok());
+        assert!(frontmatter_of("---\nname: foo\ndescription: bar\n---\nbody.\n").is_ok());
     }
 
     #[test]
     fn frontmatter_with_extra_fields_ok() {
         // Real YAML: extra fields are ignored by serde when not in the struct.
-        assert!(check_skill_frontmatter(
+        assert!(frontmatter_of(
             "---\nname: foo\ndescription: bar\nversion: 1.0.0\ntags: [a, b]\n---\nbody.\n"
         )
         .is_ok());
@@ -661,32 +663,30 @@ mod tests {
     #[test]
     fn frontmatter_quoted_values_ok() {
         // Real YAML handles quoting natively — no hand-rolled unquote.
-        assert!(
-            check_skill_frontmatter("---\nname: \"foo\"\ndescription: 'bar baz'\n---\n").is_ok()
-        );
+        assert!(frontmatter_of("---\nname: \"foo\"\ndescription: 'bar baz'\n---\n").is_ok());
     }
 
     #[test]
     fn frontmatter_missing_fence_rejected() {
-        let e = check_skill_frontmatter("name: foo\ndescription: bar\n").unwrap_err();
+        let e = frontmatter_of("name: foo\ndescription: bar\n").unwrap_err();
         assert!(e.contains("frontmatter"));
     }
 
     #[test]
     fn frontmatter_unterminated_rejected() {
-        let e = check_skill_frontmatter("---\nname: foo\ndescription: bar\n").unwrap_err();
+        let e = frontmatter_of("---\nname: foo\ndescription: bar\n").unwrap_err();
         assert!(e.contains("frontmatter"));
     }
 
     #[test]
     fn frontmatter_missing_name_rejected() {
-        let e = check_skill_frontmatter("---\ndescription: bar\n---\n").unwrap_err();
+        let e = frontmatter_of("---\ndescription: bar\n---\n").unwrap_err();
         assert!(e.contains("name"));
     }
 
     #[test]
     fn frontmatter_missing_description_rejected() {
-        let e = check_skill_frontmatter("---\nname: foo\n---\n").unwrap_err();
+        let e = frontmatter_of("---\nname: foo\n---\n").unwrap_err();
         assert!(e.contains("description"));
     }
 

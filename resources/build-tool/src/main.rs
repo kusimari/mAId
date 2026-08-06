@@ -32,8 +32,8 @@ struct Cli {
     cmd: Cmd,
 }
 
-/// The flags both verification stages share. They differ only in which
-/// side of install they read a skill from, so they take the same surface.
+/// The flags the two verification stages share — they differ only in
+/// which side of install they read a skill from.
 #[derive(clap::Args)]
 struct VerifyArgs {
     /// Only this fixture (its basename without `.smoke`).
@@ -54,48 +54,40 @@ struct VerifyArgs {
     stressed: bool,
 }
 
+/// The flags the three deployment verbs share.
+#[derive(clap::Args)]
+struct DeployArgs {
+    /// Plan without making changes.
+    #[arg(long)]
+    dry_run: bool,
+    /// Act even where something not ours is in the way.
+    #[arg(long)]
+    force: bool,
+    /// Scope to one coding agent (claude|kiro|codex); default all.
+    #[arg(long)]
+    agent: Option<String>,
+}
+
+/// The verbs, in pipeline order. Each arm's doc comment is its `--help`
+/// text and `run()` below dispatches in the same order, so a reader sees
+/// the whole surface and what each verb does in two adjacent places.
 #[derive(Subcommand)]
 enum Cmd {
     /// Verify skills BEFORE install: the kinds whose prompt carries the
     /// skill's text, so no deployment is needed.
     Check(VerifyArgs),
+    /// Validate content and deploy it so the agents can find it.
+    Install(DeployArgs),
+    /// Remove what install deployed, leaving anything not ours.
+    Uninstall(DeployArgs),
+    /// Report what is deployed and whether it points where it should.
+    Status(DeployArgs),
     /// Verify skills AFTER install, from the deployed tree: the kinds
     /// where the agent must find the skill among everything installed.
     Smoke(VerifyArgs),
-    /// Both stages: check, then smoke. Runs the second even when the
-    /// first reports failures, so one sweep is one report.
+    /// Both verification stages. Runs the second even when the first
+    /// reports failures, so one sweep is one report.
     Verify(VerifyArgs),
-    /// Validate content and create/refresh $HOME-facing symlinks.
-    Install {
-        /// Plan without making changes.
-        #[arg(long)]
-        dry_run: bool,
-        /// Replace symlinks that point elsewhere.
-        #[arg(long)]
-        force: bool,
-        /// Scope to one coding agent (claude|kiro|codex); default all.
-        #[arg(long)]
-        agent: Option<String>,
-    },
-    /// Remove install-managed symlinks.
-    Uninstall {
-        /// Plan without making changes.
-        #[arg(long)]
-        dry_run: bool,
-        /// Remove whatever is at the managed path, including foreign
-        /// symlinks and non-symlinks.
-        #[arg(long)]
-        force: bool,
-        /// Scope to one coding agent (claude|kiro|codex); default all.
-        #[arg(long)]
-        agent: Option<String>,
-    },
-    /// Report each managed symlink's state.
-    Status {
-        /// Scope to one coding agent (claude|kiro|codex); default all.
-        #[arg(long)]
-        agent: Option<String>,
-    },
 }
 
 fn main() -> ExitCode {
@@ -114,58 +106,44 @@ fn main() -> ExitCode {
     }
 }
 
-/// Resolve the roots and the `--agent` token here, so a stage receives
-/// validated values and never sees a raw CLI string.
+/// Dispatch. The only decisions here are how skills reach the agents and
+/// how a `--agent` token resolves; everything else belongs to a stage.
 fn run(cli: Cli) -> Result<u8> {
     let root = repo_root()?;
-    // How skills reach the agents. The only place this choice is made:
-    // everything below declares what it wants and this decides how. When
-    // an agent grows its own install command, a different `Deploy` impl
-    // goes here and nothing downstream changes.
+    // The one place the deployment mechanism is chosen. When an agent
+    // grows its own install command, a different `Deploy` impl goes here
+    // and no stage changes.
     //
-    // Resolved lazily, because `check` must work with no $HOME at all —
-    // it carries each skill inline, so requiring a home would reintroduce
-    // the coupling that stage exists to avoid.
-    let target = || -> Result<Symlinks> {
+    // Lazy, because `check` must work with no $HOME at all — it carries
+    // each skill inline, so resolving a home would reintroduce the
+    // coupling that stage exists to avoid.
+    let deployment = || -> Result<Symlinks> {
         Ok(Symlinks {
             home: home_dir()?,
             checkout: root.clone(),
         })
     };
     match cli.cmd {
-        Cmd::Install {
-            dry_run,
-            force,
-            agent,
-        } => stages::cmd_install(
-            &target()?,
-            &root.join("resources/content"),
-            dry_run,
-            force,
-            validate_agent(agent.as_deref())?,
-        ),
-        Cmd::Uninstall {
-            dry_run,
-            force,
-            agent,
-        } => stages::cmd_uninstall(
-            &target()?,
-            dry_run,
-            force,
-            validate_agent(agent.as_deref())?,
-        ),
-        Cmd::Status { agent } => stages::cmd_status(&target()?, validate_agent(agent.as_deref())?),
-        // check needs no deployment, so it never resolves $HOME.
+        // No deployment target at all: the guarantee is structural.
         Cmd::Check(args) => verify(Stage::Check, args, &NoDeploy, &root, false),
-        Cmd::Smoke(args) => verify(Stage::Smoke, args, &target()?, &root, false),
+        Cmd::Install(a) => stages::cmd_install(
+            &deployment()?,
+            &root.join("resources/content"),
+            a.dry_run,
+            a.force,
+            validate_agent(a.agent.as_deref())?,
+        ),
+        Cmd::Uninstall(a) => stages::cmd_uninstall(
+            &deployment()?,
+            a.dry_run,
+            a.force,
+            validate_agent(a.agent.as_deref())?,
+        ),
+        Cmd::Status(a) => stages::cmd_status(&deployment()?, validate_agent(a.agent.as_deref())?),
+        Cmd::Smoke(args) => verify(Stage::Smoke, args, &deployment()?, &root, false),
         Cmd::Verify(args) => {
-            // Both stages, and the second runs even when the first fails:
-            // a 40-minute sweep that stops a third of the way in is a
-            // different tool from one that reports everything. The
-            // check-passes/smoke-fails split is the diagnostic this
-            // feature is largely justified by, so both halves must run.
             let check = verify(Stage::Check, clone_args(&args), &NoDeploy, &root, true)?;
-            let smoke = verify(Stage::Smoke, args, &target()?, &root, true)?;
+            let smoke = verify(Stage::Smoke, args, &deployment()?, &root, true)?;
             Ok(check.max(smoke))
         }
     }
