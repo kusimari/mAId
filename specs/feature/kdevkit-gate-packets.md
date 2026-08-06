@@ -235,6 +235,42 @@ review-time discovery.
 
 ## Session Log
 
+- **2026-08-06 · Code review: PASS WITH NOTES; three findings
+  fixed.** Fresh-context reviewer independently replayed the fixture
+  (not just read it) and found what mattered:
+
+  - **This repo's own dogfooded config would have tripped its own
+    drift check.** §2's structural-verify inline check #2 still
+    required a `reviewer:` key even when `lenses:` is present —
+    the exact config this diff just wrote into `project.md`. Fixed:
+    check #2 now accepts either key.
+  - **Two real bypasses in the comment-hygiene assert**, both
+    confirmed by direct replay: a trailing same-line comment
+    (`# add each amount...` moved after the code instead of above
+    it) and a gerund reword (`adding` vs `add`) both escaped the
+    original anchored-leading-line pattern. Rewritten to catch the
+    paraphrase regardless of position or verb form, re-verified
+    against no-op / leading / trailing / gerund / legit-comment /
+    clean — all six correct.
+  - **A stale key list** in `phases/dev.md` still named the retired
+    `threshold` and omitted `lenses`/`fail_on`.
+
+  Also delivered on **R4**, which the reviewer correctly flagged as
+  claimed-but-only-half-built: the packet contract is now cited (not
+  just theoretically citable) at all three dispatch points — the §2
+  structural-verify subagent's contract is now stated in the
+  `Receives`/`Excluded`/`Returns` shape, and the Review Briefing
+  section cites the same shape while making explicit that its
+  *content* is the generator's own to declare, not kdevkit's (the
+  one legitimate case where `Returns` is prose, not a file — the
+  briefing *is* the PR/CR body).
+
+  Considered and rejected: a mechanical fixture assertion that all
+  three sites cite the shape. This is prose-consistency, not agent
+  behaviour — there's no seeded repo or agent action to probe, and
+  `build-tool`'s tests validate frontmatter, not section content.
+  Verified by review instead, which is what just caught it.
+
 - **2026-08-06 · Dev complete.** Six prose edits (§9 packet
   contract, `phases/dev.md`'s Code Review Gate rewrite, `setup.md`
   schema + migration note + prompt update, two stale-reference

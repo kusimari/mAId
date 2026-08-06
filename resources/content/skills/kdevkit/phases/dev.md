@@ -100,9 +100,9 @@ layer semantics and which suite is load-bearing; the command
 *strings* live in `AGENTS.md` when the repo keeps one, so the two
 files don't duplicate them. The `kdevkit` block under `## Agent
 Development` overrides defaults below (the full `code_review.*`
-block — `reviewer`, `threshold`, `authority`, `retry_budget` —
-the optional `review_brief.*` block, plus review CLI,
-branch-cleanup, merge).
+block — `reviewer` or `lenses`, `fail_on`, `authority`,
+`retry_budget` — the optional `review_brief.*` block, plus review
+CLI, branch-cleanup, merge).
 
 **Resolve any specific command** (review CLI, branch-delete,
 merge, worktree ops) via implicit host knowledge → `kdevkit`

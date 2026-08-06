@@ -151,8 +151,9 @@ Main's inline checks:
    order (Mission, Architecture, Tech Stack, Layout, Testing,
    Deployment).
 2. `## Agent Development > kdevkit > code_review:` is either
-   present (with at least `reviewer:` set) or entirely absent
-   (in which case the §4 Code-review setup prompt fires).
+   present (with at least `reviewer:` **or** `lenses:` set) or
+   entirely absent (in which case the §4 Code-review setup
+   prompt fires).
 3. If a `## Active initiatives` index exists, every line
    matches an `$SPEC_ROOT/initiative/*.md` on disk and every
    on-disk initiative either has an index line or is archived.
@@ -160,15 +161,16 @@ Main's inline checks:
    parse as YAML with no unknown keys.
 
 Clean → no further action. Any drift → dispatch a **fresh-
-context agent call** (the same primitive §7 Code Review Gate
-uses) with these inputs: the path to `project.md`, the path to
-`setup.md`, and the on-disk listing of `$SPEC_ROOT/initiative/`.
-The subagent loads `setup.md` and `project.md`, runs the full
-canonical-schema validation, and returns:
+context agent call** (the same primitive the Code Review Gate
+uses), per §9's dispatch packet contract:
 
 ```
-{ "status": "clean" | "drift",
-  "findings": [ { "section", "issue", "suggestion" }, ... ] }
+Receives:  the path to project.md, the path to setup.md, and
+           the on-disk listing of $SPEC_ROOT/initiative/.
+Excluded:  everything else — the subagent's whole job is the
+           schema, not the project's content.
+Returns:   { "status": "clean" | "drift",
+             "findings": [ { "section", "issue", "suggestion" }, ... ] }
 ```
 
 Main applies any accepted findings via Edit. The setup

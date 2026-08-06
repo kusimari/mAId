@@ -111,8 +111,12 @@ test -z "$(grep -F -e '- [ ]' specs/feature/running-total.md || true)"
 # plan() commit — an agent that only edited the spec fails this.
 git log --no-decorate --oneline base..feat/running-total | grep -qE ' (feat|fix|refactor|test|chore)(\(|:)'
 # AGENTS.md's comment-hygiene rule was actually followed in the new code:
-# no comment merely paraphrasing the FOR-LOOP LINE ITSELF (e.g. "add each
-# amount to the total" beside `for a in "$@"; do t=$((t+a)); done`) —
-# distinct from a comment stating a real constraint (e.g. why POSIX sh
-# needs this shape at all), which must NOT trip this check.
-test -z "$(grep -iE '^\s*#\s*(add|sum|loop over|iterate|increment)s?\s+(each|the|all)\b' src/ledger.sh || true)"
+# no comment paraphrasing the loop/accumulator line — checked line-anchored
+# (leading `#`) AND same-line trailing form, and against both the -s/-ing
+# verb forms, since a trivial reword must not defeat this. Anchored on
+# "amount(s) to the/a total" specifically — the exact paraphrase of THIS
+# script's addition — rather than a bare add/sum/loop keyword, so a real
+# constraint comment that happens to use one of those words (e.g. "add the
+# amount only after the overflow check") does not false-positive.
+test -z "$(grep -iE '#.*(add(s|ing)?|sum(s|ming)?).*(amounts?).*(to|into).*(the|a).*total' src/ledger.sh || true)"
+test -z "$(grep -iE '#.*(loop(s|ing)?|iterat(es|ing)).*(over|through).*(the )?(arguments|amounts)' src/ledger.sh || true)"
