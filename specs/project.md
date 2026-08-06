@@ -49,13 +49,28 @@ Two halves at the top level:
   2. **Tooling** (`resources/build-tool/`) — Rust crate
      organised as the pipeline it performs: validate content,
      check each skill in isolation, install the `$HOME`-facing
-     symlinks, then smoke-test what is deployed. Four files, one
-     per category — `main.rs` (the clap shim), `shared.rs` (agents,
+     symlinks, then smoke-test what is deployed. One file per
+     category — `main.rs` (the clap shim), `shared.rs` (agents,
      registry, roots), `harness.rs` (driving an agent and scoring
-     the reply), `stages.rs` (the pipeline). Dependencies run one
-     direction: stages → harness → shared. The only bash left is
-     what is genuinely shell — a fixture's `--- setup ---` /
-     `--- assert ---` blocks, executed by the runner.
+     the reply), `deploy.rs` (how a skill reaches an agent), `stages.rs`
+     (the pipeline: content → check → install → smoke). Dependencies
+     run one direction: stages → {harness, deploy} → shared.
+
+     **`deploy.rs` is a shim, not a design.** The pipeline declares
+     *what* it wants deployed; `deploy.rs` alone knows *how*, behind a
+     `Deploy` trait (`install` / `uninstall` / `status` / `is_deployed`,
+     each returning a `Report`, never a path). `Symlinks` — the
+     $HOME-layout knowledge, `Link`/`FanOut` registry expansion,
+     `--force` semantics — is its only implementation, and exists only
+     because no coding agent exposes a command to install or list its
+     own skills yet (checked: none do, as of this writing). When one
+     does, that becomes a second `Deploy` impl and nothing in `stages.rs`
+     changes. `check` needs no deployment at all — it receives a
+     `NoDeploy` target and runs with no `$HOME`, which is what makes
+     "check needs no install" a structural fact rather than a
+     convention the prompt merely honours. The only bash left in the
+     whole pipeline is what is genuinely shell — a fixture's
+     `--- setup ---` / `--- assert ---` blocks, executed by the runner.
   3. **Verbs** (Justfile recipes that use the tooling) —
      `just resources::install-skills`, `…::uninstall-skills`,
      `…::status-skills`, `…::check-skills`, `…::smoke-skills`,
@@ -199,10 +214,11 @@ mAId/
 │   ├── Justfile            `resources::*` verb surface (install/uninstall/status/verify)
 │   ├── build-tool/         Rust crate — the pipeline (check/install/uninstall/status/smoke)
 │   │   ├── Cargo.toml      deps: clap, anyhow, gray_matter, serde, tempfile
-│   │   ├── src/main.rs     the shim: clap surface + dispatch
+│   │   ├── src/main.rs     the shim: clap surface + dispatch, in pipeline order
 │   │   ├── src/lib.rs      module wiring + the pipeline doc comment
 │   │   ├── src/shared.rs   Agent, REGISTRY, roots — what every stage speaks
 │   │   ├── src/harness.rs  fixtures, the five kinds, prompts, invocation, verdicts
+│   │   ├── src/deploy.rs   the Deploy trait; Symlinks is its only impl (a shim — see Architecture)
 │   │   ├── src/stages.rs   content → check → install → smoke
 │   │   └── tests/integration.rs  cross-stage tests against the real repo
 │   ├── content/            the deployable skills (symlinked in)
@@ -256,23 +272,25 @@ keeps the no-side-effects property.
 **`just resources::check-skills` / `…::smoke-skills` — AI-tool
 functional tests, on opposite sides of install.** Drives
 the real coding agents (claude, kiro, codex) against the `.smoke`
-fixtures under `resources/tests/skills/`. Three verification styles
-share the harness: **substring** (the reply contains a string),
-**semantic** (a judge call checks the reply's meaning), and
-**behavioral** (`--- setup ---` / `--- assert ---` shell blocks — the
-agent runs against a seeded test project and the assert inspects the
-changes it made). Every fixture runs against each requested agent; the
-verb's agent selector (surfaced to the runner as `--tools <list>`)
-scopes to one, default all three, all required. Slow (minutes) and costs API credits; gated behind a confirmation
-prompt in the Justfile.
+fixtures under `resources/tests/skills/`. How a test is scored is a
+property of the fixture (`harness::Assertion`), not of the kind:
+**Reply** (a literal substring, a judged narrative, or both — checked
+together) for a skill with no inspectable side effect, or **Behavioral**
+(`--- setup ---` / `--- assert ---` shell blocks — the agent runs
+against a seeded scratch workdir and the assert inspects what it did)
+wherever an artefact exists. Every fixture runs against each requested
+agent; the verb's `--agent` selector (a comma list on the verification
+verbs) scopes to one or more, default all three, all required. Slow
+(minutes) and costs API credits; gated behind a confirmation prompt in
+the Justfile.
 
 **Only `smoke` needs the symlinks deployed.** The reach axis is the
-install boundary: an explicit prompt names the skill's path, so `check`
-points it at the checkout and needs no install at all — which is what
-makes a content change provable *before* it is made live for every
-session on the machine. An implicit prompt makes the agent find the
-skill unaided, competing against every other installed skill for a
-capped, shared description listing, so `smoke` requires
+install boundary: an explicit prompt carries the skill's own text
+inline, so `check` needs no install at all — which is what makes a
+content change provable *before* it is made live for every session on
+the machine. An implicit prompt makes the agent find the skill unaided,
+competing against every other installed skill for a capped, shared
+description listing, so `smoke` requires
 `just resources::install-skills` to have run (it says so and stops,
 rather than failing every test obscurely). A failure therefore
 localises: pre-install means the content is wrong; post-install with
