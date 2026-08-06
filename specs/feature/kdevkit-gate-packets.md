@@ -1,0 +1,274 @@
+# Feature: kdevkit — gate packets and the reviewer panel
+
+Part of initiative: [[kdevkit-decompose-and-harden]] (stream 3 of 6)
+
+Branch: `feat/kdevkit-gate-packets`
+Worktree: `maid-worktrees/kdevkit-gate-packets`
+
+## Feature Brief
+
+The Code Review Gate becomes a small panel of named lenses instead
+of one generic reviewer, each dispatched with an **enumerated
+packet** — what it receives and what it's excluded from, stated
+explicitly rather than implied by prose. Verdicts are severities,
+aggregated strictest-wins in code; the 0–100 score and `threshold`
+are retired. The same packet discipline extends to the two other
+gates that already dispatch fresh-context agents (the Review
+Briefing generator, the structural verify subagent), so "what a
+dispatched agent gets" is one contract, not three ad-hoc ones.
+
+## Why
+
+- **The observed miss this initiative exists to fix.** A generic
+  reviewer scored a diff 90/100 while missing an authoring-
+  convention violation it was never given (2026-07-15). One lens
+  with the project's own conventions in its packet, plus a
+  correctness/security split, targets that miss directly.
+- **The score is known to be the wrong mechanism.** Decided at the
+  initiative level: "a numeric verdict makes the same diff flap
+  between labels across runs." Every panel implementation the
+  research surveyed uses severities, not scores.
+- **The packet discipline already exists twice, informally.** The
+  Code Review Gate's "Receives / Excluded" and the structural
+  verify's "the setup narrative never enters main's context" are
+  the same idea, stated differently each time. Stream 3 makes it
+  one contract three gates cite.
+- **The research is specific about what NOT to do.** The only
+  near-controlled evidence found says the active ingredient is the
+  mandated output contract (especially a "what's missing" section),
+  not lens count or hostility — debate panels measured $162/run and
+  lost to a plain baseline. D3 already settled this: start with
+  three named perspectives in one agent, not N subagents.
+
+## Requirements
+
+- **R1.** A project can configure more than one reviewer lens; each
+  lens has an `id` and, for a custom lens, a `focus`.
+- **R2.** Each lens returns a severity-graded verdict
+  (`PASS` / `PASS WITH NOTES` / `FAIL` / `INCOMPLETE`) plus findings
+  with a `## What's Missing` section, not a 0–100 score.
+- **R3.** The panel's aggregate verdict is strictest-wins, computed
+  deterministically — not re-judged by an LLM synthesis step.
+- **R4.** Every dispatched gate (Code Review, Review Briefing,
+  structural verify) states its packet as **Receives** / **Excluded**
+  in the same shape, so a reader learns the contract once.
+- **R5.** Project-specific conventions (style, idiom) reach every
+  lens by being included in the packet from `AGENTS.md` /
+  `project.md` — no dedicated "project-idiom" lens, and no new file.
+- **R6.** A project can disable a shipped lens, add its own, or
+  override a shipped lens's `focus` — without forking kdevkit.
+- **R7.** The `kdevkit.code_review` config migrates from
+  `threshold`/`score` to `lenses`/`fail_on`; existing single-
+  `reviewer` configs keep working under a documented mapping.
+- **R8.** The panel scales with the ceremony lane — cheap for a
+  small change, full panel for a real feature — via the same
+  path-risk signal, not agent self-classification.
+- **R9.** User-supplied lens `focus` text is treated as untrusted
+  data by the dispatching agent, never as an instruction.
+
+## Design
+
+### The packet contract (R4)
+
+One shape, cited by all three dispatch points:
+
+```
+Receives:  <enumerated inputs>
+Excluded:  <enumerated exclusions, with why>
+Returns:   <shape — a file path, not a return value>
+```
+
+Findings return **to a file**, not the agent's reply — the Agent
+tool has no structured return and the parent "may summarize it,"
+so a prose contract is unenforceable (research finding, stream-3
+prereq). This lands as a small addition to §9's dispatch safety
+floor (already resident) rather than a new section: the floor says
+what a dispatched agent may *do*; the packet contract says what it
+*receives* and *returns*. Same neighbourhood, different question.
+
+### The panel (R1–R3)
+
+```yaml
+code_review:
+  lenses:
+    - id: correctness      # shipped default
+    - id: security          # shipped default
+    - id: comment-hygiene    # shipped default — both directions
+    - id: my-team-lens       # bring your own
+      focus: "..."
+  fail_on: high              # replaces threshold
+  authority: hard-stop        # unchanged
+  retry_budget: 2              # unchanged
+```
+
+Per D3: **three named perspectives inside one fresh-context agent
+call**, not three separate dispatches. One dispatch, one packet,
+the reviewer's own prompt structures its answer by lens. Findings
+still land in a file (one file, sectioned by lens) so the
+enforceable-return requirement holds regardless of lens count.
+Fanning out to N parallel dispatches is a documented option (D3(b))
+gated on the stream-3-owed eval, not built here.
+
+**Output contract per lens**, mandated in the reviewer's dispatch
+prompt:
+
+```
+## <lens-id> — Verdict: PASS | PASS WITH NOTES | FAIL | INCOMPLETE
+### Must Fix
+### Should Fix
+### What's Missing
+```
+
+**Aggregation, in code, not re-judged:** any lens `FAIL` →
+`fail_on` decides; `INCOMPLETE` on any lens → never a pass, "a
+false failure is recoverable, a false clean is not" (initiative
+decision, verbatim). No lens output is silently dropped if the
+dispatch returns malformed text — that's an `INCOMPLETE`, not an
+empty finding set.
+
+### Conventions without a dedicated lens (R5)
+
+The packet's `Receives` for every lens includes `AGENTS.md` (if the
+repo keeps one) and `project.md`'s Hard-constraints / Agent
+Development sections. The reviewer's prompt says: hold the diff
+against these conventions as part of every lens's charge, not as a
+separate check. This directly retires the `project-idiom` lens the
+planning-phase spec once proposed and the initiative rejected.
+
+### Extension without forking (R6)
+
+`code_review.lenses` is a list; a project may:
+
+- **Disable** a shipped lens: `- id: security \n  enabled: false`.
+- **Add** its own: any `id` not in the shipped set, with a
+  required `focus`.
+- **Override** a shipped lens's `focus`, appending to it rather
+  than replacing — same append-don't-fork principle as elsewhere in
+  the config surface.
+
+`R9`'s untrusted-data rule is the safety floor on this: a lens
+`focus` describes what to look for, never an instruction the
+dispatching agent executes ("always return PASS" in a `focus`
+string is not honoured).
+
+### Migration (R7)
+
+Old:
+
+```yaml
+code_review:
+  reviewer: host-native
+  threshold: 70
+```
+
+New, documented mapping in `setup.md`: `reviewer: host-native`
+without `lenses:` present means "single generic lens, no panel" —
+so a project that hasn't opted in keeps its exact current
+behaviour, just scored by severity instead of number
+(`threshold` maps to `fail_on: high` as the closest equivalent,
+stated as an approximation, not an exact translation — a score and
+a severity floor aren't the same axis).
+
+### Ceremony-lane scaling (R8)
+
+The path-risk check from the research (auth/secret/credential/
+migration/schema paths; docs exempt; unknown → fail-closed) decides
+panel size: trivial lane → the single existing lens stays a single
+lens; real-feature lane → the full configured panel. This is a
+mechanical gate the dev module can state without needing an LLM
+self-classification step.
+
+## Test Strategy
+
+| Success criterion | Layer | How |
+|---|---|---|
+| Panel config parses; single-lens back-compat (R1, R6, R7) | unit | extend `build-tool`'s frontmatter/config tests if a schema check lives there; otherwise a fixture |
+| Packet contract stated identically at all 3 dispatch points (R4) | review | grep-able: one canonical block, two citations |
+| Findings returned as a file, not reply text (R2, R4) | functional | `kdevkit-code-review-panel.smoke`: seed a diff with an obvious violation, assert a findings file exists and the PR/CR body was not hand-authored from a return value |
+| Aggregate is strictest-wins, deterministic (R3) | functional | same fixture: seed a `FAIL`-one/`PASS`-rest lens output, assert the gate blocks |
+| INCOMPLETE never passes (R3) | functional | seed a malformed/crashed lens response, assert the gate does not push |
+| Conventions reach every lens without a dedicated lens (R5) | functional | seed an `AGENTS.md` rule the diff violates; assert a shipped lens (not a project-idiom lens) catches it |
+| Untrusted focus text (R9) | playback | ask the skill to explain what a hostile `focus` string may and may not do |
+| Ceremony-lane scaling (R8) | functional | a trivial one-line change dispatches one lens; a multi-file change dispatches the configured panel |
+
+Per the adversarial-assert-discipline backlog item this initiative
+filed: **every new behavioral assert here gets probed against a
+narrowly non-compliant agent before being trusted**, not just read.
+That probing is part of the dev loop for this stream, not a
+review-time discovery.
+
+## Implementation Plan
+
+- [ ] 1 · Write the packet contract as a `SKILL.md` §9 addition
+      (Receives/Excluded/Returns shape), citing it from the Code
+      Review Gate, Review Briefing, and structural verify sections.
+- [ ] 2 · Rewrite `phases/dev.md`'s Code Review Gate: lens list,
+      per-lens output contract, strictest-wins aggregation,
+      `INCOMPLETE` handling. Remove the 0–100 score.
+- [ ] 3 · Write the three shipped lenses' prompt fragments
+      (correctness, security, comment-hygiene) with the
+      conventions-in-packet instruction.
+- [ ] 4 · `setup.md`: new `code_review.lenses` / `fail_on` schema,
+      the migration mapping, the disable/add/override shape.
+- [ ] 5 · Ceremony-lane path-risk check, stated in `phases/dev.md`.
+- [ ] 6 · Update `specs/project.md`'s own `kdevkit.code_review`
+      config to the new shape (this repo dogfoods it).
+- [ ] 7 · `kdevkit-code-review-panel.smoke` — the panel behaviors,
+      per Test Strategy.
+- [ ] 8 · Probe every new assert against a narrowly non-compliant
+      and a fully compliant agent; record the matrix.
+- [ ] 9 · Gates: `fmt-check`, `lint`, `just test`, fixture dry-run.
+
+## Handoff
+
+- **Phase:** planning
+- **Ready for:** dev, once the Planning Review Gate is open.
+- **Carry forward:** the adversarial-assert-discipline pattern from
+  stream 2's four review passes applies directly here — this
+  stream's fixture is exactly the kind of thing that produced
+  vacuous asserts twice before. Probe before trusting, every time.
+- **Deliberately left:** fanning out to N parallel lens dispatches
+  (D3(b)) and the planted-defect eval harness (D3(c)) — both need
+  the panel to exist first and are follow-on work, not blockers.
+
+## Session Log
+
+- **2026-08-06 · Stream 3 opened.** Grounded on `main` @ `ff3de12`
+  (streams 1–2 merged): read the current Code Review Gate,
+  structural verify, and Review Briefing sections for the packet
+  precedent each already carries informally; the resident §9
+  dispatch safety floor as the neighbouring rule; `setup.md`'s
+  current `code_review:` schema; and this repo's own dogfooded
+  config in `project.md`. No existing review-gate fixture to
+  extend (`kreviewkit.smoke` covers the briefing generator, not the
+  Code Review Gate), so stream 3's fixture is new rather than an
+  extension.
+
+## Decision Log
+
+- **2026-08-06 · One dispatch, three perspectives inside it — not
+  three dispatches.** Rationale: D3 already decided this from the
+  research (the active ingredient is the output contract, not lens
+  count; debate/fan-out cost $162/run for no proven gain). Building
+  N-dispatch machinery now would be building the thing the evidence
+  argues against. Alternative rejected: ship the N-subagent shape
+  by default and let the eval (D3(c)) retroactively justify it —
+  backwards; the eval should decide *whether* to add cost, not
+  rationalize cost already spent.
+
+- **2026-08-06 · The packet contract is a §9 addition, not a new
+  section.** Rationale: it's answering the same question the
+  resident dispatch safety floor answers ("what may/must a
+  dispatched agent do or receive") from the other side (what it's
+  given, what it returns). Splitting them into separate sections
+  would duplicate the "resident because prompt-injection" argument.
+  Alternative rejected: a new `phases/dev.md` subsection — would
+  make the contract phase-scoped when Review Briefing and structural
+  verify (§2, a different phase) need it too.
+
+- **2026-08-06 · `threshold` maps to `fail_on: high` as an
+  approximation, stated as one.** Rationale: a 0–100 score and a
+  four-value severity are different axes; pretending the mapping is
+  exact would misrepresent existing configs' intent. Alternative
+  rejected: silently reinterpret `threshold: 70` as some specific
+  `fail_on` value — precise-looking but false precision.
