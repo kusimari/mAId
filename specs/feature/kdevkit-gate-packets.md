@@ -264,6 +264,37 @@ review-time discovery.
   stderr, not just exit code and stdout, whenever a test's "clean"
   result is `test -z "$(cmd)"` over something that can itself fail.
 
+- **2026-08-06 · Briefing generator returned a real defect;
+  fixed before publishing.** R8's ceremony-lane rule had a genuine
+  logical ambiguity: "an unrecognised path" (→ full panel) and "a
+  small change outside those [risk] paths" (→ single lens) overlap
+  for any ordinary source file that matches no risk keyword —
+  exactly the fixture's own `src/ledger.sh`. Two agents reading the
+  same prose could reasonably classify it either way, and the
+  fixture's outcome depends on which they pick.
+
+  Fixed the prose to two ordered, non-overlapping buckets: a
+  named-risk-path match runs the full panel; everything else runs a
+  single lens; "unrecognised" is redefined narrowly as *genuinely
+  unclassifiable* (a binary blob, an extensionless path) rather than
+  *merely non-risky* — the distinction that was missing.
+
+  **Also closed the coverage gap the briefing named**: R8 was the
+  one Test Strategy row with zero test artifact despite being a
+  pure mechanical path-match, no harder to test than the comment-
+  hygiene check already built. Extended the existing playback's
+  task/expect to cover it explicitly, rather than fork a fifth
+  fixture for one rule — this repo's convention is one `--- playback
+  ---` per file.
+
+  Not adopted from the briefing: downgrading the aggregation/
+  INCOMPLETE Test Strategy rows from "functional" to explicit
+  "recitation, by design" in the table itself. The reasoning is
+  right (live-subagent aggregation resists deterministic seeding
+  from outside) but reopening the Test Strategy table is a bigger
+  edit than this fix warrants — flagging for the eventual eval work
+  streams 3's Decision Log already defers (D3(c)).
+
 - **2026-08-06 · Review pass 4: FAIL. Two new bugs, plus the
   fixture's own quoting broke silently — redesigned rather than
   patched again.**

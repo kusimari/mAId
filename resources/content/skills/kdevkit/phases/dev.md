@@ -177,11 +177,25 @@ untrusted diff content is treated.
 
 **Ceremony-lane scaling.** The panel scales with how much of it a
 change warrants, decided by a path-based risk signal, not agent
-self-classification: touching `auth`, `secret`, `credential`,
-`session`, `permission`, `migration`, `schema`, or `crypto` paths
-(docs paths exempt) runs the full configured panel; an unrecognised
-path defaults to running it too (fail-closed); a small change
-outside those paths runs a single lens.
+self-classification. Two buckets, checked in this order — every
+touched path lands in exactly one:
+
+1. **Named-risk path** — the path contains `auth`, `secret`,
+   `credential`, `session`, `permission`, `migration`, `schema`,
+   or `crypto` (docs paths exempt even if they match). Any file in
+   the diff landing here → run the full configured panel.
+2. **Everything else** — run a single lens (the configured
+   `reviewer:`, or the panel's first lens if only `lenses:` is
+   set).
+
+**"Unrecognised" means *ambiguous*, not *absent*: only a path this
+skill cannot classify at all** (e.g. a binary blob with no
+extension, a path the risk-keyword match can't evaluate) falls
+back to the full panel, fail-closed. A plain source file that
+simply doesn't match any risk keyword is bucket 2, not
+"unrecognised" — it runs the single lens. This distinction is the
+one place this rule can silently misfire, so state it explicitly
+rather than trusting "unrecognised" to read the same way twice.
 
 **Dispatch — one fresh-context call, three perspectives inside
 it,** not three separate dispatches (see the Decision Log on why:
