@@ -172,6 +172,7 @@ These bind every stream.
 | Stream | Branch | CR | Status | Shipped | Learnings |
 |---|---|---|---|---|---|
 | 1 · module-split | `refactor/kdevkit-module-split` | [#40](https://github.com/kusimari/mAId/pull/40) | shipped | 2026-08-04 | Moves-only + a rule inventory made a prose refactor reviewable; the defects all landed in the *new* prose (a stale trigger row, a vacuous assert), not the moved text. Fresh-context reviewers caught what every deterministic gate missed. Shipped without the paid A/B — that gap is now the compression pass's precondition. |
+| 2 · phase-handoff | `feat/kdevkit-phase-handoff` | [#41](https://github.com/kusimari/mAId/pull/41) | shipped | 2026-08-06 | Four review passes, three failed, all on the same defect class: an assert satisfiable without the agent doing the work — twice including the *fix* itself. Filed `kdevkit-adversarial-assert-discipline` so the construction-and-replay habit becomes a Test Gate step instead of memory. Closed `kdevkit-spec-consolidation-before-dev` — this stream is that backlog item. Shipped without the paid A/B, same gap as stream 1. |
 | 2 · phase-handoff | `feat/kdevkit-phase-handoff` | — | not started | — | — |
 | 3 · gate-packets | `feat/kdevkit-gate-packets` | — | not started | — | — |
 | 4 · deterministic-phasing | `feat/kdevkit-deterministic-phasing` | — | blocked (D-open-1) | — | — |

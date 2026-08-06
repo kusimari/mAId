@@ -141,22 +141,16 @@ rather than assuming it ran.
 
 ## Handoff
 
-- **Phase:** dev — complete, gates green.
-- **Ready for:** human review; the Agent-dev Review Gate is next.
-- **Carry forward:** three fixture bugs surfaced while proving
-  discrimination, all mine, all the same class — an assertion that
-  passes without the agent doing anything. Two were unreachable
-  criteria (`wc -l` can't see a trailing newline through command
-  substitution) and one was assuming git's default branch name.
-  The seeded repos now name their base branch explicitly. A
-  reviewer should weigh whether every new assert really fails a
-  no-op, since that is where I keep erring.
-- **Deliberately left:** the closure-clears-handoff question from
-  planning is now decided — `phases/close.md` sets
-  `Phase: closed` rather than deleting the block, so a merged spec
-  reads as finished rather than as missing a section. No fixture
-  covers closure clearing it; the closure fixture is untouched by
-  this stream.
+- **Phase:** closed.
+- **Ready for:** merged. `kdevkit-spec-consolidation-before-dev` closed as
+  implemented by this stream.
+- **Carry forward:** the adversarial-assert-discipline pattern from this
+  stream's four review passes should inform stream 3's reviewer-lens
+  design directly — it's filed as its own backlog item but the packet
+  contract in stream 3 is the natural place to make it mechanical.
+- **Deliberately left:** the paid tri-tool A/B for streams 1-2. Filed as
+  the same open gap as stream 1; not repeated per-stream in this log,
+  see the initiative Status table.
 
 ## Session Log
 
