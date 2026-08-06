@@ -75,35 +75,58 @@ organised by skill. Keys under `kdevkit`:
   feature branch (planning → dev → closure) per
   SKILL.md §5 and the phase modules. Set `false` to skip §6 Planning (`phases/plan.md`) and
   let spec edits ride with the first dev commit.
-- `code_review:` — nested block configuring the dev loop's Code Review
-  Gate. All keys optional; defaults below.
+- `code_review:` — nested block configuring the dev loop's Code
+  Review Gate. All keys optional; defaults below.
 
   ```yaml
   code_review:
-    reviewer: host-native       # default; alternative: skill:<name>
-                                # / mcp:<server>.<tool> / agent:<name>
-    threshold: 70               # 0–100 score floor for Push
-    authority: hard-stop        # alternative: soft
-    retry_budget: 2             # total fix-and-retry cycles (incl. first review)
+    reviewer: host-native       # legacy single-lens shape; see below
+    lenses:                     # panel shape — omit to stay single-lens
+      - id: correctness
+      - id: security
+      - id: comment-hygiene
+    fail_on: high                 # PASS | PASS WITH NOTES pass; FAIL at
+                                    # or above this severity blocks
+    authority: hard-stop            # alternative: soft
+    retry_budget: 2                   # total review cycles (incl. first)
   ```
 
-  - **`reviewer`** — who runs the review. Prefix-tagged so the
-    orchestrator knows what to dispatch:
-    - `host-native` (default) — the host coding agent's built-in
-      code review.
-    - `skill:<name>` — a skill in the registry (bare strings
-      without a prefix default to `skill:`).
-    - `mcp:<server>.<tool>` — an MCP server's tool.
-    - `agent:<name>` — a named project-configured agent.
-  - **`threshold`** — score floor; sub-threshold loops back to
-    Quality. Default `70`.
+  - **`reviewer`** — the legacy single-lens shape. Prefix-tagged
+    `<ref>` grammar so the orchestrator knows what to dispatch:
+    `host-native` (default) — the host coding agent's built-in
+    review; `skill:<name>` — a skill in the registry (bare strings
+    without a prefix default to `skill:`); `mcp:<server>.<tool>` —
+    an MCP server's tool; `agent:<name>` — a named project-
+    configured agent. Present with no `lenses:` → the gate runs
+    this one reviewer as a single lens, exactly as before the
+    panel existed.
+  - **`lenses`** — the panel shape. A list of `{ id, focus?,
+    enabled? }`. `id` is required. Shipped ids (`correctness`,
+    `security`, `comment-hygiene`) need no `focus` — the reviewer
+    prompt supplies it. A custom `id` (anything else) requires a
+    `focus` string describing what that lens should look for.
+    `enabled: false` disables a shipped lens without removing its
+    line, so the override is visible in the diff. Appending to a
+    shipped lens's `focus` (rather than only replacing it) is the
+    recommended way to sharpen one without forking it.
+  - **`fail_on`** — the severity floor: `FAIL` at or above this
+    level blocks Push. Default `high`. Replaces `threshold`; see
+    the migration note below.
   - **`authority`** — `hard-stop` blocks Push when retries
     exhaust; `soft` allows Push with residuals appended to
-    Session Log.
+    Session Log. Neither authority ever soft-passes an
+    `INCOMPLETE` verdict — that is a gate that didn't run, not a
+    residual finding.
   - **`retry_budget`** — total review attempts including the
     first (a budget of 2 = up to 2 outer review cycles, not 2
     retries on top of an initial pass). Default `2`. The Test
     Gate uses the same "attempts including first" semantics.
+
+  **Migrating an existing `threshold:`.** A score and a severity
+  floor are different axes, so there is no exact translation —
+  surface the mapping once (`threshold: 70` → suggest `fail_on:
+  high`) and have the user confirm or adjust it; never silently
+  reinterpret a number as a severity.
 
   Omitting the block entirely triggers the Code-review setup
   prompt below. Once written (even with all defaults), the
@@ -172,12 +195,16 @@ Development > kdevkit` block so the question doesn't re-fire
 next session:
 
 - Reply `'default'` → write
-  `code_review: { reviewer: host-native }`.
+  `code_review: { reviewer: host-native }` — single-lens, no panel.
 - Reply with a `<ref>` → write
-  `code_review: { reviewer: <ref> }`. Threshold / authority /
+  `code_review: { reviewer: <ref> }`. `fail_on` / authority /
   retry_budget inherit defaults.
 - Reply `'skip'` → no write; question re-fires next session.
   (Lets a user defer the decision without committing.)
+
+The panel (`lenses:`) is opt-in and never written by this prompt —
+a project starts single-lens and adds a panel deliberately, later,
+by editing the block.
 
 The same prompt fires from the first-time `project.md` flow
 above as the appended one-liner.
@@ -224,9 +251,10 @@ Validation rules the subagent applies, in order:
    Architecture, Tech Stack, Layout, Testing, Deployment. Out
    of order, missing, or duplicated → `drift`.
 2. **`## Agent Development > kdevkit > code_review:` block
-   present** with at least the `reviewer:` key, OR the block is
-   entirely absent (in which case main fires the Code-review
-   setup prompt). Block present-but-malformed → `drift`.
+   present** with at least the `reviewer:` key **or** the
+   `lenses:` key, OR the block is entirely absent (in which case
+   main fires the Code-review setup prompt). Block present-but-
+   malformed, or present with neither key, → `drift`.
 3. **`review_brief:` block, if present, parses with no unknown
    keys** — only `enabled` and `generator` are recognized. The
    block is optional and its absence is **not** drift (absent

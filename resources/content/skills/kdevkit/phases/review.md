@@ -98,17 +98,29 @@ schema.
 3. Several candidates, or none → **ask once and persist**. Never
    guess, and never skip the briefing silently.
 
-**Honour the generator's declared contract.** Consult the
-generator first — read its own definition — for:
+**Honour the generator's declared contract**, in §9's
+`Receives`/`Excluded`/`Returns` shape — but the *content* of each
+is the generator's own to declare, not kdevkit's, since kdevkit
+dispatches the role and consults what the filler asks for rather
+than defining it:
 
-- **What it needs.** Supply exactly that. Where an input it asks
-  for doesn't exist here (no test report, no spec), say so
-  explicitly rather than substituting or omitting silently.
-- **How it wants to run.** Separate/fresh context, tool
-  restrictions, read-only, whatever it specifies. Set that up as
-  asked; where the host can't, say which guarantee is weaker.
-- **What it returns.** Take the briefing as given. Do not
-  rewrite, summarise, or re-order it.
+- **Receives.** Whatever the generator's own contract asks for.
+  Supply exactly that. Where an input it asks for doesn't exist
+  here (no test report, no spec), say so explicitly rather than
+  substituting or omitting silently.
+- **Excluded.** Whatever the generator's contract doesn't ask
+  for — §9's floor (below) sets what's excluded *regardless* of
+  what's asked.
+- **Returns.** The briefing, as the generator's own contract
+  shapes it. Take it as given; do not rewrite, summarise, or
+  re-order it. (This is the one dispatch point where `Returns` is
+  legitimately prose, not a file — the briefing *is* the PR/CR
+  body.)
+
+**How it wants to run** — separate/fresh context, tool
+restrictions, read-only, whatever the generator specifies. Set
+that up as asked; where the host can't, say which guarantee is
+weaker.
 
 If a generator asks for something kdevkit cannot supply or
 arrange, report that and let the user decide — don't quietly

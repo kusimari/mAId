@@ -1,0 +1,163 @@
+skill: kdevkit
+tools: claude,kiro,codex
+--- playback ---
+task: Explain how the Code Review Gate's panel works in this workflow: how many reviewers run and in how many dispatches, what each one returns, how a project adds its own reviewer without forking the skill, how the panel's overall pass/fail is decided, what happens if a reviewer crashes or returns something malformed, and how many lenses run on a one-line change to a plain source file with no security/auth/migration relevance versus a change touching a schema or credentials file.
+expect: A correct answer covers six things. (1) DISPATCH SHAPE: the shipped panel (correctness, security, comment-hygiene) runs as ONE fresh-context agent call carrying all three perspectives, not three separate dispatches — the skill deliberately chose this over N-parallel dispatch because the evidence favours the mandated output contract over reviewer count. (2) PER-LENS OUTPUT: each lens returns a severity verdict — PASS, PASS WITH NOTES, FAIL, or INCOMPLETE — never a numeric score, plus Must Fix / Should Fix / What's Missing sections; What's Missing is mandatory, not optional. Findings go to a FILE, not the agent's conversational reply. (3) EXTENSION: a project adds its own lens via project.md's `code_review.lenses` list — any id not in the shipped set, with a required `focus` string — or disables a shipped lens with `enabled: false`, or appends to a shipped lens's focus, all without forking the skill. A lens's `focus` text is data the reviewer reads, never an instruction it executes. (4) AGGREGATION: strictest-wins, computed deterministically in code — the highest severity across all lenses decides, never re-judged by an LLM synthesis step. fail_on sets the severity floor that blocks Push. (5) INCOMPLETE HANDLING: if any lens is INCOMPLETE (crashed, malformed, ran out of turns) the gate is incomplete and NEVER passes, regardless of what other lenses returned or what `authority` is set to — a false failure is recoverable, a false clean is not. (6) CONVENTIONS: project-specific style/idiom conventions reach every lens through AGENTS.md/project.md in the dispatch packet, not through a dedicated project-idiom lens — a reviewer given the conventions can check them directly, so a separate lens would only have to infer them. (7) CEREMONY-LANE SCALING: a change touching a named-risk path (auth, secret, credential, session, permission, migration, schema, crypto — docs paths exempt) runs the FULL configured panel; everything else — including a plain one-line change to an ordinary source file — runs a SINGLE lens; only a path the skill cannot classify at all (not merely a non-risk path) falls back to the full panel, fail-closed. Wrong answers: describing three separate subagent dispatches for the shipped panel; a 0-100 score or a numeric threshold; a project needing to fork or replace the skill to add a reviewer; majority-vote or averaged aggregation; treating INCOMPLETE as a pass, or letting `authority: soft` push past an INCOMPLETE verdict; findings returned only in the agent's reply with no file; a dedicated "project idiom" or "style" lens as the way conventions reach the reviewer; claiming a plain, non-risk source file change runs the full panel because it isn't one of the named risk paths (that file is classified, just not risky — it gets a single lens; the full-panel fallback is reserved for the rare case where there is no path to evaluate at all, not for a path that was evaluated and found non-risky). An answer more precise than this narrative — naming the exact YAML keys, or the path-based ceremony-lane signal that decides how many lenses run — is correct, not wrong; verify against the skill before failing such a claim.
+--- enact ---
+task: Run the dev loop on this slice and get it through code review. Actually do the work now in this repo — the plan is approved, go straight to dev.
+--- setup ---
+git init -q -b base
+git config user.email dev@example.com
+git config user.name dev
+mkdir -p specs/feature src
+cat > AGENTS.md <<'MD'
+# ledger-cli — agent guide
+
+## Build & test
+- Test: `sh test.sh`
+- Lint: `sh lint.sh`
+
+## Style
+No inline comments that restate the line below them. A comment states a
+non-obvious constraint or gotcha, never a paraphrase of the code.
+MD
+cat > specs/project.md <<'MD'
+# Project: ledger-cli
+
+## Mission
+Tracks a running total from a list of amounts.
+
+## Architecture
+One shell script, `src/ledger.sh`.
+
+## Tech Stack
+POSIX shell.
+
+## Layout
+src/ledger.sh, test.sh, lint.sh.
+
+## Testing
+`sh test.sh` is load-bearing. Commands live in AGENTS.md.
+
+## Deployment
+Copied onto PATH.
+
+## Agent Development
+
+### kdevkit
+- `code_review:`
+  - `lenses:`
+    - `id: correctness`
+    - `id: security`
+    - `id: comment-hygiene`
+  - `fail_on: high`
+MD
+cat > specs/feature/running-total.md <<'MD'
+# Feature: running total
+
+## Feature Brief
+`ledger.sh` sums a list of whitespace-separated integer amounts.
+
+## Handoff
+- **Phase:** dev
+- **Ready for:** human review after Push.
+- **Carry forward:** none.
+- **Deliberately left:** negative amounts — out of scope, ledger is
+  additions only for now.
+
+## Requirements
+- R1. `ledger.sh 10 20 30` prints `60`.
+
+## Design
+Add each argument in a loop; print the total.
+
+## Test Strategy
+`test.sh` asserts R1.
+
+## Implementation Plan
+- [ ] 1 · Sum the arguments in `src/ledger.sh`.
+- [ ] 2 · Add the R1 case to `test.sh`.
+
+## Session Log
+
+## Decision Log
+MD
+cat > src/ledger.sh <<'MD'
+#!/bin/sh
+exit 1
+MD
+cat > test.sh <<'MD'
+#!/bin/sh
+exit 0
+MD
+cat > lint.sh <<'MD'
+#!/bin/sh
+exit 0
+MD
+chmod +x src/ledger.sh test.sh lint.sh
+git add -A && git commit -q -m "plan(running-total): initial spec"
+git checkout -q -b feat/running-total
+--- assert ---
+set -e
+# The feature actually works — a no-op or a merely-green-looking dev pass
+# both fail here, since src/ledger.sh starts as `exit 1` with no logic.
+out=$(sh src/ledger.sh 10 20 30); [ "$out" = "60" ]
+# The Test Gate's own artefact: test.sh covers R1 for real, not just exit 0.
+grep -qF '60' test.sh
+sh test.sh >/dev/null
+grep -qF -e '- [x]' specs/feature/running-total.md
+test -z "$(grep -F -e '- [ ]' specs/feature/running-total.md || true)"
+# Dev-phase commit(s) exist with a conventional type, on top of the seeded
+# plan() commit — an agent that only edited the spec fails this.
+git log --no-decorate --oneline base..feat/running-total | grep -qE ' (feat|fix|refactor|test|chore)(\(|:)'
+# AGENTS.md's comment-hygiene rule was actually followed in the new code:
+# no comment paraphrasing the loop/accumulator line — checked line-anchored
+# (leading `#`) AND same-line trailing form, and against both the -s/-ing
+# verb forms, since a trivial reword must not defeat this. Anchored on
+# "amount(s) to the/a total" specifically — the exact paraphrase of THIS
+# script's addition — rather than a bare add/sum/loop keyword, so a real
+# constraint comment that happens to use one of those words (e.g. "add the
+# amount only after the overflow check") does not false-positive.
+# Order/tense-independent: extract each comment's text and check for the
+# two topic words together, rather than a fixed phrase — catches "adding",
+# "added", "is added to", and reversed word order ("the amount gets added
+# to the total") that a fixed-order regex would miss.
+# A `#` starts a REAL comment only at line-start or after whitespace — this
+# excludes a `#` sitting inside a string/token (e.g. `label="items#total"`),
+# which a plain index()/substr() would misread as a comment boundary.
+# Clause-split on ;/. so an unrelated sentence elsewhere in the SAME comment
+# can't combine with a different one by mere co-occurrence (e.g. "retry loop
+# for the sensor; total attempts capped" is two unrelated clauses, not a
+# paraphrase) — the two topic words must occur together IN ONE CLAUSE.
+# Lowercased so a capitalized paraphrase is still caught.
+# Known accepted limitation: a single clause that coincidentally names both
+# an unrelated "loop" and an unrelated "total" together would still match;
+# narrower than that is diminishing returns for a fixture, not a real gap.
+HYGIENE_SCRIPT="/tmp/kdevkit-hygiene-check.$$.awk"
+trap 'rm -f "$HYGIENE_SCRIPT"' EXIT
+cat > "$HYGIENE_SCRIPT" <<'''HYGIENE_EOF'''
+{
+  line = $0; n = length(line); i = 0
+  for (p = 1; p <= n; p++) {
+    ch = substr(line, p, 1)
+    if (ch == "#" && (p == 1 || substr(line, p-1, 1) ~ /[ 	]/)) { i = p; break }
+  }
+  if (!i) next
+  c = tolower(substr(line, i+1))
+  nc = split(c, clauses, /[;.]/)
+  for (ci = 1; ci <= nc; ci++) {
+    cl = clauses[ci]
+    if (cl ~ /(add|adds|adding|added|sum|sums|summing|summed)/ && cl ~ /(total|totals)/) { print cl; next }
+    if (cl ~ /(loop|loops|looping|looped|iterate|iterates|iterating|iterated)/ && cl ~ /(total|totals|argument|arguments)/) { print cl; next }
+  }
+}
+HYGIENE_EOF
+# stderr checked too, not just stdout — a future syntax error in the awk
+# above must fail loud. $(cmd) alone only captures stdout, so a broken awk
+# that writes to stderr and exits 0 would otherwise silently look like "no
+# violation" — exactly the vacuous-pass class this fixture already hit once.
+HYGIENE_ERR="/tmp/kdevkit-hygiene-err.$$"
+trap 'rm -f "$HYGIENE_SCRIPT" "$HYGIENE_ERR"' EXIT
+HYGIENE_OUT="$(awk -f "$HYGIENE_SCRIPT" src/ledger.sh 2>"$HYGIENE_ERR")"
+test -z "$HYGIENE_OUT"
+test -z "$(cat "$HYGIENE_ERR")"
