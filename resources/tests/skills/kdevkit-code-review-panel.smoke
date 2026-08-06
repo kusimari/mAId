@@ -118,5 +118,9 @@ git log --no-decorate --oneline base..feat/running-total | grep -qE ' (feat|fix|
 # script's addition — rather than a bare add/sum/loop keyword, so a real
 # constraint comment that happens to use one of those words (e.g. "add the
 # amount only after the overflow check") does not false-positive.
-test -z "$(grep -iE '#.*(add(s|ing)?|sum(s|ming)?).*(amounts?).*(to|into).*(the|a).*total' src/ledger.sh || true)"
-test -z "$(grep -iE '#.*(loop(s|ing)?|iterat(es|ing)).*(over|through).*(the )?(arguments|amounts)' src/ledger.sh || true)"
+# Order/tense-independent: extract each comment's text and check for the
+# two topic words together, rather than a fixed phrase — catches "adding",
+# "added", "is added to", and reversed word order ("the amount gets added
+# to the total") that a fixed-order regex would miss.
+test -z "$(awk -F'#' 'NF>1 { c=$2; if (c ~ /total/ && c ~ /(add|sum)/) print }' src/ledger.sh)"
+test -z "$(awk -F'#' 'NF>1 { c=$2; if ((c ~ /total/ || c ~ /argument/) && c ~ /(loop|iterat)/) print }' src/ledger.sh)"

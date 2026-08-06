@@ -235,6 +235,34 @@ review-time discovery.
 
 ## Session Log
 
+- **2026-08-06 · Review pass 2: FAIL. One blocker, fixed; two
+  residual gaps closed proactively.**
+
+  - **The reviewer=>lenses fix from pass 1 was itself incomplete.**
+    I'd fixed `SKILL.md` §2's inline check but missed
+    `setup.md`'s canonical schema — the rules the *dispatched
+    subagent* actually validates against on drift. This repo's own
+    dogfooded `lenses:`-only config would have passed the inline
+    check and failed the escalation. Fixed both, and added a note
+    at the top of §2 that these are two copies of one rule and must
+    be edited together — this is the second time a schema edit
+    landed in only one of the two places.
+  - **Two more paraphrase forms escaped the comment-hygiene assert**
+    even after pass 1's fix: reversed word order ("the amount gets
+    added to the total") and past-tense passive ("each argument is
+    added to the total"). The reviewer found these by adversarial
+    probing beyond what was asked. Rewrote the check from a
+    fixed-order phrase match to an `awk`-extracted-comment-text
+    co-occurrence check (topic words present together, any order,
+    any tense) — re-verified against six cases including both new
+    forms, no new false positive on the legitimate-comment case.
+
+  Confirmed clean by the same pass: R4's citation at all three
+  dispatch points is real content, not a superficial label — the
+  Review Briefing instance correctly keeps `Receives`/`Excluded`
+  generator-defined rather than fabricating fixed inputs kdevkit
+  doesn't actually dictate.
+
 - **2026-08-06 · Code review: PASS WITH NOTES; three findings
   fixed.** Fresh-context reviewer independently replayed the fixture
   (not just read it) and found what mattered:

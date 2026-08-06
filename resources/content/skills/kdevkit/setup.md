@@ -251,9 +251,10 @@ Validation rules the subagent applies, in order:
    Architecture, Tech Stack, Layout, Testing, Deployment. Out
    of order, missing, or duplicated → `drift`.
 2. **`## Agent Development > kdevkit > code_review:` block
-   present** with at least the `reviewer:` key, OR the block is
-   entirely absent (in which case main fires the Code-review
-   setup prompt). Block present-but-malformed → `drift`.
+   present** with at least the `reviewer:` key **or** the
+   `lenses:` key, OR the block is entirely absent (in which case
+   main fires the Code-review setup prompt). Block present-but-
+   malformed, or present with neither key, → `drift`.
 3. **`review_brief:` block, if present, parses with no unknown
    keys** — only `enabled` and `generator` are recognized. The
    block is optional and its absence is **not** drift (absent

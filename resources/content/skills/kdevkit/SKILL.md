@@ -145,6 +145,12 @@ lightweight checks inline**; on any drift signal it dispatches
 the subagent for full canonical-schema validation against
 `setup.md`.
 
+**These two schema checks are two copies of the same rule** — a
+key accepted here and rejected in `setup.md`'s canonical
+validation (or vice versa) is drift in the skill itself. Editing
+one without the other is the exact bug that shipped once already
+in this repo's history: update both in the same commit.
+
 Main's inline checks:
 
 1. The six required `##` headings are present and in fixed
