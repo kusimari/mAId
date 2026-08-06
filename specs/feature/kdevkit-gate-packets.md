@@ -235,6 +235,27 @@ review-time discovery.
 
 ## Session Log
 
+- **2026-08-06 · Review pass 3: PASS WITH NOTES; one blocker
+  fixed, verified against eight probes across three rounds.**
+
+  Pass 2's `awk`-based rewrite had two bugs of its own: `-F'#'`
+  extracted field 2, so a line with an *earlier* literal `#`
+  (`n=$#  # add each of the n arguments to the total`, or an
+  issue-number reference) mis-extracted and the real comment text
+  went unchecked; and `awk`'s regex match is case-sensitive by
+  default, so a capitalized paraphrase escaped it — a case-
+  insensitivity guarantee the very first version (a plain `grep
+  -iE`) had and the rewrite silently dropped. Fixed: extract
+  everything after the *first* `#` via `index()`/`substr()`, and
+  `tolower()` before matching.
+
+  Re-verified the full set: no-op, clean, legitimate-constraint,
+  and all five prior-round bypass shapes (leading, trailing,
+  gerund, reversed-order, past-tense) plus the two new ones
+  (multi-`#`, capitalized) — eight probes, all correct, no false
+  positive on either legitimate-comment case tried across the
+  three rounds.
+
 - **2026-08-06 · Review pass 2: FAIL. One blocker, fixed; two
   residual gaps closed proactively.**
 

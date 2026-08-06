@@ -122,5 +122,8 @@ git log --no-decorate --oneline base..feat/running-total | grep -qE ' (feat|fix|
 # two topic words together, rather than a fixed phrase — catches "adding",
 # "added", "is added to", and reversed word order ("the amount gets added
 # to the total") that a fixed-order regex would miss.
-test -z "$(awk -F'#' 'NF>1 { c=$2; if (c ~ /total/ && c ~ /(add|sum)/) print }' src/ledger.sh)"
-test -z "$(awk -F'#' 'NF>1 { c=$2; if ((c ~ /total/ || c ~ /argument/) && c ~ /(loop|iterat)/) print }' src/ledger.sh)"
+# Text after the FIRST # (not field 2 of a #-split, which mis-extracts a
+# line with an earlier literal # like `n=$#  # comment`), lowercased so a
+# capitalized paraphrase isn't a false negative.
+test -z "$(awk '{ i=index($0,"#"); if (i) { c=tolower(substr($0,i+1)); if (c ~ /total/ && c ~ /(add|sum)/) print } }' src/ledger.sh)"
+test -z "$(awk '{ i=index($0,"#"); if (i) { c=tolower(substr($0,i+1)); if ((c ~ /total/ || c ~ /argument/) && c ~ /(loop|iterat)/) print } }' src/ledger.sh)"
