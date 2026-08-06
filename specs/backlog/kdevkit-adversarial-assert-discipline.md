@@ -63,6 +63,27 @@ The procedure, for each new or changed behavioral assert:
     matters (a zero-byte file passes).
   - Asserting an artefact **no rule requires** — which fails the
     *compliant* agent, and is a spec bug masquerading as a test bug.
+  - **`test -z "$(cmd)"` over a command that can itself fail.** If
+    `cmd` errors (a syntax error in an embedded script, a missing
+    tool), the failure typically lands on *stderr* while stdout
+    stays empty — so the assert reads "no violation found" instead
+    of "the check itself broke." Confirmed live in stream 3: a
+    correctly-written check, later broken by an unrelated edit,
+    would have passed vacuously because only stdout was captured.
+    Whenever an assert's clean result is empty stdout, capture and
+    check stderr separately too.
+  - **Nested shell quoting to embed a script in a variable**
+    (`'"'"'`-style). Confirmed live in stream 3: a draft fix used
+    this to pass an awk program through a shell variable: it broke
+    silently under the runner's own extraction, `awk` errored to
+    stderr, and the assert passed vacuously — the exact bug this
+    item exists to name, self-inflicted while fixing something
+    else. Prefer writing the embedded script to a file (heredoc +
+    `-f`) over quoting it into a variable.
+  - **A fixed temp-file path with no PID salt or cleanup** for any
+    assert that writes a scratch file — a collision risk the moment
+    the runner parallelizes, silent until it does. Salt with `$$`
+    and remove via `trap ... EXIT`.
 - **This is the repo's own test-first argument, arriving by a
   different road.** `kdevkit-dev-loop-vmodel-and-ceremony`'s Rule B
   says a test written after the source "often asserts the code's
