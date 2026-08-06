@@ -94,7 +94,7 @@ pub fn cmd_install(
     let count = check_content(content_dir)
         .map_err(|errs| anyhow!("Content validation failed:\n{}", errs.join("\n")))?;
     eprintln!("validated {count} content file(s)");
-    outcome(target.install(agent, dry_run, force)?, dry_run, force)
+    outcome(target.install(agent, dry_run, force)?, dry_run)
 }
 
 pub fn cmd_uninstall(
@@ -103,7 +103,7 @@ pub fn cmd_uninstall(
     force: bool,
     agent: Option<Agent>,
 ) -> Result<u8> {
-    outcome(target.uninstall(agent, dry_run, force)?, dry_run, force)
+    outcome(target.uninstall(agent, dry_run, force)?, dry_run)
 }
 
 pub fn cmd_status(target: &impl Deploy, agent: Option<Agent>) -> Result<u8> {
@@ -115,16 +115,18 @@ pub fn cmd_status(target: &impl Deploy, agent: Option<Agent>) -> Result<u8> {
 
 /// Print what happened at each location, and exit non-zero when any was
 /// left alone because acting would have destroyed something.
-fn outcome(reports: Vec<crate::deploy::Report>, dry_run: bool, force: bool) -> Result<u8> {
+fn outcome(reports: Vec<crate::deploy::Report>, dry_run: bool) -> Result<u8> {
     use crate::deploy::State;
     let tag = if dry_run { "(dry-run) " } else { "" };
     let mut skipped = 0usize;
     for report in &reports {
         let at = &report.label;
-        // A location we could not act on without clobbering something is a
-        // soft skip: reported, and counted toward a non-zero exit so a
-        // caller notices, but never fatal to the rest of the run.
-        let line = match (&report.state, force) {
+        // Whether force applied is now decided by the shim (Report::acted),
+        // not re-derived here — that re-derivation is exactly how "install
+        // --force over a real file" once reported a deletion that never
+        // happened: create() correctly refuses Occupied even with force,
+        // but a (state, force) guess here assumed force always acted.
+        let line = match (&report.state, report.acted) {
             (State::Ok(_) | State::Missing, _) => format!("{tag}done          {at}"),
             (State::SourceMissing, _) => format!("{tag}skip          {at} (source missing)"),
             (State::Wrong { found, .. }, true) => {

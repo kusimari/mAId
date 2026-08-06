@@ -58,6 +58,11 @@ pub struct Report {
     /// How the location is named to the user, relative to the target root.
     pub label: String,
     pub state: State,
+    /// Whether this call actually changed the location. `false` for
+    /// `status`, and for a location `create`/`remove` declined to touch —
+    /// the caller reports and counts from this, not by re-deriving it
+    /// from `(state, force)`.
+    pub acted: bool,
 }
 
 /// How a set of skills reaches the agents that consume them.
@@ -100,7 +105,7 @@ impl Deploy for Symlinks {
     }
 
     fn status(&self, agent: Option<Agent>) -> Result<Vec<Report>> {
-        self.act(agent, |link| Ok(self.inspect(link)))
+        self.act(agent, |link| Ok((self.inspect(link), false)))
     }
 
     fn is_deployed(&self, agent: Agent) -> bool {
@@ -118,15 +123,16 @@ impl Symlinks {
     fn act(
         &self,
         agent: Option<Agent>,
-        f: impl Fn(&Link) -> io::Result<State>,
+        f: impl Fn(&Link) -> io::Result<(State, bool)>,
     ) -> Result<Vec<Report>> {
         let mut out = Vec::new();
         for entry in selected_entries(agent) {
             for link in self.expand(entry)? {
-                let state = f(&link)?;
+                let (state, acted) = f(&link)?;
                 out.push(Report {
                     label: self.label(&link.0),
                     state,
+                    acted,
                 });
             }
         }
@@ -199,29 +205,29 @@ impl Symlinks {
         }
     }
 
-    fn create(&self, link: &Link, dry_run: bool, force: bool) -> io::Result<State> {
+    fn create(&self, link: &Link, dry_run: bool, force: bool) -> io::Result<(State, bool)> {
         let (home, source) = link;
         let state = self.inspect(link);
-        let act = match &state {
-            State::Missing => true,
-            State::Wrong { .. } if force => {
-                if !dry_run {
-                    fs::remove_file(home)?;
-                }
-                true
-            }
-            _ => false,
-        };
+        // Only Missing or a foreign symlink (with --force) are ever
+        // actionable. Occupied is never actionable here, force or not —
+        // mAId does not overwrite a real file or directory to install.
+        let act = matches!(
+            (&state, force),
+            (State::Missing, _) | (State::Wrong { .. }, true)
+        );
         if act && !dry_run {
+            if let State::Wrong { .. } = &state {
+                fs::remove_file(home)?;
+            }
             if let Some(parent) = home.parent() {
                 fs::create_dir_all(parent)?;
             }
             std::os::unix::fs::symlink(source, home)?;
         }
-        Ok(state)
+        Ok((state, act))
     }
 
-    fn remove(&self, link: &Link, dry_run: bool, force: bool) -> io::Result<State> {
+    fn remove(&self, link: &Link, dry_run: bool, force: bool) -> io::Result<(State, bool)> {
         let (home, _) = link;
         let state = self.inspect(link);
         let act = match &state {
@@ -235,7 +241,7 @@ impl Symlinks {
         if act && !dry_run {
             fs::remove_file(home)?;
         }
-        Ok(state)
+        Ok((state, act))
     }
 }
 
@@ -557,5 +563,28 @@ mod tests {
         }
         .describe()
         .contains("WRONG"));
+    }
+    /// The bug an audit caught: --force over a real FILE must never be
+    /// reported as acted-on. `create()` already refused to touch it;
+    /// `outcome()` was re-deriving "did this act" from (state, force) and
+    /// assumed force always means yes, so install printed "removed" for a
+    /// file it never touched and exited 0 for a blocked install.
+    #[test]
+    fn force_install_never_reports_acting_on_a_real_file() {
+        let checkout = make_checkout_with_skills();
+        let home = TempDir::new().unwrap();
+        let claimed = home.path().join(".claude/skills");
+        write(&claimed, "mine");
+
+        let reports = install(home.path(), checkout.path(), false, true, None);
+        let this = reports
+            .iter()
+            .find(|r| r.label == ".claude/skills")
+            .unwrap();
+        assert!(
+            !this.acted,
+            "create() must not act on a real file, force or not"
+        );
+        assert_eq!(fs::read_to_string(&claimed).unwrap(), "mine");
     }
 }
