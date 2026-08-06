@@ -1060,3 +1060,55 @@ dependency claim in Design actually holds.
   not closed by this feature. The port carries the existing tripwire
   as-is and makes the real fix cheaper to land afterwards in one
   place instead of two.
+- **The shipped shape, for a reader arriving after the design stopped
+  moving.** The sections above are the record of how the design got
+  here — several superseded drafts, each a real dead end reasoned
+  through rather than a false start deleted. What actually shipped,
+  bubbled up to `project.md` at closure:
+  - **Six files, not four.** `main.rs` / `lib.rs` / `shared.rs` /
+    `harness.rs` / `stages.rs` as planned, plus **`deploy.rs`** —
+    added on review, after this Design section was written. All
+    `$HOME`-layout knowledge (the `Deploy` trait, `Symlinks` as its
+    one implementation, `Link`/`FanOut` expansion, `--force`
+    semantics) lives there. It is a shim, not a design commitment:
+    checked against all three agent CLIs and none expose an
+    install-or-list-my-own-skills command, so `Symlinks` is what
+    fills the gap until one does. When one does, it is a second
+    `Deploy` impl and nothing in `stages.rs` changes.
+  - **Explicit prompts carry the skill's text, not a path.** The
+    original design (§"Verification is two stages") had `check`
+    resolve a checkout *path* and name it in the prompt. Review
+    argued the agent ends up reading the same bytes either way, so
+    inlining the text removes a resolution step and a tautological
+    structural check (`explicit_carries_path`, which compared a path
+    against the same path it was built from — literally unable to
+    fail) for no behavioral cost. Verified before accepting it: the
+    kind that actually proves execution passed at the same rate,
+    inline vs. path, on two agents. This is also what makes
+    `NoDeploy` sufficient for `check` — nothing about deployment is
+    read at all, so the stage receives a target that can only refuse.
+  - **Planning is a pure function.** `harness::plan_one` decides
+    everything about one test — applicability, task, prompt,
+    assertion shape — as data, before any process runs.
+    `stages::cmd_verify` reduced to plan, then `check_plan` or
+    `execute`. This replaced an 8-argument `run_one` that interleaved
+    all four decisions with the effectful calls; the argument count
+    was the symptom, not the target.
+  - **The leak tripwire compares `HEAD`, not just `git status`.**
+    Discovered by the very audit this feature's own paid runs
+    triggered: a file created *and committed* inside one sweep is
+    invisible to a status-only diff, since the tree is clean at both
+    ends. This is not a hypothetical — it happened during this
+    feature's closure runs, twice, and the commits had to be dropped
+    from history. The snapshot now includes `HEAD`; a moved `HEAD` is
+    a leak.
+  - **`install --force` must never act on a real file.** Found by an
+    independent parity audit against the deleted bash script,
+    specifically checking for regressions before closure:
+    `deploy::create` already refused to touch `Occupied` state even
+    with `--force` (mAId only ever replaces a foreign symlink), but
+    `stages::outcome` was re-deriving "did this act" from
+    `(state, force)` and assumed force always meant yes — so a
+    blocked install printed "removed" and exited 0. `Report` now
+    carries `acted`, set by the shim that actually knows, so the
+    caller reports what happened instead of guessing it.
