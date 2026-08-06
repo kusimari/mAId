@@ -67,3 +67,18 @@ nobody had run this half.
   redirected `$HOME`, so its credentials are absent and every invocation
   fails at login. A real kiro smoke run needs the operator's own `$HOME`,
   which makes it a genuinely attended test.
+
+## Also found by the closure-time parity audit (2026-08-06)
+
+- **Generated-kind agent set widened.** Bash ran activation/discovery on
+  only the agent set of the *first* fixture naming a skill; the port
+  unions the set across all fixtures for that skill. On the current
+  suite every fixture declares all three agents, so this has no effect
+  today, but a future fixture narrowing `tools:` would get broader
+  coverage (and cost) than bash gave it. The new behavior is the
+  correct reading of intent; noted so it isn't mistaken for a bug later.
+- **Malformed fixture reported twice under `verify`.** `check` and
+  `smoke` each load fixtures independently, so one unparseable file
+  prints its `FAIL fixture` line and counts toward `test(s) failed`
+  once per stage. Exit code is still 1 either way (`check.max(smoke)`).
+  Cosmetic; not worth the shared-state plumbing to dedupe.
