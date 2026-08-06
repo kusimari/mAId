@@ -133,7 +133,9 @@ git log --no-decorate --oneline base..feat/running-total | grep -qE ' (feat|fix|
 # Known accepted limitation: a single clause that coincidentally names both
 # an unrelated "loop" and an unrelated "total" together would still match;
 # narrower than that is diminishing returns for a fixture, not a real gap.
-cat > /tmp/kdevkit-hygiene-check.awk <<'''HYGIENE_EOF'''
+HYGIENE_SCRIPT="/tmp/kdevkit-hygiene-check.$$.awk"
+trap 'rm -f "$HYGIENE_SCRIPT"' EXIT
+cat > "$HYGIENE_SCRIPT" <<'''HYGIENE_EOF'''
 {
   line = $0; n = length(line); i = 0
   for (p = 1; p <= n; p++) {
@@ -150,4 +152,12 @@ cat > /tmp/kdevkit-hygiene-check.awk <<'''HYGIENE_EOF'''
   }
 }
 HYGIENE_EOF
-test -z "$(awk -f /tmp/kdevkit-hygiene-check.awk src/ledger.sh)"
+# stderr checked too, not just stdout — a future syntax error in the awk
+# above must fail loud. $(cmd) alone only captures stdout, so a broken awk
+# that writes to stderr and exits 0 would otherwise silently look like "no
+# violation" — exactly the vacuous-pass class this fixture already hit once.
+HYGIENE_ERR="/tmp/kdevkit-hygiene-err.$$"
+trap 'rm -f "$HYGIENE_SCRIPT" "$HYGIENE_ERR"' EXIT
+HYGIENE_OUT="$(awk -f "$HYGIENE_SCRIPT" src/ledger.sh 2>"$HYGIENE_ERR")"
+test -z "$HYGIENE_OUT"
+test -z "$(cat "$HYGIENE_ERR")"

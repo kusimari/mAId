@@ -235,6 +235,35 @@ review-time discovery.
 
 ## Session Log
 
+- **2026-08-06 · Review pass 5: PASS.** Independently re-derived
+  all ten prior cases plus five new probes (tab-indentation,
+  semicolon-clause split, concurrent-run collision, a deliberately
+  corrupted awk program) via the actual runner-extraction path, not
+  a simplified replay. Genuinely clean — no blocker.
+
+  Two should-fix items closed anyway, since both are the exact
+  failure class this whole stream has been fighting:
+
+  - **The temp script path was fixed** (`/tmp/kdevkit-hygiene-
+    check.awk`, no PID salt, no cleanup) — a latent collision risk
+    if the runner is ever parallelized. Salted with `$$`, removed
+    via `trap ... EXIT`.
+  - **stderr was never checked**, only stdout via `$(...)` — so a
+    *future* syntax error in the awk program would write to stderr,
+    exit 0, and the assert would see empty stdout and pass. This is
+    the identical vacuous-pass shape found twice already in this
+    stream, just relocated to a case that hadn't happened yet.
+    Fixed: stderr captured separately and asserted empty too.
+    **Verified by deliberately corrupting the awk syntax** — it now
+    fails loud instead of passing.
+
+  Five review rounds on one fixture. Every round found a real,
+  distinct bug; the last one found a landmine for a bug that hadn't
+  fired yet. Recorded in the initiative-level backlog rather than
+  just here, since the lesson generalizes past this fixture: check
+  stderr, not just exit code and stdout, whenever a test's "clean"
+  result is `test -z "$(cmd)"` over something that can itself fail.
+
 - **2026-08-06 · Review pass 4: FAIL. Two new bugs, plus the
   fixture's own quoting broke silently — redesigned rather than
   patched again.**
