@@ -56,8 +56,8 @@ struct VerifyArgs {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Verify skills BEFORE install, from the checkout: the kinds whose
-    /// prompt names the skill's path, so no deployment is needed.
+    /// Verify skills BEFORE install: the kinds whose prompt carries the
+    /// skill's text, so no deployment is needed.
     Check(VerifyArgs),
     /// Verify skills AFTER install, from the deployed tree: the kinds
     /// where the agent must find the skill among everything installed.

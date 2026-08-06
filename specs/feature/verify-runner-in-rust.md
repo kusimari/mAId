@@ -886,6 +886,17 @@ dependency claim in Design actually holds.
 
 ## Decision Log
 
+- **The leak tripwire compares HEAD, not just working-tree status.** The
+  earlier widening (report lines that disappear as well as appear) was
+  still blind to the exact incident it exists for: a file the agent
+  creates **and commits** inside one sweep leaves the working tree clean
+  at both ends, so a status-only diff sees nothing. That happened again
+  on this very branch — two `insights/*.md` files were committed by a
+  behavioral fixture during the paid runs, and the tripwire reported
+  clean. The commits were dropped from history and the snapshot now
+  carries `HEAD`. Mutation-verified: removing the HEAD comparison fails
+  the two tests that guard it.
+
 - **`strip-ansi-escapes` cannot be vendored; hand-rolled instead.** The
   flake's cargo closure is offline and the crate is absent from the
   registry index, so the Design's stated fallback applies. The

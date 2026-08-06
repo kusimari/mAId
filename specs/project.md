@@ -285,11 +285,11 @@ question it answers. The two are orthogonal, and conflating them is how
 the suite once drifted into a dozen fixtures that all answered the same
 question. Kinds are two axes composed:
 
-- **How the skill is reached.** *Explicit* — the prompt names the skill
-  and the path it lives at for the agent under test, which isolates
-  content: a failure means the skill is wrong, not that it failed to
-  load. *Implicit* — the prompt states only the task, so the agent must
-  recognise it and load the right skill unaided.
+- **How the skill is reached.** *Explicit* — the prompt carries the
+  skill's text inline, which isolates content: a failure means the skill
+  is wrong, not that it failed to load, and nothing needs deploying.
+  *Implicit* — the prompt states only the task, so the agent must
+  recognise it and load the right skill unaided from what is installed.
 - **What is verified.** The skill *plays back* the contract it was
   designed for (recites its rules), or *enacts* it (does the thing).
 
@@ -327,11 +327,11 @@ resolves to, so both stages agree on whether a marker is promised.
 The pair is diagnostic. When a skill's explicit test passes and its
 implicit counterpart fails, the fault is triggering, not content — no
 bisection needed. `activation` and `discovery` are **generated** by the
-runner from a fixture's `skill:` field, so no fixture authors them and
-none writes a skill path. The per-agent paths are derived from
-`REGISTRY` by `Agent::installed_skill`, so there is one definition;
-hand-copying them into prompts is what let them drift out of sync per
-fixture.
+runner from a fixture's `skill:` field, so no fixture authors them. No
+prompt carries a path at all now: an explicit prompt carries the skill's
+text, and the deployed roots stay derived from `REGISTRY` for the
+install verbs alone — hand-copying them into prompts is what let them
+drift out of sync per fixture.
 
 **What a new skill is expected to carry.** At minimum one `enact`
 section per load-bearing behavior — which also produces its
@@ -403,9 +403,9 @@ expect: <narrative>          for prose skills with no artefact
 
 `--dry-run` on either stage constructs every prompt and checks it
 structurally **without calling an agent** — explicit prompts must carry
-that agent's own skill path, implicit prompts must leak no skill name,
-path, or marker, and a malformed fixture fails before any credits are
-spent. Run it before any paid run. `--kind <list>` scopes a run to one
+the skill's own text, implicit prompts must leak no skill name, path, or
+marker, and a malformed fixture fails without stopping the run before any
+credits are spent. Run it before any paid run. `--kind <list>` scopes a run to one
 kind (`just resources::verify-skills-kind <kind>`).
 
 **Prefer behavioral where an artefact exists.** When a skill's

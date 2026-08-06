@@ -320,17 +320,14 @@ mod tests {
     /// edited to the wrong home path is otherwise invisible here, since
     /// every other assertion derives from the same rows.
     #[test]
-    fn installed_skill_matches_each_agents_deployed_layout() {
+    fn skills_roots_match_each_agents_deployed_layout() {
         let home = Path::new("/home/u");
         for (agent, want) in [
-            (Agent::Claude, "/home/u/.claude/skills/notes/SKILL.md"),
-            (Agent::Kiro, "/home/u/.kiro/steering/skills/notes/SKILL.md"),
-            (Agent::Codex, "/home/u/.codex/skills/notes/SKILL.md"),
+            (Agent::Claude, "/home/u/.claude/skills"),
+            (Agent::Kiro, "/home/u/.kiro/steering/skills"),
+            (Agent::Codex, "/home/u/.codex/skills"),
         ] {
-            assert_eq!(
-                agent.installed_skill(home, "notes").unwrap(),
-                Path::new(want)
-            );
+            assert_eq!(agent.skills_root(home).unwrap(), Path::new(want));
         }
     }
 
@@ -349,18 +346,6 @@ mod tests {
     fn registry_rows_share_one_content_source() {
         let sources: Vec<&str> = REGISTRY.iter().map(|(_, s, ..)| *s).collect();
         assert!(sources.windows(2).all(|w| w[0] == w[1]), "{sources:?}");
-    }
-
-    /// Compared against a *shared* root, so the two resolvers must differ
-    /// by their own construction rather than by the caller's roots
-    /// happening to be disjoint.
-    #[test]
-    fn checkout_and_installed_sources_never_collide() {
-        let root = Path::new("/same");
-        let from_checkout = checkout_skill(root, "notes");
-        for agent in Agent::ALL {
-            assert_ne!(agent.installed_skill(root, "notes").unwrap(), from_checkout);
-        }
     }
 
     #[test]

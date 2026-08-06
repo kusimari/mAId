@@ -42,13 +42,13 @@ status-skills agent="":
 [confirm("This costs API credits and takes minutes. Continue? (y/N)")]
 [no-cd]
 check-skills agent="" *FLAGS:
-    cargo run -p build-tool --release --quiet -- check {{ if agent != "" { "--agent " + agent } else { "" } }} {{ FLAGS }}
+    cargo run -p build-tool --release --quiet -- check {{ if agent =~ '^-' { agent } else if agent != "" { "--agent " + agent } else { "" } }} {{ FLAGS }}
 
 # Verify skills AFTER install, against the deployed tree.
 [confirm("This costs API credits and takes minutes. Continue? (y/N)")]
 [no-cd]
 smoke-skills agent="" *FLAGS:
-    cargo run -p build-tool --release --quiet -- smoke {{ if agent != "" { "--agent " + agent } else { "" } }} {{ FLAGS }}
+    cargo run -p build-tool --release --quiet -- smoke {{ if agent =~ '^-' { agent } else if agent != "" { "--agent " + agent } else { "" } }} {{ FLAGS }}
 
 # One `verify` invocation, not two lines: just runs recipe lines in
 # separate shells and aborts at the first non-zero exit, so a two-line
@@ -94,8 +94,8 @@ verify-skills-kind kind agent="":
       {{ if agent != "" { "--agent " + agent } else { "" } }}
 
 # Construct every prompt and check it structurally without calling an
-# agent — explicit prompts must carry that agent's own skill path,
-# implicit prompts must leak no skill name, path, or marker. Free.
+# agent — explicit prompts must carry the skill's text, implicit prompts
+# must leak no skill name, path, or marker. Free.
 [no-cd]
 verify-skills-dry name="":
     cargo run -p build-tool --release --quiet -- verify {{ if name != "" { name } else { "" } }} --dry-run

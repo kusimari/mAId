@@ -6,10 +6,10 @@
 //! ── Two axes, five kinds of skill test ───────────────────────────────
 //!
 //! How the skill is reached:
-//!   explicit — the prompt names the skill and the path it lives at.
-//!              Isolates content: a failure means the skill is wrong,
-//!              not that it failed to load. Needs no install, because
-//!              the path can name the checkout.
+//!   explicit — the prompt carries the skill's text inline. Isolates
+//!              content: a failure means the skill is wrong, not that it
+//!              failed to load. Needs no install at all, since nothing
+//!              is read from a deployment.
 //!   implicit — the prompt states only the task. The agent must find and
 //!              load the right skill itself, competing against every
 //!              other installed skill for a capped, shared description
@@ -36,9 +36,8 @@
 //! task a user phrases implicitly, so the cell has no natural test.
 //!
 //! `activation` and `discovery` are GENERATED from a fixture's `skill:`
-//! field, so no fixture authors them and none writes a skill path. That
-//! is what keeps the per-agent paths in the registry instead of
-//! hand-copied into every prompt, where they had already drifted.
+//! field, so no fixture authors them. No prompt names a path at all: the
+//! deployed roots stay in the registry, for the install verbs alone.
 
 use crate::shared::{usage, Agent};
 use anyhow::{anyhow, Result};
@@ -50,8 +49,8 @@ use std::path::{Path, PathBuf};
 // ─────────────────────────────────────────────────────────────────
 
 /// How a prompt reaches the skill. This is also the install boundary:
-/// an explicit prompt carries a path, so it can point at the checkout;
-/// an implicit one needs the deployed listing to compete in.
+/// an explicit prompt carries the skill's text, so it needs no
+/// deployment; an implicit one needs the deployed listing to compete in.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Reach {
     Explicit,
@@ -773,20 +772,18 @@ pub fn invocation(
 }
 
 /// Whether an agent's CLI is on PATH.
+///
+/// Scans PATH directly rather than shelling out: `command -v` is a shell
+/// builtin, not a binary, so spawning it always fails and the check would
+/// silently be doing nothing.
 pub fn agent_available(agent: Agent) -> bool {
     let program = match agent {
         Agent::Claude => "claude",
         Agent::Kiro => "kiro-cli",
         Agent::Codex => "codex",
     };
-    std::process::Command::new("command")
-        .args(["-v", program])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-        || std::env::var_os("PATH").is_some_and(|paths| {
-            std::env::split_paths(&paths).any(|dir| dir.join(program).is_file())
-        })
+    std::env::var_os("PATH")
+        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -1026,13 +1023,31 @@ pub fn test_name(fixture: &str, kind: Kind, agent: Agent) -> String {
 // this only detects.
 // ─────────────────────────────────────────────────────────────────
 
-/// A `git status --porcelain` snapshot of the checkout, or `None` when it
-/// isn't a git tree (nothing to compare).
-pub fn snapshot_checkout(checkout: &Path) -> Option<String> {
+/// What the checkout looked like before a sweep: its working-tree state
+/// AND its current commit.
+///
+/// The commit is load-bearing. A file the agent creates *and commits*
+/// inside one sweep appears in no working-tree status — clean before,
+/// clean after — so comparing status alone cannot see the exact incident
+/// this tripwire exists for. It has already happened twice.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Snapshot {
+    pub status: String,
+    pub head: String,
+}
+
+pub fn snapshot_checkout(checkout: &Path) -> Option<Snapshot> {
+    Some(Snapshot {
+        status: git(checkout, &["status", "--porcelain"])?,
+        head: git(checkout, &["rev-parse", "HEAD"])?,
+    })
+}
+
+fn git(checkout: &Path, args: &[&str]) -> Option<String> {
     let out = std::process::Command::new("git")
-        .args(["-C"])
+        .arg("-C")
         .arg(checkout)
-        .args(["status", "--porcelain"])
+        .args(args)
         .output()
         .ok()?;
     out.status
@@ -1040,16 +1055,29 @@ pub fn snapshot_checkout(checkout: &Path) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// How the checkout's git status differs from the snapshot. Empty means no
-/// leak; any entry is a test that acted outside its scratch dir.
+/// How the checkout changed during a sweep. Empty means no leak; any
+/// entry is a test that acted outside its scratch dir.
 ///
-/// Both directions matter. A line that DISAPPEARS is the documented
-/// incident: `close notes` runs `git commit`, which turns an untracked
-/// `??` line into a commit and removes it from the status — so watching
-/// only for additions would miss the exact case the tripwire exists for.
-pub fn detect_leak(before: &str, after: &str) -> Vec<String> {
-    let prior: Vec<&str> = before.lines().collect();
-    let now: Vec<&str> = after.lines().collect();
+/// Three things are compared, and the third is the one that matters most:
+///
+/// - lines that APPEARED — the agent wrote into the checkout;
+/// - lines that DISAPPEARED — something untracked got committed or
+///   cleaned up under us;
+/// - a MOVED HEAD — the agent committed. A file created *and* committed
+///   inside one sweep shows up in neither status, so without this the
+///   tripwire is blind to precisely the incident it was built for: a
+///   fixture whose task ends "wrap up my session so the work is
+///   committed" did exactly that, twice, while the suite reported clean.
+pub fn detect_leak(before: &Snapshot, after: &Snapshot) -> Vec<String> {
+    let prior: Vec<&str> = before.status.lines().collect();
+    let now: Vec<&str> = after.status.lines().collect();
+    let moved = (before.head != after.head).then(|| {
+        format!(
+            "COMMITTED: HEAD moved {} -> {} — a test committed into the checkout",
+            short(&before.head),
+            short(&after.head)
+        )
+    });
     now.iter()
         .filter(|line| !prior.contains(*line))
         .map(|line| format!("appeared: {line}"))
@@ -1059,7 +1087,12 @@ pub fn detect_leak(before: &str, after: &str) -> Vec<String> {
                 .filter(|line| !now.contains(*line))
                 .map(|line| format!("gone (committed?): {line}")),
         )
+        .chain(moved)
         .collect()
+}
+
+fn short(sha: &str) -> String {
+    sha.trim().chars().take(8).collect()
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -2088,29 +2121,83 @@ FAIL — omits the guardrail entirely";
 
     // ── leak tripwire ────────────────────────────────────────────
 
-    #[test]
-    fn an_unchanged_checkout_reports_no_leak() {
-        let before = " M resources/content/skills/notes/SKILL.md\n";
-        assert!(detect_leak(before, before).is_empty());
+    fn snap(status: &str, head: &str) -> Snapshot {
+        Snapshot {
+            status: status.to_string(),
+            head: head.to_string(),
+        }
     }
 
-    /// The real incident: a behavioral test wrote insight files into the
-    /// checkout while its assert ran in the scratch dir, so the suite
-    /// reported PASS and the damage was found later in git log.
+    #[test]
+    fn an_unchanged_checkout_reports_no_leak() {
+        let before = snap(
+            " M resources/content/skills/notes/SKILL.md
+",
+            "abc123",
+        );
+        assert!(detect_leak(&before, &before).is_empty());
+    }
+
+    /// A file the agent wrote into the checkout.
     #[test]
     fn a_new_path_in_the_checkout_is_a_leak() {
-        let before = "";
-        let after = "?? insights/wadler-builds-an-immutable-document-tree.md\n";
-        let leaked = detect_leak(before, after);
-        assert_eq!(leaked.len(), 1);
+        let leaked = detect_leak(
+            &snap("", "abc123"),
+            &snap(
+                "?? insights/wadler.md
+",
+                "abc123",
+            ),
+        );
+        assert_eq!(leaked.len(), 1, "{leaked:?}");
         assert!(leaked[0].contains("insights/"));
+    }
+
+    /// THE incident, and the one a status-only diff cannot see: a file
+    /// created AND committed inside one sweep leaves the working tree
+    /// clean at both ends. Only the moved HEAD betrays it. This shipped
+    /// twice — the second time on the very branch that added the
+    /// tripwire — before the commit check existed.
+    #[test]
+    fn a_file_created_and_committed_in_one_sweep_is_a_leak() {
+        let leaked = detect_leak(&snap("", "aaaaaaaa1111"), &snap("", "bbbbbbbb2222"));
+        assert_eq!(leaked.len(), 1, "{leaked:?}");
+        assert!(leaked[0].contains("COMMITTED"), "{}", leaked[0]);
+        assert!(leaked[0].contains("aaaaaaaa") && leaked[0].contains("bbbbbbbb"));
+    }
+
+    /// An untracked file that gets committed: the status line disappears
+    /// AND head moves, so both signals fire.
+    #[test]
+    fn an_untracked_file_being_committed_reports_both_signals() {
+        let leaked = detect_leak(
+            &snap(
+                "?? insights/wadler.md
+",
+                "aaaa1111",
+            ),
+            &snap("", "bbbb2222"),
+        );
+        assert_eq!(leaked.len(), 2, "{leaked:?}");
+        assert!(leaked.iter().any(|l| l.contains("gone")));
+        assert!(leaked.iter().any(|l| l.contains("COMMITTED")));
     }
 
     #[test]
     fn a_leak_is_detected_alongside_pre_existing_changes() {
-        let before = " M Cargo.lock\n";
-        let after = " M Cargo.lock\n?? stray.md\n";
-        let leaked = detect_leak(before, after);
+        let leaked = detect_leak(
+            &snap(
+                " M Cargo.lock
+",
+                "abc",
+            ),
+            &snap(
+                " M Cargo.lock
+?? stray.md
+",
+                "abc",
+            ),
+        );
         assert_eq!(leaked.len(), 1, "{leaked:?}");
         assert!(leaked[0].contains("stray.md"));
     }
@@ -2267,34 +2354,6 @@ FAIL — omits the guardrail entirely";
     }
 
     // ── regressions the Code Review Gate caught ──────────────────
-
-    /// A line DISAPPEARING is the documented incident: `close notes` runs
-    /// `git commit`, turning an untracked `??` into a commit and removing
-    /// it from the status. Watching only additions missed the exact case
-    /// the tripwire exists for.
-    #[test]
-    fn a_committed_path_is_a_leak_even_though_the_status_line_vanishes() {
-        let before = "?? insights/wadler.md\n";
-        let after = "";
-        let leaked = detect_leak(before, after);
-        assert_eq!(leaked.len(), 1, "{leaked:?}");
-        assert!(leaked[0].contains("wadler.md"));
-        assert!(leaked[0].contains("committed"), "{}", leaked[0]);
-    }
-
-    #[test]
-    fn both_directions_are_reported_together() {
-        let before = "?? a.md\n M b.md\n";
-        let after = " M b.md\n?? c.md\n";
-        let leaked = detect_leak(before, after);
-        assert_eq!(leaked.len(), 2, "{leaked:?}");
-        assert!(leaked
-            .iter()
-            .any(|l| l.contains("c.md") && l.contains("appeared")));
-        assert!(leaked
-            .iter()
-            .any(|l| l.contains("a.md") && l.contains("gone")));
-    }
 
     /// `--tools claude,kiro` accepted a list; `--agent` must too, or a
     /// two-agent run silently becomes a three-agent one.
