@@ -235,6 +235,47 @@ review-time discovery.
 
 ## Session Log
 
+- **2026-08-06 · Review pass 4: FAIL. Two new bugs, plus the
+  fixture's own quoting broke silently — redesigned rather than
+  patched again.**
+
+  Four rounds of finding-a-bug-in-this-exact-assert is itself a
+  signal: patching the same heuristic repeatedly was generalizing a
+  fragile approach, not fixing its defect. Round 4 found two real
+  gaps in the round-3 co-occurrence check — a `#` inside a string
+  literal (`label="items#total add"`) was treated as a comment
+  boundary with no quoting awareness, and an unrelated sentence
+  sharing one topic word with a different clause (a retry-loop
+  comment mentioning "total" elsewhere) was a false positive
+  because the check had no proximity or clause bound.
+
+  **Fixing both surfaced a third, self-inflicted bug**: my draft
+  used a `'"'"'`-style nested-quote to embed an awk script in a
+  shell variable, and replaying it showed the quoting broke, `awk`
+  errored to stderr, and the assert **passed vacuously**
+  (`test -z ''`) — exactly the failure class this whole initiative
+  exists to eliminate, self-inflicted while trying to fix something
+  else. Switched to writing the awk program to a `/tmp` script file
+  via heredoc and invoking `awk -f`, which has no nested-quote
+  fragility.
+
+  The redesign: a `#` only starts a comment at line-start or after
+  whitespace (excludes string-embedded `#`), and the two topic
+  words must co-occur within one clause (split on `;`/`.`), not
+  merely anywhere in the comment. Documented one accepted residual
+  limitation rather than chasing it further: a single clause that
+  coincidentally names an unrelated "loop" and an unrelated "total"
+  together would still match — narrower than that is diminishing
+  returns for a test fixture.
+
+  **Re-verified all ten cases accumulated across four rounds** —
+  no-op, clean, legit-constraint, string-hash, unrelated-clause,
+  leading, trailing, reversed-order, past-tense, multi-#,
+  capitalized — replayed via script files (not inline shell
+  escaping, which had caused my *own* verification harness bugs
+  earlier in this initiative) to avoid the exact quoting trap just
+  found in the fixture itself. All ten correct.
+
 - **2026-08-06 · Review pass 3: PASS WITH NOTES; one blocker
   fixed, verified against eight probes across three rounds.**
 

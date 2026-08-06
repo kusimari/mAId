@@ -122,8 +122,32 @@ git log --no-decorate --oneline base..feat/running-total | grep -qE ' (feat|fix|
 # two topic words together, rather than a fixed phrase — catches "adding",
 # "added", "is added to", and reversed word order ("the amount gets added
 # to the total") that a fixed-order regex would miss.
-# Text after the FIRST # (not field 2 of a #-split, which mis-extracts a
-# line with an earlier literal # like `n=$#  # comment`), lowercased so a
-# capitalized paraphrase isn't a false negative.
-test -z "$(awk '{ i=index($0,"#"); if (i) { c=tolower(substr($0,i+1)); if (c ~ /total/ && c ~ /(add|sum)/) print } }' src/ledger.sh)"
-test -z "$(awk '{ i=index($0,"#"); if (i) { c=tolower(substr($0,i+1)); if ((c ~ /total/ || c ~ /argument/) && c ~ /(loop|iterat)/) print } }' src/ledger.sh)"
+# A `#` starts a REAL comment only at line-start or after whitespace — this
+# excludes a `#` sitting inside a string/token (e.g. `label="items#total"`),
+# which a plain index()/substr() would misread as a comment boundary.
+# Clause-split on ;/. so an unrelated sentence elsewhere in the SAME comment
+# can't combine with a different one by mere co-occurrence (e.g. "retry loop
+# for the sensor; total attempts capped" is two unrelated clauses, not a
+# paraphrase) — the two topic words must occur together IN ONE CLAUSE.
+# Lowercased so a capitalized paraphrase is still caught.
+# Known accepted limitation: a single clause that coincidentally names both
+# an unrelated "loop" and an unrelated "total" together would still match;
+# narrower than that is diminishing returns for a fixture, not a real gap.
+cat > /tmp/kdevkit-hygiene-check.awk <<'''HYGIENE_EOF'''
+{
+  line = $0; n = length(line); i = 0
+  for (p = 1; p <= n; p++) {
+    ch = substr(line, p, 1)
+    if (ch == "#" && (p == 1 || substr(line, p-1, 1) ~ /[ 	]/)) { i = p; break }
+  }
+  if (!i) next
+  c = tolower(substr(line, i+1))
+  nc = split(c, clauses, /[;.]/)
+  for (ci = 1; ci <= nc; ci++) {
+    cl = clauses[ci]
+    if (cl ~ /(add|adds|adding|added|sum|sums|summing|summed)/ && cl ~ /(total|totals)/) { print cl; next }
+    if (cl ~ /(loop|loops|looping|looped|iterate|iterates|iterating|iterated)/ && cl ~ /(total|totals|argument|arguments)/) { print cl; next }
+  }
+}
+HYGIENE_EOF
+test -z "$(awk -f /tmp/kdevkit-hygiene-check.awk src/ledger.sh)"
