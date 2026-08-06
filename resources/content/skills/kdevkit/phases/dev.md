@@ -188,14 +188,16 @@ touched path lands in exactly one:
    `reviewer:`, or the panel's first lens if only `lenses:` is
    set).
 
-**"Unrecognised" means *ambiguous*, not *absent*: only a path this
-skill cannot classify at all** (e.g. a binary blob with no
-extension, a path the risk-keyword match can't evaluate) falls
-back to the full panel, fail-closed. A plain source file that
-simply doesn't match any risk keyword is bucket 2, not
-"unrecognised" — it runs the single lens. This distinction is the
-one place this rule can silently misfire, so state it explicitly
-rather than trusting "unrecognised" to read the same way twice.
+**"Unrecognised" means the path itself can't be evaluated, not
+"evaluated and found non-risky."** The check matches keywords
+against the path string, not file content, so almost every real
+path lands in bucket 1 or 2 cleanly. The fallback exists for the
+rare case where there's no path to match at all (a bare diff hunk
+with no filename attached, or a rename in flight) — not for an
+ordinary source file that simply doesn't match any risk keyword,
+which is bucket 2. This distinction is the one place this rule can
+silently misfire, so state it explicitly rather than trusting
+"unrecognised" to read the same way twice.
 
 **Dispatch — one fresh-context call, three perspectives inside
 it,** not three separate dispatches (see the Decision Log on why:

@@ -264,6 +264,16 @@ review-time discovery.
   stderr, not just exit code and stdout, whenever a test's "clean"
   result is `test -z "$(cmd)"` over something that can itself fail.
 
+- **2026-08-06 · Briefing round 2: clean, one nitpick fixed.**
+  The regenerated briefing confirmed the ambiguity is genuinely
+  closed and found no defect — one nitpick: the "binary blob"
+  illustration for the unclassifiable-path fallback was shaky,
+  since the path-string keyword match doesn't depend on file
+  content, so a reader could wrongly conclude content matters.
+  Reworded to the actual rare case (no path to evaluate at all —
+  a bare hunk, a rename in flight) and aligned the playback's
+  matching wrong-answer clause to the same framing.
+
 - **2026-08-06 · Briefing generator returned a real defect;
   fixed before publishing.** R8's ceremony-lane rule had a genuine
   logical ambiguity: "an unrecognised path" (→ full panel) and "a
