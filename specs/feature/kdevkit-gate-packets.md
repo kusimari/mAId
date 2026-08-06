@@ -199,39 +199,60 @@ review-time discovery.
 
 ## Implementation Plan
 
-- [ ] 1 · Write the packet contract as a `SKILL.md` §9 addition
+- [x] 1 · Write the packet contract as a `SKILL.md` §9 addition
       (Receives/Excluded/Returns shape), citing it from the Code
       Review Gate, Review Briefing, and structural verify sections.
-- [ ] 2 · Rewrite `phases/dev.md`'s Code Review Gate: lens list,
+- [x] 2 · Rewrite `phases/dev.md`'s Code Review Gate: lens list,
       per-lens output contract, strictest-wins aggregation,
       `INCOMPLETE` handling. Remove the 0–100 score.
-- [ ] 3 · Write the three shipped lenses' prompt fragments
+- [x] 3 · Write the three shipped lenses' prompt fragments
       (correctness, security, comment-hygiene) with the
       conventions-in-packet instruction.
-- [ ] 4 · `setup.md`: new `code_review.lenses` / `fail_on` schema,
+- [x] 4 · `setup.md`: new `code_review.lenses` / `fail_on` schema,
       the migration mapping, the disable/add/override shape.
-- [ ] 5 · Ceremony-lane path-risk check, stated in `phases/dev.md`.
-- [ ] 6 · Update `specs/project.md`'s own `kdevkit.code_review`
+- [x] 5 · Ceremony-lane path-risk check, stated in `phases/dev.md`.
+- [x] 6 · Update `specs/project.md`'s own `kdevkit.code_review`
       config to the new shape (this repo dogfoods it).
-- [ ] 7 · `kdevkit-code-review-panel.smoke` — the panel behaviors,
+- [x] 7 · `kdevkit-code-review-panel.smoke` — the panel behaviors,
       per Test Strategy.
-- [ ] 8 · Probe every new assert against a narrowly non-compliant
+- [x] 8 · Probe every new assert against a narrowly non-compliant
       and a fully compliant agent; record the matrix.
-- [ ] 9 · Gates: `fmt-check`, `lint`, `just test`, fixture dry-run.
+- [x] 9 · Gates: `fmt-check`, `lint`, `just test`, fixture dry-run.
 
 ## Handoff
 
-- **Phase:** planning
-- **Ready for:** dev, once the Planning Review Gate is open.
-- **Carry forward:** the adversarial-assert-discipline pattern from
-  stream 2's four review passes applies directly here — this
-  stream's fixture is exactly the kind of thing that produced
-  vacuous asserts twice before. Probe before trusting, every time.
-- **Deliberately left:** fanning out to N parallel lens dispatches
-  (D3(b)) and the planted-defect eval harness (D3(c)) — both need
-  the panel to exist first and are follow-on work, not blockers.
+- **Phase:** dev — complete, gates green.
+- **Ready for:** human review; the Agent-dev Review Gate is next.
+- **Carry forward:** the fixture was probed for both false-negatives
+  (four bypass shapes) and one false-positive (a legitimate gotcha
+  comment tripping the comment-hygiene grep) before being trusted —
+  the false-positive was caught and fixed. A reviewer should assume
+  more false-positive shapes exist in that grep and treat it as a
+  crude proxy, not a real comment-hygiene checker.
+- **Deliberately left:** the N-parallel-dispatch shape (D3(b)) and
+  the planted-defect eval (D3(c)) — both explicitly deferred per
+  the Decision Log, gated on evidence this stream doesn't build.
 
 ## Session Log
+
+- **2026-08-06 · Dev complete.** Six prose edits (§9 packet
+  contract, `phases/dev.md`'s Code Review Gate rewrite, `setup.md`
+  schema + migration note + prompt update, two stale-reference
+  fixes in `SKILL.md` §4) and this repo's own `code_review:` config
+  migrated to the panel shape it now ships (dogfood, per R7).
+
+  **Fixture built and adversarially probed before being trusted**,
+  per the backlog item stream 2 filed: no-op fails, code-without-
+  test-update fails, the exact comment-hygiene violation the panel
+  exists to catch fails, and a fully compliant agent passes. One
+  round-trip caught my own false positive — a legitimate gotcha
+  comment ("POSIX sh has no arrays…") tripped the first version of
+  the comment-hygiene grep, which matched on topic words rather
+  than the line-restating shape. Tightened to anchor on the
+  paraphrase pattern specifically; re-verified all four cases after
+  the fix.
+
+  Gates: `fmt-check`, `lint`, 98 tests, fixture dry-run — green.
 
 - **2026-08-06 · Stream 3 opened.** Grounded on `main` @ `ff3de12`
   (streams 1–2 merged): read the current Code Review Gate,

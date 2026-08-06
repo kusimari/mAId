@@ -339,7 +339,8 @@ a fixture like any other: a `playback` that the right module is named
 per stage, and a behavioral `enact` that drives a stage transition and
 asserts the next stage's discipline shows up in the artefacts
 (`kdevkit-module-load`, `kdevkit-phase-boundary`,
-`kdevkit-handoff-resume`, `kdevkit-consolidate`, `kdevkit-closure`). A wrong trigger is
+`kdevkit-handoff-resume`, `kdevkit-consolidate`, `kdevkit-closure`,
+`kdevkit-code-review-panel`). A wrong trigger is
 invisible to the deterministic gates, so this layer is the only one
 that can catch it.
 
@@ -535,11 +536,15 @@ the experience is symmetric across resource kinds.
 ### kdevkit
 
 - `code_review:`
-  - `reviewer: host-native` — use the host coding agent's built-in
-    code review (Claude Code's `/code-review` skill, Kiro's
-    equivalent). No project-specific reviewer skill yet; revisit
-    once host-native review proves consistently weak across
-    feature work in this repo.
+  - `lenses:` — the shipped panel (`correctness`, `security`,
+    `comment-hygiene`), dispatched as the host coding agent's
+    native review with the three-perspective prompt (no
+    project-specific reviewer skill). Opted in here as this
+    repo's own dogfood of the panel this project builds —
+    revisit if it proves noisier than the single-lens shape it
+    replaces.
+  - `fail_on: high` (default) — no per-project override needed
+    yet.
 - `review_brief:`
   - `enabled: true` — dev-loop completion generates a review
     briefing and uses it as the PR body. Complements
