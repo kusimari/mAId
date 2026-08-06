@@ -12,6 +12,11 @@ authors.
 
 ## 7 · Human review (the other half of the dev loop)
 
+**On entry, read the spec's `## Handoff` block** (§5) — dev wrote
+it at Push, and its *Carry forward* is what the briefing should
+draw a reviewer's attention to. Derive the rest from the repo: the
+diff vs. base, which gates ran, whether findings are open.
+
 ### Comment-prefix convention
 
 When the agent operates the CR/PR review surface under the
@@ -163,6 +168,24 @@ The briefing informs the closure decision; it does not gate it.
 
 Fires after Push. Apply §9 Review Gates. Phase-specific body
 content: **Approach** (bullets covering the changes).
+
+### Leaving review
+
+On the dev → closure cue, **rewrite the `## Handoff` block** (§5)
+with `Phase: closure` — the phase now starting. (Closure itself
+clears it to `Phase: closed` when it is done.)
+From review, *Carry forward* is what closure must reconcile — a
+review comment accepted but deferred, a follow-up promised in the
+thread — and *Deliberately left* is anything the reviewer raised
+that is deliberately not being fixed here, with the reason. Closure
+sweeps the spec, not the review thread, so a promise made only in a
+comment is a promise lost.
+
+A loop-back is a legitimate outcome here: review can return work to
+dev, or to planning when the *requirement* was wrong rather than
+the code. Say which layer the fault entered and why in the block
+before going back — that line is what stops a loop-back becoming a
+silent plan amendment (§9).
 
 **Refuse-on-fail.** A prior gate (Quality / Test / Code Review)
 failed or noted residual issues → no review. Surface failure;

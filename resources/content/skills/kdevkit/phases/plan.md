@@ -168,6 +168,10 @@ before any code work begins. Order matters:
 5. **Open the Planning Review Gate** (PR/CR with the
    phase-specific body shape — see below).
 6. **Then** wait for the planning → dev cue (§5).
+7. **On the cue, before any code:** consolidate the spec, write
+   the `## Handoff` block, and commit as
+   `plan(<feature>): consolidate spec`. See "Leaving planning"
+   below.
 
 The cue gates the *move* to dev — not the planning commit. The
 commit + push + review must happen first so the user has
@@ -182,7 +186,34 @@ paths — fresh-from-interviews and spec-on-disk (§3); §3 cites it
 rather than duplicating.
 
 Skip steps 3–6 if `planning_phase: false` (§2) — spec edits ride
-with the first dev commit.
+with the first dev commit. Step 7's **handoff still applies** (dev
+needs something to resume from) but rides that same commit rather
+than a separate `plan()` one; there is nothing to consolidate,
+since no planning iteration happened.
+
+### Leaving planning
+
+Two things happen on the planning → dev cue, before the first line
+of implementation. Both are cheap and both fail silently if
+skipped, which is why they are steps rather than advice.
+
+**1 · Consolidate the spec.** Planning converged, so the spec must
+stop being the record of *how* and become the contract for *what*.
+**Inline-Read `interviews.md`** for the checklist — what to strip,
+what to keep as a decision, what to relocate rather than delete.
+Skip only if the spec carries no alternatives, Q&A, or revision
+narration; there is then nothing to strip.
+
+**2 · Write the `## Handoff` block** (§5). From planning, the
+fields that matter most are *Carry forward* — a constraint the
+interviews surfaced that the Implementation Plan doesn't state — and
+*Deliberately left*, so dev doesn't relitigate a decision or read a
+deliberate gap as an oversight.
+
+Commit both as `plan(<feature>): consolidate spec` and rewrite the
+review body from the consolidated spec: a reviewer reading the
+pre-consolidation body is reading an artefact that no longer
+exists.
 
 ### Planning Review Gate
 
