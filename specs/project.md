@@ -58,18 +58,35 @@ Two halves at the top level:
      by asking, since a role it fills may be resolved from content it
      doesn't control.
   2. **Tooling** (`resources/build-tool/`) — Rust crate
-     (single-file) that does the install. Validates content
-     and creates/removes/reports the `$HOME`-facing
-     symlinks. Plus a small bash script
-     (`resources/tests/run`) that drives the AI tools
-     against the installed content. Rust where types help
-     (the symlink state machine and content validator);
-     bash where shelling out to other tools is the job
-     (driving `claude` / `kiro-cli` / `codex`).
+     organised as the pipeline it performs: validate content,
+     check each skill in isolation, install the `$HOME`-facing
+     symlinks, then smoke-test what is deployed. One file per
+     category — `main.rs` (the clap shim), `shared.rs` (agents,
+     registry, roots), `harness.rs` (driving an agent and scoring
+     the reply), `deploy.rs` (how a skill reaches an agent), `stages.rs`
+     (the pipeline: content → check → install → smoke). Dependencies
+     run one direction: stages → {harness, deploy} → shared.
+
+     **`deploy.rs` is a shim, not a design.** The pipeline declares
+     *what* it wants deployed; `deploy.rs` alone knows *how*, behind a
+     `Deploy` trait (`install` / `uninstall` / `status` / `is_deployed`,
+     each returning a `Report`, never a path). `Symlinks` — the
+     $HOME-layout knowledge, `Link`/`FanOut` registry expansion,
+     `--force` semantics — is its only implementation, and exists only
+     because no coding agent exposes a command to install or list its
+     own skills yet (checked: none do, as of this writing). When one
+     does, that becomes a second `Deploy` impl and nothing in `stages.rs`
+     changes. `check` needs no deployment at all — it receives a
+     `NoDeploy` target and runs with no `$HOME`, which is what makes
+     "check needs no install" a structural fact rather than a
+     convention the prompt merely honours. The only bash left in the
+     whole pipeline is what is genuinely shell — a fixture's
+     `--- setup ---` / `--- assert ---` blocks, executed by the runner.
   3. **Verbs** (Justfile recipes that use the tooling) —
      `just resources::install-skills`, `…::uninstall-skills`,
-     `…::status-skills`, `…::verify-skills`
-     (single-fixture: `just resources::verify-skills-one <name>`).
+     `…::status-skills`, `…::check-skills`, `…::smoke-skills`,
+     `…::verify-skills` (both stages; single-fixture:
+     `just resources::verify-skills-one <name>`).
      Every verb follows the `<action>-<resource-kind>` pattern and
      takes an optional coding-agent selector (`claude|kiro|codex`;
      omit for all three). These are how a human or another tool
@@ -90,7 +107,7 @@ Both halves are members of one cargo workspace at the
 root, so `cargo build --workspace` covers everything.
 
 **Registry** lives inline at the top of
-`resources/build-tool/src/main.rs` (a slice of
+`resources/build-tool/src/shared.rs` (a slice of
 `(home_subpath, source_subpath, kind, agent)` tuples). The
 authoritative manifest for what gets installed where. The
 `agent` tag is what lets install/uninstall/status be scoped
@@ -162,9 +179,12 @@ re-auth. Its shape differs from skills in two ways:
     taking the coding-agent selector (`claude|kiro|codex`; omit
     for all three): `just resources::install-skills [agent]`,
     `…::uninstall-skills [agent]`, `…::status-skills [agent]`,
-    `…::verify-skills [agent]` (drives the agents against
-    installed content; costs API credits, gated behind a
-    confirmation prompt), `…::verify-skills-one <name> [agent]`,
+    `…::check-skills [agent]` (pre-install: reads each skill from
+    the checkout, so no deploy is needed), `…::smoke-skills
+    [agent]` (post-install: the agent must find the skill among
+    everything deployed), `…::verify-skills [agent]` (both
+    stages). All three cost API credits and are gated behind a
+    confirmation prompt. `…::verify-skills-one <name> [agent]`,
     `…::verify-skills-kind <kind> [agent]` (one kind of skill
     test across every skill — see Testing), `…::verify-skills-dry
     [name]` (construct and structurally check every prompt
@@ -182,8 +202,8 @@ re-auth. Its shape differs from skills in two ways:
     operates on every member): `just test`, `just fmt`,
     `just fmt-check`, `just lint`, `just check`,
     `just ci` (full gate).
-  Each recipe is a one-liner over native cargo or a bash
-  fixture-runner — `just --list` shows the root verbs,
+  Each recipe is a thin wrapper over native cargo (the
+  kind-routing verb adds a shebang body) — `just --list` shows the root verbs,
   `just --list <module>` drills into a module. There is
   no installed binary on `$PATH`; the build-tool is
   invoked through `cargo run -p build-tool` from the
@@ -203,18 +223,24 @@ mAId/
 ├── flake.nix / .envrc      repo-local rust toolchain + just (direnv + rust-overlay)
 ├── resources/
 │   ├── Justfile            `resources::*` verb surface (install/uninstall/status/verify)
-│   ├── build-tool/         single-file Rust crate (install/uninstall/status)
-│   │   ├── Cargo.toml      deps: clap, anyhow; dev: tempfile
-│   │   └── src/main.rs     registry + content checks + symlink core + clap + tests
+│   ├── build-tool/         Rust crate — the pipeline (check/install/uninstall/status/smoke)
+│   │   ├── Cargo.toml      deps: clap, anyhow, gray_matter, serde, tempfile
+│   │   ├── src/main.rs     the shim: clap surface + dispatch, in pipeline order
+│   │   ├── src/lib.rs      module wiring + the pipeline doc comment
+│   │   ├── src/shared.rs   Agent, REGISTRY, roots — what every stage speaks
+│   │   ├── src/harness.rs  fixtures, the five kinds, prompts, invocation, verdicts
+│   │   ├── src/deploy.rs   the Deploy trait; Symlinks is its only impl (a shim — see Architecture)
+│   │   ├── src/stages.rs   content → check → install → smoke
+│   │   └── tests/integration.rs  cross-stage tests against the real repo
 │   ├── content/            the deployable skills (symlinked in)
 │   │   ├── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
 │   │   └── skills/kdevkit/  SKILL.md core + phases/, tiers/, setup.md, interviews.md
 │   ├── browser/            browser-control MCP (not symlinked — runnable)
 │   │   ├── launch          allowlist-enforcing launcher; enters flake, execs chrome-devtools-mcp
 │   │   └── manage          data-driven MCP registrar (MCP_AGENTS table: claude/codex global, kiro per-sub-agent)
-│   └── tests/              bash fixture-runner (drives claude / kiro / codex against installed content)
-│       ├── run             entrypoint (`just resources::verify-skills` calls this)
+│   └── tests/              fixtures + the attended browser test (the runner itself is in build-tool)
 │       ├── browser-functional   ATTENDED test: drives real Chrome, asserts off-list blocked
+│       ├── conversational-stream.txt  the --stressed prefix
 │       └── skills/<name>.smoke   fixtures: skill + playback/enact sections (runner owns the five kinds)
 ├── kaimux/                 tmux-pane orchestrator for coding-agent sessions
 │   ├── Justfile            `kaimux::*` verb surface (build/test/integration)
@@ -243,10 +269,11 @@ covering the content validator and the symlink state
 machine against a `tempfile`-fake `$HOME`, plus the kaimux
 crate's 53 unit tests against a tempdir `Store`. Fast
 (sub-second). No real `$HOME` side effects, no API credits.
-Load-bearing — this is the kdevkit Test Gate default. Includes
-a structural integration test (`structural_install_to_real_directory_layout`)
-that runs a full install→status→uninstall round-trip in
-the fake $HOME, replacing the older bash structural smoke.
+Load-bearing — this is the kdevkit Test Gate default. `deploy.rs` carries
+the structural coverage: a full install→status→uninstall round-trip in
+a fake `$HOME`, `--force` semantics per state, and `FanOut` orphan
+reaping and deployment detection — the tests most sensitive to a
+symlink-layout regression.
 
 One test deliberately breaks the fake-`$HOME` pattern:
 `shipped_content_validates` points the validator at the **real**
@@ -256,19 +283,32 @@ uninstallable — which is exactly what happened when two descriptions
 carried an unquoted `: ` (see "Writing a skill"). It reads only, so it
 keeps the no-side-effects property.
 
-**`just resources::verify-skills` — AI-tool functional tests.** Drives
+**`just resources::check-skills` / `…::smoke-skills` — AI-tool
+functional tests, on opposite sides of install.** Drives
 the real coding agents (claude, kiro, codex) against the `.smoke`
-fixtures under `resources/tests/skills/`. Three verification styles
-share the harness: **substring** (the reply contains a string),
-**semantic** (a judge call checks the reply's meaning), and
-**behavioral** (`--- setup ---` / `--- assert ---` shell blocks — the
-agent runs against a seeded test project and the assert inspects the
-changes it made). Every fixture runs against each requested agent; the
-verb's agent selector (surfaced to the runner as `--tools <list>`)
-scopes to one, default all three, all required. Slow (minutes), costs
-API credits, requires the managed symlinks already deployed (run
-`just resources::install-skills` first). Gated behind a confirmation
-prompt in the Justfile.
+fixtures under `resources/tests/skills/`. How a test is scored is a
+property of the fixture (`harness::Assertion`), not of the kind:
+**Reply** (a literal substring, a judged narrative, or both — checked
+together) for a skill with no inspectable side effect, or **Behavioral**
+(`--- setup ---` / `--- assert ---` shell blocks — the agent runs
+against a seeded scratch workdir and the assert inspects what it did)
+wherever an artefact exists. Every fixture runs against each requested
+agent; the verb's `--agent` selector (a comma list on the verification
+verbs) scopes to one or more, default all three, all required. Slow
+(minutes) and costs API credits; gated behind a confirmation prompt in
+the Justfile.
+
+**Only `smoke` needs the symlinks deployed.** The reach axis is the
+install boundary: an explicit prompt carries the skill's own text
+inline, so `check` needs no install at all — which is what makes a
+content change provable *before* it is made live for every session on
+the machine. An implicit prompt makes the agent find the skill unaided,
+competing against every other installed skill for a capped, shared
+description listing, so `smoke` requires
+`just resources::install-skills` to have run (it says so and stops,
+rather than failing every test obscurely). A failure therefore
+localises: pre-install means the content is wrong; post-install with
+check passing means deployment or description-budget competition.
 
 ### The five kinds of skill test
 
@@ -277,11 +317,11 @@ question it answers. The two are orthogonal, and conflating them is how
 the suite once drifted into a dozen fixtures that all answered the same
 question. Kinds are two axes composed:
 
-- **How the skill is reached.** *Explicit* — the prompt names the skill
-  and the path it lives at for the agent under test, which isolates
-  content: a failure means the skill is wrong, not that it failed to
-  load. *Implicit* — the prompt states only the task, so the agent must
-  recognise it and load the right skill unaided.
+- **How the skill is reached.** *Explicit* — the prompt carries the
+  skill's text inline, which isolates content: a failure means the skill
+  is wrong, not that it failed to load, and nothing needs deploying.
+  *Implicit* — the prompt states only the task, so the agent must
+  recognise it and load the right skill unaided from what is installed.
 - **What is verified.** The skill *plays back* the contract it was
   designed for (recites its rules), or *enacts* it (does the thing).
 
@@ -310,17 +350,20 @@ non-skill output. A **workflow** skill earns that differently:
 `kdevkit`'s evidence is the artefacts it leaves (phase-prefixed
 commits, a feature spec, gate-shaped PR bodies), so a per-turn stamp
 across a long session would be noise. The runner therefore reads the
-contract from the installed `SKILL.md` rather than assuming it; a
+contract from the skill itself rather than assuming it; a
 skill without one skips activation/discovery and is proven to fire by
-its `enact` / `integration` artefacts instead.
+its `enact` / `integration` artefacts instead. The contract is read from
+the **checkout** copy, which is the same file the deployed symlink
+resolves to, so both stages agree on whether a marker is promised.
 
 The pair is diagnostic. When a skill's explicit test passes and its
 implicit counterpart fails, the fault is triggering, not content — no
 bisection needed. `activation` and `discovery` are **generated** by the
-runner from a fixture's `skill:` field, so no fixture authors them and
-none writes a skill path (the per-agent paths live only in the runner's
-`skill_path`, mirroring build-tool's `REGISTRY`; hand-copying them into
-prompts is what let them drift out of sync per fixture).
+runner from a fixture's `skill:` field, so no fixture authors them. No
+prompt carries a path at all now: an explicit prompt carries the skill's
+text, and the deployed roots stay derived from `REGISTRY` for the
+install verbs alone — hand-copying them into prompts is what let them
+drift out of sync per fixture.
 
 **What a new skill is expected to carry.** At minimum one `enact`
 section per load-bearing behavior — which also produces its
@@ -409,11 +452,11 @@ expect: <narrative>          for prose skills with no artefact
 --- setup --- / --- assert --- optional; seed and inspect a workdir
 ```
 
-`resources/tests/run --dry-run` constructs every prompt and checks it
+`--dry-run` on either stage constructs every prompt and checks it
 structurally **without calling an agent** — explicit prompts must carry
-that agent's own skill path, implicit prompts must leak no skill name,
-path, or marker, and a malformed fixture fails before any credits are
-spent. Run it before any paid run. `--kind <list>` scopes a run to one
+the skill's own text, implicit prompts must leak no skill name, path, or
+marker, and a malformed fixture fails without stopping the run before any
+credits are spent. Run it before any paid run. `--kind <list>` scopes a run to one
 kind (`just resources::verify-skills-kind <kind>`).
 
 **Prefer behavioral where an artefact exists.** When a skill's
@@ -427,25 +470,30 @@ behavioral assert must fail a no-op agent (pair a presence check
 with the absence check) or it proves nothing.
 
 kdevkit's Test Gate uses `just test` by default. SKILL.md
-prose revisions add `just resources::verify-skills` (judge mode)
-as their A/B evidence. kdevkit's close-out can run
+prose revisions add `just resources::check-skills` (judge mode)
+as their A/B evidence — the pre-install stage is the one that
+isolates content, so it is the honest A/B. kdevkit's close-out can run
 `just resources::status-skills` after an install to confirm
 symlinks resolved.
 
 ### Functional tests are user-driven
 
 Agentic runs (an AI assistant working through this project)
-**must** stop at `just test`. `just resources::verify-skills` costs
-API credits and takes minutes; whether to spend that budget
+**must** stop at `just test`. The `check-skills` / `smoke-skills` /
+`verify-skills` verbs cost API credits and take minutes; whether to spend that budget
 on a given change is a human call. The agent prepares the
 fixture, names the exact command, and hands off — it does
-not run it. The Justfile's `[confirm]` gate on `verify-skills`
-provides a second line of defense.
+not run it. The Justfile's `[confirm]` gate on each of those verbs
+provides a second line of defense. `verify-skills-dry` is free and
+un-gated — it constructs and structurally checks every prompt without
+calling an agent, so an agentic run may use it.
 
 Commands the user runs by hand:
 
-- All fixtures: `just resources::verify-skills`
-- A single fixture: `just resources::verify-skills-one <name>`
+- Pre-install only (no deploy needed): `just resources::check-skills`
+- Post-install only: `just resources::smoke-skills`
+- Both stages: `just resources::verify-skills`
+- A single fixture, both stages: `just resources::verify-skills-one <name>`
   (e.g. `just resources::verify-skills-one notes-git-commit`).
 
 The fixture file's basename (without `.smoke`) is the

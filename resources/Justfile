@@ -1,9 +1,9 @@
 # Resources verbs operate on $HOME — they read or write the
-# symlinks the AI tools consume. Validation of content runs
-# inside `install`. Recipes invoke from the workspace root
-# (via `[no-cd]`), so `cargo run -p build-tool` and
-# `resources/tests/run` resolve against the same paths as
-# the legacy flat Justfile.
+# symlinks the AI tools consume — except `check-skills`, which
+# needs no deployment at all. Validation of content runs inside
+# `install`. Recipes invoke from the workspace root (via
+# `[no-cd]`), so `cargo run -p build-tool` resolves against the
+# workspace, not this directory.
 
 # First arg is the coding-agent selector (claude|kiro|codex; omit for
 # all three); remaining flags pass through, e.g.
@@ -28,41 +28,77 @@ uninstall-skills agent="" *FLAGS:
 status-skills agent="":
     cargo run -p build-tool --release --quiet -- status {{ if agent != "" { "--agent " + agent } else { "" } }}
 
-# Costs API credits and takes minutes — gated behind a confirmation
-# prompt. Optional agent selector scopes to one; omit for all three.
-#   just resources::verify-skills          (all three)
-#   just resources::verify-skills codex    (codex only)
-# Drive the coding agents against installed skills to confirm they load.
+# ── verification ─────────────────────────────────────────────────
+# Two stages, on opposite sides of install. `check` reads each skill from
+# the CHECKOUT: its kinds name the skill's path in the prompt, so nothing
+# needs deploying and a content change is provable before it goes live.
+# `smoke` reads the DEPLOYED tree: its kinds make the agent find the
+# skill unaided, competing against every installed skill for a capped
+# description listing, which only exists once installed.
+#
+# `verify-skills` runs both, so the existing habit still works.
+
+# Verify skills BEFORE install, from the checkout (no deploy needed).
+[confirm("This costs API credits and takes minutes. Continue? (y/N)")]
+[no-cd]
+check-skills agent="" *FLAGS:
+    cargo run -p build-tool --release --quiet -- check {{ if agent =~ '^-' { agent } else if agent != "" { "--agent " + agent } else { "" } }} {{ FLAGS }}
+
+# Verify skills AFTER install, against the deployed tree.
+[confirm("This costs API credits and takes minutes. Continue? (y/N)")]
+[no-cd]
+smoke-skills agent="" *FLAGS:
+    cargo run -p build-tool --release --quiet -- smoke {{ if agent =~ '^-' { agent } else if agent != "" { "--agent " + agent } else { "" } }} {{ FLAGS }}
+
+# One `verify` invocation, not two lines: just runs recipe lines in
+# separate shells and aborts at the first non-zero exit, so a two-line
+# recipe would skip the smoke stage on any check failure — exactly the
+# fail-fast the binary `verify` exists to prevent.
+# Both stages: pre-install checks, then post-install smoke.
 [confirm("This costs API credits and takes minutes. Continue? (y/N)")]
 [no-cd]
 verify-skills agent="":
-    resources/tests/run {{ if agent != "" { "--tools " + agent } else { "" } }}
+    cargo run -p build-tool --release --quiet -- verify {{ if agent != "" { "--agent " + agent } else { "" } }}
 
-# e.g. `just resources::verify-skills-one kdevkit`
-# Drive a single skill fixture, optionally scoped to one agent.
+# e.g. `just resources::verify-skills-one kdevkit-planning`
+# Drive a single fixture through both stages, optionally scoped to one agent.
+[confirm("This costs API credits and takes minutes. Continue? (y/N)")]
 [no-cd]
 verify-skills-one name agent="":
-    resources/tests/run "{{ name }}" {{ if agent != "" { "--tools " + agent } else { "" } }}
+    cargo run -p build-tool --release --quiet -- verify "{{ name }}" {{ if agent != "" { "--agent " + agent } else { "" } }}
 
 # Run one kind of skill test across every skill. The five kinds are two
-# axes composed — explicit/implicit reach x playback/enact verification:
-#   activation   does the skill load when named outright?
-#   discovery    does its own description trigger from a bare task?
-#   playback     does it state its own rules correctly?
-#   enact        loaded, does it actually do the thing?
-#   integration  end to end — does it fire AND do the thing?
+# axes composed — explicit/implicit reach x announce/recite/perform — and
+# the reach axis IS the install boundary, so each kind belongs to one
+# stage. This verb routes to the owning stage:
+#   activation   explicit  check  does the skill load when named?
+#   playback     explicit  check  does it state its rules correctly?
+#   enact        explicit  check  loaded, does it actually do it?
+#   discovery    implicit  smoke  does its own description trigger?
+#   integration  implicit  smoke  end to end — does it fire AND do it?
 # e.g. `just resources::verify-skills-kind integration`
+# Routed by the binary, which owns the kind -> stage mapping and rejects
+# an unknown kind (or one belonging to the other stage) with a message
+# naming why — so this recipe never restates the taxonomy.
 [confirm("This costs API credits and takes minutes. Continue? (y/N)")]
 [no-cd]
 verify-skills-kind kind agent="":
-    resources/tests/run --kind "{{ kind }}" {{ if agent != "" { "--tools " + agent } else { "" } }}
+    #!/usr/bin/env bash
+    set -uo pipefail
+    # Both stages are attempted because the binary owns the kind -> stage
+    # mapping; the stage that does not own this kind reports a no-op and
+    # exits 0. Output is not redirected — report() splits FAIL headers
+    # (stderr) from their detail lines (stdout), so capturing one stream
+    # would print them unpaired.
+    cargo run -p build-tool --release --quiet -- verify --kind "{{ kind }}" \
+      {{ if agent != "" { "--agent " + agent } else { "" } }}
 
 # Construct every prompt and check it structurally without calling an
-# agent — explicit prompts must carry that agent's own skill path,
-# implicit prompts must leak no skill name, path, or marker. Free.
+# agent — explicit prompts must carry the skill's text, implicit prompts
+# must leak no skill name, path, or marker. Free.
 [no-cd]
 verify-skills-dry name="":
-    resources/tests/run {{ if name != "" { name } else { "" } }} --dry-run
+    cargo run -p build-tool --release --quiet -- verify {{ if name != "" { name } else { "" } }} --dry-run
 
 # ── browser-control MCP ──────────────────────────────────────────
 # Register Google's chrome-devtools-mcp with the installed agent
