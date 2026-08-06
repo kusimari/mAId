@@ -515,11 +515,10 @@ fn implicit_leaks_nothing(skill: &str, prompt: &str) -> Result<()> {
 
 /// The command syntax a skill documents as its entry point. Empty for a
 /// skill invoked by intent alone rather than a fixed verb — true of every
-/// shipped skill except `notes` as of this writing, so the list is
-/// deliberately not pinned against the registry the way `is_common_noun`
-/// now is: there is nothing to forget to add for a skill with no fixed
-/// verb, and inventing one would be testing a contract the skill doesn't
-/// have.
+/// shipped skill except `notes` as of this writing. Not pinned against
+/// the registry: there is nothing to forget to add for a skill with no
+/// fixed verb, and inventing one would be testing a contract the skill
+/// doesn't have.
 fn invocations(skill: &str) -> &'static [&'static str] {
     match skill {
         "notes" => &["add note", "close notes", "merge buffer"],
