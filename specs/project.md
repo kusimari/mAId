@@ -256,10 +256,11 @@ covering the content validator and the symlink state
 machine against a `tempfile`-fake `$HOME`, plus the kaimux
 crate's 53 unit tests against a tempdir `Store`. Fast
 (sub-second). No real `$HOME` side effects, no API credits.
-Load-bearing — this is the §8 Test Gate default. Includes
-a structural integration test (`structural_install_to_real_directory_layout`)
-that runs a full install→status→uninstall round-trip in
-the fake $HOME, replacing the older bash structural smoke.
+Load-bearing — this is the §8 Test Gate default. `deploy.rs` carries
+the structural coverage: a full install→status→uninstall round-trip in
+a fake `$HOME`, `--force` semantics per state, and `FanOut` orphan
+reaping and deployment detection — the tests most sensitive to a
+symlink-layout regression.
 
 One test deliberately breaks the fake-`$HOME` pattern:
 `shipped_content_validates` points the validator at the **real**

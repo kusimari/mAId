@@ -489,8 +489,14 @@ fn implicit_leaks_nothing(skill: &str, prompt: &str) -> Result<()> {
         .find(|a| prompt.contains(&format!("/.{}/", a.name())))
     {
         Some(format!("a {} skills path", agent.name()))
-    } else if skill.contains('-') && lower.contains(skill) {
-        // A hyphenated name is never ordinary English, so any mention leaks.
+    } else if !is_common_noun(skill) && lower.contains(skill) {
+        // Anything but a common noun leaks on any mention. The carve-out
+        // used to be "no hyphen", which is the wrong proxy: `kdevkit` and
+        // `kreviewkit` have none and are not ordinary English either, so
+        // an implicit prompt could name them outright and still pass —
+        // the exact case each skill's OWN doc comment cites as the bug
+        // this check exists to catch. Only a genuine dictionary word may
+        // appear as scene-setting.
         Some(format!("the skill name '{skill}'"))
     } else if lower.contains(&format!("{skill} skill")) {
         Some(format!("the phrase '{skill} skill'"))
@@ -508,12 +514,29 @@ fn implicit_leaks_nothing(skill: &str, prompt: &str) -> Result<()> {
 }
 
 /// The command syntax a skill documents as its entry point. Empty for a
-/// skill invoked by intent alone rather than a fixed verb.
+/// skill invoked by intent alone rather than a fixed verb — true of every
+/// shipped skill except `notes` as of this writing, so the list is
+/// deliberately not pinned against the registry the way `is_common_noun`
+/// now is: there is nothing to forget to add for a skill with no fixed
+/// verb, and inventing one would be testing a contract the skill doesn't
+/// have.
 fn invocations(skill: &str) -> &'static [&'static str] {
     match skill {
         "notes" => &["add note", "close notes", "merge buffer"],
         _ => &[],
     }
+}
+
+/// Whether `skill`'s name is ordinary English and may therefore appear in
+/// a domain phrase without that being a reference to the skill itself
+/// ("an Obsidian-shaped notes vault" is scene-setting, not a call). Every
+/// other name — including one with no hyphen — leaks on any mention.
+///
+/// Deliberately an explicit list rather than "no hyphen": a hyphen was
+/// never what made a name safe to mention, and the two invented names in
+/// today's skill set (`kdevkit`, `kreviewkit`) proved it by having none.
+fn is_common_noun(skill: &str) -> bool {
+    matches!(skill, "notes" | "browser")
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -2617,5 +2640,40 @@ FAIL — omits the guardrail entirely";
                 }
             }
         }
+    }
+
+    // ── closure-gate findings ────────────────────────────────────
+
+    /// The bare-name carve-out used to be "no hyphen", which let an
+    /// invented proper noun with no hyphen — `kdevkit`, `kreviewkit` —
+    /// be named outright in an implicit prompt while dry-run still said
+    /// "names no skill". Every real skill name, checked.
+    #[test]
+    fn every_non_common_noun_skill_name_leaks_on_any_mention() {
+        for skill in ["kdevkit", "kreviewkit", "writing-style"] {
+            let leak = format!("run the {skill} workflow please");
+            assert!(
+                check_prompt(Kind::Integration, skill, &leak).is_err(),
+                "{skill} did not leak"
+            );
+        }
+    }
+
+    /// The two genuine common nouns still get their scene-setting
+    /// carve-out — this is the property the fix must not break.
+    #[test]
+    fn common_noun_skill_names_still_permit_scene_setting() {
+        assert!(check_prompt(
+            Kind::Integration,
+            "notes",
+            "The current directory is an Obsidian-shaped notes vault."
+        )
+        .is_ok());
+        assert!(check_prompt(
+            Kind::Integration,
+            "browser",
+            "Chrome is already open and logged in."
+        )
+        .is_ok());
     }
 }

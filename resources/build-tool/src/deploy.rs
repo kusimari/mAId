@@ -109,11 +109,23 @@ impl Deploy for Symlinks {
     }
 
     fn is_deployed(&self, agent: Agent) -> bool {
-        // A dangling symlink is not deployed: it resolves to nothing, so
-        // an agent reading through it finds no skill.
-        agent
-            .skills_root(&self.home)
-            .is_some_and(|root| root.exists())
+        // The skills ROOT existing is the wrong question for a FanOut
+        // agent: codex owns ~/.codex/skills and may have it
+        // present-but-empty (or non-empty for reasons unrelated to us),
+        // so the directory existing proves nothing about whether we
+        // deployed into it. Ask instead whether at least one of our own
+        // links resolves to something that is actually there —
+        // `State::Ok` alone is not enough, since it only means the
+        // symlink points where the registry says, not that the target
+        // still exists (the source can be deleted out from under an
+        // otherwise-correct symlink).
+        selected_entries(Some(agent))
+            .into_iter()
+            .filter_map(|entry| self.expand(entry).ok())
+            .flatten()
+            .any(|(home, source)| {
+                matches!(self.inspect(&(home, source.clone())), State::Ok(_)) && exists(&source)
+            })
     }
 }
 
@@ -551,6 +563,34 @@ mod tests {
         install(home.path(), checkout.path(), false, false, None);
         fs::remove_dir_all(checkout.path().join("resources/content/skills")).unwrap();
         assert!(!sym(home.path(), checkout.path()).is_deployed(Agent::Claude));
+    }
+
+    /// The bug an audit caught: for a FanOut agent, an existing-but-empty
+    /// (or unrelated-content) skills root must NOT read as deployed. Only
+    /// codex is FanOut, and its root existing proves nothing about
+    /// whether WE put anything there.
+    #[test]
+    fn an_empty_fanout_root_does_not_count_as_deployed() {
+        let checkout = make_checkout();
+        let home = TempDir::new().unwrap();
+        // codex's root exists, pre-created, but nothing of ours is in it.
+        fs::create_dir_all(home.path().join(".codex/skills")).unwrap();
+        assert!(!sym(home.path(), checkout.path()).is_deployed(Agent::Codex));
+    }
+
+    #[test]
+    fn a_fanout_deployment_is_detected_once_a_child_resolves() {
+        let checkout = make_checkout_with_skills();
+        let home = TempDir::new().unwrap();
+        assert!(!sym(home.path(), checkout.path()).is_deployed(Agent::Codex));
+        install(
+            home.path(),
+            checkout.path(),
+            false,
+            false,
+            Some(Agent::Codex),
+        );
+        assert!(sym(home.path(), checkout.path()).is_deployed(Agent::Codex));
     }
 
     #[test]

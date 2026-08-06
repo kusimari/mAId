@@ -16,7 +16,7 @@ use crate::harness::{
     plan_one, plan_tests, read_verdict, score_reply, snapshot_checkout, test_name, Assertion,
     Authority, Fixture, Kind as TestKind, Outcome, Plan, Reach, Selection, Skipped, Stage, Verdict,
 };
-use crate::shared::{checkout_skill, Agent};
+use crate::shared::{checkout_skill, usage, Agent};
 use anyhow::{anyhow, Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -186,14 +186,16 @@ pub fn cmd_verify(
 
     let (fixtures, broken) = load_fixtures(checkout, selection)?;
     if fixtures.is_empty() && broken.is_empty() {
-        return Err(anyhow!(
+        // A typo in the fixture selector is a bad invocation, exactly
+        // like a bad --agent or --kind value — it must exit 2, not 1.
+        return Err(usage(format!(
             "no fixtures matched{}",
             selection
                 .fixture
                 .as_deref()
                 .map(|f| format!(" selector {f:?}"))
                 .unwrap_or_default()
-        ));
+        )));
     }
 
     // Smoke reads the deployed tree, so say so plainly rather than
@@ -738,5 +740,26 @@ mod tests {
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].name, "a");
         assert!(broken.is_empty());
+    }
+
+    /// A fixture-name typo is a bad invocation exactly like a bad --agent
+    /// or --kind, and must exit 2 — not 1, which is reserved for "the run
+    /// happened and a test failed".
+    #[test]
+    fn an_unmatched_fixture_selector_is_a_usage_error() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("resources/tests/skills")).unwrap();
+        write(
+            &dir.path().join("resources/tests/skills/real.smoke"),
+            "skill: notes\n--- enact ---\ntask: t\nexpect: n\n",
+        );
+        let selection = Selection::resolve(Stage::Check, Some("typo-of-real"), None, None).unwrap();
+        let err =
+            cmd_verify(&crate::deploy::NoDeploy, dir.path(), &selection, true, None).unwrap_err();
+        assert!(
+            err.downcast_ref::<crate::shared::UsageError>().is_some(),
+            "{err}"
+        );
+        assert!(err.to_string().contains("typo-of-real"));
     }
 }
