@@ -133,17 +133,18 @@ Log's originating conversation). After-state, claude-only:
 - [ ] 7 · Quality + Test gates; commit; push; open Planning Review
       Gate retroactively documenting the work already done, per
       kdevkit's own discipline for work executed ahead of its spec.
-- [ ] 8 · Code Review Gate (fresh-context, per the panel this same
-      initiative shipped).
+- [x] 8 · Code Review Gate (fresh-context, per the panel this same
+      initiative shipped). FAIL then PASS — one real blocker found
+      and fixed, see Session Log.
 - [ ] 9 · Review Briefing; Agent-dev Review Gate.
 - [ ] 10 · Closure: reconcile, initiative Status update, backlog
       check, squash-merge.
 
 ## Handoff
 
-- **Phase:** dev — complete, all Implementation Plan items but
-  gates/review/closure done; gates about to run.
-- **Ready for:** Quality/Test gates, then Code Review Gate.
+- **Phase:** dev — Code Review Gate complete (one round, one
+  blocker found and fixed).
+- **Ready for:** Review Briefing, then Agent-dev Review Gate.
 - **Carry forward:** the fix for root cause 1 took three iterations
   before it held — the lesson is that a *trigger condition phrased
   as a question* ("No Handoff, or a spec still carrying...?") reads
@@ -160,6 +161,46 @@ Log's originating conversation). After-state, claude-only:
   added only if a future run actually hits them.
 
 ## Session Log
+
+- **2026-08-07 · Code Review Gate: FAIL, one blocker fixed.**
+  Fresh-context reviewer found the R1 fix's own scan was unscoped:
+  "the spec's Design/Decision sections" included the Decision Log,
+  where a settled `Alternatives rejected: (a) … (b) …` entry is
+  consolidation's *target state*, not evidence it's missing. Any
+  dev-loop re-entry on a correctly consolidated feature — a fresh
+  session, a Test Gate retry, a Code Review loop-back — would have
+  re-read that permanent record as a stop condition and been told
+  to "strip the deliberation" from it: the one unrecoverable
+  mistake `interviews.md` explicitly warns against.
+
+  Verified the failure scenario against this repo's own corpus
+  (the reviewer cited `specs/feature/initiative-tier.md`'s lettered
+  `Alternatives rejected:` entries as exactly the shape that would
+  misfire) before fixing. Fixed by scoping the scan to the Design
+  section only, and stating explicitly that the Decision Log is
+  the opposite signal and must never be touched by this check.
+
+  Added the missing counter-case fixture the reviewer named:
+  `kdevkit-consolidated-resume.smoke` seeds an already-consolidated
+  spec (settled Design, a real lettered Decision Log entry) and
+  asserts a dev-loop entry leaves it untouched while still doing
+  the actual remaining work. Adversarially probed before trusting
+  it: no-op fails, an agent that wrongly re-strips the Decision Log
+  fails, a fully compliant agent passes.
+
+  Also fixed the reviewer's Should-Fix: `CLAUDE.md`'s exclusion
+  grep was unanchored (`grep -v 'CLAUDE.md\$'`), so it would have
+  silently swallowed a genuinely dirty tracked `CLAUDE.md` or a
+  nested `docs/CLAUDE.md`. Tightened to
+  `grep -v '^?? CLAUDE\.md\$'` — verified a tracked edit and a
+  nested path both still fail the check, only the exact untracked
+  root-level noise case is excluded.
+
+  Re-verified all three original fixtures plus the new one against
+  claude: consolidate, closure, handoff-resume, and
+  consolidated-resume all pass.
+
+
 
 - **2026-08-07 · Paid tri-tool run (9 fixtures × 3 agents) found
   12 failures**, analyzed per the user's 1–2-report/3+-analyze

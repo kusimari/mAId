@@ -13,9 +13,12 @@ with code already in progress. The human-review side of the loop
 ## 7 · Dev loop (self-run gates)
 
 **Before reading anything else, check consolidation happened.**
-Scan the spec's Design/Decision sections for lettered options
-(`(a)`/`(b)`/`(c)`), a `## Q&A` heading, or "recommendation" /
-"revised after" phrasing. **Finding any of these is a stop
+Scan the **Design section only** (never the Decision Log — see
+below) for *undecided* deliberation: bolded lettered option
+headers still under consideration (`**(a) …**`, `**(b) …**`), a
+`## Q&A` heading, or "recommendation" / "revised after" phrasing
+attached to a choice that hasn't been folded into a plain
+imperative statement. **Finding any of these is a stop
 condition** — it means planning converged but
 `phases/plan.md`'s exit step never ran, and this dev-loop entry
 must run it now, before step 1 below and before any code:
@@ -25,6 +28,17 @@ and write the Handoff with `Phase: dev`. This check is not
 optional and not skippable because "the cue already fired" — the
 cue starting dev is exactly when this must be verified, since
 nothing else in the workflow checks it.
+
+**The Decision Log is the opposite signal — do not scan it, and
+never touch its content on this check.** A settled
+`Alternatives rejected: (a) … (b) …` entry there is the *target
+state* consolidation produces, not evidence it's missing. This
+check fires on a resumed or re-entered dev-loop session too — a
+correctly consolidated spec's Decision Log will always carry
+lettered rejected alternatives permanently, and re-reading that as
+a stop condition would send an agent back to "strip the
+deliberation" from the one record `interviews.md` calls "the one
+unrecoverable mistake" to delete.
 
 **Once consolidation is confirmed (or was never needed), read the
 spec's `## Handoff` block** (§5), then derive the rest from the

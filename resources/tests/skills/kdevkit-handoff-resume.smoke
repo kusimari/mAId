@@ -126,7 +126,7 @@ test -z "$(git log --no-decorate --oneline base..feat/trim-dashes | grep -E '^[[
 # Excludes CLAUDE.md: Claude Code auto-creates it as an untracked memory file
 # unrelated to the agent's actual work, and it must not fail an otherwise
 # fully-compliant run.
-test -z "$(git status --porcelain | grep -v 'CLAUDE.md$')"
+test -z "$(git status --porcelain | grep -v '^?? CLAUDE\.md$')"
 # ...and require more than the single seeded commit, so the clean tree isn't
 # achieved by simply doing nothing at all.
 [ "$(git rev-list --count base..feat/trim-dashes)" -ge 2 ]
