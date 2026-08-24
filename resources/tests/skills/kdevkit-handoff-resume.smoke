@@ -123,7 +123,10 @@ test -z "$(git log --no-decorate --oneline base..feat/trim-dashes | grep -E '^[[
 # The agent COMMITTED its work. The setup already seeds one feat() commit, so
 # counting commit types would pass vacuously — instead require the tree to be
 # clean, which an agent that edited but never committed cannot satisfy.
-test -z "$(git status --porcelain)"
+# Excludes CLAUDE.md: Claude Code auto-creates it as an untracked memory file
+# unrelated to the agent's actual work, and it must not fail an otherwise
+# fully-compliant run.
+test -z "$(git status --porcelain | grep -v 'CLAUDE.md$')"
 # ...and require more than the single seeded commit, so the clean tree isn't
 # achieved by simply doing nothing at all.
 [ "$(git rev-list --count base..feat/trim-dashes)" -ge 2 ]

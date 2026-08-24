@@ -54,6 +54,16 @@ otherwise lost:
   item. "Out of scope for this feature" is not the same as "nobody
   wants it," and this spec is about to stop being read.
 
+**File it. Don't ask whether to.** If `$SPEC_ROOT/backlog/` doesn't
+exist yet, create it and write the item, in this same closure
+step — an absent directory is not evidence there's nothing to file,
+and is not a reason to pause for confirmation. Step 3 below lists
+the directory to find items to *remove*; that is a different
+question from whether one needs to be *added* here. Only ask the
+user something genuinely undecidable by you — e.g. whether an
+entry is actually finished rather than deferred; whether to create
+the directory at all is not that kind of question.
+
 Clearing the block without doing that discards the only record.
 Where an entry is genuinely finished or genuinely unwanted, say so
 in the closure commit and clear it.
