@@ -215,18 +215,18 @@ should show a reviewer exactly which guarantee changed and why.
 
 ## Implementation Plan
 
-- [ ] Add the strategy column to the registry with `Copy`; keep every
+- [x] Add the strategy column to the registry with `Copy`; keep every
       existing row's behaviour byte-identical (pure refactor, tests green).
-- [ ] Teach the planner copy comparison, including the stale state, with
+- [x] Teach the planner copy comparison, including the stale state, with
       unit tests over a fake `$HOME`.
-- [ ] Implement copy install/uninstall driven off the plan; preserve the
+- [x] Implement copy install/uninstall driven off the plan; preserve the
       real-file guarantee and managed-only uninstall.
-- [ ] Add the plugin packaging step and the declared skill subset, with
+- [x] Add the plugin packaging step and the declared skill subset, with
       the skipped skills reported by name.
-- [ ] Add the desktop registry row, the selector value, and the
+- [x] Add the desktop registry row, the selector value, and the
       writability precheck.
-- [ ] Amend the two `project.md` hard constraints.
-- [ ] Record the **document-shaped-only** rule in `project.md` as a
+- [x] Amend the two `project.md` hard constraints.
+- [x] Record the **document-shaped-only** rule in `project.md` as a
       standing constraint: which skills may reach the desktop target and
       why terminal-shaped ones are excluded. This outlives the feature —
       a future skill must be declared document-shaped to be included, so
@@ -234,10 +234,11 @@ should show a reviewer exactly which guarantee changed and why.
       `AGENTS.md` and deploys no global instruction file by design, so
       `project.md` is the home; it is project-knowledge, not operational
       instruction.)
-- [ ] Update `README.md` verb docs and `project.md` Architecture /
+- [x] Update `README.md` verb docs and `project.md` Architecture /
       Deployment for the second strategy.
-- [ ] Attended functional check: install for real, confirm the app loads
-      the skills.
+- [ ] Attended functional check: install for real (needs `sudo`), confirm
+      the app loads the skills. Deferred to the review gate — everything
+      up to the elevation boundary is verified.
 
 - *Risk note:* the packaging step is new build output; keep it inside the
   existing build directory so `status`/`uninstall` have one source of
@@ -288,3 +289,19 @@ should show a reviewer exactly which guarantee changed and why.
   because it advertises a capability the surface cannot honour. Recorded
   in `project.md` rather than only here, since a future skill has to be
   declared document-shaped to be included.
+
+- 2026-08-25 · Implemented. Two things the plan did not anticipate, both
+  found by checking rather than assuming:
+  1. **The app hardcodes an absolute system plugin path.** The first pass
+     installed to a `$HOME`-relative equivalent and "succeeded" — the app
+     never reads there. Caught by grepping the app bundle for the path it
+     actually resolves, after the log showed no plugin discovery. Led to
+     the `Roots` seam; the desktop row is the one absolute row.
+  2. **That seam started as an env var and leaked between parallel
+     tests**, producing a genuine cross-test failure (one test's absolute
+     root escaping into another's). Replaced with an explicit parameter,
+     which also guarantees no test can reach the real filesystem.
+  Also relaxed one thing: a declared skill missing from the content tree
+  was initially a hard error, which broke every existing test using the
+  empty-content fixture. Reporting it and packaging what exists is right —
+  a partial content tree is a normal state.
