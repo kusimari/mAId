@@ -37,7 +37,7 @@ Two halves at the top level:
      symlinks. Plus a small bash script
      (`resources/tests/run`) that drives the AI tools
      against the installed content. Rust where types help
-     (the symlink state machine and content validator);
+     (the destination state machine and content validator);
      bash where shelling out to other tools is the job
      (driving `claude` / `kiro-cli` / `codex`).
   3. **Verbs** (Justfile recipes that use the tooling) —
@@ -45,8 +45,8 @@ Two halves at the top level:
      `…::status-skills`, `…::verify-skills`
      (single-fixture: `just resources::verify-skills-one <name>`).
      Every verb follows the `<action>-<resource-kind>` pattern and
-     takes an optional coding-agent selector (`claude|kiro|codex`;
-     omit for all three). These are how a human or another tool
+     takes an optional target selector (`claude|kiro|codex|desktop`;
+     omit for all four). These are how a human or another tool
      consumes the
      tooling.
 - **`kaimux/`** — tmux-pane orchestrator for coding-agent
@@ -103,7 +103,8 @@ re-auth. Its shape differs from skills in two ways:
   above can't express it — registration is a runnable command,
   not a symlink — so it lives in `resources::browser-mcp-*`
   Just verbs (shell over each harness's MCP CLI), keeping the
-  Rust build-tool pure-symlink.
+  Rust build-tool to filesystem population (symlink or copy) rather
+  than process invocation.
 - **Browser-enforced allowlist.** The agent may act only on
   sites in a user-owned allowlist file
   (`${XDG_CONFIG_HOME:-$HOME/.config}/maid/browser-allowlist`).
@@ -137,8 +138,8 @@ re-auth. Its shape differs from skills in two ways:
   what they touch:
   - **`resources::*`** (operate on `$HOME` or the AI tools).
     Verbs follow the `<action>-<resource-kind>` pattern, each
-    taking the coding-agent selector (`claude|kiro|codex`; omit
-    for all three): `just resources::install-skills [agent]`,
+    taking the target selector (`claude|kiro|codex|desktop`; omit
+    for all four): `just resources::install-skills [agent]`,
     `…::uninstall-skills [agent]`, `…::status-skills [agent]`,
     `…::verify-skills [agent]` (drives the agents against
     installed content; costs API credits, gated behind a

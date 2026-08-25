@@ -22,13 +22,13 @@ first-class target of the existing `<action>-<resource-kind>` verbs and
 agent selector.
 
 After it lands: `just resources::install-skills desktop` packages the
-Cowork-appropriate skills as a plugin and copies it where the app reads
-it; the other three targets behave exactly as before; and "install"
-means a fresh clone can install and be deleted, for the target where
-that is the honest contract.
+document-shaped skills as a plugin and copies it where the app reads it;
+the other three targets behave exactly as before; and "install" means a
+fresh clone can install and be deleted, for the target where that is the
+honest contract.
 
-Part of initiative: [[claude-desktop-cowork]] *(corporate spec tree; the
-initiative itself is not tracked in this public repo)*
+*This feature is one stream of a larger effort tracked in a corporate
+spec tree; the initiative itself is not recorded in this public repo.*
 
 ## Requirements
 
