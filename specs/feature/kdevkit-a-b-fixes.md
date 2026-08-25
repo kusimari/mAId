@@ -136,24 +136,30 @@ Log's originating conversation). After-state, claude-only:
 - [x] 8 · Code Review Gate (fresh-context, per the panel this same
       initiative shipped). FAIL then PASS — one real blocker found
       and fixed, see Session Log.
-- [ ] 9 · Review Briefing; Agent-dev Review Gate.
+- [x] 9 · Review Briefing (clean, three "Needs your judgement"
+      notes, no defects); full paid re-verify against claude
+      (43 fixtures) — 3 kdevkit failures + 1 unrelated-skill
+      failure all reproduced as PASS on retry, confirming
+      stochastic noise, not a regression; one pre-existing
+      harness leak (unrelated) found and cleaned up.
 - [ ] 10 · Closure: reconcile, initiative Status update, backlog
       check, squash-merge.
 
 ## Handoff
 
-- **Phase:** dev — Code Review Gate complete (one round, one
-  blocker found and fixed).
-- **Ready for:** Review Briefing, then Agent-dev Review Gate.
+- **Phase:** dev — Review Briefing and full paid re-verify both
+  clean; ready for closure.
+- **Ready for:** closure (reconcile, initiative Status update,
+  backlog check, squash-merge).
 - **Carry forward:** the fix for root cause 1 took three iterations
   before it held — the lesson is that a *trigger condition phrased
   as a question* ("No Handoff, or a spec still carrying...?") reads
   as advisory to a real agent even when the surrounding prose calls
   it mandatory. An unconditional imperative ("scan for X; finding it
-  is a stop condition") is what actually changes behaviour. Worth
-  applying this lesson proactively to any other trigger-phrased-as-
-  question prose elsewhere in the skill, not just where testing
-  happens to have caught it.
+  is a stop condition") is what actually changes behaviour. Filed as
+  `specs/backlog/kdevkit-triggers-must-be-imperatives-not-questions.md`
+  so this is swept proactively, not just where testing happened to
+  catch it.
 - **Deliberately left:** kiro/codex confirmation (R4) — explicit
   scope boundary, not an oversight. `CLAUDE.md` fixture exclusion is
   narrow by design; other harness-specific artefacts (a `.codex/`
@@ -161,6 +167,24 @@ Log's originating conversation). After-state, claude-only:
   added only if a future run actually hits them.
 
 ## Session Log
+
+- **2026-08-25 · Full paid re-verify (`verify-skills claude`, 43
+  fixtures across check+smoke) after the Code Review Gate fix.**
+  4 failures on the first pass: `kdevkit-closure` enact,
+  `kdevkit-dev-loop` playback, `kdevkit-planning` integration, plus
+  two unrelated skills' `discovery` kind (`kreviewkit`, `notes`).
+  Re-ran each individually 2–3× to distinguish a real regression
+  from judge/model noise: all three kdevkit failures and the
+  kreviewkit failure reproduced as PASS on immediate retry with no
+  code change — stochastic, not a defect in the fix. The `notes`
+  discovery retry surfaced a different, already-tracked issue
+  instead: a `reminders/` dir leaked into this checkout (see
+  `specs/backlog/test-runner-workdir-containment.md`, a pre-existing
+  harness containment gap, unrelated to kdevkit) — cleaned up
+  manually. All three original fixes confirmed holding on claude.
+  Also filed `specs/backlog/kdevkit-triggers-must-be-imperatives-
+  not-questions.md`, generalizing the round-3 lesson from root
+  cause 1's Carry-forward note into a proactive sweep item.
 
 - **2026-08-07 · Code Review Gate: FAIL, one blocker fixed.**
   Fresh-context reviewer found the R1 fix's own scan was unscoped:
