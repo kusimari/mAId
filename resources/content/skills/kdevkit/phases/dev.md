@@ -12,13 +12,42 @@ with code already in progress. The human-review side of the loop
 
 ## 7 · Dev loop (self-run gates)
 
-**On entry, read the spec's `## Handoff` block** (§5), then derive
-the rest from the repo: current branch, which Implementation Plan
-items are still `- [ ]`, what the last commits did, whether a
-review is open with findings. The block tells you what planning
-decided to carry forward and what it left; the repo tells you where
-the work actually is. Where they disagree, trust the repo — and say
-so, because a stale block means the previous phase was interrupted.
+**Before reading anything else, check consolidation happened.**
+Scan the **Design section only** (never the Decision Log — see
+below) for *undecided* deliberation: bolded lettered option
+headers still under consideration (`**(a) …**`, `**(b) …**`), a
+`## Q&A` heading, or "recommendation" / "revised after" phrasing
+attached to a choice that hasn't been folded into a plain
+imperative statement. **Finding any of these is a stop
+condition** — it means planning converged but
+`phases/plan.md`'s exit step never ran, and this dev-loop entry
+must run it now, before step 1 below and before any code:
+inline-Read `interviews.md`'s consolidation checklist, strip the
+deliberation, relocate load-bearing rationale to the Decision Log,
+and write the Handoff with `Phase: dev`. This check is not
+optional and not skippable because "the cue already fired" — the
+cue starting dev is exactly when this must be verified, since
+nothing else in the workflow checks it.
+
+**The Decision Log is the opposite signal — do not scan it, and
+never touch its content on this check.** A settled
+`Alternatives rejected: (a) … (b) …` entry there is the *target
+state* consolidation produces, not evidence it's missing. This
+check fires on a resumed or re-entered dev-loop session too — a
+correctly consolidated spec's Decision Log will always carry
+lettered rejected alternatives permanently, and re-reading that as
+a stop condition would send an agent back to "strip the
+deliberation" from the one record `interviews.md` calls "the one
+unrecoverable mistake" to delete.
+
+**Once consolidation is confirmed (or was never needed), read the
+spec's `## Handoff` block** (§5), then derive the rest from the
+repo: current branch, which Implementation Plan items are still
+`- [ ]`, what the last commits did, whether a review is open with
+findings. The block tells you what planning decided to carry
+forward and what it left; the repo tells you where the work
+actually is. Where they disagree, trust the repo — and say so,
+because a stale block means the previous phase was interrupted.
 
 Apply after any coherent unit of implementation work. The
 loop runs autonomously between gates — no per-step prompts.
@@ -286,12 +315,20 @@ per `authority`).
 
 ### Leaving dev
 
-After Push, **rewrite the `## Handoff` block** (§5) before handing
-to human review. From dev, the fields that carry weight are *Carry
-forward* — a reviewer-relevant risk the diff doesn't show on its
-face, a gate that passed only after a fix worth knowing about — and
-*Deliberately left*: work moved to backlog, a residual a soft
-`authority` allowed through, a plan item ticked with a caveat.
+After Push, **rewrite the `## Handoff` block** (§5) **with
+`Phase: review`** — the phase now starting — before handing to
+human review. Re-author every field: `Phase:` is not exempt just
+because *Carry forward* and *Deliberately left* are the fields
+carrying the most information. Leaving `Phase:` at its prior value
+while updating the others is the exact stale record §5 warns
+against, and it is easy to miss precisely because those other two
+fields *do* get real content and look like the update happened.
+
+From dev, *Carry forward* is a reviewer-relevant risk the diff
+doesn't show on its face, or a gate that passed only after a fix
+worth knowing about; *Deliberately left* is work moved to backlog,
+a residual a soft `authority` allowed through, or a plan item
+ticked with a caveat.
 
 Then read `phases/review.md`. The briefing it describes is
 generated from the spec and the diff, so a stale handoff is a stale

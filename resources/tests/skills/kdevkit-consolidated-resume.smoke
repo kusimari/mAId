@@ -1,0 +1,120 @@
+skill: kdevkit
+tools: claude,kiro,codex
+--- enact ---
+task: Continue this feature. Do the work now in this repo.
+--- setup ---
+git init -q -b base
+git config user.email dev@example.com
+git config user.name dev
+mkdir -p specs/feature src
+cat > AGENTS.md <<'MD'
+# stamp-cli — agent guide
+
+## Build & test
+- Test: `sh test.sh`
+- Lint: `sh lint.sh`
+MD
+cat > specs/project.md <<'MD'
+# Project: stamp-cli
+
+## Mission
+Prints a timestamp in one of two formats.
+
+## Architecture
+One shell script, `src/stamp.sh`.
+
+## Tech Stack
+POSIX shell.
+
+## Layout
+src/stamp.sh, test.sh, lint.sh.
+
+## Testing
+`sh test.sh` is load-bearing. Commands live in AGENTS.md.
+
+## Deployment
+Copied onto PATH.
+
+## Agent Development
+
+### kdevkit
+- `code_review:`
+  - `reviewer: host-native`
+MD
+cat > specs/feature/iso-flag.md <<'MD'
+# Feature: -i flag prints ISO 8601
+
+## Feature Brief
+`stamp.sh` gains a `-i` flag that prints an ISO 8601 timestamp instead
+of the default format.
+
+## Handoff
+- **Phase:** dev
+- **Ready for:** implementation; both slices below.
+- **Carry forward:** none.
+- **Deliberately left:** timezone override — separate feature.
+
+## Requirements
+- R1. `stamp.sh` prints the default format, unchanged.
+- R2. `stamp.sh -i` prints an ISO 8601 timestamp.
+
+## Design
+
+Parse `-i` as a positional check on `$1`; delegate to `date` with the
+appropriate format string for each mode.
+
+## Decision Log
+
+- Chose a positional check over getopts: script is four lines and
+  getopts would be more parsing code than program.
+- Alternatives rejected: (a) shell built-in `printf %(...)T` — not
+  POSIX-portable across the target shells; (b) a Python helper — adds
+  a runtime dependency for a four-line script.
+
+## Test Strategy
+`test.sh` asserts both R1 and R2.
+
+## Implementation Plan
+- [ ] 1 · Add `-i` handling to `src/stamp.sh`.
+- [ ] 2 · Add the R2 case to `test.sh`.
+
+## Session Log
+- Planning consolidated before this session; see Decision Log above.
+MD
+cat > src/stamp.sh <<'MD'
+#!/bin/sh
+date
+MD
+cat > test.sh <<'MD'
+#!/bin/sh
+set -e
+echo ok
+MD
+cat > lint.sh <<'MD'
+#!/bin/sh
+exit 0
+MD
+chmod +x src/stamp.sh test.sh lint.sh
+git add -A && git commit -q -m "plan(iso-flag): consolidate spec"
+git checkout -q -b feat/iso-flag
+--- assert ---
+set -e
+# The spec's ALREADY-CONSOLIDATED Decision Log — lettered rejected
+# alternatives, the exact permanent target-state shape — must survive
+# completely untouched. This is the one thing a resumed dev-loop entry
+# must never strip: the check that "spot-consolidation is needed" is
+# scoped to the Design section only and must not fire on a settled
+# Decision Log.
+grep -qF 'Alternatives rejected: (a) shell built-in' specs/feature/iso-flag.md
+grep -qF '(b) a Python helper' specs/feature/iso-flag.md
+grep -qF 'getopts would be more parsing code than program' specs/feature/iso-flag.md
+# No spurious SECOND consolidate commit — the spec was already
+# consolidated in the seeded commit, so a compliant agent has no
+# consolidation work to redo and commits only the implementation.
+test -z "$(git log --no-decorate --oneline base..feat/iso-flag | grep -E ' plan\(' || true)"
+# The actual work still happened: -i implemented and tested for real.
+out=$(sh src/stamp.sh -i); echo "$out" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
+grep -qF -e '- [x]' specs/feature/iso-flag.md
+test -z "$(grep -F -e '- [ ]' specs/feature/iso-flag.md || true)"
+sh test.sh >/dev/null
+grep -qiE '\-i|iso' test.sh
