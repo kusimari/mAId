@@ -310,19 +310,33 @@ passes. After exhausting `retry_budget`, behavior splits on
 
 ### Push Gate
 
-Only push after Quality + Test + Code Review pass (the latter
-per `authority`).
+Once Quality + Test + Code Review pass (the latter per
+`authority`), push. **No remote configured is an environment gap,
+not a reason to hold at `Phase: dev`** — the gates are what decide
+readiness, and they've already passed; report the missing remote
+and proceed with the Handoff rewrite below exactly as if Push had
+succeeded.
 
 ### Leaving dev
 
-After Push, **rewrite the `## Handoff` block** (§5) **with
-`Phase: review`** — the phase now starting — before handing to
-human review. Re-author every field: `Phase:` is not exempt just
-because *Carry forward* and *Deliberately left* are the fields
-carrying the most information. Leaving `Phase:` at its prior value
-while updating the others is the exact stale record §5 warns
-against, and it is easy to miss precisely because those other two
-fields *do* get real content and look like the update happened.
+Once gates pass (Push included, where a remote exists),
+**rewrite the `## Handoff` block** (§5) **with `Phase: review`**
+— the phase now starting — before handing to human review.
+Re-author every field: `Phase:` is not exempt just because *Carry
+forward* and *Deliberately left* are the fields carrying the most
+information. Leaving `Phase:` at its prior value while updating
+the others is the exact stale record §5 warns against, and it is
+easy to miss precisely because those other two fields *do* get
+real content and look like the update happened.
+
+**This rewrite is never a `plan()`-typed commit.** Review has no
+entry cue of its own (§1): it is the back half of the dev loop,
+not a fourth phase, so there is no phase transition here to
+justify a `plan()` commit the way planning→dev genuinely has one.
+Commit it with the same dev-type prefix as the work it hands off
+(new commit, per §9 — never an amend); inventing a separate
+`plan(<feature>): hand off dev -> review` commit manufactures a
+boundary the workflow does not have.
 
 From dev, *Carry forward* is a reviewer-relevant risk the diff
 doesn't show on its face, or a gate that passed only after a fix
