@@ -115,7 +115,17 @@ Log's originating conversation). After-state, claude-only:
 | consolidate | 3/3 agents fail | pass (3 rounds to land) |
 | closure | 2/3 agents fail | pass (1 round) |
 | handoff-resume | 3/3 agents fail (+ 1 fixture bug) | pass (2 rounds + fixture fix) |
-| other 6 fixtures | pass | pass (regression-swept, one resampled probabilistic miss confirmed noise) |
+| consolidated-resume | n/a (new fixture) | pass (added after Code Review Gate caught the round-3 fix's own regression risk — see Session Log) |
+| other 5 fixtures | pass | pass (regression-swept, one resampled probabilistic miss confirmed noise) |
+
+Superseded by the fuller picture in the Session Log below: a
+Code Review Gate round after this table was written found and
+fixed a real regression risk in the consolidate fix itself (the
+`consolidated-resume` row above), and the closure-time full
+43-fixture re-verify against claude confirmed everything still
+holds — a handful of first-pass failures there all reproduced as
+PASS on retry (judge/model noise), and one unrelated, pre-existing
+harness leak was found and cleaned up along the way.
 
 ## Implementation Plan
 
