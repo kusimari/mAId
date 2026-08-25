@@ -103,8 +103,11 @@ state machine, and the copy strategy needs the same treatment.
 - Selector filtering: `desktop` touches only desktop rows; `claude` only
   claude rows; no selector touches all.
 - Packaging shape: the emitted plugin has a valid manifest and each
-  selected skill present; a skill absent from source is an error, not a
-  silent skip.
+  selected skill present; a declared skill absent from the content tree is
+  reported, not silently dropped. *(Implementation note: originally
+  specified as a hard error. That was wrong — a partial content tree is a
+  normal state, e.g. a fresh checkout or a fixture with a subset, so it
+  reports and packages what exists.)*
 
 ### Functional (the existing `resources/tests/run` harness)
 
@@ -122,8 +125,8 @@ already covered per-skill for the three coding agents.
 ### Why this shape
 
 The registry already varies *how* a destination is populated —
-`Kind::Link` writes one symlink, `Kind::FanOut` writes one per child,
-because codex owns its skills directory and ships its own entries there.
+`Link` writes one symlink, `FanOut` writes one per child, because codex
+owns its skills directory and ships its own entries there.
 So "destinations differ in mechanism" is not a new idea; the enum has
 carried it since the codex row landed. What is new is a mechanism that
 is not a symlink at all.
