@@ -319,15 +319,18 @@ succeeded.
 
 ### Leaving dev
 
-Once gates pass (Push included, where a remote exists),
-**rewrite the `## Handoff` block** (§5) **with `Phase: review`**
-— the phase now starting — before handing to human review.
-Re-author every field: `Phase:` is not exempt just because *Carry
-forward* and *Deliberately left* are the fields carrying the most
-information. Leaving `Phase:` at its prior value while updating
-the others is the exact stale record §5 warns against, and it is
-easy to miss precisely because those other two fields *do* get
-real content and look like the update happened.
+Once the gates pass, **rewrite the `## Handoff` block** (§5)
+**with `Phase: review`** — the phase now starting — before handing
+to human review. The gates are the readiness signal; a Push that
+couldn't run for want of a remote (see the Push Gate above) does
+not hold this rewrite back — name the skipped Push in *Carry
+forward* and proceed. Re-author every field: `Phase:` is not
+exempt just because *Carry forward* and *Deliberately left* are
+the fields carrying the most information. Leaving `Phase:` at its
+prior value while updating the others is the exact stale record §5
+warns against, and it is easy to miss precisely because those
+other two fields *do* get real content and look like the update
+happened.
 
 **This rewrite is never a `plan()`-typed commit.** Review has no
 entry cue of its own (§1): it is the back half of the dev loop,
