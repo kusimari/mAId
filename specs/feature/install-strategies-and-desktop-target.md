@@ -62,12 +62,26 @@ Omitting the selector still means "every target", so a bare
   three symlinked targets, and requires a re-run for the copied one. The
   status verb is what tells the user a re-run is due.
 
-### Skills reaching the desktop app
+### Skills reaching the desktop app — document-shaped only
 
-Not every skill belongs there. `kdevkit` and `browser` are
-repo-and-terminal shaped; the note-taking and writing-style skills suit
-the desktop app's document work. The selection is declared data, so
-changing it is an edit to one list.
+**The desktop target carries document-oriented skills only. Terminal-shaped
+skills are deliberately left out.** This is a scoping rule, not a
+temporary gap: the desktop app's surface is document work (drafting,
+research, note-keeping), while skills built around a repo, a shell, or a
+terminal session have nothing to act on there.
+
+Today that means the note-taking and writing-style skills are in;
+`kdevkit` (spec-driven development over a checkout) and `browser`
+(drives a real browser through a terminal-registered MCP) are out.
+
+The user-visible consequence: `install-skills desktop` installs a
+*subset*, and says which skills it skipped and why, so the omission reads
+as intent rather than as a bug. Adding a new skill does not
+automatically reach the desktop target — it must be declared
+document-shaped.
+
+Because this rule outlives the feature, it is recorded in `project.md`
+(see Implementation Plan), not only here.
 
 ## Test Strategy
 
@@ -207,10 +221,19 @@ should show a reviewer exactly which guarantee changed and why.
       unit tests over a fake `$HOME`.
 - [ ] Implement copy install/uninstall driven off the plan; preserve the
       real-file guarantee and managed-only uninstall.
-- [ ] Add the plugin packaging step and the declared skill subset.
+- [ ] Add the plugin packaging step and the declared skill subset, with
+      the skipped skills reported by name.
 - [ ] Add the desktop registry row, the selector value, and the
       writability precheck.
 - [ ] Amend the two `project.md` hard constraints.
+- [ ] Record the **document-shaped-only** rule in `project.md` as a
+      standing constraint: which skills may reach the desktop target and
+      why terminal-shaped ones are excluded. This outlives the feature —
+      a future skill must be declared document-shaped to be included, so
+      the rule cannot live only in this spec. (mAId has no repo-root
+      `AGENTS.md` and deploys no global instruction file by design, so
+      `project.md` is the home; it is project-knowledge, not operational
+      instruction.)
 - [ ] Update `README.md` verb docs and `project.md` Architecture /
       Deployment for the second strategy.
 - [ ] Attended functional check: install for real, confirm the app loads
@@ -255,3 +278,13 @@ should show a reviewer exactly which guarantee changed and why.
 - **Stale as an explicit plan state.** The real cost of copy-install is
   silent drift. Surfacing it in `status` converts a footgun into a
   reported condition.
+- **Document-shaped skills only on the desktop target; terminal-shaped
+  ones excluded.** Confirmed as the scope for this feature. The split is
+  by what the surface can act on, not by preference: the desktop app is
+  a document workspace, so a skill built around a checkout or a shell
+  session has nothing to operate on there. Considered installing
+  everything and letting the app ignore what does not apply, and
+  rejected — a skill that cannot work is worse than an absent one,
+  because it advertises a capability the surface cannot honour. Recorded
+  in `project.md` rather than only here, since a future skill has to be
+  declared document-shaped to be included.
