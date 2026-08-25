@@ -65,7 +65,7 @@ root, so `cargo build --workspace` covers everything.
 
 **Registry** lives inline at the top of
 `resources/build-tool/src/main.rs` (a slice of
-`(home_subpath, source_subpath, kind, agent)` tuples). The
+`(home_subpath, source_subpath, strategy, agent)` tuples). The
 authoritative manifest for what gets installed where. The
 `agent` tag is what lets install/uninstall/status be scoped
 to one coding agent (`--agent`, surfaced as the Just verbs'
@@ -302,6 +302,12 @@ gets populated is data, not a code path:
   symlinking cannot reach it at all. Copy also means an install survives
   the checkout being moved or deleted, which is the honest meaning of
   "install" for anyone consuming the repo rather than developing it.
+
+**A copied destination is only ever touched if it carries mAId's ownership
+marker.** Copy destinations can be shared system paths that other tools
+legitimately populate, so "contents differ from source" must never be read
+as "safe to delete". An unmarked directory is refused by install and by
+uninstall — even with `--force`.
 
 The cost of copy is that a destination can go **stale** — the source was
 edited after the install. `status-skills` reports that explicitly

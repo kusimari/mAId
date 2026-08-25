@@ -92,6 +92,12 @@ const DESKTOP_PLUGIN_PATH: &str = "/Library/Application Support/Claude/org-plugi
 /// by design rather than pending. See project.md "Desktop target".
 const DESKTOP_SKILLS: &[&str] = &["notes", "writing-style"];
 
+/// Written into every `Copy` destination so ownership is a fact rather
+/// than an inference. Copy destinations can be system paths that other
+/// tools legitimately populate, so "contents differ from source" must not
+/// be read as "safe to delete" — only this marker licenses removal.
+const OWNED_MARKER: &str = ".maid-managed";
+
 const REGISTRY: &[Entry] = &[
     (
         ".claude/skills",
@@ -325,32 +331,38 @@ fn plan_for(home: PathBuf, source: PathBuf, strategy: Strategy) -> io::Result<Pl
 /// not mtime-based: mtimes shift with checkout order and clock skew,
 /// which would report phantom staleness.
 fn plan_one_copy(home: PathBuf, source: PathBuf) -> io::Result<Plan> {
-    let cmp = if !source.is_dir() {
-        // Nothing to copy from. Mirrors the symlink path: only report
-        // SourceMissing when there's also nothing at the destination.
-        if path_exists(&home) {
-            Comparison::Stale
-        } else {
-            Comparison::SourceMissing
-        }
-    } else {
-        match fs::symlink_metadata(&home) {
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Comparison::Missing,
-            Err(e) => return Err(e),
-            // A symlink where a real tree belongs is foreign: the app
-            // refuses symlinked plugin dirs, so this was not us.
-            Ok(meta) if meta.file_type().is_symlink() => {
-                Comparison::WrongTarget(fs::read_link(&home)?)
+    // Ownership is positive, never inferred: a directory only counts as
+    // ours if it carries the marker file install writes. Without that,
+    // "differs from source" and "belongs to somebody else" are the same
+    // observation — and this destination is a system path an MDM or
+    // another tool may legitimately populate, so guessing means deleting
+    // a stranger's data.
+    let cmp = match fs::symlink_metadata(&home) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            if source.is_dir() {
+                Comparison::Missing
+            } else {
+                Comparison::SourceMissing
             }
-            Ok(meta) if meta.is_dir() => {
-                if trees_match(&source, &home)? {
-                    Comparison::Match
-                } else {
-                    Comparison::Stale
-                }
-            }
-            Ok(_) => Comparison::BlockedByRealFile,
         }
+        Err(e) => return Err(e),
+        // A symlink where a real tree belongs was not us: the app refuses
+        // symlinked plugin dirs, which is why this strategy exists.
+        Ok(meta) if meta.file_type().is_symlink() => Comparison::WrongTarget(fs::read_link(&home)?),
+        Ok(meta) if meta.is_dir() => {
+            if !home.join(OWNED_MARKER).is_file() {
+                Comparison::BlockedByRealDir
+            } else if !source.is_dir() {
+                // Ours, but nothing to compare against (nothing packaged
+                // this run). Removable by uninstall; install skips it.
+                Comparison::SourceMissing
+            } else if trees_match(&source, &home)? {
+                Comparison::Match
+            } else {
+                Comparison::Stale
+            }
+        }
+        Ok(_) => Comparison::BlockedByRealFile,
     };
     Ok(Plan { home, source, cmp })
 }
@@ -362,13 +374,24 @@ fn trees_match(a: &Path, b: &Path) -> io::Result<bool> {
     let (mut ra, mut rb) = (Vec::new(), Vec::new());
     collect_tree(a, a, &mut ra)?;
     collect_tree(b, b, &mut rb)?;
+    // The ownership marker is written by install, not present in source,
+    // so it must not read as drift.
+    rb.retain(|p| p != Path::new(OWNED_MARKER));
     ra.sort();
     rb.sort();
     if ra != rb {
         return Ok(false);
     }
     for rel in ra {
-        if fs::read(a.join(&rel))? != fs::read(b.join(&rel))? {
+        let (pa, pb) = (a.join(&rel), b.join(&rel));
+        // A symlink is drift by definition here: Copy exists because the
+        // consuming app refuses symlinked entries, and `fs::read` would
+        // follow one and report a false match. Compare link-ness first.
+        let (ma, mb) = (fs::symlink_metadata(&pa)?, fs::symlink_metadata(&pb)?);
+        if ma.file_type().is_symlink() || mb.file_type().is_symlink() {
+            return Ok(false);
+        }
+        if fs::read(&pa)? != fs::read(&pb)? {
             return Ok(false);
         }
     }
@@ -455,8 +478,26 @@ fn package_desktop_plugin(checkout: &Path) -> Result<(Vec<String>, Vec<String>)>
 
     // Rebuild from scratch: a skill dropped from DESKTOP_SKILLS must not
     // survive in the packaged output and get copied onward.
+    //
+    // A root-owned `out` is a reachable state, not a hypothetical: the
+    // documented `sudo install-skills desktop` leaves build output owned by
+    // root, and every later unprivileged run would fail here. Say what to
+    // do rather than surfacing a bare permission error on a path the user
+    // never chose.
     if out.exists() {
-        fs::remove_dir_all(&out).with_context(|| format!("clearing {}", out.display()))?;
+        fs::remove_dir_all(&out).map_err(|e| {
+            if e.kind() == io::ErrorKind::PermissionDenied {
+                anyhow!(
+                    "cannot rebuild {} ({e}).\n\
+                     A previous `sudo` run left build output root-owned. Reclaim it:\n\
+                     \x20 sudo rm -rf {}",
+                    out.display(),
+                    out.display()
+                )
+            } else {
+                anyhow!("clearing {}: {e}", out.display())
+            }
+        })?;
     }
     fs::create_dir_all(out.join(".claude-plugin"))
         .with_context(|| format!("creating {}", out.display()))?;
@@ -557,7 +598,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Validate content and create/refresh $HOME-facing symlinks.
+    /// Validate content and populate each target's destination.
     Install {
         /// Plan without making changes.
         #[arg(long)]
@@ -565,26 +606,27 @@ enum Cmd {
         /// Replace symlinks that point elsewhere.
         #[arg(long)]
         force: bool,
-        /// Scope to one coding agent (claude|kiro|codex); default all.
+        /// Scope to one target (claude|kiro|codex|desktop); default all.
         #[arg(long)]
         agent: Option<String>,
     },
-    /// Remove install-managed symlinks.
+    /// Remove install-managed destinations.
     Uninstall {
         /// Plan without making changes.
         #[arg(long)]
         dry_run: bool,
         /// Remove whatever is at the managed path, including foreign
-        /// symlinks and non-symlinks.
+        /// symlinks and non-symlinks. Never removes an unmarked
+        /// directory at a Copy destination — that is shared ground.
         #[arg(long)]
         force: bool,
-        /// Scope to one coding agent (claude|kiro|codex); default all.
+        /// Scope to one target (claude|kiro|codex|desktop); default all.
         #[arg(long)]
         agent: Option<String>,
     },
-    /// Report each managed symlink's state.
+    /// Report each managed destination's state.
     Status {
-        /// Scope to one coding agent (claude|kiro|codex); default all.
+        /// Scope to one target (claude|kiro|codex|desktop); default all.
         #[arg(long)]
         agent: Option<String>,
     },
@@ -631,8 +673,9 @@ fn cmd_install(
         .map_err(|errs| anyhow!("Content validation failed:\n{}", errs.join("\n")))?;
     eprintln!("validated {count} content file(s)");
 
-    let entries = selected_entries(agent);
+    let mut entries = selected_entries(agent);
     let touches_desktop = entries.iter().any(|(.., a)| *a == "desktop");
+    let mut desktop_skipped = false;
 
     if touches_desktop {
         // Package before planning: the Copy row's source is build output,
@@ -648,13 +691,20 @@ fn cmd_install(
                 skipped.join(", ")
             );
         }
+        // Soft skip, not an error: the default verb (no selector) includes
+        // this row, and its destination is a root-owned system path on a
+        // stock machine. Aborting would mean an unprivileged
+        // `install-skills` installed nothing at all — including the three
+        // targets that need no elevation. Every other refusal in this file
+        // is per-row; this matches.
         if !dry_run && !desktop_writable(roots) {
-            return Err(anyhow!(
-                "desktop plugin dir is not writable: {}\n\
-                 It is a system path owned by the app, so this needs elevation:\n\
-                 \x20 sudo just resources::install-skills desktop",
+            eprintln!(
+                "skip      {} (not writable; needs elevation)\n\
+                 \x20         run: sudo just resources::install-skills desktop",
                 roots.resolve(DESKTOP_PLUGIN_PATH).display()
-            ));
+            );
+            entries.retain(|(.., a)| *a != "desktop");
+            desktop_skipped = true;
         }
     }
 
@@ -672,7 +722,11 @@ fn cmd_install(
         .into_iter()
         .filter(|&fail| fail)
         .count();
-    Ok(if failures > 0 { 1 } else { 0 })
+    Ok(if failures > 0 || desktop_skipped {
+        1
+    } else {
+        0
+    })
 }
 
 fn cmd_uninstall(
@@ -704,13 +758,12 @@ fn cmd_status(roots: Roots, checkout: &Path, agent: Option<&str>) -> Result<u8> 
     let agent = validate_agent(agent)?;
     let entries = selected_entries(agent);
 
-    // Status compares the destination against the packaged plugin, so it
-    // has to exist — otherwise an installed desktop target would read as
-    // "source missing" purely because nothing had packaged yet this run.
-    // Repackaging is cheap and touches only build output.
-    if entries.iter().any(|(.., a)| *a == "desktop") {
-        package_desktop_plugin(checkout)?;
-    }
+    // Status is read-only: it never packages. Repackaging here would make
+    // a report verb mutate the repo, and — worse — after the documented
+    // `sudo install-skills desktop`, build output is root-owned, so an
+    // unprivileged status would fail on a write it had no reason to
+    // attempt. A desktop row with nothing packaged reports "source
+    // missing", which is the honest state.
 
     for entry in entries {
         for (h, s, strat) in expand(entry, roots, checkout)? {
@@ -763,7 +816,7 @@ fn install_one_copy(
         }
         Comparison::Missing => {
             if !dry_run {
-                copy_tree(&plan.source, &plan.home)?;
+                copy_tree_owned(&plan.source, &plan.home)?;
             }
             println!("{tag}copied    {target}");
             Ok(false)
@@ -772,8 +825,9 @@ fn install_one_copy(
             if !dry_run {
                 // Remove then copy: an in-place overwrite would leave
                 // files deleted from source behind in the destination.
+                // Safe because Stale requires our ownership marker.
                 fs::remove_dir_all(&plan.home)?;
-                copy_tree(&plan.source, &plan.home)?;
+                copy_tree_owned(&plan.source, &plan.home)?;
             }
             println!("{tag}refreshed {target} (was stale)");
             Ok(false)
@@ -781,7 +835,7 @@ fn install_one_copy(
         Comparison::WrongTarget(current) if force => {
             if !dry_run {
                 fs::remove_file(&plan.home)?;
-                copy_tree(&plan.source, &plan.home)?;
+                copy_tree_owned(&plan.source, &plan.home)?;
             }
             println!(
                 "{tag}replaced  {target} (was symlink -> {})",
@@ -801,9 +855,12 @@ fn install_one_copy(
             Ok(true)
         }
         Comparison::BlockedByRealDir => {
-            // Unreachable for Copy (a real dir is Match or Stale), but
-            // keep the arm honest rather than unreachable!().
-            eprintln!("{tag}skip      {target} (existing dir; not overwriting)");
+            // A real dir without our ownership marker: another tool's
+            // plugin, or a hand-made one. Never overwritten, and not even
+            // with --force — this is a shared system directory.
+            eprintln!(
+                "{tag}skip      {target} (directory is not mAId-managed;                  remove it by hand to let this tool own the path)"
+            );
             Ok(true)
         }
         Comparison::SourceMissing => {
@@ -816,6 +873,16 @@ fn install_one_copy(
 /// Recursively copy `src` to `dst`, creating parents. Plain files and
 /// dirs only — the content tree is markdown, and a symlink inside a
 /// copied plugin would defeat the point of copying.
+fn copy_tree_owned(src: &Path, dst: &Path) -> io::Result<()> {
+    copy_tree(src, dst)?;
+    // Stamp ownership last, so a partially-copied tree is never claimed.
+    fs::write(
+        dst.join(OWNED_MARKER),
+        "Written by mAId's build-tool. Removing this makes the directory\n\
+         unmanaged: install and uninstall will refuse to touch it.\n",
+    )
+}
+
 fn copy_tree(src: &Path, dst: &Path) -> io::Result<()> {
     fs::create_dir_all(dst)?;
     for e in fs::read_dir(src)?.filter_map(Result::ok) {
@@ -1036,6 +1103,7 @@ fn home_dir() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
 
     fn write(p: &Path, s: &str) {
@@ -1992,6 +2060,125 @@ mod tests {
             1
         );
         assert_eq!(fs::read_to_string(&dest).unwrap(), "hand-written\n");
+    }
+
+    // Regressions for the review findings. Each of these passed with the
+    // pre-fix code, which is the point.
+
+    #[test]
+    fn desktop_refuses_a_foreign_directory_at_the_destination() {
+        // The destination is a shared system dir another tool may populate.
+        // Without an ownership marker, "differs from source" is
+        // indistinguishable from "someone else's data" — and the pre-fix
+        // code deleted it via the Stale path, with no --force.
+        let checkout = make_checkout_with_skills();
+        let home = TempDir::new().unwrap();
+        let dest = test_roots(home.path()).resolve(DESKTOP_PLUGIN_PATH);
+        let theirs = dest.join("THEIRS.md");
+        write(&theirs, "another tool's plugin\n");
+
+        // Soft skip, data intact — and not even --force may remove it.
+        for force in [false, true] {
+            assert_eq!(
+                cmd_install(
+                    test_roots(home.path()),
+                    checkout.path(),
+                    false,
+                    force,
+                    Some("desktop")
+                )
+                .unwrap(),
+                1
+            );
+            assert!(theirs.is_file(), "foreign data deleted (force={force})");
+            assert_eq!(
+                cmd_uninstall(
+                    test_roots(home.path()),
+                    checkout.path(),
+                    false,
+                    force,
+                    Some("desktop")
+                )
+                .unwrap(),
+                1
+            );
+            assert!(theirs.is_file(), "foreign data deleted (force={force})");
+        }
+    }
+
+    #[test]
+    fn unwritable_desktop_dest_still_installs_the_other_targets() {
+        // The default verb includes desktop, whose real destination is
+        // root-owned. Aborting would install nothing at all — including the
+        // three targets needing no elevation.
+        let checkout = make_checkout_with_skills();
+        let home = TempDir::new().unwrap();
+        let sys = TempDir::new().unwrap();
+        let roots = Roots {
+            home: home.path(),
+            system: sys.path(),
+        };
+        // Make the system root unwritable so the precheck fails.
+        let mut perms = fs::metadata(sys.path()).unwrap().permissions();
+        perms.set_mode(0o555);
+        fs::set_permissions(sys.path(), perms).unwrap();
+
+        let rc = cmd_install(roots, checkout.path(), false, false, None).unwrap();
+
+        // Restore before assertions so TempDir can clean up.
+        let mut perms = fs::metadata(sys.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(sys.path(), perms).unwrap();
+
+        assert_eq!(rc, 1, "the skip should be reported in the exit code");
+        assert!(
+            path_exists(&home.path().join(".claude/skills")),
+            "claude must still be installed when only desktop is unwritable"
+        );
+        assert!(path_exists(&home.path().join(".codex/skills/notes")));
+    }
+
+    #[test]
+    fn status_does_not_package_or_write() {
+        // status is a report verb; it must not mutate the checkout. The
+        // pre-fix version repackaged, which also broke unprivileged status
+        // once a sudo install had left build output root-owned.
+        let checkout = make_checkout_with_skills();
+        let home = TempDir::new().unwrap();
+        let out = checkout.path().join("target/desktop-plugin");
+        assert!(!out.exists());
+        cmd_status(test_roots(home.path()), checkout.path(), None).unwrap();
+        assert!(!out.exists(), "status packaged build output");
+    }
+
+    #[test]
+    fn desktop_symlink_inside_the_installed_tree_reads_as_drift() {
+        // Copy exists because the app refuses symlinks. A symlinked file
+        // inside the destination must not read as ok — fs::read would
+        // follow it and report a false match.
+        let checkout = make_checkout_with_skills();
+        let home = TempDir::new().unwrap();
+        cmd_install(
+            test_roots(home.path()),
+            checkout.path(),
+            false,
+            false,
+            Some("desktop"),
+        )
+        .unwrap();
+        let (dest, src) = copy_row(home.path(), checkout.path());
+        let installed = dest.join("skills/notes/SKILL.md");
+        let original = checkout
+            .path()
+            .join("resources/content/skills/notes/SKILL.md");
+        fs::remove_file(&installed).unwrap();
+        std::os::unix::fs::symlink(&original, &installed).unwrap();
+
+        assert_eq!(
+            plan_one_copy(dest, src).unwrap().cmp,
+            Comparison::Stale,
+            "a symlinked entry must be drift, not a match"
+        );
     }
 
     #[test]
