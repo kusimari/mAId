@@ -75,10 +75,14 @@ expected `$HOME` paths as registry entries, not rewriting
 content. Content stays tool-agnostic; the registry translates
 it into each tool's expected layout.
 
-Skills deploy through the registry as symlinks — each supported tool
-discovers them natively at its own skills path (`~/.claude/skills`,
-`~/.kiro/steering/skills`, `~/.codex/skills`), verified to load with
-no extra preamble. mAId installs no global instruction file:
+Skills deploy through the registry, each row naming the **strategy** that
+populates its destination — symlink for the three coding agents, which
+discover them natively at their own skills path (`~/.claude/skills`,
+`~/.kiro/steering/skills`, `~/.codex/skills`) and get live edits; copy for
+the desktop app, which reads a plugin directory and refuses a symlink
+there. Strategy is the third registry dimension alongside destination and
+agent, so a new target is a row rather than a new code path (see
+Deployment). mAId installs no global instruction file:
 `AGENTS.md` is a repo-root convention (per-project, alongside
 README.md), not a global per-tool preamble, and "load the project's
 AGENTS.md / project.md" is kdevkit's work-time instruction rather
@@ -277,15 +281,48 @@ slice.
      in a traditional sense, describe how it's consumed. -->
 
 Not a service — consumed locally.
-`just resources::install-skills` validates content and creates the
-`$HOME`-facing symlinks; `just resources::uninstall-skills`
-reverses them. `just resources::status-skills` reports current
-managed-symlink state. `just resources::verify-skills` drives the
-real AI tools against the installed content. Each takes an
-optional coding-agent selector (`claude|kiro|codex`; omit for all
-three). App workspace members (`kaimux/`) build via
-`just kaimux::build` (a one-liner over `cargo build -p kaimux
---release` + copy into `dist/`).
+`just resources::install-skills` validates content and populates each
+target's destination; `just resources::uninstall-skills` reverses it.
+`just resources::status-skills` reports current state per destination.
+`just resources::verify-skills` drives the real AI tools against the
+installed content. Each takes an optional target selector
+(`claude|kiro|codex|desktop`; omit for all four). App workspace members
+(`kaimux/`) build via `just kaimux::build` (a one-liner over
+`cargo build -p kaimux --release` + copy into `dist/`).
+
+**Two install strategies, declared per registry row.** How a destination
+gets populated is data, not a code path:
+
+- **Symlink** (`Link`, `FanOut`) — `claude`, `kiro`, `codex`. The
+  destination points back into the checkout, so a content edit is live in
+  the next session. This is what makes authoring skills fast, and it is
+  why these targets stay symlinked.
+- **Copy** (`Copy`) — `desktop`. The destination holds real files. Not a
+  preference: the desktop app *refuses* a symlinked plugin directory, so
+  symlinking cannot reach it at all. Copy also means an install survives
+  the checkout being moved or deleted, which is the honest meaning of
+  "install" for anyone consuming the repo rather than developing it.
+
+The cost of copy is that a destination can go **stale** — the source was
+edited after the install. `status-skills` reports that explicitly
+(`STALE … re-run install`) rather than showing it as ok; a symlinked
+destination cannot reach that state. Content comparison, not mtimes,
+decides: mtimes shift with checkout order and clock skew.
+
+### Desktop target — document-shaped skills only
+
+The desktop target carries **document-oriented skills only**, packaged as
+a plugin (manifest + `skills/<name>/`) assembled under build output.
+Terminal-shaped skills are excluded **by design, not pending**: the app
+is a document workspace, so a skill built around a checkout, a shell
+session, or a terminal-registered MCP has nothing there to act on.
+Installing one anyway would advertise a capability the surface cannot
+honour, which is worse than its absence.
+
+The subset is declared in the build-tool (`DESKTOP_SKILLS`), and install
+names what it skipped so the omission reads as intent. **A new skill does
+not reach the desktop target automatically** — it must be declared
+document-shaped, which is a deliberate registry edit.
 
 The browser-control MCP deploys separately from skills
 (env-gated, opt-in): `just resources::install-browser-mcp
@@ -303,22 +340,31 @@ the experience is symmetric across resource kinds.
 
 ### Hard constraints
 
-- **Never write into `~/.claude/skills/`, `~/.kiro/steering/skills/`,
-  `~/.codex/skills/`, or any registry destination directly.** These
-  paths are symlinks back into the checkout; a non-symlink file there
-  breaks deploy invariants. Edit the source under
-  `resources/content/` instead — the symlink exposes changes
-  live. (This guardrail is mAId-project context — it protects mAId's
-  own deploy invariant — which is why it lives here, not in a
-  globally-installed preamble.)
+- **Source is truth — never hand-edit an installed artefact.** Edit
+  under `resources/content/`, never at a registry destination
+  (`~/.claude/skills/`, `~/.kiro/steering/skills/`, `~/.codex/skills/`,
+  the desktop plugin dir). How a destination is populated is its row's
+  **strategy**: the symlink strategies (`Link`, `FanOut`) expose source
+  edits live, so a hand-edit there silently diverges from the checkout;
+  the `Copy` strategy overwrites the destination wholesale on install,
+  so a hand-edit is simply lost. Either way the checkout is the only
+  place a change survives. (This guardrail is mAId-project context — it
+  protects mAId's own deploy invariant — which is why it lives here, not
+  in a globally-installed preamble.)
 - **Registry is the single source of truth** for deployment.
   Adding a new managed path = a registry change + CR, never an
   ad-hoc edit.
-- **No global state mutation** on install. The rust toolchain
-  and `just` come from the repo-local flake; `build-tool` is
-  invoked through `cargo run -p build-tool` (wrapped by Just)
-  from the checkout — no shim under `~/.local/bin`, no
-  `cargo install` anywhere in the install path.
+- **No global state mutation** on install, with one declared
+  exception. The rust toolchain and `just` come from the repo-local
+  flake; `build-tool` is invoked through `cargo run -p build-tool`
+  (wrapped by Just) from the checkout — no shim under `~/.local/bin`,
+  no `cargo install` anywhere in the install path. **Exception: the
+  desktop target.** Its plugin directory is a system path chosen by the
+  app, not by mAId, so writing there needs elevation. It is opt-in
+  (never reached without naming `desktop` or omitting the selector),
+  and the verb checks writability up front and refuses with the command
+  to re-run rather than installing half a plugin. Every other target
+  stays strictly inside `$HOME`.
 - **No changes to the user's env-workplace** from this
   repo. mAId stays a pure-content workspace; bootstrap
   drivers belong on the env side.

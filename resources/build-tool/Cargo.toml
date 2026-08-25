@@ -13,6 +13,10 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 gray_matter = "0.3"
 serde = { version = "1", features = ["derive"] }
+# Emits the desktop plugin manifest. Hand-writing JSON means hand-escaping
+# it; the app silently ignores a manifest it can't parse, so correctness
+# here is worth the dependency.
+serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"

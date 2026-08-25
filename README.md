@@ -17,9 +17,11 @@ The repo has two halves:
 - **`kaimux/`** — sibling workspace member for the kaimux
   tmux-pane orchestrator. Built via `kaimux::build`.
 
-`just resources::install-skills` creates symlinks from `$HOME`
-into the content tree so edits are live for the next AI
-session.
+`just resources::install-skills` populates each target's skills
+destination. For the three coding agents that means symlinks from `$HOME`
+into the content tree, so edits are live for the next AI session; for the
+desktop app it means a copied plugin, because that app refuses a
+symlinked plugin directory.
 
 ## Develop
 
@@ -46,12 +48,12 @@ Three groups, namespaced by what they touch:
 
 **`resources::*`** — operate on `$HOME` or the AI tools. Every
 verb reads `<action>-<resource-kind>` and takes the uniform
-coding-agent selector (`claude|kiro|codex`; omit for all three):
+target selector (`claude|kiro|codex|desktop`; omit for all four):
 
 ```
-just resources::install-skills [agent]     # validate content + create $HOME-facing symlinks
-just resources::uninstall-skills [agent]   # remove install-managed symlinks
-just resources::status-skills [agent]      # report current symlink state
+just resources::install-skills [agent]     # validate content + populate each destination
+just resources::uninstall-skills [agent]   # remove install-managed destinations
+just resources::status-skills [agent]      # report current state (copied ones can be STALE)
 just resources::verify-skills [agent]      # drive the coding agents against installed content (costs API credits, gated)
 just resources::verify-skills-one <name> [agent]   # single fixture
 
@@ -85,25 +87,35 @@ just ci           # the full hygiene gate
 ## Install
 
 ```
-just resources::install-skills          # all three agents
-just resources::install-skills codex    # or scope to one
+just resources::install-skills            # all four targets
+just resources::install-skills codex      # or scope to one
+sudo just resources::install-skills desktop   # system path; needs elevation
 ```
 
 What it does:
 
 1. Validates `resources/content/` — each `skills/<name>/SKILL.md`
    has the required frontmatter.
-2. Creates `$HOME`-facing symlinks per the registry at the
-   top of
-   [`resources/build-tool/src/main.rs`](./resources/build-tool/src/main.rs).
-   The skills tree, per tool: `~/.claude/skills` and
-   `~/.kiro/steering/skills` (whole-dir symlinks), and
-   `~/.codex/skills` (per-skill symlinks, since codex owns that
-   directory and ships its own skills there).
+2. Populates each destination per the registry at the top of
+   [`resources/build-tool/src/main.rs`](./resources/build-tool/src/main.rs),
+   using that row's **strategy**:
+   - **symlink** — `~/.claude/skills` and `~/.kiro/steering/skills`
+     (whole-dir), and `~/.codex/skills` (per-skill, since codex owns that
+     directory and ships its own skills there). Edits are live.
+   - **copy** — the desktop app's plugin directory, as a packaged plugin
+     (manifest + skills). It refuses a symlinked plugin dir, so copy is
+     the only way in. Two consequences: the install survives the checkout
+     being moved or deleted, and it can go **stale** when the source is
+     edited — `status-skills` reports that, and re-running install
+     refreshes it.
 
 `just resources::uninstall-skills` is idempotent. Hand-written files at a
 managed destination are preserved unless you pass
 `--force`.
+
+The desktop target carries **document-shaped skills only**; terminal-shaped
+ones (built around a checkout or a shell session) are excluded by design,
+and install names what it skipped. See `specs/project.md` for the rule.
 
 mAId installs **skills only**. Each supported tool discovers them
 natively at its own skills path (verified: claude, kiro, codex all

@@ -1,29 +1,37 @@
 # Resources verbs operate on $HOME — they read or write the
-# symlinks the AI tools consume. Validation of content runs
+# destinations the AI tools consume. Validation of content runs
 # inside `install`. Recipes invoke from the workspace root
 # (via `[no-cd]`), so `cargo run -p build-tool` and
 # `resources/tests/run` resolve against the same paths as
 # the legacy flat Justfile.
 
-# First arg is the coding-agent selector (claude|kiro|codex; omit for
-# all three); remaining flags pass through, e.g.
-#   just resources::install-skills                 (all agents)
+# First arg is the target selector (claude|kiro|codex|desktop; omit for
+# all four); remaining flags pass through, e.g.
+#   just resources::install-skills                 (all targets)
 #   just resources::install-skills codex           (codex only)
 #   just resources::install-skills codex --force   (codex, repoint)
-#   just resources::install-skills --force         (all agents, repoint)
-# The `=~ '^-'` guard lets a leading flag (no agent given) pass through
-# as a flag rather than being mistaken for an agent name.
-# Validate content and create/refresh $HOME-facing skill symlinks.
+#   just resources::install-skills --force         (all targets, repoint)
+# The `=~ '^-'` guard lets a leading flag (no target given) pass through
+# as a flag rather than being mistaken for a target name.
+#
+# `desktop` differs from the three coding agents: it installs a packaged
+# plugin by COPY (the app refuses a symlinked plugin dir), carries only
+# document-shaped skills, and writes to a system path — so it needs
+# elevation and the verb says so rather than half-installing:
+#   sudo just resources::install-skills desktop
+# Validate content and populate each target's skills destination.
 [no-cd]
 install-skills agent="" *FLAGS:
     cargo run -p build-tool --release --quiet -- install {{ if agent =~ '^-' { agent } else if agent != "" { "--agent " + agent } else { "" } }} {{ FLAGS }}
 
-# Remove install-managed skill symlinks (optionally for one agent).
+# Remove install-managed skill destinations (optionally for one target).
 [no-cd]
 uninstall-skills agent="" *FLAGS:
     cargo run -p build-tool --release --quiet -- uninstall {{ if agent =~ '^-' { agent } else if agent != "" { "--agent " + agent } else { "" } }} {{ FLAGS }}
 
-# Report each managed skill symlink's state (optionally for one agent).
+# Report each managed destination's state (optionally for one target).
+# Copied destinations can report STALE — the source changed since install,
+# so a re-run of install is due. Symlinked ones never can.
 [no-cd]
 status-skills agent="":
     cargo run -p build-tool --release --quiet -- status {{ if agent != "" { "--agent " + agent } else { "" } }}
