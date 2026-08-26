@@ -366,12 +366,15 @@ the experience is symmetric across resource kinds.
   flake; `build-tool` is invoked through `cargo run -p build-tool`
   (wrapped by Just) from the checkout — no shim under `~/.local/bin`,
   no `cargo install` anywhere in the install path. **Exception: the
-  `claude-desktop` target.** Its plugin directory is a system path chosen by the
-  app, not by mAId, so writing there needs elevation. It is opt-in
-  (never reached without naming `claude-desktop` or omitting the selector),
-  and the verb checks writability up front and refuses with the command
-  to re-run rather than installing half a plugin. Every other target
-  stays strictly inside `$HOME`.
+  `claude-desktop` target.** Its plugin directory is a system path chosen by
+  the app, not by mAId. Elevation is needed **once**, to take ownership of
+  that directory (`sudo mkdir -p` + `sudo chown`); every install after that
+  runs unprivileged. The install verb never itself requires `sudo` — running
+  it elevated would run `cargo` as root and leave build output root-owned —
+  so when the directory is unwritable it prints the two setup commands and
+  skips that one target rather than failing the whole install. This mirrors
+  the browser MCP's one-time manual prerequisite (enabling Chrome remote
+  debugging). Every other target stays strictly inside `$HOME`.
 - **No changes to the user's env-workplace** from this
   repo. mAId stays a pure-content workspace; bootstrap
   drivers belong on the env side.

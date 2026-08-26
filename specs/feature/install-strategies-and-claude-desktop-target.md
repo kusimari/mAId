@@ -54,8 +54,12 @@ Omitting the selector still means "every target", so a bare
   (source edited since the copy) rather than merely present.
 - `uninstall-skills claude-desktop` removes what was installed and nothing
   else. Hand-added entries alongside ours are preserved.
-- Installing to Claude Desktop needs elevated permission, and the verb
-  says so up front rather than failing partway.
+- Installing to Claude Desktop needs its plugin directory to be writable.
+  That is a **one-time** `sudo mkdir` + `sudo chown`; every install after
+  that is unprivileged. The verb itself must never need `sudo` — running it
+  elevated would run the build as root and leave build output root-owned —
+  so when the directory is unwritable it prints those two commands and skips
+  only that target, leaving the other three installed.
 - A target whose app is not installed is skipped with a reason, not an
   error — matching how the browser installable graceful-skips.
 - Editing a skill after installing shows the change immediately on the
@@ -153,14 +157,34 @@ agents, commands, hooks, MCP servers). A single-skill plugin may put
 `SKILL.md` at its root, but the `skills/<name>/SKILL.md` layout is
 correct for a plugin expected to carry more than one, which this is.
 
-**Why copy and not a marketplace.** A marketplace is the vendor's
-recommended fleet mechanism and would avoid elevated permission, but it
-needs the plugin served from a reachable git or HTTPS origin and pins
-auto-install to a commit SHA. For a local checkout on one machine that
-is more moving parts than the job needs, and it makes the install
-depend on network reachability. Copy from the checkout keeps the
-install self-contained. A marketplace stays the clean upgrade path if
-this is ever distributed to more than one machine — noted, not built.
+**Why copy and not a marketplace — measured, not assumed.** A marketplace
+is the vendor's recommended fleet mechanism and installs per-user, so it
+would avoid elevation entirely. It was tested rather than dismissed: a real
+plugin zip and `marketplace.json` served from `python3 -m http.server` on
+loopback, registered via `allowedPluginMarketplaces`.
+
+Three of four unknowns came back favourable — the third-party app *does*
+read the key (`syncing 1 configured source(s)`), loopback origins are *not*
+rejected, and both digests (`sha256`, `manifestSha256`) are plain
+`shasum -a 256` output, computable locally with no chicken-and-egg. The
+fourth killed it:
+
+```
+failed to add 127.0.0.1: url must be bare https with no userinfo,
+query, or fragment. Use credentialKind for authentication.
+```
+
+HTTPS is mandatory. A local server would therefore need a TLS cert the app
+trusts, and every route to that (system keychain, `mkcert`'s CA install)
+wants elevation once anyway — for a *trust store*, which is a broader grant
+than one directory. So the marketplace route trades one narrow privileged
+step for a wider one plus a cert, a subprocess lifecycle, and periodic
+re-fetch against a server that will not be running.
+
+Copy from the checkout keeps the install self-contained, and the one-time
+`chown` of the plugin directory is the narrower grant. A marketplace stays
+the clean upgrade path if this is ever distributed to more than one machine,
+where a real HTTPS origin exists anyway.
 
 **Stale is a first-class state, not a failure.** A symlinked
 destination cannot go stale; a copy can, and silently. So the

@@ -89,8 +89,20 @@ just ci           # the full hygiene gate
 ```
 just resources::install-skills            # all four targets
 just resources::install-skills codex      # or scope to one
-sudo just resources::install-skills claude-desktop   # system path; needs elevation
 ```
+
+**One-time setup for `claude-desktop`.** Its plugin directory is a system
+path chosen by the app, so take ownership of it once:
+
+```
+sudo mkdir -p '/Library/Application Support/Claude/org-plugins'
+sudo chown "$(whoami)" '/Library/Application Support/Claude/org-plugins'
+```
+
+After that every install runs unprivileged. Don't run the verb itself under
+`sudo` — that runs `cargo` as root and leaves build output root-owned. The
+verb prints these commands if it finds the directory unwritable, and skips
+that one target rather than failing the whole install.
 
 What it does:
 

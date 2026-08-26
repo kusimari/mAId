@@ -16,9 +16,14 @@
 #
 # `claude-desktop` differs from the three coding agents: it installs a packaged
 # plugin by COPY (the app refuses a symlinked plugin dir), carries only
-# document-shaped skills, and writes to a system path — so it needs
-# elevation and the verb says so rather than half-installing:
-#   sudo just resources::install-skills claude-desktop
+# document-shaped skills, and writes to a system path the app chooses.
+# That path needs elevation ONCE, to take ownership of it:
+#   sudo mkdir -p '/Library/Application Support/Claude/org-plugins'
+#   sudo chown "$(whoami)" '/Library/Application Support/Claude/org-plugins'
+# Every install after that is unprivileged. Never run these verbs under
+# sudo — that runs cargo as root and leaves build output root-owned. When
+# the dir is unwritable the verb prints those commands and skips just that
+# target, so the other three still install.
 # Validate content and populate each target's skills destination.
 [no-cd]
 install-skills agent="" *FLAGS:

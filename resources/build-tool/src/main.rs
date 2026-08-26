@@ -554,6 +554,14 @@ fn package_claude_desktop_plugin(checkout: &Path) -> Result<(Vec<String>, Vec<St
     Ok((packaged, skipped))
 }
 
+/// Single-quote a path for a shell command we print for the user to paste.
+/// The Claude Desktop plugin path contains spaces, so an unquoted command
+/// would silently target the wrong directory. Embedded single quotes are
+/// escaped the POSIX way (`'\''`) — belt and braces; the real path has none.
+fn shell_quote(p: &Path) -> String {
+    format!("'{}'", p.display().to_string().replace('\'', r"'\''"))
+}
+
 /// Is the Claude Desktop destination writable without elevation? Its
 /// plugin dir is system-wide, so check before doing any work — a
 /// half-installed plugin is worse than a clear refusal.
@@ -698,11 +706,25 @@ fn cmd_install(
         // `install-skills` installed nothing at all — including the three
         // targets that need no elevation. Every other refusal in this file
         // is per-row; this matches.
+        //
+        // The remedy is a one-time chown of the directory, NOT running this
+        // verb under sudo. `sudo just …` would run cargo as root and leave
+        // build output root-owned, breaking every later unprivileged run —
+        // so the fix is to make the destination writable once and keep the
+        // install itself unprivileged forever after.
         if !dry_run && !claude_desktop_writable(roots) {
+            let dest = roots.resolve(CLAUDE_DESKTOP_PLUGIN_PATH);
+            let parent = dest.parent().unwrap_or(&dest);
             eprintln!(
-                "skip      {} (not writable; needs elevation)\n\
-                 \x20         run: sudo just resources::install-skills claude-desktop",
-                roots.resolve(CLAUDE_DESKTOP_PLUGIN_PATH).display()
+                "skip      {} (not writable)\n\
+                 \x20         One-time setup — take ownership of the plugin dir, then\n\
+                 \x20         this and every later install runs unprivileged:\n\
+                 \x20           sudo mkdir -p {p}\n\
+                 \x20           sudo chown \"$(whoami)\" {p}\n\
+                 \x20         Do NOT run this verb under sudo: that runs cargo as root\n\
+                 \x20         and leaves build output root-owned.",
+                dest.display(),
+                p = shell_quote(parent)
             );
             entries.retain(|(.., a)| *a != "claude-desktop");
             claude_desktop_skipped = true;
