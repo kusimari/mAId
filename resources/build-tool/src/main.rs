@@ -717,8 +717,10 @@ fn cmd_install(
             let parent = dest.parent().unwrap_or(&dest);
             eprintln!(
                 "skip      {} (not writable)\n\
-                 \x20         One-time setup — take ownership of the plugin dir, then\n\
-                 \x20         this and every later install runs unprivileged:\n\
+                 \x20         This directory is prepared by your environment setup, which\n\
+                 \x20         owns privileged machine prep — run that first, then re-run\n\
+                 \x20         this install unprivileged.\n\
+                 \x20         Preparing it by hand is equivalent:\n\
                  \x20           sudo mkdir -p {p}\n\
                  \x20           sudo chown \"$(whoami)\" {p}\n\
                  \x20         Do NOT run this verb under sudo: that runs cargo as root\n\

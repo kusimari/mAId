@@ -91,8 +91,10 @@ just resources::install-skills            # all four targets
 just resources::install-skills codex      # or scope to one
 ```
 
-**One-time setup for `claude-desktop`.** Its plugin directory is a system
-path chosen by the app, so take ownership of it once:
+**Prerequisite for `claude-desktop`.** Its plugin directory is a system path
+chosen by the app, so it has to be made writable once. That is machine prep,
+not content install — so it belongs to whatever provisions your machine, and
+mAId never asks for `sudo`. Preparing it by hand is equivalent:
 
 ```
 sudo mkdir -p '/Library/Application Support/Claude/org-plugins'
@@ -100,9 +102,9 @@ sudo chown "$(whoami)" '/Library/Application Support/Claude/org-plugins'
 ```
 
 After that every install runs unprivileged. Don't run the verb itself under
-`sudo` — that runs `cargo` as root and leaves build output root-owned. The
-verb prints these commands if it finds the directory unwritable, and skips
-that one target rather than failing the whole install.
+`sudo` — that runs `cargo` as root and leaves build output root-owned. When
+the directory isn't writable the verb says so and skips that one target,
+leaving the other three installed.
 
 What it does:
 
