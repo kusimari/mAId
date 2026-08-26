@@ -131,6 +131,11 @@ The `claude-desktop` target carries **document-shaped skills only**; terminal-sh
 ones (built around a checkout or a shell session) are excluded by design,
 and install names what it skipped. See `specs/project.md` for the rule.
 
+The packaged plugin declares `installationPreference: auto_install`, so it
+enables itself on the app's next launch rather than sitting in the plugin
+list switched off. You can still disable it in the app and it stays
+disabled.
+
 mAId installs **skills only**. Each supported tool discovers them
 natively at its own skills path (verified: claude, kiro, codex all
 load skills with no extra preamble), so mAId deploys no global

@@ -327,7 +327,14 @@ Installing one anyway would advertise a capability the surface cannot
 honour, which is worse than its absence.
 
 The subset is declared in the build-tool (`CLAUDE_DESKTOP_SKILLS`), and install
-names what it skipped so the omission reads as intent. **A new skill does
+names what it skipped so the omission reads as intent.
+
+The manifest sets `installationPreference: auto_install` — without it a
+plugin installs as `available`, meaning present in the app's list but
+switched off until enabled by hand, which makes "install" only half-true.
+`required` would also auto-enable but re-asserts on every sync and hides the
+uninstall action; `auto_install` respects a deliberate disable. Installing
+the user's own tooling should not then ask them to go and switch it on. **A new skill does
 not reach the `claude-desktop` target automatically** — it must be declared
 document-shaped, which is a deliberate registry edit.
 

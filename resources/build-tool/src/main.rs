@@ -511,6 +511,14 @@ fn package_claude_desktop_plugin(checkout: &Path) -> Result<(Vec<String>, Vec<St
     let manifest = serde_json::json!({
         "name": "maid",
         "description": "Document-shaped skills from the mAId content tree.",
+        // Without this the plugin lands as `available` — present in the
+        // app's plugin list but switched off until enabled by hand, which
+        // makes "install" only half-true. `auto_install` enables it on the
+        // next launch; `required` would too, but re-asserts on every sync
+        // and hides the uninstall action, so a deliberate disable would be
+        // overridden. This is the user's own tooling: install it for them,
+        // still let them turn it off.
+        "installationPreference": "auto_install",
     });
     fs::write(
         out.join(".claude-plugin/plugin.json"),
@@ -1435,7 +1443,13 @@ mod tests {
             cmd_uninstall(test_roots(home.path()), checkout.path(), false, false, None).unwrap();
         assert_eq!(rc, 0);
         for entry in REGISTRY {
-            assert!(!path_exists(&home.path().join(entry.0)));
+            // Resolve through Roots, never `home.join()`: the claude-desktop
+            // row is absolute, so joining would escape the fake home and
+            // assert against the real system path — which passes or fails
+            // depending on whether the machine happens to have the plugin
+            // installed. That made this test read the real filesystem.
+            let dest = test_roots(home.path()).resolve(entry.0);
+            assert!(!path_exists(&dest), "still present: {}", dest.display());
         }
     }
 
@@ -1803,6 +1817,12 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(v["name"], "maid");
         assert!(v["description"].as_str().is_some_and(|d| !d.is_empty()));
+        // Without this the plugin installs but stays switched off until
+        // enabled by hand — the failure mode is silent, so assert it.
+        assert_eq!(
+            v["installationPreference"], "auto_install",
+            "the plugin must enable itself; `available` needs a manual toggle"
+        );
     }
 
     #[test]
