@@ -508,26 +508,11 @@ fn package_claude_desktop_plugin(checkout: &Path) -> Result<(Vec<String>, Vec<St
     fs::create_dir_all(out.join(".claude-plugin"))
         .with_context(|| format!("creating {}", out.display()))?;
 
-    // `name` namespaces the skills in the app (maid:notes), `description`
-    // shows in its plugin manager. Kept minimal on purpose — `version` is
-    // optional and would need bumping to signal updates, which the
-    // content-comparison install already handles. Serialized rather than
-    // hand-written: the app silently ignores a manifest it cannot parse.
-    let manifest = serde_json::json!({
-        "name": "maid",
-        "description": "Document-shaped skills from the mAId content tree.",
-        // Without this the plugin lands as `available` — present in the
-        // app's plugin list but switched off until enabled by hand, which
-        // makes "install" only half-true. `auto_install` enables it on the
-        // next launch; `required` would too, but re-asserts on every sync
-        // and hides the uninstall action, so a deliberate disable would be
-        // overridden. This is the user's own tooling: install it for them,
-        // still let them turn it off.
-        "installationPreference": "auto_install",
-    });
+    // Manifest bytes come from plugin_manifest_bytes() so the packager and
+    // status's read-only expectation cannot disagree.
     fs::write(
         out.join(".claude-plugin/plugin.json"),
-        format!("{}\n", serde_json::to_string_pretty(&manifest)?),
+        plugin_manifest_bytes(),
     )
     .context("writing plugin manifest")?;
 
@@ -565,6 +550,113 @@ fn package_claude_desktop_plugin(checkout: &Path) -> Result<(Vec<String>, Vec<St
         .collect();
     skipped.sort();
     Ok((packaged, skipped))
+}
+
+/// What the packaged plugin *would* contain, computed from the content tree
+/// without writing anything: relative path → bytes.
+///
+/// This is the read-only twin of `package_claude_desktop_plugin`. Status uses
+/// it so a source edit shows as drift immediately, instead of comparing the
+/// destination against build output that may predate the edit. Both derive
+/// from `CLAUDE_DESKTOP_SKILLS` and the same manifest, so they cannot
+/// disagree about what belongs in the plugin.
+fn expected_plugin_files(checkout: &Path) -> io::Result<Vec<(PathBuf, Vec<u8>)>> {
+    let content = checkout.join("resources/content/skills");
+    let mut out = vec![(
+        PathBuf::from(".claude-plugin/plugin.json"),
+        plugin_manifest_bytes(),
+    )];
+    for skill in CLAUDE_DESKTOP_SKILLS {
+        let src = content.join(skill);
+        if !src.join("SKILL.md").is_file() {
+            continue; // declared but absent; packaging reports it
+        }
+        let mut rels = Vec::new();
+        collect_tree(&src, &src, &mut rels)?;
+        rels.sort();
+        for rel in rels {
+            out.push((
+                Path::new("skills").join(skill).join(&rel),
+                fs::read(src.join(&rel))?,
+            ));
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(out)
+}
+
+/// The plugin manifest bytes. One definition, used by both the packager and
+/// the read-only expectation — otherwise a manifest change would look like
+/// permanent drift to status.
+fn plugin_manifest_bytes() -> Vec<u8> {
+    let manifest = serde_json::json!({
+        "name": "maid",
+        "description": "Document-shaped skills from the mAId content tree.",
+        // Without this the plugin lands as `available` — present in the
+        // app's plugin list but switched off until enabled by hand, which
+        // makes "install" only half-true. `auto_install` enables it on the
+        // next launch; `required` would too, but re-asserts on every sync
+        // and hides the uninstall action, so a deliberate disable would be
+        // overridden. This is the user's own tooling: install it for them,
+        // still let them turn it off.
+        "installationPreference": "auto_install",
+    });
+    format!(
+        "{}\n",
+        serde_json::to_string_pretty(&manifest).expect("manifest is a literal")
+    )
+    .into_bytes()
+}
+
+/// Compare a Copy destination against what the content tree *should* produce.
+/// Used by status so drift is reported against source, not build output.
+fn plan_copy_against_content(home: PathBuf, source: PathBuf, checkout: &Path) -> io::Result<Plan> {
+    let expected = expected_plugin_files(checkout)?;
+    let cmp = match fs::symlink_metadata(&home) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            if expected.len() > 1 {
+                Comparison::Missing
+            } else {
+                Comparison::SourceMissing // manifest only: nothing to ship
+            }
+        }
+        Err(e) => return Err(e),
+        Ok(meta) if meta.file_type().is_symlink() => Comparison::WrongTarget(fs::read_link(&home)?),
+        Ok(meta) if meta.is_dir() => {
+            if !home.join(OWNED_MARKER).is_file() {
+                Comparison::BlockedByRealDir
+            } else if dest_matches_expected(&home, &expected)? {
+                Comparison::Match
+            } else {
+                Comparison::Stale
+            }
+        }
+        Ok(_) => Comparison::BlockedByRealFile,
+    };
+    Ok(Plan { home, source, cmp })
+}
+
+/// Does the destination hold exactly the expected files, byte for byte?
+fn dest_matches_expected(dest: &Path, expected: &[(PathBuf, Vec<u8>)]) -> io::Result<bool> {
+    let mut actual = Vec::new();
+    collect_tree(dest, dest, &mut actual)?;
+    // The ownership marker is install-written and absent from source.
+    actual.retain(|p| p != Path::new(OWNED_MARKER));
+    actual.sort();
+    let mut want: Vec<PathBuf> = expected.iter().map(|(p, _)| p.clone()).collect();
+    want.sort();
+    if actual != want {
+        return Ok(false);
+    }
+    for (rel, bytes) in expected {
+        let p = dest.join(rel);
+        // A symlink is drift by definition: this strategy exists because the
+        // app refuses symlinked entries, and `fs::read` would follow one.
+        if fs::symlink_metadata(&p)?.file_type().is_symlink() || &fs::read(&p)? != bytes {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Clear our plugin from the app's user-uninstall tombstone list, so an
@@ -876,12 +968,17 @@ fn cmd_status(roots: Roots, checkout: &Path, agent: Option<&str>) -> Result<u8> 
     let agent = validate_agent(agent)?;
     let entries = selected_entries(agent);
 
-    // Status is read-only: it never packages. Repackaging here would make
-    // a report verb mutate the repo, and — worse — after the documented
-    // `sudo install-skills claude-desktop`, build output is root-owned, so an
-    // unprivileged status would fail on a write it had no reason to
-    // attempt. A claude-desktop row with nothing packaged reports "source
-    // missing", which is the honest state.
+    // Status stays read-only — a report verb must not mutate the repo, and
+    // build output can be root-owned after a `sudo` install, so writing here
+    // would fail on something status had no reason to attempt.
+    //
+    // But it must not compare against *stale* build output either: the
+    // content tree is edited far more often than this is installed, and
+    // comparing destination-to-package would report `ok` for an edit that
+    // has not shipped. So the expectation is derived from the content tree
+    // in memory (`expected_plugin_files`) and compared against the
+    // destination directly. Read-only and honest, rather than one or the
+    // other.
 
     for entry in entries {
         for (h, s, strat) in expand(entry, roots, checkout)? {
@@ -892,7 +989,12 @@ fn cmd_status(roots: Roots, checkout: &Path, agent: Option<&str>) -> Result<u8> 
                 .unwrap_or(&h)
                 .display()
                 .to_string();
-            let plan = plan_for(h.clone(), s, strat)?;
+            // Copy rows compare against the content tree, not build
+            // output, so an unshipped edit reads as drift rather than ok.
+            let plan = match strat {
+                Strategy::Copy => plan_copy_against_content(h.clone(), s, checkout)?,
+                _ => plan_for(h.clone(), s, strat)?,
+            };
             let state = match plan.cmp {
                 Comparison::Match => match strat {
                     Strategy::Copy => format!("ok (copied from {})", plan.source.display()),
@@ -2331,6 +2433,88 @@ mod tests {
             .iter()
             .map(|e| e.as_str().unwrap().to_string())
             .collect()
+    }
+
+    #[test]
+    fn status_reports_an_unshipped_content_edit_as_stale() {
+        // The content tree is edited far more often than this is installed,
+        // so this is the common case. Status used to compare the destination
+        // against build output, which meant an edit that had not been
+        // packaged yet still read as `ok` — status lying about being current.
+        let checkout = make_checkout_with_skills();
+        let home = TempDir::new().unwrap();
+        cmd_install(
+            test_roots(home.path()),
+            checkout.path(),
+            false,
+            false,
+            Some("claude-desktop"),
+        )
+        .unwrap();
+        let (dest, src) = copy_row(home.path(), checkout.path());
+        assert_eq!(
+            plan_copy_against_content(dest.clone(), src.clone(), checkout.path())
+                .unwrap()
+                .cmp,
+            Comparison::Match
+        );
+
+        // Edit content only — do NOT repackage, which is the state a user is
+        // in immediately after editing a skill.
+        write(
+            &checkout
+                .path()
+                .join("resources/content/skills/notes/SKILL.md"),
+            "---\nname: notes\ndescription: edited\n---\nnew body.\n",
+        );
+        assert_eq!(
+            plan_copy_against_content(dest.clone(), src.clone(), checkout.path())
+                .unwrap()
+                .cmp,
+            Comparison::Stale,
+            "an unshipped content edit must read as stale, not ok"
+        );
+
+        // Installing converges it.
+        cmd_install(
+            test_roots(home.path()),
+            checkout.path(),
+            false,
+            false,
+            Some("claude-desktop"),
+        )
+        .unwrap();
+        assert_eq!(
+            plan_copy_against_content(dest, src, checkout.path())
+                .unwrap()
+                .cmp,
+            Comparison::Match
+        );
+    }
+
+    #[test]
+    fn expected_plugin_files_matches_what_packaging_writes() {
+        // The two must not drift: status compares against the expectation,
+        // install writes the package. A manifest or subset change that
+        // touched only one would make status permanently wrong.
+        let checkout = make_checkout_with_skills();
+        package_claude_desktop_plugin(checkout.path()).unwrap();
+        let out = checkout.path().join("target/claude-desktop-plugin/maid");
+
+        let expected = expected_plugin_files(checkout.path()).unwrap();
+        for (rel, bytes) in &expected {
+            let on_disk = fs::read(out.join(rel))
+                .unwrap_or_else(|e| panic!("packaging omitted {}: {e}", rel.display()));
+            assert_eq!(&on_disk, bytes, "bytes differ for {}", rel.display());
+        }
+
+        let mut packaged = Vec::new();
+        collect_tree(&out, &out, &mut packaged).unwrap();
+        assert_eq!(
+            packaged.len(),
+            expected.len(),
+            "packaging wrote files the expectation does not know about"
+        );
     }
 
     #[test]

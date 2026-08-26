@@ -316,6 +316,16 @@ edited after the install. `status-skills` reports that explicitly
 destination cannot reach that state. Content comparison, not mtimes,
 decides: mtimes shift with checkout order and clock skew.
 
+**Status compares against the content tree, not build output.** This repo's
+content changes far more often than it is installed, so the question status
+must answer is "does the destination match what I have now?" — not "does it
+match the last package I built?". Comparing to build output made an unshipped
+edit read as `ok`. It stays read-only (a report verb must not mutate the
+repo, and build output may be root-owned after an elevated install), so the
+expectation is derived from content in memory. Packaging and that expectation
+share one manifest definition, and a test asserts they agree — otherwise a
+change to one would make status permanently wrong.
+
 ### The `claude-desktop` target — document-shaped skills only
 
 The `claude-desktop` target carries **document-oriented skills only**, packaged as
