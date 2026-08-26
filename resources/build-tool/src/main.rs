@@ -7,12 +7,12 @@
 //!   just resources::install-skills [target]    populate each destination (after content checks)
 //!   just resources::uninstall-skills [target]  remove the managed destinations
 //!   just resources::status-skills [target]     report each destination's current state
-//! An optional `--agent <claude|kiro|codex|desktop>` scopes any of the
+//! An optional `--agent <claude|kiro|codex|claude-desktop>` scopes any of the
 //! three verbs to one target; the default is all of them.
 //!
 //! Each registry row names the strategy that populates its destination:
-//! symlink for the coding agents (live edits), copy for the desktop app
-//! (which refuses a symlinked plugin dir). See the registry comment.
+//! symlink for the coding agents (live edits), copy for Claude
+//! Desktop (which refuses a symlinked plugin dir). See the registry comment.
 //!
 //! `just resources::verify` is a separate verb that drives
 //! `claude --print` (and kiro/codex) against the installed content;
@@ -74,9 +74,9 @@ enum Strategy {
 /// The targets mAId deploys to. An install/uninstall/status can be
 /// scoped to one (`--agent`) or, by default, cover them all. This list
 /// is also the recognized universe used to validate `--agent`.
-const AGENTS: &[&str] = &["claude", "kiro", "codex", "desktop"];
+const AGENTS: &[&str] = &["claude", "kiro", "codex", "claude-desktop"];
 
-/// Where the desktop app reads org-provisioned plugins from. **Absolute,
+/// Where Claude Desktop reads org-provisioned plugins from. **Absolute,
 /// not `$HOME`-relative**: the app hardcodes this system path, so a
 /// per-user `~/Library/...` copy is never read. That is what makes this
 /// the one target needing elevation.
@@ -84,13 +84,13 @@ const AGENTS: &[&str] = &["claude", "kiro", "codex", "desktop"];
 /// Registry rows are `$HOME`-relative by default; a `/`-rooted row is
 /// resolved against `Roots::system` instead, which is `/` in production and
 /// a tempdir under test.
-const DESKTOP_PLUGIN_PATH: &str = "/Library/Application Support/Claude/org-plugins/maid";
+const CLAUDE_DESKTOP_PLUGIN_PATH: &str = "/Library/Application Support/Claude/org-plugins/maid";
 
-/// The skills that reach the desktop target: **document-shaped only**.
+/// The skills that reach the Claude Desktop target: **document-shaped only**.
 /// Terminal-shaped skills (built around a checkout or a shell session)
 /// have nothing to act on in a document workspace, so they are excluded
 /// by design rather than pending. See project.md "Desktop target".
-const DESKTOP_SKILLS: &[&str] = &["notes", "writing-style"];
+const CLAUDE_DESKTOP_SKILLS: &[&str] = &["notes", "writing-style"];
 
 /// Written into every `Copy` destination so ownership is a fact rather
 /// than an inference. Copy destinations can be system paths that other
@@ -118,18 +118,19 @@ const REGISTRY: &[Entry] = &[
         "codex",
     ),
     // The source is the packaged plugin under build output, not the
-    // content tree — the desktop app reads a plugin (manifest + skills),
-    // not a bare skills dir. `package_desktop_plugin` builds it.
+    // content tree — Claude Desktop reads a plugin (manifest + skills),
+    // not a bare skills dir. `package_claude_desktop_plugin` builds it.
     (
-        DESKTOP_PLUGIN_PATH,
-        "target/desktop-plugin/maid",
+        CLAUDE_DESKTOP_PLUGIN_PATH,
+        "target/claude-desktop-plugin/maid",
         Strategy::Copy,
-        "desktop",
+        "claude-desktop",
     ),
 ];
 
 /// Where a registry destination is rooted. Most rows are `$HOME`-relative;
-/// the desktop row is absolute, because the app hardcodes a system path.
+/// the Claude Desktop row is absolute, because that app hardcodes a
+/// system path.
 ///
 /// Both roots are passed explicitly rather than read from the environment:
 /// the tests need to redirect the absolute root to a tempdir, and a
@@ -175,12 +176,12 @@ fn selected_entries(agent: Option<&str>) -> Vec<Entry> {
 }
 
 /// Validate an `--agent` value against the known set, returning it
-/// back for chaining. An unknown agent is a hard error listing the
+/// back for chaining. An unknown target is a hard error listing the
 /// valid names, so a typo never silently installs nothing.
 fn validate_agent(agent: Option<&str>) -> Result<Option<&str>> {
     match agent {
         Some(a) if !AGENTS.contains(&a) => Err(anyhow!(
-            "unknown coding agent {a:?} (known: {})",
+            "unknown target {a:?} (known: {})",
             AGENTS.join(", ")
         )),
         other => Ok(other),
@@ -457,30 +458,30 @@ fn ensure_parent(p: &Path) -> io::Result<()> {
 // ─────────────────────────────────────────────────────────────────
 // 3b. Desktop plugin packaging.
 //
-// The desktop app reads a *plugin* — a directory with a manifest that
+// Claude Desktop reads a *plugin* — a directory with a manifest that
 // bundles skills — not a bare skills dir. So the Copy row's source is
 // assembled under build output rather than pointing at the content tree:
 //
-//   target/desktop-plugin/maid/
+//   target/claude-desktop-plugin/maid/
 //   ├── .claude-plugin/plugin.json
-//   └── skills/<name>/…            (one per DESKTOP_SKILLS entry)
+//   └── skills/<name>/…            (one per CLAUDE_DESKTOP_SKILLS entry)
 //
 // Assembling under `target/` keeps the content tree unmutated and gives
 // install/status/uninstall one source of truth to compare against.
 // ─────────────────────────────────────────────────────────────────
 
-/// Assemble the desktop plugin from the declared skill subset. Returns
+/// Assemble the Claude Desktop plugin from the declared skill subset. Returns
 /// the skills packaged and those skipped (present in content, not
 /// document-shaped), so the caller can report the omission as intent.
-fn package_desktop_plugin(checkout: &Path) -> Result<(Vec<String>, Vec<String>)> {
+fn package_claude_desktop_plugin(checkout: &Path) -> Result<(Vec<String>, Vec<String>)> {
     let content = checkout.join("resources/content/skills");
-    let out = checkout.join("target/desktop-plugin/maid");
+    let out = checkout.join("target/claude-desktop-plugin/maid");
 
-    // Rebuild from scratch: a skill dropped from DESKTOP_SKILLS must not
+    // Rebuild from scratch: a skill dropped from CLAUDE_DESKTOP_SKILLS must not
     // survive in the packaged output and get copied onward.
     //
     // A root-owned `out` is a reachable state, not a hypothetical: the
-    // documented `sudo install-skills desktop` leaves build output owned by
+    // documented `sudo install-skills claude-desktop` leaves build output owned by
     // root, and every later unprivileged run would fail here. Say what to
     // do rather than surfacing a bare permission error on a path the user
     // never chose.
@@ -523,7 +524,7 @@ fn package_desktop_plugin(checkout: &Path) -> Result<(Vec<String>, Vec<String>)>
     // state (a fresh checkout, or a test fixture with a subset).
     let mut packaged = Vec::new();
     let mut absent = Vec::new();
-    for skill in DESKTOP_SKILLS {
+    for skill in CLAUDE_DESKTOP_SKILLS {
         let src = content.join(skill);
         if src.join("SKILL.md").is_file() {
             copy_tree(&src, &out.join("skills").join(skill))
@@ -535,7 +536,7 @@ fn package_desktop_plugin(checkout: &Path) -> Result<(Vec<String>, Vec<String>)>
     }
     if !absent.is_empty() {
         eprintln!(
-            "desktop plugin: declared but not in content: {} (nothing to package)",
+            "claude-desktop plugin: declared but not in content: {} (nothing to package)",
             absent.join(", ")
         );
     }
@@ -547,13 +548,13 @@ fn package_desktop_plugin(checkout: &Path) -> Result<(Vec<String>, Vec<String>)>
         .filter_map(Result::ok)
         .filter(|e| e.path().join("SKILL.md").is_file())
         .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|n| !DESKTOP_SKILLS.contains(&n.as_str()))
+        .filter(|n| !CLAUDE_DESKTOP_SKILLS.contains(&n.as_str()))
         .collect();
     skipped.sort();
     Ok((packaged, skipped))
 }
 
-/// Is the desktop destination writable without elevation? The app's
+/// Is the Claude Desktop destination writable without elevation? Its
 /// plugin dir is system-wide, so check before doing any work — a
 /// half-installed plugin is worse than a clear refusal.
 ///
@@ -561,8 +562,8 @@ fn package_desktop_plugin(checkout: &Path) -> Result<(Vec<String>, Vec<String>)>
 /// doesn't exist on a first install, and whatever sits at the leaf may not
 /// be a directory at all (a hand-placed file is a case install handles on
 /// its own, so it must not be misreported here as a permission problem).
-fn desktop_writable(roots: Roots) -> bool {
-    let dest = roots.resolve(DESKTOP_PLUGIN_PATH);
+fn claude_desktop_writable(roots: Roots) -> bool {
+    let dest = roots.resolve(CLAUDE_DESKTOP_PLUGIN_PATH);
     let mut probe = dest.as_path();
     loop {
         if probe.is_dir() {
@@ -606,7 +607,7 @@ enum Cmd {
         /// Replace symlinks that point elsewhere.
         #[arg(long)]
         force: bool,
-        /// Scope to one target (claude|kiro|codex|desktop); default all.
+        /// Scope to one target (claude|kiro|codex|claude-desktop); default all.
         #[arg(long)]
         agent: Option<String>,
     },
@@ -620,13 +621,13 @@ enum Cmd {
         /// directory at a Copy destination — that is shared ground.
         #[arg(long)]
         force: bool,
-        /// Scope to one target (claude|kiro|codex|desktop); default all.
+        /// Scope to one target (claude|kiro|codex|claude-desktop); default all.
         #[arg(long)]
         agent: Option<String>,
     },
     /// Report each managed destination's state.
     Status {
-        /// Scope to one target (claude|kiro|codex|desktop); default all.
+        /// Scope to one target (claude|kiro|codex|claude-desktop); default all.
         #[arg(long)]
         agent: Option<String>,
     },
@@ -674,20 +675,20 @@ fn cmd_install(
     eprintln!("validated {count} content file(s)");
 
     let mut entries = selected_entries(agent);
-    let touches_desktop = entries.iter().any(|(.., a)| *a == "desktop");
-    let mut desktop_skipped = false;
+    let touches_claude_desktop = entries.iter().any(|(.., a)| *a == "claude-desktop");
+    let mut claude_desktop_skipped = false;
 
-    if touches_desktop {
+    if touches_claude_desktop {
         // Package before planning: the Copy row's source is build output,
         // so it must exist before the destination is compared against it.
-        let (packaged, skipped) = package_desktop_plugin(checkout)?;
-        eprintln!("desktop plugin: packaged {}", packaged.join(", "));
+        let (packaged, skipped) = package_claude_desktop_plugin(checkout)?;
+        eprintln!("claude-desktop plugin: packaged {}", packaged.join(", "));
         if !skipped.is_empty() {
             // Named, not silent — the subset is a declared scoping rule
             // (document-shaped only), so the omission should read as
             // intent rather than as a missing skill.
             eprintln!(
-                "desktop plugin: skipped {} (not document-shaped)",
+                "claude-desktop plugin: skipped {} (not document-shaped)",
                 skipped.join(", ")
             );
         }
@@ -697,14 +698,14 @@ fn cmd_install(
         // `install-skills` installed nothing at all — including the three
         // targets that need no elevation. Every other refusal in this file
         // is per-row; this matches.
-        if !dry_run && !desktop_writable(roots) {
+        if !dry_run && !claude_desktop_writable(roots) {
             eprintln!(
                 "skip      {} (not writable; needs elevation)\n\
-                 \x20         run: sudo just resources::install-skills desktop",
-                roots.resolve(DESKTOP_PLUGIN_PATH).display()
+                 \x20         run: sudo just resources::install-skills claude-desktop",
+                roots.resolve(CLAUDE_DESKTOP_PLUGIN_PATH).display()
             );
-            entries.retain(|(.., a)| *a != "desktop");
-            desktop_skipped = true;
+            entries.retain(|(.., a)| *a != "claude-desktop");
+            claude_desktop_skipped = true;
         }
     }
 
@@ -722,7 +723,7 @@ fn cmd_install(
         .into_iter()
         .filter(|&fail| fail)
         .count();
-    Ok(if failures > 0 || desktop_skipped {
+    Ok(if failures > 0 || claude_desktop_skipped {
         1
     } else {
         0
@@ -760,9 +761,9 @@ fn cmd_status(roots: Roots, checkout: &Path, agent: Option<&str>) -> Result<u8> 
 
     // Status is read-only: it never packages. Repackaging here would make
     // a report verb mutate the repo, and — worse — after the documented
-    // `sudo install-skills desktop`, build output is root-owned, so an
+    // `sudo install-skills claude-desktop`, build output is root-owned, so an
     // unprivileged status would fail on a write it had no reason to
-    // attempt. A desktop row with nothing packaged reports "source
+    // attempt. A claude-desktop row with nothing packaged reports "source
     // missing", which is the honest state.
 
     for entry in entries {
@@ -1246,17 +1247,17 @@ mod tests {
 
     /// Roots for tests: both the home and the absolute-destination root
     /// live inside the same tempdir, so an absolute registry row (the
-    /// desktop plugin path) can never touch the real filesystem.
+    /// Claude Desktop plugin path) can never touch the real filesystem.
     fn test_roots(home: &Path) -> Roots<'_> {
         Roots { home, system: home }
     }
 
-    /// The desktop (Copy) row's single (destination, source) pair.
+    /// The claude-desktop (Copy) row's single (destination, source) pair.
     fn copy_row(home: &Path, checkout: &Path) -> (PathBuf, PathBuf) {
         let entry = *REGISTRY
             .iter()
-            .find(|(.., a)| *a == "desktop")
-            .expect("a desktop row");
+            .find(|(.., a)| *a == "claude-desktop")
+            .expect("a claude-desktop row");
         let (h, s, _) = expand(entry, test_roots(home), checkout)
             .unwrap()
             .into_iter()
@@ -1504,9 +1505,9 @@ mod tests {
     /// exercising the `Strategy::FanOut` entry (`.codex/skills`).
     fn make_checkout_with_skills() -> TempDir {
         let dir = make_checkout();
-        // `kdevkit` is terminal-shaped (excluded from the desktop
+        // `kdevkit` is terminal-shaped (excluded from the claude-desktop
         // target); `notes` and `writing-style` are the document-shaped
-        // ones DESKTOP_SKILLS declares, so this covers both sides of the
+        // ones CLAUDE_DESKTOP_SKILLS declares, so this covers both sides of the
         // packaging split.
         for name in ["kdevkit", "notes", "writing-style"] {
             write(
@@ -1740,23 +1741,23 @@ mod tests {
         // …while claude and kiro whole-dir links were never made.
         assert!(!path_exists(&home.path().join(".claude/skills")));
         assert!(!path_exists(&home.path().join(".kiro/steering/skills")));
-        // …and the desktop copy row was not touched either.
+        // …and the claude-desktop copy row was not touched either.
         assert!(!path_exists(
-            &test_roots(home.path()).resolve(DESKTOP_PLUGIN_PATH)
+            &test_roots(home.path()).resolve(CLAUDE_DESKTOP_PLUGIN_PATH)
         ));
     }
 
-    // ── copy strategy (the desktop target) ──────────────────────
+    // ── copy strategy (the claude-desktop target) ───────────────
 
     #[test]
-    fn desktop_packages_only_document_shaped_skills() {
+    fn claude_desktop_packages_only_document_shaped_skills() {
         let checkout = make_checkout_with_skills();
-        let (packaged, skipped) = package_desktop_plugin(checkout.path()).unwrap();
+        let (packaged, skipped) = package_claude_desktop_plugin(checkout.path()).unwrap();
         assert_eq!(packaged, vec!["notes", "writing-style"]);
         // kdevkit is terminal-shaped: present in content, deliberately out.
         assert_eq!(skipped, vec!["kdevkit"]);
 
-        let plugin = checkout.path().join("target/desktop-plugin/maid");
+        let plugin = checkout.path().join("target/claude-desktop-plugin/maid");
         assert!(plugin.join(".claude-plugin/plugin.json").is_file());
         assert!(plugin.join("skills/notes/SKILL.md").is_file());
         assert!(plugin.join("skills/writing-style/SKILL.md").is_file());
@@ -1764,13 +1765,13 @@ mod tests {
     }
 
     #[test]
-    fn desktop_manifest_is_valid_json_naming_the_plugin() {
+    fn claude_desktop_manifest_is_valid_json_naming_the_plugin() {
         let checkout = make_checkout_with_skills();
-        package_desktop_plugin(checkout.path()).unwrap();
+        package_claude_desktop_plugin(checkout.path()).unwrap();
         let raw = fs::read_to_string(
             checkout
                 .path()
-                .join("target/desktop-plugin/maid/.claude-plugin/plugin.json"),
+                .join("target/claude-desktop-plugin/maid/.claude-plugin/plugin.json"),
         )
         .unwrap();
         // Parsed, not string-matched: an invalid manifest is silently
@@ -1781,21 +1782,21 @@ mod tests {
     }
 
     #[test]
-    fn desktop_repackaging_drops_a_skill_removed_from_the_subset() {
+    fn claude_desktop_repackaging_drops_a_skill_removed_from_the_subset() {
         // Packaging rebuilds from scratch, so stale output can't survive
         // into the copy and reach the app.
         let checkout = make_checkout_with_skills();
-        package_desktop_plugin(checkout.path()).unwrap();
+        package_claude_desktop_plugin(checkout.path()).unwrap();
         let stray = checkout
             .path()
-            .join("target/desktop-plugin/maid/skills/gone/SKILL.md");
+            .join("target/claude-desktop-plugin/maid/skills/gone/SKILL.md");
         write(&stray, "---\nname: gone\ndescription: x\n---\n");
-        package_desktop_plugin(checkout.path()).unwrap();
+        package_claude_desktop_plugin(checkout.path()).unwrap();
         assert!(!stray.exists());
     }
 
     #[test]
-    fn desktop_install_copies_real_files_not_symlinks() {
+    fn claude_desktop_install_copies_real_files_not_symlinks() {
         // The whole reason Copy exists: the app refuses a symlinked
         // plugin dir, so every installed entry must be a real file.
         let checkout = make_checkout_with_skills();
@@ -1806,19 +1807,19 @@ mod tests {
                 checkout.path(),
                 false,
                 false,
-                Some("desktop")
+                Some("claude-desktop")
             )
             .unwrap(),
             0
         );
-        let dest = test_roots(home.path()).resolve(DESKTOP_PLUGIN_PATH);
+        let dest = test_roots(home.path()).resolve(CLAUDE_DESKTOP_PLUGIN_PATH);
         assert!(!dest.is_symlink());
         let skill = dest.join("skills/notes/SKILL.md");
         assert!(skill.is_file() && !skill.is_symlink());
     }
 
     #[test]
-    fn desktop_install_is_idempotent() {
+    fn claude_desktop_install_is_idempotent() {
         let checkout = make_checkout_with_skills();
         let home = TempDir::new().unwrap();
         cmd_install(
@@ -1826,7 +1827,7 @@ mod tests {
             checkout.path(),
             false,
             false,
-            Some("desktop"),
+            Some("claude-desktop"),
         )
         .unwrap();
         let (dest, src) = copy_row(home.path(), checkout.path());
@@ -1840,7 +1841,7 @@ mod tests {
                 checkout.path(),
                 false,
                 false,
-                Some("desktop")
+                Some("claude-desktop")
             )
             .unwrap(),
             0
@@ -1849,7 +1850,7 @@ mod tests {
     }
 
     #[test]
-    fn desktop_edited_source_reports_stale_then_refreshes() {
+    fn claude_desktop_edited_source_reports_stale_then_refreshes() {
         let checkout = make_checkout_with_skills();
         let home = TempDir::new().unwrap();
         cmd_install(
@@ -1857,7 +1858,7 @@ mod tests {
             checkout.path(),
             false,
             false,
-            Some("desktop"),
+            Some("claude-desktop"),
         )
         .unwrap();
 
@@ -1868,7 +1869,7 @@ mod tests {
                 .join("resources/content/skills/notes/SKILL.md"),
             "---\nname: notes\ndescription: edited\n---\nnew body.\n",
         );
-        package_desktop_plugin(checkout.path()).unwrap();
+        package_claude_desktop_plugin(checkout.path()).unwrap();
         let (dest, src) = copy_row(home.path(), checkout.path());
         assert_eq!(
             plan_one_copy(dest.clone(), src.clone()).unwrap().cmp,
@@ -1882,7 +1883,7 @@ mod tests {
             checkout.path(),
             false,
             false,
-            Some("desktop"),
+            Some("claude-desktop"),
         )
         .unwrap();
         assert_eq!(
@@ -1895,7 +1896,7 @@ mod tests {
     }
 
     #[test]
-    fn desktop_refresh_drops_files_deleted_from_source() {
+    fn claude_desktop_refresh_drops_files_deleted_from_source() {
         // Remove-then-copy, not overwrite-in-place: a file deleted from
         // source must not linger in the destination.
         let checkout = make_checkout_with_skills();
@@ -1905,10 +1906,10 @@ mod tests {
             checkout.path(),
             false,
             false,
-            Some("desktop"),
+            Some("claude-desktop"),
         )
         .unwrap();
-        let dest = test_roots(home.path()).resolve(DESKTOP_PLUGIN_PATH);
+        let dest = test_roots(home.path()).resolve(CLAUDE_DESKTOP_PLUGIN_PATH);
         assert!(dest.join("skills/writing-style/SKILL.md").is_file());
 
         fs::remove_dir_all(
@@ -1922,7 +1923,7 @@ mod tests {
             checkout.path(),
             false,
             false,
-            Some("desktop"),
+            Some("claude-desktop"),
         )
         .unwrap();
         assert!(!dest.join("skills/writing-style").exists());
@@ -1930,7 +1931,7 @@ mod tests {
     }
 
     #[test]
-    fn desktop_dry_run_makes_no_changes() {
+    fn claude_desktop_dry_run_makes_no_changes() {
         let checkout = make_checkout_with_skills();
         let home = TempDir::new().unwrap();
         cmd_install(
@@ -1938,16 +1939,16 @@ mod tests {
             checkout.path(),
             true,
             false,
-            Some("desktop"),
+            Some("claude-desktop"),
         )
         .unwrap();
         assert!(!path_exists(
-            &test_roots(home.path()).resolve(DESKTOP_PLUGIN_PATH)
+            &test_roots(home.path()).resolve(CLAUDE_DESKTOP_PLUGIN_PATH)
         ));
     }
 
     #[test]
-    fn desktop_uninstall_removes_the_tree_and_is_idempotent() {
+    fn claude_desktop_uninstall_removes_the_tree_and_is_idempotent() {
         let checkout = make_checkout_with_skills();
         let home = TempDir::new().unwrap();
         cmd_install(
@@ -1955,10 +1956,10 @@ mod tests {
             checkout.path(),
             false,
             false,
-            Some("desktop"),
+            Some("claude-desktop"),
         )
         .unwrap();
-        let dest = test_roots(home.path()).resolve(DESKTOP_PLUGIN_PATH);
+        let dest = test_roots(home.path()).resolve(CLAUDE_DESKTOP_PLUGIN_PATH);
         assert!(dest.is_dir());
 
         assert_eq!(
@@ -1967,7 +1968,7 @@ mod tests {
                 checkout.path(),
                 false,
                 false,
-                Some("desktop")
+                Some("claude-desktop")
             )
             .unwrap(),
             0
@@ -1980,7 +1981,7 @@ mod tests {
                 checkout.path(),
                 false,
                 false,
-                Some("desktop")
+                Some("claude-desktop")
             )
             .unwrap(),
             0
@@ -1988,7 +1989,7 @@ mod tests {
     }
 
     #[test]
-    fn desktop_uninstall_preserves_sibling_plugins() {
+    fn claude_desktop_uninstall_preserves_sibling_plugins() {
         // Our destination is one plugin inside a dir the app also lets
         // others populate; uninstall must not reach outside it.
         let checkout = make_checkout_with_skills();
@@ -1998,7 +1999,7 @@ mod tests {
             checkout.path(),
             false,
             false,
-            Some("desktop"),
+            Some("claude-desktop"),
         )
         .unwrap();
         let sibling = home
@@ -2011,17 +2012,17 @@ mod tests {
             checkout.path(),
             false,
             false,
-            Some("desktop"),
+            Some("claude-desktop"),
         )
         .unwrap();
         assert!(sibling.is_file(), "a sibling plugin must survive uninstall");
     }
 
     #[test]
-    fn desktop_foreign_symlink_at_destination_is_skipped_without_force() {
+    fn claude_desktop_foreign_symlink_at_destination_is_skipped_without_force() {
         let checkout = make_checkout_with_skills();
         let home = TempDir::new().unwrap();
-        let dest = test_roots(home.path()).resolve(DESKTOP_PLUGIN_PATH);
+        let dest = test_roots(home.path()).resolve(CLAUDE_DESKTOP_PLUGIN_PATH);
         ensure_parent(&dest).unwrap();
         let elsewhere = home.path().join("elsewhere");
         fs::create_dir_all(&elsewhere).unwrap();
@@ -2034,7 +2035,7 @@ mod tests {
                 checkout.path(),
                 false,
                 false,
-                Some("desktop")
+                Some("claude-desktop")
             )
             .unwrap(),
             1
@@ -2043,10 +2044,10 @@ mod tests {
     }
 
     #[test]
-    fn desktop_real_file_at_destination_is_preserved() {
+    fn claude_desktop_real_file_at_destination_is_preserved() {
         let checkout = make_checkout_with_skills();
         let home = TempDir::new().unwrap();
-        let dest = test_roots(home.path()).resolve(DESKTOP_PLUGIN_PATH);
+        let dest = test_roots(home.path()).resolve(CLAUDE_DESKTOP_PLUGIN_PATH);
         write(&dest, "hand-written\n");
         assert_eq!(
             cmd_install(
@@ -2054,7 +2055,7 @@ mod tests {
                 checkout.path(),
                 false,
                 false,
-                Some("desktop")
+                Some("claude-desktop")
             )
             .unwrap(),
             1
@@ -2066,14 +2067,14 @@ mod tests {
     // pre-fix code, which is the point.
 
     #[test]
-    fn desktop_refuses_a_foreign_directory_at_the_destination() {
+    fn claude_desktop_refuses_a_foreign_directory_at_the_destination() {
         // The destination is a shared system dir another tool may populate.
         // Without an ownership marker, "differs from source" is
         // indistinguishable from "someone else's data" — and the pre-fix
         // code deleted it via the Stale path, with no --force.
         let checkout = make_checkout_with_skills();
         let home = TempDir::new().unwrap();
-        let dest = test_roots(home.path()).resolve(DESKTOP_PLUGIN_PATH);
+        let dest = test_roots(home.path()).resolve(CLAUDE_DESKTOP_PLUGIN_PATH);
         let theirs = dest.join("THEIRS.md");
         write(&theirs, "another tool's plugin\n");
 
@@ -2085,7 +2086,7 @@ mod tests {
                     checkout.path(),
                     false,
                     force,
-                    Some("desktop")
+                    Some("claude-desktop")
                 )
                 .unwrap(),
                 1
@@ -2097,7 +2098,7 @@ mod tests {
                     checkout.path(),
                     false,
                     force,
-                    Some("desktop")
+                    Some("claude-desktop")
                 )
                 .unwrap(),
                 1
@@ -2107,8 +2108,8 @@ mod tests {
     }
 
     #[test]
-    fn unwritable_desktop_dest_still_installs_the_other_targets() {
-        // The default verb includes desktop, whose real destination is
+    fn unwritable_claude_desktop_dest_still_installs_the_other_targets() {
+        // The default verb includes claude-desktop, whose real destination is
         // root-owned. Aborting would install nothing at all — including the
         // three targets needing no elevation.
         let checkout = make_checkout_with_skills();
@@ -2133,7 +2134,7 @@ mod tests {
         assert_eq!(rc, 1, "the skip should be reported in the exit code");
         assert!(
             path_exists(&home.path().join(".claude/skills")),
-            "claude must still be installed when only desktop is unwritable"
+            "claude must still be installed when only claude-desktop is unwritable"
         );
         assert!(path_exists(&home.path().join(".codex/skills/notes")));
     }
@@ -2145,14 +2146,14 @@ mod tests {
         // once a sudo install had left build output root-owned.
         let checkout = make_checkout_with_skills();
         let home = TempDir::new().unwrap();
-        let out = checkout.path().join("target/desktop-plugin");
+        let out = checkout.path().join("target/claude-desktop-plugin");
         assert!(!out.exists());
         cmd_status(test_roots(home.path()), checkout.path(), None).unwrap();
         assert!(!out.exists(), "status packaged build output");
     }
 
     #[test]
-    fn desktop_symlink_inside_the_installed_tree_reads_as_drift() {
+    fn claude_desktop_symlink_inside_the_installed_tree_reads_as_drift() {
         // Copy exists because the app refuses symlinks. A symlinked file
         // inside the destination must not read as ok — fs::read would
         // follow it and report a false match.
@@ -2163,7 +2164,7 @@ mod tests {
             checkout.path(),
             false,
             false,
-            Some("desktop"),
+            Some("claude-desktop"),
         )
         .unwrap();
         let (dest, src) = copy_row(home.path(), checkout.path());

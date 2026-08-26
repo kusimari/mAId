@@ -45,8 +45,8 @@ Two halves at the top level:
      `…::status-skills`, `…::verify-skills`
      (single-fixture: `just resources::verify-skills-one <name>`).
      Every verb follows the `<action>-<resource-kind>` pattern and
-     takes an optional target selector (`claude|kiro|codex|desktop`;
-     omit for all four). These are how a human or another tool
+     takes an optional target selector
+     (`claude|kiro|codex|claude-desktop`; omit for all four). These are how a human or another tool
      consumes the
      tooling.
 - **`kaimux/`** — tmux-pane orchestrator for coding-agent
@@ -79,7 +79,7 @@ Skills deploy through the registry, each row naming the **strategy** that
 populates its destination — symlink for the three coding agents, which
 discover them natively at their own skills path (`~/.claude/skills`,
 `~/.kiro/steering/skills`, `~/.codex/skills`) and get live edits; copy for
-the desktop app, which reads a plugin directory and refuses a symlink
+Claude Desktop, which reads a plugin directory and refuses a symlink
 there. Strategy is the third registry dimension alongside destination and
 agent, so a new target is a row rather than a new code path (see
 Deployment). mAId installs no global instruction file:
@@ -138,8 +138,8 @@ re-auth. Its shape differs from skills in two ways:
   what they touch:
   - **`resources::*`** (operate on `$HOME` or the AI tools).
     Verbs follow the `<action>-<resource-kind>` pattern, each
-    taking the target selector (`claude|kiro|codex|desktop`; omit
-    for all four): `just resources::install-skills [agent]`,
+    taking the target selector (`claude|kiro|codex|claude-desktop`;
+    omit for all four): `just resources::install-skills [agent]`,
     `…::uninstall-skills [agent]`, `…::status-skills [agent]`,
     `…::verify-skills [agent]` (drives the agents against
     installed content; costs API credits, gated behind a
@@ -287,7 +287,7 @@ target's destination; `just resources::uninstall-skills` reverses it.
 `just resources::status-skills` reports current state per destination.
 `just resources::verify-skills` drives the real AI tools against the
 installed content. Each takes an optional target selector
-(`claude|kiro|codex|desktop`; omit for all four). App workspace members
+(`claude|kiro|codex|claude-desktop`; omit for all four). App workspace members
 (`kaimux/`) build via `just kaimux::build` (a one-liner over
 `cargo build -p kaimux --release` + copy into `dist/`).
 
@@ -298,8 +298,8 @@ gets populated is data, not a code path:
   destination points back into the checkout, so a content edit is live in
   the next session. This is what makes authoring skills fast, and it is
   why these targets stay symlinked.
-- **Copy** (`Copy`) — `desktop`. The destination holds real files. Not a
-  preference: the desktop app *refuses* a symlinked plugin directory, so
+- **Copy** (`Copy`) — `claude-desktop`. The destination holds real files. Not a
+  preference: Claude Desktop *refuses* a symlinked plugin directory, so
   symlinking cannot reach it at all. Copy also means an install survives
   the checkout being moved or deleted, which is the honest meaning of
   "install" for anyone consuming the repo rather than developing it.
@@ -316,9 +316,9 @@ edited after the install. `status-skills` reports that explicitly
 destination cannot reach that state. Content comparison, not mtimes,
 decides: mtimes shift with checkout order and clock skew.
 
-### Desktop target — document-shaped skills only
+### The `claude-desktop` target — document-shaped skills only
 
-The desktop target carries **document-oriented skills only**, packaged as
+The `claude-desktop` target carries **document-oriented skills only**, packaged as
 a plugin (manifest + `skills/<name>/`) assembled under build output.
 Terminal-shaped skills are excluded **by design, not pending**: the app
 is a document workspace, so a skill built around a checkout, a shell
@@ -326,9 +326,9 @@ session, or a terminal-registered MCP has nothing there to act on.
 Installing one anyway would advertise a capability the surface cannot
 honour, which is worse than its absence.
 
-The subset is declared in the build-tool (`DESKTOP_SKILLS`), and install
+The subset is declared in the build-tool (`CLAUDE_DESKTOP_SKILLS`), and install
 names what it skipped so the omission reads as intent. **A new skill does
-not reach the desktop target automatically** — it must be declared
+not reach the `claude-desktop` target automatically** — it must be declared
 document-shaped, which is a deliberate registry edit.
 
 The browser-control MCP deploys separately from skills
@@ -350,7 +350,7 @@ the experience is symmetric across resource kinds.
 - **Source is truth — never hand-edit an installed artefact.** Edit
   under `resources/content/`, never at a registry destination
   (`~/.claude/skills/`, `~/.kiro/steering/skills/`, `~/.codex/skills/`,
-  the desktop plugin dir). How a destination is populated is its row's
+  the Claude Desktop plugin dir). How a destination is populated is its row's
   **strategy**: the symlink strategies (`Link`, `FanOut`) expose source
   edits live, so a hand-edit there silently diverges from the checkout;
   the `Copy` strategy overwrites the destination wholesale on install,
@@ -366,9 +366,9 @@ the experience is symmetric across resource kinds.
   flake; `build-tool` is invoked through `cargo run -p build-tool`
   (wrapped by Just) from the checkout — no shim under `~/.local/bin`,
   no `cargo install` anywhere in the install path. **Exception: the
-  desktop target.** Its plugin directory is a system path chosen by the
+  `claude-desktop` target.** Its plugin directory is a system path chosen by the
   app, not by mAId, so writing there needs elevation. It is opt-in
-  (never reached without naming `desktop` or omitting the selector),
+  (never reached without naming `claude-desktop` or omitting the selector),
   and the verb checks writability up front and refuses with the command
   to re-run rather than installing half a plugin. Every other target
   stays strictly inside `$HOME`.

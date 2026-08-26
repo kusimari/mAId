@@ -19,8 +19,8 @@ The repo has two halves:
 
 `just resources::install-skills` populates each target's skills
 destination. For the three coding agents that means symlinks from `$HOME`
-into the content tree, so edits are live for the next AI session; for the
-desktop app it means a copied plugin, because that app refuses a
+into the content tree, so edits are live for the next AI session; for
+Claude Desktop it means a copied plugin, because that app refuses a
 symlinked plugin directory.
 
 ## Develop
@@ -48,7 +48,7 @@ Three groups, namespaced by what they touch:
 
 **`resources::*`** — operate on `$HOME` or the AI tools. Every
 verb reads `<action>-<resource-kind>` and takes the uniform
-target selector (`claude|kiro|codex|desktop`; omit for all four):
+target selector (`claude|kiro|codex|claude-desktop`; omit for all four):
 
 ```
 just resources::install-skills [agent]     # validate content + populate each destination
@@ -89,7 +89,7 @@ just ci           # the full hygiene gate
 ```
 just resources::install-skills            # all four targets
 just resources::install-skills codex      # or scope to one
-sudo just resources::install-skills desktop   # system path; needs elevation
+sudo just resources::install-skills claude-desktop   # system path; needs elevation
 ```
 
 What it does:
@@ -102,7 +102,7 @@ What it does:
    - **symlink** — `~/.claude/skills` and `~/.kiro/steering/skills`
      (whole-dir), and `~/.codex/skills` (per-skill, since codex owns that
      directory and ships its own skills there). Edits are live.
-   - **copy** — the desktop app's plugin directory, as a packaged plugin
+   - **copy** — Claude Desktop's plugin directory, as a packaged plugin
      (manifest + skills). It refuses a symlinked plugin dir, so copy is
      the only way in. Two consequences: the install survives the checkout
      being moved or deleted, and it can go **stale** when the source is
@@ -113,7 +113,7 @@ What it does:
 managed destination are preserved unless you pass
 `--force`.
 
-The desktop target carries **document-shaped skills only**; terminal-shaped
+The `claude-desktop` target carries **document-shaped skills only**; terminal-shaped
 ones (built around a checkout or a shell session) are excluded by design,
 and install names what it skipped. See `specs/project.md` for the rule.
 

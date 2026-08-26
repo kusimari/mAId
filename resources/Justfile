@@ -5,8 +5,8 @@
 # `resources/tests/run` resolve against the same paths as
 # the legacy flat Justfile.
 
-# First arg is the target selector (claude|kiro|codex|desktop; omit for
-# all four); remaining flags pass through, e.g.
+# First arg is the target selector (claude|kiro|codex|claude-desktop; omit
+# for all four); remaining flags pass through, e.g.
 #   just resources::install-skills                 (all targets)
 #   just resources::install-skills codex           (codex only)
 #   just resources::install-skills codex --force   (codex, repoint)
@@ -14,11 +14,11 @@
 # The `=~ '^-'` guard lets a leading flag (no target given) pass through
 # as a flag rather than being mistaken for a target name.
 #
-# `desktop` differs from the three coding agents: it installs a packaged
+# `claude-desktop` differs from the three coding agents: it installs a packaged
 # plugin by COPY (the app refuses a symlinked plugin dir), carries only
 # document-shaped skills, and writes to a system path — so it needs
 # elevation and the verb says so rather than half-installing:
-#   sudo just resources::install-skills desktop
+#   sudo just resources::install-skills claude-desktop
 # Validate content and populate each target's skills destination.
 [no-cd]
 install-skills agent="" *FLAGS:

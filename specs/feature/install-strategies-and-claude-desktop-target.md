@@ -1,8 +1,8 @@
-# Feature: install-strategies-and-desktop-target
+# Feature: install-strategies-and-claude-desktop-target
 
 ## Git Setup
 
-- Branch: `feat/install-strategies-and-desktop-target`
+- Branch: `feat/install-strategies-and-claude-desktop-target`
 - Base: `main`
 
 ## Feature Brief
@@ -12,16 +12,16 @@ That is one *strategy*, not the definition of install — and it has two
 costs. A fresh clone installed on a machine stays coupled to that
 checkout forever (move or delete it and the install breaks), and one
 target refuses symlinks outright, so it cannot be reached at all: the
-desktop agent app's plugin directory rejects a symlinked entry by design.
+Claude Desktop's plugin directory rejects a symlinked entry by design.
 
 This feature separates **what** is installed from **how** it reaches a
 destination. The registry gains a strategy per row — symlink for the
 three coding agents (live edits stay valuable while authoring skills) and
-copy for the desktop app — and the desktop app becomes a fourth
+copy for Claude Desktop — and Claude Desktop becomes a fourth
 first-class target of the existing `<action>-<resource-kind>` verbs and
 agent selector.
 
-After it lands: `just resources::install-skills desktop` packages the
+After it lands: `just resources::install-skills claude-desktop` packages the
 document-shaped skills as a plugin and copies it where the app reads it;
 the other three targets behave exactly as before; and "install" means a
 fresh clone can install and be deleted, for the target where that is the
@@ -37,24 +37,24 @@ spec tree; the initiative itself is not recorded in this public repo.*
 The existing pattern extends by one selector value — no new verbs:
 
 ```
-just resources::install-skills   [claude|kiro|codex|desktop]
-just resources::uninstall-skills [claude|kiro|codex|desktop]
-just resources::status-skills    [claude|kiro|codex|desktop]
+just resources::install-skills   [claude|kiro|codex|claude-desktop]
+just resources::uninstall-skills [claude|kiro|codex|claude-desktop]
+just resources::status-skills    [claude|kiro|codex|claude-desktop]
 ```
 
 Omitting the selector still means "every target", so a bare
-`install-skills` now also reaches the desktop app.
+`install-skills` now also reaches Claude Desktop.
 
 ### What the user observes
 
-- `install-skills desktop` reports which skills were packaged and where
+- `install-skills claude-desktop` reports which skills were packaged and where
   they landed. A second run reports no change.
 - `status-skills` shows, per target, whether the destination matches the
   checkout — and for the copied target, whether the copy is **stale**
   (source edited since the copy) rather than merely present.
-- `uninstall-skills desktop` removes what was installed and nothing
+- `uninstall-skills claude-desktop` removes what was installed and nothing
   else. Hand-added entries alongside ours are preserved.
-- Installing to the desktop app needs elevated permission, and the verb
+- Installing to Claude Desktop needs elevated permission, and the verb
   says so up front rather than failing partway.
 - A target whose app is not installed is skipped with a reason, not an
   error — matching how the browser installable graceful-skips.
@@ -62,11 +62,11 @@ Omitting the selector still means "every target", so a bare
   three symlinked targets, and requires a re-run for the copied one. The
   status verb is what tells the user a re-run is due.
 
-### Skills reaching the desktop app — document-shaped only
+### Skills reaching Claude Desktop — document-shaped only
 
-**The desktop target carries document-oriented skills only. Terminal-shaped
+**The `claude-desktop` target carries document-oriented skills only. Terminal-shaped
 skills are deliberately left out.** This is a scoping rule, not a
-temporary gap: the desktop app's surface is document work (drafting,
+temporary gap: Claude Desktop's surface is document work (drafting,
 research, note-keeping), while skills built around a repo, a shell, or a
 terminal session have nothing to act on there.
 
@@ -74,10 +74,10 @@ Today that means the note-taking and writing-style skills are in;
 `kdevkit` (spec-driven development over a checkout) and `browser`
 (drives a real browser through a terminal-registered MCP) are out.
 
-The user-visible consequence: `install-skills desktop` installs a
+The user-visible consequence: `install-skills claude-desktop` installs a
 *subset*, and says which skills it skipped and why, so the omission reads
 as intent rather than as a bug. Adding a new skill does not
-automatically reach the desktop target — it must be declared
+automatically reach the `claude-desktop` target — it must be declared
 document-shaped.
 
 Because this rule outlives the feature, it is recorded in `project.md`
@@ -100,7 +100,7 @@ state machine, and the copy strategy needs the same treatment.
   survives.
 - A real (non-symlink) file at a symlink destination is still preserved
   without `--force` — existing guarantee, must not regress.
-- Selector filtering: `desktop` touches only desktop rows; `claude` only
+- Selector filtering: `claude-desktop` touches only its own row; `claude` only
   claude rows; no selector touches all.
 - Packaging shape: the emitted plugin has a valid manifest and each
   selected skill present; a declared skill absent from the content tree is
@@ -111,7 +111,7 @@ state machine, and the copy strategy needs the same treatment.
 
 ### Functional (the existing `resources/tests/run` harness)
 
-- After a real `install-skills desktop`, the app loads the skills. This
+- After a real `install-skills claude-desktop`, the app loads the skills. This
   is attended and gated like `verify-browser-mcp` — it needs the app
   installed and elevated permission, so it is not in the default gate.
 
@@ -134,7 +134,7 @@ is not a symlink at all.
 That makes **strategy the third dimension of the registry**, alongside
 destination and agent — the same move `resource-symmetry` made when it
 added the agent tag rather than writing a per-agent function. The
-alternative, a separate desktop-only code path beside the registry loop,
+alternative, a separate claude-desktop-only code path beside the registry loop,
 is exactly the hand-written divergence that let codex be silently
 omitted from the MCP installer before; the registry is the single source
 of truth precisely so a new target is a row, not a branch.
@@ -146,7 +146,7 @@ benefits from, and the fresh-clone argument does not apply — those
 targets read from `$HOME` paths mAId owns entirely. Copy is adopted
 where it is *required*, not as a blanket policy.
 
-**Why a plugin rather than loose skills.** The desktop app does not read
+**Why a plugin rather than loose skills.** Claude Desktop does not read
 the coding-agent skills directory at all; its extension surface is a
 plugin — a directory with a manifest that bundles skills (and, later,
 agents, commands, hooks, MCP servers). A single-skill plugin may put
@@ -173,10 +173,10 @@ rows. This is the honest cost of copy-install, and surfacing it in
 
 1. **Registry gains a strategy column.** Rows become
    `(home_subpath, source_subpath, strategy, agent)` where strategy is
-   `Link | FanOut | Copy`. The desktop row names the app's plugin
+   `Link | FanOut | Copy`. The claude-desktop row names the app's plugin
    directory as its destination and the packaged plugin as its source.
 
-2. **A packaging step for the copied row.** The desktop row's source is
+2. **A packaging step for the copied row.** The claude-desktop row's source is
    not `resources/content/skills` directly — it is a plugin assembled
    from a declared subset of it (manifest + `skills/<name>/` per
    selected skill). Assembly happens under the repo's existing build
@@ -209,7 +209,7 @@ mechanism. Both are amended to say what they actually protect:
   copied destinations are overwritten by install, never edited in place.
 - *"No global state mutation on install"* → retained for the three
   coding-agent targets and for the toolchain (still no `cargo install`,
-  still no `~/.local/bin` shim). The desktop target is declared an
+  still no `~/.local/bin` shim). The `claude-desktop` target is declared an
   explicit exception: its plugin directory is system-wide by the app's
   design, the verb is opt-in, and it announces the permission it needs.
 
@@ -226,11 +226,11 @@ should show a reviewer exactly which guarantee changed and why.
       real-file guarantee and managed-only uninstall.
 - [x] Add the plugin packaging step and the declared skill subset, with
       the skipped skills reported by name.
-- [x] Add the desktop registry row, the selector value, and the
+- [x] Add the claude-desktop registry row, the selector value, and the
       writability precheck.
 - [x] Amend the two `project.md` hard constraints.
 - [x] Record the **document-shaped-only** rule in `project.md` as a
-      standing constraint: which skills may reach the desktop target and
+      standing constraint: which skills may reach the `claude-desktop` target and
       why terminal-shaped ones are excluded. This outlives the feature —
       a future skill must be declared document-shaped to be included, so
       the rule cannot live only in this spec. (mAId has no repo-root
@@ -256,18 +256,18 @@ should show a reviewer exactly which guarantee changed and why.
 
 - 2026-08-25 · Spec drafted. Grounded in `resource-symmetry` (the prior
   feature that made skills and the browser installable symmetric behind
-  one selector) and in the desktop app's own bundle: its 3P code path
+  one selector) and in Claude Desktop's own bundle: its third-party code path
   logs `Refusing symlink at <path>` for a symlinked plugin entry, and
   hardcodes the system plugin directory per platform. That refusal is
   what rules out extending the symlink registry to this target.
 
 ## Decision Log
 
-- **Strategy per registry row, not a parallel desktop code path.**
+- **Strategy per registry row, not a parallel claude-desktop code path.**
   The registry is already the single source of truth for deployment and
   already varies mechanism (`Link` vs `FanOut`). A separate path would
   repeat the hand-written divergence that previously let a target be
-  silently omitted. Considered a desktop-specific installer script
+  silently omitted. Considered a claude-desktop-specific installer script
   (mirroring the browser installable's shell layer) and rejected: the
   browser MCP is shell because *registration is a runnable command a
   symlink cannot express*; copying files is exactly what the build-tool
@@ -282,9 +282,9 @@ should show a reviewer exactly which guarantee changed and why.
 - **Stale as an explicit plan state.** The real cost of copy-install is
   silent drift. Surfacing it in `status` converts a footgun into a
   reported condition.
-- **Document-shaped skills only on the desktop target; terminal-shaped
+- **Document-shaped skills only on the `claude-desktop` target; terminal-shaped
   ones excluded.** Confirmed as the scope for this feature. The split is
-  by what the surface can act on, not by preference: the desktop app is
+  by what the surface can act on, not by preference: Claude Desktop is
   a document workspace, so a skill built around a checkout or a shell
   session has nothing to operate on there. Considered installing
   everything and letting the app ignore what does not apply, and
@@ -299,7 +299,7 @@ should show a reviewer exactly which guarantee changed and why.
      installed to a `$HOME`-relative equivalent and "succeeded" — the app
      never reads there. Caught by grepping the app bundle for the path it
      actually resolves, after the log showed no plugin discovery. Led to
-     the `Roots` seam; the desktop row is the one absolute row.
+     the `Roots` seam; the claude-desktop row is the one absolute row.
   2. **That seam started as an env var and leaked between parallel
      tests**, producing a genuine cross-test failure (one test's absolute
      root escaping into another's). Replaced with an explicit parameter,
