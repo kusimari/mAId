@@ -334,7 +334,16 @@ plugin installs as `available`, meaning present in the app's list but
 switched off until enabled by hand, which makes "install" only half-true.
 `required` would also auto-enable but re-asserts on every sync and hides the
 uninstall action; `auto_install` respects a deliberate disable. Installing
-the user's own tooling should not then ask them to go and switch it on. **A new skill does
+the user's own tooling should not then ask them to go and switch it on.
+
+**Install clears its own uninstall tombstone.** The app records an in-app
+uninstall of an org-provisioned plugin and honours it forever, which
+`auto_install` respects — so re-installing after one would otherwise leave
+the plugin on disk but disabled, recoverable only through the GUI. Running
+install is an explicit "I want this" and supersedes an earlier "I didn't", so
+it prunes our entry from the app's per-user tombstone list (no elevation
+needed; the file is under the app's own data). Only our entry is touched —
+another plugin's tombstone is somebody else's decision. **A new skill does
 not reach the `claude-desktop` target automatically** — it must be declared
 document-shaped, which is a deliberate registry edit.
 

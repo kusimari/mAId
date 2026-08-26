@@ -98,6 +98,11 @@ const CLAUDE_DESKTOP_SKILLS: &[&str] = &["notes", "writing-style"];
 /// be read as "safe to delete" — only this marker licenses removal.
 const OWNED_MARKER: &str = ".maid-managed";
 
+/// How the app names our plugin in its user-uninstall tombstone list:
+/// `<plugin name>@<source>`, where org-provisioned plugins use the fixed
+/// `org-provisioned` suffix.
+const PLUGIN_TOMBSTONE_ID: &str = "maid@org-provisioned";
+
 const REGISTRY: &[Entry] = &[
     (
         ".claude/skills",
@@ -562,6 +567,78 @@ fn package_claude_desktop_plugin(checkout: &Path) -> Result<(Vec<String>, Vec<St
     Ok((packaged, skipped))
 }
 
+/// Clear our plugin from the app's user-uninstall tombstone list, so an
+/// install is genuinely idempotent.
+///
+/// The app records a manual uninstall of an org-provisioned plugin in
+/// `org_uninstalled.json` and then honours it forever — `auto_install`
+/// deliberately respects a user's removal, so re-copying the files alone
+/// leaves the plugin present-but-disabled with no way back except the GUI.
+/// Installing is an explicit "I want this", so it supersedes an earlier
+/// "I didn't": the entry is pruned and the plugin enables itself again.
+///
+/// Only our own entry is touched, and only the list is rewritten — other
+/// plugins' tombstones are somebody else's decision to keep. The file lives
+/// under the app's per-user data (no elevation) at an account/org-scoped
+/// path, so the account segments are globbed rather than assumed.
+fn clear_plugin_tombstone(home: &Path, dry_run: bool) -> Result<()> {
+    let sessions = home.join("Library/Application Support/Claude-3p/local-agent-mode-sessions");
+    if !sessions.is_dir() {
+        return Ok(()); // app never run; nothing to clear
+    }
+
+    // …/local-agent-mode-sessions/<account>/<org>/cowork_plugins/org_uninstalled.json
+    let mut files = Vec::new();
+    for account in read_dirs(&sessions)? {
+        for org in read_dirs(&account)? {
+            let f = org.join("cowork_plugins").join("org_uninstalled.json");
+            if f.is_file() {
+                files.push(f);
+            }
+        }
+    }
+
+    for f in files {
+        let raw = fs::read_to_string(&f)?;
+        // A malformed file is the app's to fix, not ours to rewrite: it
+        // treats unparseable as "no tombstones", so leaving it alone is
+        // already the permissive outcome.
+        let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            continue;
+        };
+        let Some(list) = v.get_mut("userUninstalled").and_then(|l| l.as_array_mut()) else {
+            continue;
+        };
+        let before = list.len();
+        list.retain(|e| e.as_str() != Some(PLUGIN_TOMBSTONE_ID));
+        if list.len() == before {
+            continue; // not tombstoned here
+        }
+        if dry_run {
+            println!(
+                "(dry-run) would clear {PLUGIN_TOMBSTONE_ID} tombstone in {}",
+                f.display()
+            );
+            continue;
+        }
+        fs::write(&f, format!("{}\n", serde_json::to_string_pretty(&v)?))
+            .with_context(|| format!("rewriting {}", f.display()))?;
+        println!("cleared   {PLUGIN_TOMBSTONE_ID} tombstone (was uninstalled in-app)");
+    }
+    Ok(())
+}
+
+/// Immediate subdirectories of `dir`, sorted for deterministic output.
+fn read_dirs(dir: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut out: Vec<PathBuf> = fs::read_dir(dir)?
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    out.sort();
+    Ok(out)
+}
+
 /// Single-quote a path for a shell command we print for the user to paste.
 /// The Claude Desktop plugin path contains spaces, so an unquoted command
 /// would silently target the wrong directory. Embedded single quotes are
@@ -738,6 +815,14 @@ fn cmd_install(
             );
             entries.retain(|(.., a)| *a != "claude-desktop");
             claude_desktop_skipped = true;
+        }
+
+        // Installing is an explicit "I want this", so it supersedes an
+        // earlier in-app uninstall. Without this, re-installing after one
+        // leaves the plugin on disk but disabled, recoverable only through
+        // the GUI — which is exactly the manual step install should remove.
+        if !claude_desktop_skipped {
+            clear_plugin_tombstone(roots.home, dry_run)?;
         }
     }
 
@@ -2223,6 +2308,112 @@ mod tests {
             plan_one_copy(dest, src).unwrap().cmp,
             Comparison::Stale,
             "a symlinked entry must be drift, not a match"
+        );
+    }
+
+    /// Write a tombstone file at the app's account/org-scoped path.
+    fn write_tombstone(home: &Path, ids: &[&str]) -> PathBuf {
+        let f = home
+            .join("Library/Application Support/Claude-3p/local-agent-mode-sessions")
+            .join("acct1/00000000/cowork_plugins/org_uninstalled.json");
+        write(
+            &f,
+            &serde_json::json!({ "userUninstalled": ids }).to_string(),
+        );
+        f
+    }
+
+    fn tombstone_ids(f: &Path) -> Vec<String> {
+        let v: serde_json::Value = serde_json::from_str(&fs::read_to_string(f).unwrap()).unwrap();
+        v["userUninstalled"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e.as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn install_clears_our_tombstone_and_leaves_others() {
+        // An in-app uninstall is honoured forever, so re-installing without
+        // clearing it leaves the plugin on disk but disabled — the GUI step
+        // install is supposed to remove.
+        let checkout = make_checkout_with_skills();
+        let home = TempDir::new().unwrap();
+        let f = write_tombstone(
+            home.path(),
+            &[PLUGIN_TOMBSTONE_ID, "somebody-else@org-provisioned"],
+        );
+
+        cmd_install(
+            test_roots(home.path()),
+            checkout.path(),
+            false,
+            false,
+            Some("claude-desktop"),
+        )
+        .unwrap();
+
+        let ids = tombstone_ids(&f);
+        assert!(
+            !ids.iter().any(|i| i == PLUGIN_TOMBSTONE_ID),
+            "our tombstone must be cleared"
+        );
+        assert!(
+            ids.iter().any(|i| i == "somebody-else@org-provisioned"),
+            "another plugin's tombstone is not ours to remove"
+        );
+    }
+
+    #[test]
+    fn install_dry_run_leaves_the_tombstone_alone() {
+        let checkout = make_checkout_with_skills();
+        let home = TempDir::new().unwrap();
+        let f = write_tombstone(home.path(), &[PLUGIN_TOMBSTONE_ID]);
+        let before = fs::read_to_string(&f).unwrap();
+
+        cmd_install(
+            test_roots(home.path()),
+            checkout.path(),
+            true,
+            false,
+            Some("claude-desktop"),
+        )
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(&f).unwrap(), before);
+    }
+
+    #[test]
+    fn tombstone_clearing_tolerates_absent_and_malformed_files() {
+        let checkout = make_checkout_with_skills();
+
+        // No app data at all — a machine where the app never ran.
+        let home = TempDir::new().unwrap();
+        assert!(clear_plugin_tombstone(home.path(), false).is_ok());
+
+        // Malformed JSON is the app's to fix; it reads unparseable as "no
+        // tombstones", so leaving it untouched is already permissive.
+        let home2 = TempDir::new().unwrap();
+        let f = home2
+            .path()
+            .join("Library/Application Support/Claude-3p/local-agent-mode-sessions")
+            .join("acct1/00000000/cowork_plugins/org_uninstalled.json");
+        write(&f, "{ not json");
+        assert!(clear_plugin_tombstone(home2.path(), false).is_ok());
+        assert_eq!(fs::read_to_string(&f).unwrap(), "{ not json");
+
+        // And an install over that state still succeeds.
+        assert_eq!(
+            cmd_install(
+                test_roots(home2.path()),
+                checkout.path(),
+                false,
+                false,
+                Some("claude-desktop")
+            )
+            .unwrap(),
+            0
         );
     }
 
