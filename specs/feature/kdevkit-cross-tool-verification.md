@@ -228,7 +228,16 @@ The test is the run itself: 18 fixtures × 2 agents × 2 stages, paid.
   tooling to catch this class of regression automatically was
   considered and explicitly deferred — the user redirected to
   "understand and fix it properly first," not "build infrastructure
-  to keep re-detecting it."
+  to keep re-detecting it." The structural-mechanism question itself
+  is deliberately NOT designed here — two independent research
+  threads (a code-owned-state investigation, and a published
+  skill-authoring guide, `stephanmiller.com/the-agent-skills-guide-i-
+  wish-id-had`) both point toward moving durable state/enforcement
+  out of prose, but neither has been synthesized into a decision.
+  Filed as `specs/backlog/kdevkit-durable-cross-runtime-adherence.md`
+  for a dedicated follow-on session, per explicit user instruction —
+  this feature closes with the finding recorded, not the problem
+  solved.
 
 ## Session Log
 
