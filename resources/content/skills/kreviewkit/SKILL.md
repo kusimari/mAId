@@ -7,6 +7,30 @@ tags: [review, pr, cr, briefing, reviewer, spec, diff, independent]
 
 # kreviewkit — brief a human before they review
 
+## Non-negotiables — check every one before you return
+
+These five are stated once each below, in context — restated here as a
+flat list because they are exactly the shape of requirement that is
+easy to satisfy in spirit while missing in the output. Before
+returning, confirm your answer/briefing does all five, not most:
+
+1. **Fresh context, no write authority beyond the briefing itself** —
+   you did not write the code, cannot see the implementer's session,
+   and touch nothing already on the branch (see Invocation contract).
+2. **Read beyond the diff hunks** — whole files, callers, callees,
+   history — required, not optional (see Invocation contract).
+3. **§2 does a V-model coverage read**: functional/integration
+   changes mapped to the spec's *requirements*, unit changes mapped to
+   the *design primitives* — name the gaps, and say "unverified" where
+   there is no test report rather than assuming coverage (§2 below).
+4. **§3's reading order uses exactly three named buckets** — read for
+   intent / read for contract / read for plumbing — ranked by risk,
+   not file order (§3 below).
+5. **Every defect is routed back, never published as judgement.** The
+   test is "would fixing it make the finding disappear?" — if yes,
+   it's a defect, report it to the caller instead of writing it into
+   §4 (see "Defects → back to the loop" below).
+
 ## Output rule 0 — announce, always
 
 The **first line** of every conversational response that uses this
@@ -326,6 +350,14 @@ body. The workflow owns *when* to ask and *what to do with the result* —
 this skill owns what a briefing is and how it must be produced. Under
 kdevkit that hand-off is dev-loop completion, where the four sections
 also satisfy the usual body shape (section 3 *is* the reading order).
+
+## Before you return — self-check
+
+Re-read the **Non-negotiables** list at the top of this file against
+what you are about to return. All five, not most. A briefing missing
+the V-model read, using different bucket names or fewer than three in
+§3, or carrying a defect dressed as a §4 `question`, is not done — fix
+it before returning, not after.
 
 ## Publishing the briefing
 
