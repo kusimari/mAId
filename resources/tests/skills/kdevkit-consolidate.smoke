@@ -146,9 +146,13 @@ awk '/^## Decision Log/{f=1;next} /^## /{f=0} f' specs/feature/count-flag.md | g
 # Revision narration is stripped too — the diff and the thread carry that.
 test -z "$(grep -F 'Revised after looking at the script' specs/feature/count-flag.md || true)"
 test -z "$(grep -F 'Three options were considered' specs/feature/count-flag.md || true)"
-# The (a)/(b)/(c) lettering is gone: a shipped spec with lettered options is
-# an unmade decision.
-test -z "$(grep -E '^[[:space:]]*-?[[:space:]]*(\*\*)?\([abc]\)' specs/feature/count-flag.md || true)"
+# The (a)/(b)/(c) lettering is gone OUTSIDE the Decision Log: a shipped
+# Design with lettered options is an unmade decision. Scoped to exclude the
+# Decision Log because relocating a rejected alternative there legitimately
+# uses the same "(a) ... (b) ..." shape — see kdevkit-consolidated-resume's
+# seed for the settled target-state example — so an unscoped ban would fail
+# an agent for correctly relocating rather than deleting the rationale.
+test -z "$(awk '/^## Decision Log/{f=1} !f' specs/feature/count-flag.md | grep -E '^[[:space:]]*-?[[:space:]]*(\*\*)?\([abc]\)' || true)"
 # The requirements and the decision itself are intact — consolidation strips
 # the deliberation, not the contract.
 grep -qF 'R2.' specs/feature/count-flag.md
