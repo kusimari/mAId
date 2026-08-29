@@ -1,903 +1,725 @@
-# Feature: kdevkit — deterministic phasing
+# Making phase transitions reliable in kdevkit
 
 Branch: `feat/kdevkit-deterministic-phasing`
-Worktree: `mAId-worktrees/kdevkit-deterministic-phasing`
-Initiative: `specs/initiative/kdevkit-decompose-and-harden.md`, stream 4.
-Raw investigation archive: `specs/backlog/kdevkit-durable-cross-runtime-adherence.md`
-(rounds 2–5). This file is the standalone contract — it should be
-implementable by someone who saw none of the discussion.
 
-## Feature Brief
+## What this document is
 
-<!-- What the user can do that they couldn't before. -->
+A proposal to fix one specific bug in how kdevkit tracks its own
+progress. It is written to be read start to finish. It covers what the
+problem is, what we measured, what we tried and rejected, the design we
+arrived at, how we will know it works, and how to build it.
 
-A kdevkit feature can cross a phase boundary in a long, loaded, or
-resumed session on any supported coding agent, and the boundary holds
-— because the phase record lives in git history and is written by a
-git hook from observed facts, rather than recalled by the agent from
-prose.
+Nothing has been built yet. The point of this document is to get the
+design wrong on paper rather than in code.
 
-Concretely, three things become true that are not true today:
+## Background: what kdevkit is
 
-- A resumed session learns its phase from `git log`, not from a
-  remembered instruction.
-- A commit whose phase claim contradicts the repository state is
-  refused, including under `git commit --no-verify`.
-- A loop-back to an earlier phase is recorded, structured, counted,
-  and blocks re-advance until discharged.
+kdevkit is a set of instructions that guides an AI coding agent through
+building a feature. It is not a program. It is markdown files that the
+agent reads, in the same way a new team member might read a
+CONTRIBUTING guide — except the agent reads them fresh in every
+session, and follows them by choosing to.
 
-## Why
+A feature moves through four stages:
 
-kdevkit's transition rules are prose an agent must recall. Measured
-(round 1, `verify-skills` under `--stressed`): a ~300-line contract
-read fresh was followed by codex ~50% of the time, rose to 80% after a
-prose fix, and **fell back to ~33% under ~4.6KB of prepended
-conversation** — statistically indistinguishable from the unfixed
-baseline, reverting to the identical failure mode. Claude held ~100%.
-The initiative's own conclusion: no amount of prose scaffolding
-reliably survives conversational load on codex.
+1. **Plan** — write down what we are building and why, as a spec file
+   checked into the repository.
+2. **Dev** — build it, committing as you go, running the tests.
+3. **Review** — a human reads the change and gives feedback.
+4. **Closure** — merge it, tidy up, record what was learned.
 
-Phase transitions are the worst-exposed surface, because kdevkit's
-premise is a workflow spanning sessions.
+Work can also go backwards. If review finds that the *requirement* was
+wrong, you go back to planning; if the requirement was right but the
+code is wrong, you go back to dev. The rule is to return to the stage
+where the mistake was actually made.
 
-## Requirements
+Each stage has its own instruction file, and the feature's current
+stage is written down in a `## Handoff` section inside the spec file, so
+that a new session can pick up where the last one left off. That
+handoff section is the thing this document is about.
 
-Stated as things a person can check, without reference to how they are
-achieved. These are what the tests are written against.
+## The problem
 
-- **R1.** A session that begins knowing nothing about prior work can
-  determine the feature's current phase from the repository alone.
-- **R2.** A commit whose phase claim contradicts the repository does not
-  land.
-- **R3.** R2 still holds when the commit is made with `--no-verify`.
-- **R4.** Moving back to an earlier phase records which layer was at
-  fault, what the problem is, and what would resolve it.
-- **R5.** After moving back, the feature cannot move forward again until
-  that recorded problem is resolved.
-- **R6.** Moving back is countable, so repeated bouncing between phases
-  is visible rather than hidden.
-- **R7.** After a feature merges, no phase bookkeeping remains on the
-  mainline branch.
-- **R8.** With none of the new machinery installed, kdevkit behaves
-  exactly as it does today.
-- **R9.** When a check cannot determine the answer, the transition does
-  not happen.
-- **R10.** Where the agent supports limiting what tools a context may
-  use, a phase cannot act outside its remit.
-- **R11.** R1–R9 hold on claude, codex and kiro.
+The agent is told, in prose: *when you finish dev, update the handoff
+section to say you have moved to review.*
 
-## Research report
+In a short session, it does. In a long one, it often does not — and
+nothing notices. The spec still says `Phase: dev` after dev is over. The
+next session reads that, believes it, and redoes work or skips a gate.
 
-### The question, restated correctly
+This is not a hypothetical. We measured it. A roughly 300-line
+instruction file, read fresh and then asked to repeat its own rules
+back, was followed correctly:
 
-The initiative framed this as "code owns phase transitions." Five
-rounds of investigation establish that **forcing a transition is not
-available on any runtime**, and that the framing must change.
-
-No surveyed system forces a transition. gastown — tmux panes × git
-worktrees, the most state-machine-shaped prior art — does not force
-`gt done`; an agent decides to call it. GitHub spec-kit gates nothing
-at all: phases are prompt files, ordering is advisory, the convergence
-loop is model-judged. Roo Code states it outright: "No mandatory
-transition sequence is described — nothing forces Architect → Code."
-
-What credible implementations do instead is **refuse to trust a
-transition that observable state contradicts.** So three goals must be
-separated, and only two are reachable:
-
-1. **The right transition always happens.** Unavailable. Abandoned.
-2. **No illegal transition is accepted.** Reachable. This is the
-   feature.
-3. **A missing transition is observable.** Reachable and cheap.
-
-### Where determinism actually comes from
-
-Of the available hardening techniques, only two produce determinism: a
-**deterministic precondition re-check** against observable state, and a
-**fail-closed default**. Closed enums, abstention members, and
-N-sample agreement only reduce noise in a non-deterministic input.
-
-Governing rule: **shrink the agent's job to the smallest residual
-judgement that git and the spec cannot settle.** Most of a transition
-is computable — whether a `feat|fix|refactor` commit exists, whether
-`- [ ]` boxes remain, whether a remote branch exists.
-
-A trap specific to constrained decoding, from OpenAI's own
-documentation: "the model will always try to adhere to the provided
-schema", so a closed enum **forces a pick even when no value is
-right**, converting "I don't know" into a confident wrong answer.
-Schema conformance is additionally void on a safety refusal ("a refusal
-does not necessarily follow the schema"), on truncation, and on
-unsupported schema keywords. Any advisor call therefore needs an
-explicit abstention member.
-
-### Invocation compliance is the dominant failure, and position causes it
-
-The intuitive fix — replace five recalled rules with one recalled CLI
-call — is refuted by measurement. `spec-workflow-mcp` #199: an MCP
-*tool*, more salient than a shell command, was skipped at effectively
-100%. "Across dozens of specs, **zero** implementation logs are being
-created." Root cause was **position, not salience**: "AI agents follow
-numbered steps sequentially. They execute step 6 (mark complete),
-consider the task done, and never reach step 7."
-
-Any `advance` call placed after commit-and-push sits in exactly that
-slot. Two consequences shape the design:
-
-- **State must be written by something that observes, not by the agent
-  choosing to report.** `superpowers-flow-enforcer` ships this: a
-  `PostToolUse` handler syncs workflow state from observed events, and
-  "a phase advances only when a hook writes the flag, never by
-  self-report."
-- **Gate the act the agent wants, rather than following it.** Desire is
-  a more reliable forcing function than memory.
-
-### Enforcement: capability restriction beats sequence gating
-
-Every mode-based tool enforces what a phase *can do*; none enforces
-order.
-
-| Tool | Restriction |
-|---|---|
-| Cline Plan | "cannot modify any files or execute commands… This constraint is intentional" |
-| Roo Architect | `read`, `mcp`, restricted `edit` (markdown only) |
-| Roo Ask | `read`, `mcp` only |
-| Kilo `plan` | read-only plus writes confined to `.kilo/plans/` |
-| Kilo `ask` | read-only plus a safe bash allowlist |
-
-This is strictly stronger than a transition gate — it removes the
-capability instead of detecting misuse — and it is the only enforcement
-mechanism that reaches every supported runtime.
-
-### Agent-runtime hooks: real, but they fail open silently
-
-All three current targets expose a `PreToolUse`-equivalent that blocks
-deterministically. Codex ships `features.hooks` with an event
-vocabulary mirroring Claude Code's; Kiro's IDE hooks block on
-`PreToolUse`/`UserPromptSubmit`/`PreTaskExec` but **`kiro-cli` has no
-hooks at all**. None can force a call the agent never attempted.
-
-The disqualifying property is observability: *a hook that does not fire
-looks exactly like a hook with nothing to object to.* Documented open
-failure modes include `PreToolUse` silently ceasing mid-session
-(#88738, #76322), project settings silently not registering (#79480),
-and — default product behaviour, not evasion — #89251, where under
-bypass-permissions mode Claude Code's own system prompt instructs the
-agent to "make file changes with sed, heredocs, or short scripts,
-rather than using the dedicated Read, Edit, or Write tools", so a
-`Write|Edit` matcher never fires. TDD Guard's need to deny
-`Bash(echo|printf|sed|awk|perl)` independently confirms that a
-write-tool matcher does not hold.
-
-Measured here (claude 2.1.251.736, Linux, throwaway repo + linked
-worktree, project-local committed settings, 5 `claude -p` runs):
-
-| Scenario | Fired | Block effective |
+| Coding agent | Fresh session | After ~4.6KB of unrelated conversation |
 |---|---|---|
-| Normal repo, `Bash` matcher | yes | n/a |
-| Linked worktree, session started there | yes | n/a |
-| Linked worktree, `exit 2` | yes | **yes** — command refused |
-| Linked worktree, `Write\|Edit` matcher | yes | n/a |
-| Linked worktree, `--bare` | **no** | silently unhooked, exit 0, no warning |
+| Claude Code | ~100% | ~100% |
+| Kiro | ~100% | slight dip, inconclusive |
+| Codex | ~50%, rising to 80% after rewriting the prose | **~33%** |
 
-So the widely-cited worktree breakage (#76897) does **not** reproduce
-for a session *started* in a worktree, which is how kdevkit runs. The
-mechanism-identified issue #90104 explains why: hook execution runs
-"under a separate sandbox scope … **fixed at session start**", which
-only mid-session `EnterWorktree` migration invalidates. **`--bare` is a
-confirmed silent-disable vector** and must never be used where
-enforcement is expected.
+The last cell is the finding. We rewrote the instructions to be clearer,
+added a checklist, added a self-check at the end — and it worked, in a
+fresh session. Under a realistic amount of prior conversation, the
+improvement vanished entirely and the same rule was dropped in the same
+way as before.
 
-Install asymmetry is decisive: Claude Code can ship enforcement in
-committed `.claude/settings.json`; **Codex cannot** — both the feature
-flag and `hooks.json` live in `~/.codex/`, user scope, trust/hash-bound.
-The runtime measured at ~33% is the one a repo cannot enforce by
-default.
+So the conclusion is uncomfortable but clear: **for at least one agent
+we support, no amount of better writing makes a prose instruction
+survive a long session.** And kdevkit's whole premise is work that spans
+sessions.
 
-### Git is the one layer that is portable and deterministic
+## What we tried, and what we learned
 
-Tested (git 2.53.0):
+We spent a long research session on this, partly reading what other
+people have built and partly running experiments. Here is what changed
+our minds, roughly in the order it changed them.
 
-| Hook | Injects trailer | Refuses commit | Under `--no-verify` |
+### "Force the agent to do it" is not available
+
+The obvious fix is to make the transition mandatory rather than
+requested. Every agent we support has a mechanism that can intercept an
+action and refuse it. So: intercept, check, refuse if wrong.
+
+That works for *stopping* something. It does not work for *starting*
+something. None of these mechanisms can force the agent to take an
+action it never attempted. If the agent simply never updates the
+handoff, there is nothing to intercept.
+
+We then looked at whether anyone else had solved this, and found that
+nobody had even tried. Every comparable system we examined **gates**
+transitions but does not **force** them:
+
+- **gastown**, a multi-agent workspace manager and the most
+  machinery-heavy example we found, still relies on an agent choosing to
+  run a "done" command.
+- **GitHub's spec-kit** enforces nothing at all — its stages are just
+  prompt files, and their ordering is a recommendation.
+- **Roo Code**, which has explicit modes for architecture, coding and
+  debugging, states plainly that nothing forces you to move from one to
+  the next.
+
+So we stopped trying to guarantee the *right* transition happens, and
+settled on a weaker but achievable goal: **a wrong record must never
+become the accepted truth, and a session that has lost its memory must
+be able to recover the truth from the repository.**
+
+### Replacing five rules with one command does not help
+
+Next idea: instead of five rules to remember, give the agent one command
+to run — `phase advance --to review` — and put the logic in the command.
+One thing to remember is easier than five.
+
+We found a project that had tried exactly this and measured the result.
+`spec-workflow-mcp` asks its agent to call a logging tool after
+completing each task. Across dozens of features, that tool was called
+**zero times**. Not rarely. Never.
+
+The cause was not that the instruction was unclear. It was *where the
+instruction sat*: it came after the step that marks the task complete.
+The agent marked the task done, considered the job finished, and never
+reached the next line.
+
+Our planned command would have sat in exactly the same place — after
+commit and push, at the point where the work already feels finished. So
+this idea was not an improvement. It was the same bug with a shorter
+instruction.
+
+That failure is what produced the actual design. If the agent cannot be
+relied on to record something *after* finishing, then the record has to
+be a **side effect of the finishing itself**.
+
+### The thing the agent cannot skip is a commit
+
+An agent doing dev work has to make commits. That is not optional and
+not forgettable — it is the work.
+
+Git can attach a line to the bottom of every commit message
+automatically, using a hook. This is not exotic: the `Signed-off-by:`
+line on Linux kernel patches works this way, and Gerrit has used a
+hook-inserted `Change-Id:` line as durable identity for about fifteen
+years.
+
+So the phase can be stamped into the commit message by git, at the
+moment of committing, without the agent doing anything. And the same
+hook can refuse the commit if the claimed state and the actual state
+disagree.
+
+We tested the details, because the details decide whether this works:
+
+| Hook | Can add the line | Can refuse the commit | Still runs with `--no-verify` |
 |---|---|---|---|
-| `commit-msg` | yes | yes | **skipped** |
-| `prepare-commit-msg` | yes | yes | **still runs** |
+| `commit-msg` | yes | yes | **no, skipped** |
+| `prepare-commit-msg` | yes | yes | **yes** |
 
-`prepare-commit-msg` can both write a trailer and refuse an
-inconsistent commit, surviving `--no-verify`. Trailers read cleanly
-(`git log --format='%(trailers:key=Phase,valueonly=true,unfold=true)'`
-— note the trailing newline) and write cleanly
-(`git interpret-trailers --in-place`). They survive rebase and
-cherry-pick; **`git commit --amend -m` destroys them**, though not
-silently, since the whole message changes.
+That difference matters. An agent that hits a refusal will sometimes
+retry with `--no-verify` to get past it. Using `prepare-commit-msg`
+closes that door.
 
-The precedent is Gerrit's `Change-Id`: a hook-injected trailer used as
-durable identity for ~15 years, with pushes rejected for "missing
-Change-Id in commit message footer".
+### Storing state in the spec file is the weak point
 
-Rejected alternatives, with reasons:
+We had assumed the handoff section was fine as a place to keep the
+current phase. Two projects showed us otherwise.
 
-- **Git notes** — three independent disqualifiers, all tested: not
-  pushed by default; orphaned on amend unless `notes.rewriteRef` is set
-  ("Does not have a default value; you must configure this variable");
-  merges need manual resolution.
-- **A markdown state field** — not categorically wrong (`Backlog.md`,
-  6.5k★, stores task state as markdown in git), but kdevkit's variant
-  is the fragile end: one machine field among four prose fields, in a
-  document humans are expected to edit, replaced wholesale (maximal
-  merge conflict surface). `Backlog.md` #860 measured "**7 of 8
-  concurrent writes lost**" pre-fix, silently, both writers reporting
-  success — and kdevkit runs features in sibling worktrees.
-  `taskmaster-ai` (28k★) accumulated races (#1567), repeated
-  self-corruption (#931, #854, #1004) and stale reads after a
-  legitimate hand-edit (#348), and is migrating to SQLite + JSONL for
-  atomicity and line-oriented merges.
-- **Branch names** — insufficient alone; also the "never reuse a
-  branch" rule attributed to gastown is not corroborated and is
-  contradicted by `ReuseIdlePolecat` and `ResumeBranch`.
-- **Pure derivation from history** — insufficient but an excellent
-  cross-check. A `feat(` commit proves dev *started*, never that it
-  finished, and prose fields exist nowhere in git.
+**Backlog.md** stores task state as markdown in git, deliberately, and
+is well used. But it had a bug where two processes updating a task at
+once would silently lose one of the updates — measured at **seven of
+eight concurrent writes lost**, with both writers reporting success. The
+fix was file locking.
 
-Squash interaction: local `git merge --squash` puts every branch
-commit message, trailers included, into `SQUASH_MSG`. GitHub's default
-squash message includes the "list of commits", so **trailers leak into
-mainline unless the repo is set to "Pull request title only" or "title
-and description"**. Satisfying the no-devloop-artifacts-in-mainline
-rule requires that setting explicitly; it is not automatic.
+**taskmaster-ai** keeps its state in a JSON file and accumulated a long
+run of problems: race conditions between multiple editor windows,
+several kinds of corruption caused by its own commands, and stale reads
+after a user hand-edited the file. It is now moving to a database for
+the transactions and to a line-per-entry format so git can merge it.
 
-### Where the checker can live
+kdevkit's version is the fragile end of this. One machine-readable field
+sits among four free-prose fields, inside a document humans are actively
+encouraged to edit, and the instruction is to replace the entire block
+each time — which is the worst possible shape for git merges. And
+kdevkit runs each feature in its own git worktree, so two sessions
+touching one spec is a normal occurrence, not an edge case.
 
-`${CLAUDE_SKILL_DIR}` is a **text substitution** on skill markdown and
-`allowed-tools` rules, not a shell variable (verified: no such variable
-exists in the environment; the substitution yields the install path and
-executes correctly through a symlink). But Codex has **no documented
-mechanism** for a skill to invoke a bundled script — its own system
-skills use three incompatible conventions — and Kiro's use bare
-relative paths resolvable only if cwd happens to be the skill dir.
+Commit messages avoid all of this. Each commit is its own entry, so
+there is nothing to overwrite. Nobody hand-edits history casually. And
+when the feature branch is squashed into the mainline, the per-commit
+messages go away, so none of this bookkeeping pollutes the main history
+— which is the behaviour we want anyway.
 
-So a *skill-bundled* script is deterministic on Claude only. A
-*repo-committed* script at a fixed repo-relative path is deterministic
-everywhere, because cwd is the repo root. That distinction decides the
-design.
+### Where the checking code can live
 
-An LLM sub-session as the checker is rejected: every fact is
-shell-greppable, so a model adds only variance to exactly-answerable
-questions; Kiro has no schema flag to constrain it; constrained
-decoding forces a pick when none fits; and cost is seconds and money
-per check versus milliseconds and free. **No prior art exists for an
-LLM performing a mechanical state check that gates a workflow.**
-Probity is the reference split — deterministic rules by default,
-`ctx.agent?.reason()` reserved for judgment.
+We needed a small amount of code to answer factual questions about the
+repository. Three options:
 
-Language is constrained to **POSIX `sh` + `awk`/`sed`/`git`**: `python3`
-and `jq` resolve to `~/.nix-profile/bin` (user-specific), and the flake
-devShell provides only `rustToolchain`, `just`, `nodejs_22`.
+**A compiled program installed on the PATH.** Works well on every agent
+we support. Rejected because it means a build step and an install step
+for something that should travel with the repository.
 
-### Orchestration: route, do not track
+**A script bundled inside the skill folder.** This works on Claude,
+which substitutes the skill's own directory into commands. It does not
+work elsewhere: Codex has no documented way for a skill to invoke its
+own script, and Kiro's own skills use bare relative paths that only
+resolve if the working directory happens to be the skill folder. So on
+two of three agents the path would have to be guessed — reintroducing
+exactly the unreliability we are trying to remove, with a silent failure
+when the guess is wrong.
 
-gastown's rejection of a persistent coordinator is real and correctly
-cited (`docs/design/convoy/mountain-eater.md`, commit `649b832`):
+**A script committed in the repository at a fixed path.** Works
+everywhere, because the working directory is the repository root. No
+build, no install, no guessing. This is what we chose.
 
-> "The reason single-coordinator approaches fail is **hysteresis**. Any
-> agent maintaining an 'I'm driving this epic' loop will lose that
-> thread at compaction."
+One constraint follows: the script must use only tools that are
+definitely present. `jq` and `python3` are not — on this machine they
+come from a user-specific package profile, and the project's own
+development shell does not include them. So: POSIX shell, `git`, `awk`,
+`sed`.
 
-It nonetheless ships the Mayor as router ("Always start with the
-Mayor"). The distinction is the whole lesson: **routing by a persistent
-agent is fine; holding the progress thread is the failure mode.** Their
-rule is "Discover, Don't Track." Kilo Code independently deprecated its
-Orchestrator mode — "there's no need for a dedicated orchestrator."
+### Asking an AI to do the checking is worse than it sounds
 
-`awslabs/cli-agent-orchestrator` validates a supervisor that *is* a
-provider CLI session across all three targets. `multi-agent-shogun`
-supplies the scar tissue: "Message content is never sent through tmux —
-only a short 'you have mail' nudge"; payloads through tmux cause
-"character corruption and transmission hangs"; Enter must be sent
-separately for Codex; and "Claude Code's `Stop` hook only fires at turn
-end. An idle agent … has no turn ending", so a file watcher, not a
-hook, must be the wake path.
+We seriously considered making the checker itself an AI sub-session:
+zero installation, works anywhere a skill works.
 
-ACP is a superior control plane to `send-keys` — real turn boundaries
-via `session/prompt` returning a `stopReason`, typed tool-call events,
-`session/load` resume — and `recailai/jockey` already coordinates
-Claude Code, Gemini CLI and Codex CLI over it. But it is **not an
-enforcement point**: permission is `MAY` not `MUST`, nothing "forbids
-direct access" to the filesystem, and the terminal page "doesn't impose
-any obligation on Agents to route command execution through the
-Client." Decisively for mAId, **Claude Code is not an ACP agent** —
-only the Claude Agent SDK, via a Zed-built adapter — so driving it may
-not run what this repo deploys.
+Every question the checker needs to answer has an exact answer
+obtainable with `grep` — are all the checklist items ticked, does a
+commit of the right type exist, is there exactly one handoff section. An
+AI answering those adds nothing but variance.
 
-### Corrections to earlier specs
+Worse, constrained output makes this actively dangerous. If you require
+the answer to be one of a fixed set of values, the model will pick one
+even when none of them is right — the documented behaviour is that it
+"will always try to adhere to the provided schema." A checker that
+cannot say "I don't know" is a checker that confidently says the wrong
+thing. And Kiro has no way to constrain output at all.
 
-Five claims in checked-in specs did not survive and are corrected here.
+We found no example of anyone using an AI for a mechanical state check.
+The nearest relevant project, Probity, deliberately splits the two:
+deterministic rules by default, AI only for genuine judgement calls.
 
-- **`no hooks are shipped for any agent today`** — wrong. `kaimux`
-  installs a hook-driven state machine into `~/.claude/settings.json`;
-  `apply_event` (`kaimux/src/main.rs:127-142`) maps
-  `UserPromptSubmit|PreToolUse|PostToolUse → Working`,
-  `Notification → Waiting`, `Stop → Done`.
-- **kaimux's "no extra parent process"** is not a position on
-  coordinators — in context (`specs/feature/kaimux.md:234`) it
-  describes `execvp` semantics for one wrapped pane.
-- **The OpenAI re-assertion citation is overstated.** That advice is
-  scoped to *Markdown formatting* adherence ("appending a Markdown
-  instruction every 3-5 user messages"), not instruction-following
-  generally. The measured codex collapse stands on its own evidence.
-- **gastown's "never reuse a branch" rule** is uncorroborated and
-  contradicted; remove it where cited.
-- **`.codex/skills` is correct, not a defect** — `~/.codex/skills`
-  exists on codex `0.150.1.392`, `~/.agents` does not. Codex docs now
-  also specify `.agents/skills`; both appear live, so treat this as
-  version drift to watch.
+### Restricting what a stage can do beats checking what it did
 
-Additionally unverified and worth checking before relying on it:
-`~/.kiro/` contains both a native `skills/` directory and
-`steering/skills → mAId`, so kdevkit may be loading on Kiro as
-always-on steering context rather than a progressively-disclosed skill.
+This came from looking at editor-based agents, and it was the most
+useful single idea we found. Cline, Roo Code and Kilo Code all have
+modes — planning, coding, asking — and **none of them enforces the order
+of the modes.** What they enforce is what each mode is *capable* of:
 
-## The supported range: chosen floor and ceiling
+- Cline's planning mode cannot modify files or run commands at all, and
+  its documentation says the constraint is deliberate.
+- Roo's architect mode can only edit markdown.
+- Kilo's planning mode can only write into its own plans directory.
 
-kdevkit does not target every coding agent. It targets agents that can
-carry its loop, and the range is chosen rather than inherited.
+This is stronger than checking afterwards, because there is nothing to
+check — the stage physically cannot do the wrong thing. And every agent
+we support has some version of it.
 
-**Floor definition — an agent must provide all three:**
+### One thing that nearly caught us out
 
-1. a skills *directory* loaded from disk (not a single flat instruction
-   file, which cannot carry per-phase modules),
-2. an unattended shell command,
-3. per-context tool capability restriction.
+The mechanism we rely on can fail without saying so. There is a known
+class of bug where an interception hook stops working mid-session and
+the result looks identical to a session where nothing was wrong. As one
+bug report put it: a hook that does not fire looks exactly like a hook
+with nothing to object to.
 
-**The floor is `kiro-cli`.** It meets all three (`--trust-tools=`) and
-lacks only hooks and schema-constrained output. Everything the design
-requires must therefore work with git plus a shell plus prose.
+We tested the specific case that worried us most — kdevkit runs features
+in git worktrees, and there was a report of hooks dying when switching
+into one. It does not reproduce when the session *starts* in the
+worktree, which is how kdevkit works. Good news.
 
-**Rejected as below the floor, deliberately:**
+But we did find a real one: running Claude with the `--bare` flag
+disables hooks entirely, exits successfully, and warns about nothing.
+That flag must never be used where we expect enforcement.
 
-- **Cloud agents (Jules, Devin).** No local install of any kind — no
-  skills directory, no hooks, no binary; Jules' only documented channel
-  is a root `AGENTS.md`. Supporting them would mean abandoning phase
-  modules and capability restriction to reach a tier that cannot run
-  kdevkit's human/parent review phase anyway. **Rejected.**
-- **Aider.** Shell is confirmation-gated *suggestions*, with no
-  per-tool allow/deny and no skills directory. **Rejected.**
+The general lesson stands, and it is the reason the design puts the
+guarantee in git rather than in the agent: **git running a hook is not
+subject to the agent's session state at all.**
 
-**The ceiling is Claude Code** — rich hooks including `SKILL.md`
-frontmatter `hooks:`, `disallowedTools`, `context: fork`,
-`--json-schema`. Everything above the floor is an accelerator, never a
-requirement.
+## The design
 
-**Amp is above the ceiling and is a design target, not a dependency.**
-Its `tool.call` handler returns `allow | reject-and-continue | modify |
-synthesize` ("returning a result without running the tool"), and
-`agent.end` can return `continue` with a `userMessage` — result
-substitution and refuse-to-finish, neither available on Claude Code.
-Its plugins live in repo-committable `.amp/plugins/`, solving exactly
-Codex's user-scope problem, and `amp.ai.ask(...)` is a built-in advisor
-primitive. It is Amp-specific TypeScript with "No backward
-compatibility", so the design should *aim at that shape* — repo-owned,
-tool-level, allow/reject/modify — without depending on it.
+Four pieces. Only one of them is new code, and it is small.
 
-`AGENTS.md` is noted but not adopted as the primary channel: now
-stewarded by the Agentic AI Foundation with 60k+ projects claimed, but
-hierarchical-nearest-file rather than a module directory, and **Claude
-Code and Kiro — both anchors — are absent from its supporter list.**
+### 1. The instruction files — unchanged in kind
 
-## Design
+The markdown the agent reads, split so that each stage loads only what
+applies to it. This keeps everything that requires judgement: what
+"finished" means, when to go back a stage, what good work looks like. No
+judgement moves into code, ever.
 
-### In plain terms
+### 2. The checker — a shell script committed to the repository
 
-The problem is simple to state. kdevkit tells an agent "you are in the
-dev phase; when you are done, write down that you have moved to review."
-That instruction is a sentence in a long document, and in a long
-conversation the agent stops honouring it. Nothing notices.
+Lives at a fixed path in the repository. It answers factual questions
+and has no opinions:
 
-The fix is to stop asking the agent to remember, and instead write the
-phase down as a side effect of something it cannot skip. An agent doing
-dev work *must* make commits. So the phase gets stamped into the commit
-message, automatically, by git itself — not by the agent choosing to
-record it.
+- Are all the checklist items in the implementation plan ticked?
+- Is there a commit on this branch that looks like real work rather than
+  planning?
+- Does the branch exist on the remote?
+- Is there exactly one handoff section in the spec?
 
-Four pieces do this.
-
-**1 · The skill** is what it is today: instructions the agent reads,
-split so a phase only loads the part that applies to it. It carries all
-the judgement — what "done" means, when to go back a step, what good
-work looks like. Nothing about judgement moves into code.
-
-**2 · The checker** is a small shell script committed into the repo. It
-answers plain factual questions and nothing else: are all the plan
-items ticked off? is there a commit that looks like real work rather
-than planning? does the branch exist on the remote? is there exactly
-one handoff section in the spec? It has no opinions and no settings to
-tune. If it cannot tell, it says so, and "cannot tell" is treated as
+It has no configurable thresholds, now or later — if a question needs a
+tunable number to answer, it is a judgement call and belongs in the
+instructions instead. It always prints the facts it found alongside any
+conclusion, so a conclusion can never hide its inputs. And if it cannot
+determine something, it says so, and "cannot determine" is treated as
 "no".
 
-**3 · Two git hooks** are small scripts that *git* runs on its own,
-without the agent's involvement. The first runs every time a commit is
-made: it asks the checker what is actually true, stamps the phase into
-the commit message, and refuses the commit outright if the claim and
-the reality disagree. The second runs before a push and refuses to
-publish a branch whose history does not add up. These work identically
-on every agent, because git runs them, not the agent.
-
-**4 · A capability list** says what each phase is allowed to touch —
-for instance, the planning phase may write specs but not source code.
-Where an agent supports restricting its own tools, this is applied so
-the phase simply cannot overstep, rather than being told not to.
-
-**Where the phase is written down.** Not in a file. In the commit
-messages, as a line like `Phase: dev` at the bottom. This is chosen for
-four reasons a file cannot match: the agent cannot forget to write it
-(git writes it); two sessions working in parallel cannot overwrite each
-other's record (each commit is its own entry); it travels with the
-branch automatically; and it disappears when the feature is squashed
-into mainline, so no bookkeeping pollutes the main history.
-
-**What this does and does not promise.** It does not guarantee the agent
-makes the *right* decision about when to move on — no system surveyed
-achieves that, and it is not attempted here. It guarantees that a
-*wrong* record cannot quietly become the truth, and that a session which
-lost its memory can recover the truth from the repository.
-
-### Components
+Its verbs:
 
 ```
-resources/content/skills/kdevkit/
-  SKILL.md              always-on router + cross-cutting rules
-  phases/research.md    optional pre-phase
-  phases/plan.md        judgment prose, one per phase
-  phases/dev.md
-  phases/review.md
-  phases/close.md
-  capabilities.toml     per-phase tool restrictions        (NEW)
-
-specs/.kdevkit/                                            (NEW, per repo)
-  phase                 POSIX sh checker, committed, executable
-  hooks/prepare-commit-msg
-  hooks/pre-push
+phase facts                 print what is true about this repo
+phase show                   current stage, plus the facts, plus how
+                             many times we have gone backwards
+phase check --to dev         is that move allowed from here?
+phase advance --to dev       record the intent to move
+phase return --to plan       record going back, with reasons
 ```
 
-Four things: **skill (markdown)**, **checker (committed POSIX script)**,
-**git hooks (committed)**, **capability manifest**. No new binary on
-PATH, no MCP server, no ACP, no A2A.
+### 3. Two git hooks — also committed to the repository
 
-`build-tool` gains one job beyond symlinking: point `core.hooksPath` at
-`specs/.kdevkit/hooks` and mark the scripts executable.
+Git runs these itself. The agent is not involved and does not need to
+know they exist.
 
-### State
+**On every commit**, the first hook asks the checker what is true,
+writes the current stage into the commit message as a line at the
+bottom, and refuses the commit outright if the claim and the facts
+disagree. Because it writes the stage *from the facts* rather than from
+the agent's claim, the agent cannot get it wrong by forgetting.
 
-Phase state is **git history**. There is no state file.
+**Before every push**, the second hook re-checks and refuses to publish
+a branch whose history does not add up. This deliberately gates the
+thing the agent wants — publishing its work — rather than trailing
+behind it.
 
-| Record | Form |
-|---|---|
-| current phase | `Phase:` trailer on the most recent commit carrying one |
-| a loop-back | `Return-To:` trailer plus structured body fields |
-| who approved | `Acked-By:` trailer — `human` or `session:<id>` |
-| return count | `git log --format='%(trailers:key=Return-To)' \| grep -c .` |
-| judgment prose | `## Handoff` block: `Carry forward`, `Deliberately left`, `Ready for` — **no machine field** |
+### 4. The stage capability list
 
-Transient intent lives at `git rev-parse --git-path kdevkit-intent` —
-inside the gitdir, so per-worktree, never committed, and invisible to
-mainline. The hook consumes and clears it.
+A small configuration file saying what each stage may touch. Planning
+may write specs but not source. Review may read but not write. Where the
+agent supports limiting its own tools, this is applied so the stage
+cannot overstep in the first place.
 
-This satisfies the constraint that devloop artifacts stay out of
-mainline files: trailers vanish on squash once the repo's squash-message
-setting is corrected, and the intent file is never committed.
+### Where the state actually lives
 
-### The checker
+In the commit messages, as a line like `Phase: dev`, plus `Return-To:`
+when work goes backwards and `Acked-By:` to record who approved the
+move.
 
-```
-specs/.kdevkit/phase facts            → key=value lines, always
-specs/.kdevkit/phase show             → current phase + facts + return count
-specs/.kdevkit/phase check --to dev   → exit 0 legal, 1 illegal, 2 unknown
-specs/.kdevkit/phase advance --to dev --ack <actor>
-specs/.kdevkit/phase return  --to plan --fault-entered <layer> \
-                             --issue … --expected-fix … --acceptance …
-```
+The four reasons this beats a file:
 
-`facts` is emitted alongside every verdict, never replaced by it —
-gastown's rule that code supplies transport and agents supply
-cognition. Predicates are crisp and threshold-free; **no tunable
-threshold is ever added.** `check` returns *unknown* rather than
-guessing, and unknown fails closed. `return` refuses without all three
-structured fields.
+1. The agent cannot forget to write it, because git writes it.
+2. Two sessions cannot overwrite each other's record, because each
+   commit is a separate entry.
+3. It travels with the branch automatically.
+4. It disappears when the branch is squashed into mainline, so none of
+   this bookkeeping ends up in the permanent history.
 
-`advance` and `return` write intent; they do not rewrite history. The
-transition is effected by the next commit.
+The handoff section stays in the spec, but only for the parts that are
+genuinely prose and genuinely useful to a human: what to carry forward,
+what was deliberately left undone, what the next stage should expect. No
+machine-readable field remains in it.
 
-### The transition flow
-
-```
-       ┌── research ──┐   optional; exit is an ack, never fact-gated
-       ▼              │
-     plan ──▶ dev ──▶ review ──▶ closure
-       ▲       ▲        │           │
-       └───────┴── return ──────────┘
-        structured · counted · blocks re-advance until discharged
-```
-
-Legal edges are a **closed table** in the checker, not a free graph.
-oh-my-claudecode permits exactly four stage orderings and "deliberately
-omits… arbitrary stages"; a closed set is testable and fail-closed by
-construction.
-
-On every commit, `prepare-commit-msg`:
-
-1. computes facts,
-2. reads intent, if any,
-3. refuses the commit if intent contradicts facts, or if the claimed
-   phase is not reachable from the recorded one,
-4. otherwise injects `Phase:` — **derived from facts**, not from the
-   agent's claim — plus `Acked-By:` and any `Return-To:`,
-5. clears the intent.
-
-Because the trailer is injected at commit time, inside an artifact the
-agent must write anyway, the agent never has to remember to record
-anything. That is the answer to #199's position problem.
-
-`pre-push` re-runs the check and refuses a push whose history is
-inconsistent — gating the act the agent wants rather than following it.
+One piece of short-lived state — "the next commit should move us to
+review" — is written inside the `.git` directory, where it is specific
+to one worktree and can never be committed by accident.
 
 ### Who decides what
 
-| Decision | Owner |
+| Decision | Decided by |
 |---|---|
-| which phase module to load | router, from `phase show` |
-| is a forward edge legal | **checker** — facts, fail-closed |
-| should we take it | **ack from the supervising context** |
-| which layer the fault entered | agent proposes, must justify structurally |
-| is the return recorded | **checker**, refuses unstructured |
-| did the phase overstep | **capability restriction** |
+| Which instruction file to load | The router, from what the checker reports |
+| Whether a move forward is allowed | The checker, from facts |
+| Whether to actually make that move | Whoever is supervising the session |
+| Which stage a mistake belongs to | The agent proposes; it must give reasons |
+| Whether that reasoning is recorded | The checker, which refuses vague answers |
+| Whether a stage overstepped | The capability list |
 
-**Ack is not necessarily human.** It is whoever supervises the session
-— a human, or a parent session in a project → feature → phase
-hierarchy. So ack must be expressible programmatically and is recorded
-with its actor (`Acked-By: session:<id>`). Ack is an **audited fact,
-not a source of determinism**: a parent session acking its child is two
-models agreeing.
+On supervision: this is usually a human, but it need not be. If a
+project-level session breaks work into features and runs each one, then
+*it* is the supervisor for those sessions. So approval has to be
+something a program can express, and we record who gave it. Approval is
+an audit record, not a guarantee — one AI approving another's work is
+two guesses agreeing.
 
-### Enforcement, in cost order
+### Going backwards
 
-1. **Capability restriction** — the phase cannot do the wrong thing.
-   `capabilities.toml` declares it once; `build-tool` translates.
-2. **Git hooks** — `prepare-commit-msg` writes and refuses, surviving
-   `--no-verify`; `pre-push` gates publication. Portable to every
-   supported runtime, because it is git rather than the agent.
-3. **Agent-runtime hooks** — optional accelerator on Claude and Codex,
-   catching the file-write surface git cannot see. Any such hook must
-   write a liveness marker that the checker requires fresh, since
-   silence is otherwise indistinguishable from a dead hook.
+Any earlier stage can be returned to. That is not restricted, because
+deciding where a mistake belongs is judgement and code cannot do it.
 
-### Per runtime
+What *is* enforced is that the return is not vague. It must name the
+stage at fault, the problem, and what would resolve it. Returns are
+counted, so repeated bouncing between stages becomes visible instead of
+hidden. And until the recorded problem is discharged, the feature cannot
+move forward again — otherwise "go back" becomes a way of escaping a
+check that cannot be passed.
 
-| | Claude | Codex | Kiro (floor) |
-|---|---|---|---|
-| Skill load | `.claude/skills` | `.codex/skills` fan-out | `.kiro/…/skills` |
-| Checker | ✓ committed script | ✓ | ✓ |
-| Git hooks | ✓ | ✓ | ✓ |
-| Capability restriction | ✓ `disallowedTools`, skill-level | user-scope config | launch flag only (`--trust-tools=`) |
-| Agent hooks | ✓ frontmatter `hooks:` | opt-in, user scope | ✗ |
-| Phase isolation | ✓ `context: fork` | separate sessions | `--resume-id` |
+## How each agent gets this
 
-Kiro gets the full guarantee that matters — illegal transitions
-refused, state recovered from history — via git alone. Capability
-restriction on Kiro requires launching through a wrapper, since it is a
-launch flag rather than config; that is a known limitation, not a gap
-to close.
+The important part: **three of the four pieces need no per-agent work at
+all.** The checker and the hooks are files in the repository, and git
+runs the hooks. That is why the weakest agent we support still gets the
+main guarantee.
 
-**Never use `--bare`** where enforcement is expected; it silently
-disables hooks.
+**Claude Code** — instruction files are symlinked into its skills
+directory, as today. The capability list becomes tool restrictions, so a
+stage cannot use a tool outside its remit. Optionally, hooks declared in
+the skill's own front matter add a second net that catches file edits
+git cannot see; these travel with the skill and need no separate
+install. Each stage can run in its own clean context using the agent's
+built-in forking, so no terminal multiplexing is required.
 
-### Orchestration
+**Codex** — instruction files are symlinked per-skill. Checker and git
+hooks work identically. Tool restrictions come from its sandbox
+settings, which live in the user's own configuration rather than the
+repository, so the project cannot ship them and we treat them as
+optional. Stage isolation is done by running each stage as a separate
+session.
 
-**Default — one session, router swaps phase modules.** `phase show` →
-load the module → work. On Claude, `context: fork` isolates each phase
-without tmux.
+**Kiro** — instruction files are symlinked into its skills location.
+Checker and git hooks work identically, and this is the whole argument
+for putting the guarantee in git: Kiro's command-line tool has no hook
+mechanism at all and cannot constrain its output, yet it still gets
+everything except capability restriction. Restricting tools on Kiro is a
+launch-time flag rather than configuration, so it only applies when the
+session is started through a wrapper. That is a limitation we are
+accepting, not solving.
 
-**Optional — session per phase.** Fresh session each phase; handoff is
-git history plus the prose block. Already stream 2's shape.
+**Any future agent** needs two things: it must read instruction files
+from a directory, and it must be able to run a shell command. It then
+gets everything git provides for free.
 
-**Optional — tmux via kaimux.** A **stateless** master that re-reads
-`phase show` every cycle. Requires kaimux to grow a parent field
-(`Session` is flat, `main.rs:111-124`), spawn/kill verbs (it has none),
-and a file watcher. Files are the bus; `send-keys` is a doorbell only.
+### Which agents we are not supporting, and why
 
-**Never — a coordinator that remembers.**
+We chose the weakest agent we will support rather than inheriting one.
+The bar is three capabilities: a *directory* of instruction files (not a
+single flat file, which cannot hold per-stage modules), the ability to
+run a shell command unattended, and some way to restrict what tools a
+context may use. Kiro is the weakest agent that clears that bar.
 
-### Degradation
+Below it, and rejected:
 
-| Installed | Behaviour |
-|---|---|
-| everything | capability-bounded, state observed, illegal transitions refused |
-| no agent hooks | git hooks still write and refuse |
-| no `core.hooksPath` | agent invokes the checker by prose; refusal still works |
-| nothing but markdown | today's behaviour exactly |
+- **Cloud agents** such as Jules and Devin. There is nothing installed
+  locally at all — no instruction directory, no hooks, no script.
+  Supporting them would mean giving up per-stage instructions and
+  capability restriction in order to reach agents that cannot run the
+  human review stage anyway.
+- **Aider.** Running a shell command is a confirmation-gated
+  *suggestion*, and there is no per-tool restriction.
 
-## How each agent loads it
+Above Claude Code is **Amp**, which can intercept a tool call and
+respond with allow, reject, modify, or substitute a result outright, and
+can refuse to let a session end. Its plugins live in the repository, so
+a project can ship enforcement — exactly the thing Codex cannot do. It
+is not portable and explicitly offers no backward compatibility, so we
+treat it as a picture of what good looks like rather than something to
+depend on.
 
-The four pieces reach the three agents by three different routes, and
-only one of them is agent-specific.
+## What must be true when we are done
 
-**Shared by all three, no per-agent work.** The checker and the git
-hooks live in the repository. Git runs the hooks itself once
-`core.hooksPath` points at them, which `build-tool` sets during install
-and which anyone can set by hand in one command. The agent never has to
-know they exist. This is why the floor runtime still gets the guarantee.
+These are the statements the tests are written against. They describe
+outcomes a person can check, and deliberately say nothing about how they
+are achieved.
 
-**Claude.** The skill directory is symlinked to `~/.claude/skills`, as
-today. Phase modules load on demand. The capability list becomes
-`disallowedTools` entries so a phase physically cannot use a tool
-outside its remit. Optionally, hooks declared in the skill's own
-frontmatter add a second net that catches file edits git cannot see —
-these travel with the skill, needing no separate install. Each phase can
-run in its own clean context using the agent's built-in forking, so no
-tmux is required.
+1. A session starting with no knowledge of prior work can determine the
+   feature's current stage from the repository alone.
+2. A commit whose stage claim contradicts the repository does not land.
+3. Statement 2 still holds when the commit is made with `--no-verify`.
+4. Going back a stage records the stage at fault, the problem, and what
+   would resolve it.
+5. After going back, the feature cannot move forward again until the
+   recorded problem is discharged.
+6. Going back is countable, so repeated bouncing is visible.
+7. After a feature is merged, no stage bookkeeping remains on the
+   mainline branch.
+8. With none of this installed, kdevkit behaves exactly as it does
+   today.
+9. When the checker cannot determine an answer, no transition happens.
+10. Where the agent can restrict tools, a stage cannot act outside its
+    remit.
+11. Statements 1 to 9 hold on Claude, Codex and Kiro.
 
-**Codex.** The skill directory is symlinked per-skill into
-`~/.codex/skills`. Checker and git hooks work identically. Capability
-limits come from the sandbox and filesystem deny settings, which live
-in the user's own config rather than the repo — so a repo cannot ship
-them, and they are treated as optional. Agent-level hooks are available
-but also user-scoped and opt-in. Phase isolation is achieved by running
-each phase as a separate session.
+## How we will test it
 
-**Kiro — the floor.** The skill directory is symlinked into Kiro's
-skills location. Checker and git hooks work identically, and this is the
-whole point of putting the guarantee in git: Kiro's CLI has no hooks at
-all and cannot return schema-constrained answers, yet it still gets R1
-through R9. Limiting tools is a launch-time flag rather than
-configuration, so capability restriction only applies when the session
-is started through a wrapper. That is a known limitation, accepted
-rather than solved.
+The tests are written from the statements above, not from the design. An
+assertion may describe what someone would find in the repository. It may
+not describe which script ran, or in what order. If we rebuilt this a
+completely different way, these tests should still pass unchanged.
 
-**Any future agent** needs two things only: it must read instruction
-files from a directory, and it must be able to run a shell command. It
-then gets everything git provides for free.
+### Two kinds of test
 
-## Test Strategy
+**Tests with no AI involved.** Set up a throwaway repository, run git
+commands the way a person would, check the result. These cover
+statements 2, 3, 5, 6, 7 and 9 — the guarantees that must hold no matter
+how any model behaves. They are fast, free, repeatable, and run on every
+build.
 
-Tests are written from the requirements above, not from the design. An
-assertion may describe what a person would find in the repository; it
-may not describe which script ran or how. If the design were rebuilt a
-different way, these tests should still pass unchanged.
+**Tests that drive real agents.** These extend the project's existing
+fixture format, which already works the right way: each fixture poses a
+task the way a person would phrase it, lets the agent work, and then
+checks the repository afterwards. It never inspects the agent's
+reasoning. These cover statements 1, 4, 8, 10 and 11, because those are
+the ones that depend on an agent actually behaving.
 
-### Two layers
+### Rules for writing the assertions
 
-**Layer 1 — mechanism tests. No agent, no cost, fully repeatable.**
-Seed a throwaway repository, drive git directly as a user would, and
-assert on the result. These cover R2, R3, R5, R7 and R9 — the
-guarantees that must hold regardless of any model's behaviour. They run
-in `just ci` alongside the existing suite and must never be skipped.
+Every one of these exists because it caught a real defect in earlier
+work on this project.
 
-**Layer 2 — behavioural fixtures. Real agents, real cost.** Extend the
-existing `.smoke` fixtures, which are already blackbox: each poses a
-bare task the way a person would phrase it, then asserts on the
-repository afterwards. These cover R1, R4, R6, R8, R10 and R11, because
-they are the ones that depend on an agent actually behaving.
-
-### Rules the assertions must obey
-
-These come from this repo's own hard-won discipline, and three of them
-have caught real defects in earlier streams.
-
-- **An assertion must fail if the work was not done.** For every new
-  assertion, construct the lazy agent that does nothing and the careless
-  agent that does the wrong thing, and confirm both fail. An assertion
-  satisfiable without the agent working is worse than no assertion.
-- **Never assert a bare absence.** "No stale phase" is satisfied by
-  deleting the field entirely. Assert that the field exists *and* holds
-  a legal value *and* is not the value it should have moved on from.
-- **Guard against the template.** The spec template lists every legal
-  phase on one line, so a naive match succeeds against unedited
+- **An assertion must fail if the work was not done.** For each new
+  assertion, write down what a lazy agent that does nothing would leave
+  behind, and what a careless agent that does the wrong thing would
+  leave behind, and confirm both fail. An assertion that passes without
+  the work being done is worse than none.
+- **Never check only that something is absent.** "No stale stage" is
+  satisfied by deleting the field entirely. Check that the field exists,
+  *and* holds a legal value, *and* is not the value it should have moved
+  on from.
+- **Watch out for the template.** The spec template lists every legal
+  stage on one line, so a naive match succeeds against untouched
   boilerplate. Exclude it explicitly.
-- **Check stderr and exit codes, not just output.** A silent failure
-  that produces no output can otherwise read as a pass.
-- **One sample proves nothing.** Sample at least three runs per fixture
-  per agent, and record the ratio rather than a verdict.
-- **Test under load.** Every behavioural fixture must also run with the
-  harness's conversational-prefix mode, because the entire problem being
-  solved only appears under load. A fixture that passes fresh and fails
-  loaded has found the bug, not a flake.
+- **Check exit codes and error output, not just success output.** A
+  silent failure that prints nothing otherwise reads as a pass.
+- **One run proves nothing.** Sample at least three runs per fixture per
+  agent and record the ratio, not a verdict.
+- **Test under load.** Every agent-driven fixture must also run with a
+  large block of unrelated prior conversation prepended, because the
+  entire problem being solved only appears under load. A fixture that
+  passes fresh and fails loaded has found the bug, not a flake.
 
-### Requirement coverage
+### Coverage
 
-| Req | Layer | What the test does |
-|---|---|---|
-| R1 | 2 | Seed a mid-feature branch, start a session with no context, ask it what state the feature is in; assert it names the correct phase and does not ask. |
-| R2 | 1 | Hand-write a commit claiming a phase the repo contradicts; assert the commit does not exist afterwards and the failure said why. |
-| R3 | 1 | Repeat R2 with `--no-verify`; assert identical outcome. |
-| R4 | 2 | Seed a review-phase branch with a requirement-level fault; give the review outcome; assert the recorded reason names the layer, the problem and the resolution. |
-| R5 | 1 | With an unresolved recorded problem, attempt to move forward; assert it is refused, then resolve it and assert it now succeeds. |
-| R6 | 1 | Record two moves back; assert the count is two and readable without parsing prose. |
-| R7 | 1 | Merge a feature branch as configured; assert no phase bookkeeping appears in mainline history or files. |
-| R8 | 2 | Remove the checker and unset the hook path; run the existing dev-loop fixtures; assert results match today's recorded baseline. |
-| R9 | 1 | Corrupt the repo into a state the checker cannot classify; assert no transition occurs and the reason is stated. |
-| R10 | 2 | In the planning phase, task the agent with something requiring a source edit; assert no source file changed. |
-| R11 | 2 | Every layer-2 fixture runs on all three agents, fresh and loaded. |
+| Statement | Test |
+|---|---|
+| 1 | Set up a half-finished feature branch, start a session knowing nothing, ask what state the feature is in. It should name the right stage without asking. |
+| 2 | Hand-write a commit claiming a stage the repository contradicts. The commit should not exist afterwards, and the error should say why. |
+| 3 | Repeat with `--no-verify`. Same outcome. |
+| 4 | Set up a review-stage branch where the original requirement was wrong. Feed in that review outcome. The recorded reason should name the stage, the problem and the resolution. |
+| 5 | With an undischarged problem recorded, try to move forward. Refused. Discharge it. Now allowed. |
+| 6 | Record two returns. The count reads as two, without parsing prose. |
+| 7 | Merge a feature branch. No stage bookkeeping appears in mainline history or files. |
+| 8 | Remove the checker, unset the hook path, run the existing dev-loop fixtures. Results should match today's recorded baseline. |
+| 9 | Put the repository into a state the checker cannot classify. No transition happens, and it says why. |
+| 10 | In the planning stage, give the agent a task that would require editing source. No source file changes. |
+| 11 | Every agent-driven fixture runs on all three agents, fresh and under load. |
 
-### Known adversarial cases to cover explicitly
+### Ways this could be cheated, each needing its own test
 
-Each of these is a way the guarantee could be laundered, and each needs
-its own test:
+- Amending a commit to replace its message, erasing the stamped stage.
+- Hand-editing the handoff prose so it disagrees with the commit
+  history.
+- Making the change through a shell here-document instead of the editing
+  tool, so an agent-level hook never fires.
+- Going backwards to escape a forward check that cannot be passed.
+- Running with the flag that disables hooks, and checking the failure is
+  loud rather than silent.
 
-- Amending a commit to replace its message, erasing the stamped phase.
-- Editing the handoff prose by hand to disagree with the commit history.
-- Making the phase-advancing change through a shell heredoc rather than
-  the editing tool, so an agent-level hook never fires.
-- Bouncing backward to escape a forward check that cannot be passed.
-- Running with the flag that disables hooks, and confirming the failure
-  is loud rather than silent.
+## How to build it
 
-## Implementation Plan
+Ordered so that each step is useful on its own and testable when it
+lands. No step depends on an unresolved question.
 
-Ordered so each step is independently useful and testable. Nothing here
-requires a decision that is still open.
+1. Change the repository's squash-merge setting so per-commit messages
+   are discarded on merge. This is configuration, not code, and
+   statement 7 depends on it.
+2. Write only the `facts` verb of the checker — read the repository,
+   print plain `key=value` lines, no conclusions. Add a test per fact
+   against a seeded repository.
+3. Add the list of allowed moves and the `check` verb, including the
+   "cannot determine" answer. Test statement 9.
+4. Add the commit-time hook: stamp the stage from the facts, refuse
+   contradictions. Test statements 2 and 3, including the amend case.
+5. Add the going-back verbs with their required fields, the count, and
+   the block on moving forward. Test statements 4, 5 and 6.
+6. Add the pre-push hook. Test that an inconsistent branch cannot be
+   published.
+7. Teach the install tool to point git at the hooks and mark the scripts
+   executable. Test that a fresh clone plus install gives a working
+   guarantee.
+8. Update the instruction files to mention the checker, and remove the
+   machine-readable field from the handoff section, leaving the prose.
+9. Add the capability list and translate it for Claude. Document the
+   Codex and Kiro limitations rather than working around them.
+10. Extend the agent-driven fixtures for statements 1, 4, 6, 8 and 10.
+    Three samples per agent, fresh and under load, ratios recorded.
+11. Correct the five inaccurate claims in the existing specs, listed
+    below.
 
-- [ ] 1 · Fix the repository's squash-message setting so per-commit
-  messages are discarded on merge. Prerequisite for R7; configuration,
-  not code.
-- [ ] 2 · Write the checker's `facts` verb only — read the repo, print
-  plain key/value lines. No verdicts yet. Add layer-1 tests for each
-  fact against seeded repositories.
-- [ ] 3 · Add the closed table of legal moves and the `check` verb,
-  including the cannot-tell answer. Layer-1 tests for R9.
-- [ ] 4 · Add the commit-time hook: stamp the phase from the facts, and
-  refuse contradictions. Layer-1 tests for R2 and R3, including the
-  amend case.
-- [ ] 5 · Add the going-back verbs with their required fields, the count,
-  and the block on moving forward again. Layer-1 tests for R4, R5, R6.
-- [ ] 6 · Add the pre-push hook. Layer-1 test that an inconsistent branch
-  cannot be published.
-- [ ] 7 · Teach `build-tool` to set the hook path and mark the scripts
-  executable on install; add a test that a fresh clone plus install
-  yields a working guarantee.
-- [ ] 8 · Point the phase modules at the checker in prose, and strip the
-  machine field from the handoff block, leaving only the prose fields.
-- [ ] 9 · Add the capability list and translate it for claude; leave
-  codex and kiro as documented limitations.
-- [ ] 10 · Extend the `.smoke` fixtures for R1, R4, R6, R8, R10; run
-  three samples per agent, fresh and loaded, and record ratios.
-- [ ] 11 · Apply the five spec corrections to the initiative spec.
+### Notes for whoever builds it
 
-### How to implement, briefly
+Write the checker in POSIX shell using only `git`, `awk` and `sed`.
+Make each fact a separate one-line function so it can be tested alone,
+and have `facts` print all of them every time, so a conclusion can never
+hide the inputs that produced it.
 
-Write the checker in POSIX shell using only `git`, `awk` and `sed` —
-`jq` and `python3` are not reliably present, and the flake devShell
-provides neither. Keep every fact a separate one-line function so it can
-be tested in isolation, and have `facts` print all of them
-unconditionally so a verdict never hides its inputs.
-
-Read the phase with
-`git log --format='%(trailers:key=Phase,valueonly=true,unfold=true)'`
-and remember it emits a trailing newline, which will silently break a
+Read the stage with
+`git log --format='%(trailers:key=Phase,valueonly=true,unfold=true)'`.
+Note that this emits a trailing newline, which will silently break a
 naive string comparison. Write with `git interpret-trailers --in-place`
-rather than hand-editing the message.
+rather than editing the message text yourself.
 
-Put the refusal logic in `prepare-commit-msg`, not `commit-msg` — only
+Put the refusal logic in `prepare-commit-msg`, not `commit-msg`. Only
 the former still runs under `--no-verify`, and that difference is the
-whole of R3. Re-stamp on every commit including amends, since an amend
-replaces the entire message.
+whole of statement 3. Re-stamp on every commit including amends, because
+an amend replaces the entire message.
 
-Make every refusal message say what was wrong and what would fix it. A
-refusal the agent cannot act on becomes a retry loop; a refusal that
-names the problem becomes a correction.
+Make every refusal say what was wrong *and* what would fix it. A
+refusal the agent cannot act on turns into a retry loop; a refusal that
+names the problem turns into a correction.
 
-Keep transient intent inside the git directory, at the path
-`git rev-parse --git-path kdevkit-intent` gives, so it is per-worktree
-and can never be committed.
+Keep the short-lived intent file inside the git directory, at the path
+`git rev-parse --git-path kdevkit-intent` returns, so it is
+per-worktree and cannot be committed.
 
-## Decisions taken
+## Corrections to existing specs
 
-- **State is git trailers, not a file.** Append-only by construction,
-  so the 7-of-8-lost-writes class is structurally impossible; written
-  inside an artifact the agent must produce; absent from mainline after
-  squash.
-- **The checker is a repo-committed POSIX script**, not a PATH binary
-  and not skill-bundled. Repo-relative is the only path convention that
-  resolves on every runtime.
-- **`prepare-commit-msg` is the primary enforcement point**, because it
-  survives `--no-verify` and fires on the act that effects a
-  transition.
-- **Forward edges are a closed table; backward edges are always
-  reachable but structured, counted, and blocking.**
-- **Ack is the supervising context**, human or parent session,
-  recorded with its actor.
-- **Research is recordable, never gated** — no observable predicate
-  exists for "research is done", so its exit is an ack. Bounded the way
-  gastown bounds `mol-idea-to-plan`: a named artifact and exactly one
-  gate at peak ambiguity.
-- **Floor is `kiro-cli`; cloud agents and Aider are rejected.**
-- **ACP, MCP and a new PATH binary are all rejected** as the mechanism.
+Five claims in the checked-in specs turned out to be wrong. Two of them
+were introduced during this research session and then corrected, which
+is worth saying plainly.
 
-## Open questions
+1. **"No hooks are shipped for any agent today"** — wrong. The
+   project's own terminal session tracker already installs hooks into
+   the user's Claude settings and uses them to track session state.
+2. **The session tracker's "no extra parent process"** is a note about
+   how one wrapped process replaces itself, not a position on
+   orchestration. It has been cited as the latter.
+3. **The OpenAI citation about re-stating instructions** is narrower
+   than claimed: it is about markdown *formatting* drifting over a long
+   conversation, not instruction-following in general. The measured
+   Codex result stands on its own; this citation should not be leaned
+   on.
+4. **gastown's "never reuse a branch" rule** could not be found and is
+   contradicted by code that explicitly reuses branches. Remove the
+   citation.
+5. **gastown's argument against a remembering coordinator is real** — I
+   wrongly reported it as a misquote mid-session. The distinction is
+   worth keeping: routing work through a long-lived agent is fine, but
+   having that agent *remember* the progress of the work is the failure
+   mode, because it loses the thread when its context is compacted.
 
-- **Does the repo's squash-message setting need changing first?**
-  Trailers leak into mainline under GitHub's default. This is a repo
-  configuration prerequisite, not code.
-- **`--amend -m` erases trailers.** Mitigation is re-injection on
-  amend plus the derived cross-check; needs a fixture proving an
-  amended commit cannot launder a phase claim.
-- **Is capability restriction expressible per-phase on Codex** without
-  user-scope config, or is it launch-time only like Kiro?
-- **Does the Kiro steering-vs-skills deploy target need changing?**
-  Unverified; affects context cost, not correctness.
-- **How is the liveness marker verified** without reintroducing a state
-  file? Candidate: a trailer written by the agent-runtime hook, absent
-  from commits made without it.
+## What we decided, and what we turned down
+
+- **State goes in commit messages, not a file.** Each commit is its own
+  entry, so concurrent writes cannot clobber each other; git writes it,
+  so the agent cannot forget; it vanishes on squash, so mainline stays
+  clean. Turned down: git notes (not pushed by default, orphaned by
+  amends, and merges need hand-resolution — all three verified); a
+  locked side file (solves the corruption but adds an artifact and still
+  needs the agent to call something); the current markdown field (whose
+  failure mode is measured elsewhere at seven of eight writes lost).
+- **The checker is a committed shell script.** Turned down: a compiled
+  program on the PATH (needs building and installing, and reaches no
+  agent without a local install); a script inside the skill folder
+  (resolves reliably on Claude only).
+- **An AI does not do the checking.** Every question has an exact
+  answer, constrained output forces a guess where none is right, and
+  Kiro cannot constrain output at all. Revisit only if the facts turn
+  out to leave a real judgement call behind.
+- **Forcing the right transition is out of scope.** Nothing achieves it.
+  We guarantee that a wrong record cannot become the truth.
+- **Approval is whoever supervises**, human or a parent session, and is
+  recorded with who gave it.
+- **The research stage is recordable but never gated.** There is no
+  factual test for "research is finished", so its exit is an approval,
+  not a check.
+- **Kiro is the floor; cloud agents and Aider are out.**
+
+## Still open
+
+- **The squash-merge setting has to change before statement 7 can pass.**
+  Under the current default, per-commit messages are kept, so the
+  bookkeeping would leak into mainline.
+- **`git commit --amend -m` erases the stamped stage**, and agents amend
+  often. Re-stamping should handle it, but it needs a test proving an
+  amended commit cannot launder a false claim.
+- **Can tool restrictions be applied per stage on Codex** without
+  touching the user's own configuration, or is it launch-time only as on
+  Kiro?
+- **Is kdevkit being loaded on Kiro in the wrong way?** Kiro now has a
+  native skills directory, and we deploy into its steering directory
+  instead. If so, our instructions may be loaded as always-on context
+  rather than on demand. This affects cost, not correctness, and is
+  unverified.
+- **How is a silently dead agent-level hook detected?** The idea is for
+  the hook to leave a mark that a later check requires, so absence is
+  detectable — but that must not reintroduce a state file.
 
 ## Handoff
 
-- **Phase:** planning
-- **Ready for:** dev, once this spec is approved.
-- **Carry forward:** the raw investigation lives in
-  `specs/backlog/kdevkit-durable-cross-runtime-adherence.md` rounds
-  2–5; five corrections to checked-in specs are listed above and should
-  be applied to the initiative spec as part of this stream.
-- **Deliberately left:** the advisor/residual-judgment call (Probity's
-  hybrid shape) — build the facts first and measure how small the
-  residual is; tmux/kaimux orchestration, which is stream 5.
+- **Ready for:** dev, once this design is agreed.
+- **Carry forward:** the full research record, with sources, is in
+  `specs/backlog/kdevkit-durable-cross-runtime-adherence.md`. The five
+  spec corrections above are part of this work, not a separate task.
+- **Deliberately left:** using an AI for whatever genuine judgement
+  remains after the facts are computed — build the facts first and see
+  how small the remainder is. Also left: running stages as separate
+  terminal sessions, which is its own piece of work.
 
-## Session Log
+## Session log
 
-<!-- Newest at top. -->
+- **2026-08-29 · Research done, design drafted, nothing built.** Eleven
+  parallel investigations and three local experiments: whether hooks
+  survive a git worktree, how commit-message trailers behave, and
+  whether a skill can invoke its own bundled script on each agent. Also
+  probed the three agents' command-line capabilities directly. Five
+  existing claims corrected. Around $1.75 of paid agent runs.
 
-- **2026-08-29 · Research complete across five rounds; design drafted.**
-  Eleven parallel investigations plus three local experiments (hook
-  liveness in a linked worktree, git trailer mechanics, skill-bundled
-  script resolution) and capability probes of `claude`, `codex` and
-  `kiro-cli`. Paid cost ≈ $1.75 across ~10 `claude -p` invocations.
-  Five corrections to checked-in specs recorded. No implementation
-  started.
+## Decision log
 
-## Decision Log
-
-<!-- append: decision · rationale · alternatives rejected -->
-
-- **2026-08-29 · Forcing a transition is abandoned as a goal; the
-  target is that no illegal transition is accepted.** Rationale: no
-  surveyed system forces one, including gastown and spec-kit, and no
-  runtime mechanism can force a call the agent never attempted.
-  Alternative rejected: continue pursuing forced invocation via hooks
-  or a mandated CLI call — refuted by `spec-workflow-mcp` #199's
-  measured ~100% skip rate of a more-salient MCP tool.
-
-- **2026-08-29 · State moves to git trailers rather than a markdown
-  field or a sidecar file.** Rationale: append-only and merge-free by
-  construction; injected by a hook at commit time so no recall is
-  needed; vanishes from mainline on squash, satisfying the
-  no-devloop-artifacts constraint; Gerrit's `Change-Id` is a 15-year
-  production precedent. Alternatives rejected: git notes (not pushed by
-  default, orphaned on amend, manual merge resolution — all tested); a
-  locked JSONL sidecar (satisfies atomicity but adds an artifact and
-  still needs the agent to call something); the existing markdown field
-  (`Backlog.md` #860 measured 7-of-8 concurrent writes lost).
-
-- **2026-08-29 · The checker is a repo-committed POSIX script.**
-  Rationale: `${CLAUDE_SKILL_DIR}` is a text substitution with no Codex
-  or Kiro equivalent, so a skill-bundled script is deterministic on
-  Claude only; a PATH binary excludes any agent without a local
-  install. Repo-relative paths resolve everywhere because cwd is the
-  repo root. Alternatives rejected: a Rust binary on PATH (fails the
-  no-install tier and taxes the markdown-symlink invariant); an LLM
-  sub-session as checker (adds variance to exactly-answerable
-  questions, no schema flag on Kiro, and constrained decoding forces a
-  pick when none fits).
-
-- **2026-08-29 · Floor is `kiro-cli`; cloud agents and Aider are
-  rejected as targets.** Rationale: a floor is defined by capability —
-  a skills directory, an unattended shell, and per-context tool
-  restriction — not by popularity. Supporting the no-local-install tier
-  would mean abandoning phase modules and capability restriction to
-  reach agents that cannot run the review phase anyway. Alternative
-  rejected: `AGENTS.md` as the primary channel — hierarchical rather
-  than modular, and both anchors are absent from its supporter list.
-
-- **2026-08-29 · Ack is the supervising context, not a human.**
-  Rationale: the user's project → feature → phase hierarchy makes a
-  parent session the acking party for a child session, so ack must be
-  programmatic and attributed. Consequence: ack is an audited fact, not
-  a source of determinism, since a parent acking a child is two models
-  agreeing. Alternative rejected: an interactive confirm as the gate — a
-  parent session cannot answer one.
+- **2026-08-29 · Stop trying to force transitions; guarantee instead
+  that a wrong record cannot be accepted.** Nothing we surveyed forces
+  one, and no agent can force an action it never attempted. Rejected:
+  continuing to chase forced invocation, which the
+  `spec-workflow-mcp` result shows fails even for a more prominent
+  mechanism than a shell command.
+- **2026-08-29 · Keep stage state in commit messages.** Written by git
+  so it cannot be forgotten, append-only so it cannot be clobbered, and
+  discarded on squash so mainline stays clean. Rejected: git notes, a
+  locked side file, and the current markdown field, each for reasons
+  recorded above.
+- **2026-08-29 · The checker is a committed POSIX shell script.** A
+  repository-relative path is the only one that resolves on every agent.
+  Rejected: an installed binary, a skill-bundled script, and an AI
+  sub-session.
+- **2026-08-29 · Support down to Kiro and no further.** A supported
+  agent must offer an instruction *directory*, an unattended shell, and
+  tool restriction. Rejected: cloud agents and Aider, which fail that
+  bar and cannot run the human review stage anyway.
+- **2026-08-29 · Approval is the supervising context, not necessarily a
+  human.** A project-level session may supervise a feature-level one, so
+  approval must be expressible by a program and recorded with its
+  author. It is an audit record, not a guarantee.
