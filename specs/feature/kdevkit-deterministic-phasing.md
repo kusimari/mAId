@@ -9,8 +9,8 @@ progress. It is written to be read start to finish. It covers what the
 problem is, what we measured, what we tried and rejected, the design we
 arrived at, how we will know it works, and how to build it.
 
-Nothing has been built yet. The point of this document is to get the
-design wrong on paper rather than in code.
+The mechanism described here is now built and tested; the checklist near
+the end marks what is done, partly done, and not started.
 
 ## Background: what kdevkit is
 
@@ -874,47 +874,47 @@ work on this project.
 Ordered so that each step is useful on its own and testable when it
 lands. No step depends on an unresolved question.
 
-1. Make the merge message an authored summary. Two parts: set the
+1. [ ] Make the merge message an authored summary. Two parts: set the
    repository's squash-merge option so per-commit messages are discarded
    rather than accumulated, and have closure compose the message from the
    spec's requirements, design and implementation sections. Statements 7
    and 8 both depend on this, and without it the main branch collects a
    transcript of the feature's internal commits.
-2. Write only the `facts` verb of the checker — read the repository,
+2. [x] Write only the `facts` verb of the checker — read the repository,
    print plain `key=value` lines, no conclusions. Add a test per fact
    against a seeded repository.
-3. Add the list of allowed moves and the `check` verb, including the
+3. [x] Add the list of allowed moves and the `check` verb, including the
    "cannot determine" answer. Test statement 10.
-4. Add the commit-time hook: stamp the stage from the facts, refuse
+4. [x] Add the commit-time hook: stamp the stage from the facts, refuse
    contradictions. Test statements 2 and 3, including the amend case.
-5. Add the going-back verbs with their required fields, the count, and
+5. [x] Add the going-back verbs with their required fields, the count, and
    the block on moving forward. Test statements 4, 5 and 6, and test
    statement 13 — that dev-loop iterations do not touch the count.
-6. Add the dev-loop convergence facts and make them preconditions for
+6. [x] Add the dev-loop convergence facts and make them preconditions for
    leaving dev, with the hook running the checks rather than trusting a
    report, and recorded evidence keyed to the tree hash. Test statements
    14 and 15.
-7. Add the pre-push hook. Test that an inconsistent branch cannot be
+7. [x] Add the pre-push hook. Test that an inconsistent branch cannot be
    published.
-8. Add the hook's self-scoping check as the first thing it does, and its
+8. [x] Add the hook's self-scoping check as the first thing it does, and its
    hand-off to any pre-existing hook. Test statement 12 in a single
    checkout with no worktrees, and statement 15 on an initiative branch:
    the default branch, an unrelated branch and initiative work must all
    be untouched.
-9. Teach the install tool to write the checker's absolute path into the
+9. [~] Teach the install tool to write the checker's absolute path into the
    instruction files as it deploys them, and to set the hooks path —
    scoped to the feature's worktree when there is one, locally when there
    is not. Test statement 7 against a fresh clone of a real remote, and
    test that a project cloned without kdevkit contains nothing belonging
    to it.
-10. Update the instruction files to mention the checker, and remove the
+10. [x] Update the instruction files to mention the checker, and remove the
     machine-readable field from the handoff section, leaving the prose.
-11. Add the capability list and translate it for Claude. Document the
+11. [ ] Add the capability list and translate it for Claude. Document the
     Codex and Kiro limitations rather than working around them.
-12. Extend the agent-driven fixtures for statements 1, 4, 6, 9, 11, 12
+12. [ ] Extend the agent-driven fixtures for statements 1, 4, 6, 9, 11, 12
     and 13. Three samples per agent, fresh and under load, ratios
     recorded.
-13. Correct the five inaccurate claims in the existing specs, listed
+13. [ ] Correct the five inaccurate claims in the existing specs, listed
     below.
 
 ### Notes for whoever builds it

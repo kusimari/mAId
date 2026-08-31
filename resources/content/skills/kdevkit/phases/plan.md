@@ -204,7 +204,10 @@ what to keep as a decision, what to relocate rather than delete.
 Skip only if the spec carries no alternatives, Q&A, or revision
 narration; there is then nothing to strip.
 
-**2 · Write the `## Handoff` block** (§5) **with `Phase: dev`** —
+**2 · Run `phase advance --to dev`.** It refuses if the spec is not
+committed or the handoff section is ambiguous, and records the move so
+the next commit carries it. If `phase` is not installed, write the
+`## Handoff` block (§5) **with `Phase: dev`** yourself —
 the phase now starting. Re-author every field; do not leave a
 previous or placeholder value in `Phase:` while only updating the
 others. From planning, the fields that matter most beyond `Phase:`

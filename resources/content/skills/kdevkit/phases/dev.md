@@ -319,9 +319,15 @@ succeeded.
 
 ### Leaving dev
 
-Once the gates pass, **rewrite the `## Handoff` block** (§5)
-**with `Phase: review`** — the phase now starting — before handing
-to human review. The gates are the readiness signal; a Push that
+Once the gates pass, run **`phase advance --to review`**. It reads
+git and the spec, refuses if the move does not hold — unticked plan
+items, no implementation commit, checks not observed passing — and
+records the move so the next commit carries it. The stage is written
+by git, not by you; you do not need to remember to record it.
+
+If `phase` is not installed, **rewrite the `## Handoff` block** (§5)
+**with `Phase: review`** yourself — the phase now starting — before
+handing to human review. The gates are the readiness signal; a Push that
 couldn't run for want of a remote (see the Push Gate above) does
 not hold this rewrite back — name the skipped Push in *Carry
 forward* and proceed. Re-author every field: `Phase:` is not
