@@ -285,6 +285,63 @@ The general lesson stands, and it is the reason the design puts the
 guarantee in git rather than in the agent: **git running a hook is not
 subject to the agent's session state at all.**
 
+## Where this sits among kdevkit's three loops
+
+kdevkit is not one loop, it is three nested ones, and this work
+deliberately addresses only the middle one. Being explicit about that is
+what keeps the design from quietly breaking the other two.
+
+```
+project  →  [optional initiative]  →  feature            outer loop
+                                        │
+        [optional research] → plan → dev → review → closure   feature loop
+                                     │
+                    quality → test → code review → fix → …    dev loop
+```
+
+**This work operates on the feature loop only.** The stamp records which
+feature stage we are in. Nothing here stamps or gates the outer loop or
+the dev loop.
+
+Three consequences follow, and each is a robustness requirement rather
+than a note.
+
+**The dev loop must not look like feature movement.** The dev loop
+iterates: run the quality checks, run the tests, get the change reviewed,
+fix what came back, go round again. That produces many commits, and it
+produces genuine backwards movement *within* dev. None of that is a
+feature-stage change. So every commit made during dev is stamped `dev`,
+however many times the inner loop turns, and **inner-loop iterations are
+never recorded as going back a stage.** Going back is reserved for
+crossing a feature boundary — review sending work to plan, for instance.
+Otherwise the return count, which exists to make thrash visible, would be
+swamped by normal dev activity and tell us nothing.
+
+**Leaving dev requires the dev loop to have converged.** This is the one
+place the two loops genuinely meet. Dev is not finished because the agent
+believes it is; it is finished when the quality checks are clean, the
+tests have run and passed against the current commit, and any review
+findings are resolved. Those are all facts, so the checker computes them
+and they become preconditions for moving to review. The inner loop
+therefore needs no stamps of its own — its state is observable in the
+same way everything else is.
+
+**The outer loop is out of scope, and inert rather than broken.** A
+project- or initiative-level session also commits — writing the project
+document, or an initiative plan. Those commits must not be stamped with a
+feature stage, because they have no feature. The hook's self-scoping check
+covers this: it looks for a work-in-progress *feature* spec naming the
+branch, so an initiative branch finds none and the hook does nothing.
+That is a deliberate boundary, not an accident, and it needs a test —
+otherwise a later change to the detection rule could start stamping
+initiative work with a feature stage and nobody would notice.
+
+One naming decision follows from all this. The stamp is scoped to the
+loop it describes, so the outer loop can add its own later without a
+migration and without ambiguity about which loop a line refers to. A bare
+`Phase:` would have to be reinterpreted the moment project-level tracking
+arrives; a name that says which loop it belongs to will not.
+
 ## The design
 
 Four pieces. Only one of them is new code, and it is small.
@@ -309,6 +366,10 @@ opinions:
   planning?
 - Does the branch exist on the remote?
 - Is there exactly one handoff section in the spec?
+- Has the dev loop converged on the current commit — quality checks
+  clean, tests run and passed, review findings resolved? These are the
+  facts that let the feature leave dev, and they are the only place the
+  inner loop touches this design.
 
 It has no configurable thresholds, now or later — if a question needs a
 tunable number to answer, it is a judgement call and belongs in the
@@ -690,7 +751,15 @@ are achieved.
 12. A feature works the same way whether or not it has its own worktree,
     and in a single checkout the machinery stays inert on every branch
     that is not a kdevkit feature.
-13. Statements 1 to 10 and 12 hold on Claude, Codex and Kiro.
+13. Iterating the dev loop — quality, tests, review, fix, repeat — does
+    not change the recorded feature stage and does not count as going
+    back a stage, however many times it turns.
+14. A feature cannot leave dev until the dev loop has converged on the
+    current commit: quality clean, tests passed, review findings
+    resolved.
+15. Commits made by project- or initiative-level work carry no feature
+    stage at all.
+16. Statements 1 to 10 and 12 to 15 hold on Claude, Codex and Kiro.
 
 ## How we will test it
 
@@ -756,7 +825,10 @@ work on this project.
 | 10 | Put the repository into a state the checker cannot classify. No transition happens, and it says why. |
 | 11 | In the planning stage, give the agent a task that would require editing source. No source file changes. |
 | 12 | In one checkout with no worktrees, run the same feature through and assert it behaves identically; then commit on the default branch and on an unrelated branch and assert nothing was stamped and nothing was refused. |
-| 13 | Every agent-driven fixture runs on all three agents, fresh and under load. |
+| 13 | Drive several dev-loop iterations — failing tests, then a review finding, then a fix. Assert the stage stayed `dev` throughout and the return count is still zero. This is the test that stops normal dev churn from being mistaken for thrash. |
+| 14 | With tests failing on the current commit, attempt to move to review. Refused, naming which condition failed. Fix, re-run, and assert it is now allowed. Repeat for an unresolved review finding. |
+| 15 | On a branch holding initiative-level work and no feature spec, commit. Assert no stage was stamped and the commit was not refused. Guards the boundary against a future change to the detection rule. |
+| 16 | Every agent-driven fixture runs on all three agents, fresh and under load. |
 
 ### Ways this could be cheated, each needing its own test
 
@@ -788,26 +860,31 @@ lands. No step depends on an unresolved question.
 4. Add the commit-time hook: stamp the stage from the facts, refuse
    contradictions. Test statements 2 and 3, including the amend case.
 5. Add the going-back verbs with their required fields, the count, and
-   the block on moving forward. Test statements 4, 5 and 6.
-6. Add the pre-push hook. Test that an inconsistent branch cannot be
+   the block on moving forward. Test statements 4, 5 and 6, and test
+   statement 13 — that dev-loop iterations do not touch the count.
+6. Add the dev-loop convergence facts and make them preconditions for
+   leaving dev. Test statement 14.
+7. Add the pre-push hook. Test that an inconsistent branch cannot be
    published.
-7. Add the hook's self-scoping check as the first thing it does, and its
+8. Add the hook's self-scoping check as the first thing it does, and its
    hand-off to any pre-existing hook. Test statement 12 in a single
-   checkout with no worktrees: the default branch and an unrelated branch
-   must be untouched.
-8. Teach the install tool to write the checker's absolute path into the
+   checkout with no worktrees, and statement 15 on an initiative branch:
+   the default branch, an unrelated branch and initiative work must all
+   be untouched.
+9. Teach the install tool to write the checker's absolute path into the
    instruction files as it deploys them, and to set the hooks path —
    scoped to the feature's worktree when there is one, locally when there
    is not. Test statement 7 against a fresh clone of a real remote, and
    test that a project cloned without kdevkit contains nothing belonging
    to it.
-9. Update the instruction files to mention the checker, and remove the
-   machine-readable field from the handoff section, leaving the prose.
-10. Add the capability list and translate it for Claude. Document the
+10. Update the instruction files to mention the checker, and remove the
+    machine-readable field from the handoff section, leaving the prose.
+11. Add the capability list and translate it for Claude. Document the
     Codex and Kiro limitations rather than working around them.
-11. Extend the agent-driven fixtures for statements 1, 4, 6, 9, 11 and
-    12. Three samples per agent, fresh and under load, ratios recorded.
-12. Correct the five inaccurate claims in the existing specs, listed
+12. Extend the agent-driven fixtures for statements 1, 4, 6, 9, 11, 12
+    and 13. Three samples per agent, fresh and under load, ratios
+    recorded.
+13. Correct the five inaccurate claims in the existing specs, listed
     below.
 
 ### Notes for whoever builds it
@@ -891,6 +968,12 @@ is worth saying plainly.
 
 ## Still open
 
+- **The outer and inner loops are noted but not addressed.** This work
+  stamps and gates the feature loop only. Whether the project and
+  initiative levels eventually want the same treatment — and whether the
+  dev loop wants its own record of how many times it turned — is left
+  open deliberately. The scoped stamp name and the inertness tests exist
+  so that answering those later does not require unpicking this.
 - **Where does the merge summary come from?** Closure has to compose it
   from the spec. kdevkit already generates a review briefing that becomes
   the pull request body, so the raw material may already exist — but a
