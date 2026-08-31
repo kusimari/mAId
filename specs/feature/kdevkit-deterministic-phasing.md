@@ -345,27 +345,50 @@ thing the agent wants — publishing its work — rather than trailing
 behind it.
 
 **Neither hook is committed, and neither affects the rest of the
-repository.** Git hooks are not versioned content; they are a local
-setting pointing at a directory. Two facts make this clean, and both were
-verified rather than assumed:
+repository.** Git hooks are not versioned content — they are a local
+setting pointing at a directory — so there is no mechanism by which they
+could reach a branch at all.
 
-- Git can be told where to find hooks **per worktree**, by enabling
-  worktree-scoped configuration and setting the hooks path inside the
-  feature's worktree only.
-- A hook installed that way fires for commits made in the feature
-  worktree and **does not fire** for commits made in the main checkout.
+**The hook decides for itself whether it applies.** This matters because
+kdevkit must work whether or not the feature has its own worktree, and
+the scoping git offers is per-worktree, not per-branch. In a single
+checkout where you simply switch branches, a hooks path applies to
+*every* branch including the main one. Verified — an earlier draft of
+this document claimed otherwise and was wrong.
 
-So the hooks path points into kdevkit's own install directory, set when
-the feature's worktree is created and unset when the feature closes. The
-main branch never has hooks. Someone working on another branch, or
-another feature using entirely different tooling, is unaffected. Clone
-the project fresh without kdevkit and there is nothing to notice.
+So the scoping is done by the hook, not by where it is installed. Its
+first two lines ask: is this the project's default branch, and does a
+work-in-progress spec name this branch? If either answer says no, the
+hook exits immediately having done nothing. Verified across three
+branches in a single checkout with no worktrees:
 
-This also answers the natural question of whether hooks can be avoided
-altogether. They cannot, if the guarantee is to reach every supported
-agent — the agent's own interception mechanisms do not exist on Kiro and
-cannot be shipped by a project on Codex. But scoping them to the feature
-worktree removes the reason to want to avoid them.
+| Commit made on | Hook acts |
+|---|---|
+| the default branch | no |
+| an unrelated branch | no |
+| a feature branch with a spec naming it | **yes** |
+
+This works in both modes. If the feature does have its own worktree, the
+hooks path can additionally be set for that worktree only, which is a
+second layer rather than the mechanism. Either way the default branch is
+untouched, another branch is unaffected, another feature may use
+completely different tooling, and a project cloned without kdevkit
+contains nothing belonging to it.
+
+Two rough edges are real and not yet designed away. Matching a spec
+against the branch name breaks if the branch is renamed mid-feature; the
+more robust signal is that the branch's history already contains a stage
+stamp, but that cannot work for the very first commit, so probably either
+signal should activate it. And pointing git at a hooks directory
+displaces any hooks the user already has — someone using a hook manager
+would lose it — so kdevkit's hook needs to hand off to a pre-existing
+hook rather than assume it owns the slot.
+
+This also answers whether hooks can be avoided altogether. They cannot,
+if the guarantee is to reach every supported agent: the agent's own
+interception mechanisms do not exist on Kiro and cannot be shipped by a
+project on Codex. But a hook that does nothing outside a kdevkit feature
+removes the reason to want to avoid them.
 
 ### 4. The stage capability list
 
@@ -397,6 +420,42 @@ machine-readable field remains in it.
 One piece of short-lived state — "the next commit should move us to
 review" — is written inside the `.git` directory, where it is specific
 to one worktree and can never be committed by accident.
+
+### What reaches the main branch
+
+The intent is that someone who clones the project and reads the main
+branch sees the feature, and no sign of how it was built. Verified with a
+real remote, a feature branch carrying stage stamps, a squash merge, and
+a fresh clone: the clone has one clean commit for the feature, no hooks
+configured, no hook files, no kdevkit files, and no stage bookkeeping
+anywhere in its history.
+
+That result depends on one thing being set up, and is otherwise false.
+**With git's default squash message, every branch commit message is
+copied into the squash commit body** — so the main branch ends up
+containing a transcript of the feature's internal commits, stage lines
+and all. Tested; it reads exactly as badly as it sounds. The lines no
+longer parse as machine-readable footers, being indented, but anyone
+running `git log` reads them.
+
+So the squash commit message must be **authored**, not accumulated. It
+should be a summary of the feature — what was built, why, and how it was
+approached — drawn from the spec's own requirements, design and
+implementation sections. That is the record worth keeping in permanent
+history. A list of the branch's intermediate commit subjects is not.
+
+Two things deliberately do reach the main branch, and both are fine:
+
+- **The feature's spec file.** It is checked-in documentation, which is
+  the point of kdevkit. Its handoff section is cleared at closure, so a
+  newcomer reads the spec's content and finds no stage state in it.
+- **Nothing else.**
+
+The feature branch itself remains visible on the remote while its pull
+request is open, and after merge if it is not deleted. Its stage stamps
+are readable there by anyone with access. That is acceptable: the branch
+is the working record, and the guarantee being made is about the main
+branch.
 
 ### Who decides what
 
@@ -542,10 +601,15 @@ tests. That is now on the record, it counts as one return, and **the
 feature cannot move forward to closure until it is discharged.**
 
 **Closure.** Requirement amended, code updated, tests extended, reviewed
-again, and you say *"ship it."* It squash-merges. The squashed commit on
-the main branch has a normal message — none of the `Phase:` lines survive,
-because the per-commit messages are discarded. The worktree goes away and
-with it the hooks setting. Your main branch has no trace of any of this.
+again, and you say *"ship it."* It squash-merges, and writes the merge
+message itself as a summary of the feature — what it does, why, how it
+was built — taken from the spec. None of the intermediate commit
+messages, and none of the `Phase:` lines, appear on the main branch. The
+worktree goes away and with it the hooks setting.
+
+Someone who clones the project tomorrow sees one commit adding a
+`--quiet` flag, plus the spec file as documentation. No hooks, no stage
+lines, nothing to tell them kdevkit was involved.
 
 **If your session had died** at any point — crashed terminal, closed
 laptop, context exhausted — a new session reads the branch, finds the
@@ -613,14 +677,20 @@ are achieved.
 5. After going back, the feature cannot move forward again until the
    recorded problem is discharged.
 6. Going back is countable, so repeated bouncing is visible.
-7. After a feature is merged, no stage bookkeeping remains on the
-   mainline branch.
-8. With none of this installed, kdevkit behaves exactly as it does
+7. After a feature is merged, no stage bookkeeping remains on the main
+   branch, and the main branch has no hooks configured or installed.
+8. The merge commit on the main branch carries an authored summary of the
+   feature — what was built, why, and how — and does not contain a copy
+   of the branch's intermediate commit messages.
+9. With none of this installed, kdevkit behaves exactly as it does
    today.
-9. When the checker cannot determine an answer, no transition happens.
-10. Where the agent can restrict tools, a stage cannot act outside its
+10. When the checker cannot determine an answer, no transition happens.
+11. Where the agent can restrict tools, a stage cannot act outside its
     remit.
-11. Statements 1 to 9 hold on Claude, Codex and Kiro.
+12. A feature works the same way whether or not it has its own worktree,
+    and in a single checkout the machinery stays inert on every branch
+    that is not a kdevkit feature.
+13. Statements 1 to 10 and 12 hold on Claude, Codex and Kiro.
 
 ## How we will test it
 
@@ -680,11 +750,13 @@ work on this project.
 | 4 | Set up a review-stage branch where the original requirement was wrong. Feed in that review outcome. The recorded reason should name the stage, the problem and the resolution. |
 | 5 | With an undischarged problem recorded, try to move forward. Refused. Discharge it. Now allowed. |
 | 6 | Record two returns. The count reads as two, without parsing prose. |
-| 7 | Merge a feature branch. No stage bookkeeping appears in mainline history or files. |
-| 8 | Remove the checker, unset the hook path, run the existing dev-loop fixtures. Results should match today's recorded baseline. |
-| 9 | Put the repository into a state the checker cannot classify. No transition happens, and it says why. |
-| 10 | In the planning stage, give the agent a task that would require editing source. No source file changes. |
-| 11 | Every agent-driven fixture runs on all three agents, fresh and under load. |
+| 7 | Merge a feature branch into a real remote, then clone it fresh. The clone must show no stage bookkeeping anywhere in its history, no hooks path configured, and no hook files. Assert against the clone, not the working copy — the working copy still has the feature branch and will pass by accident. |
+| 8 | Merge a feature and read the resulting commit message. It must contain the feature's summary and must *not* contain the subjects of the branch's intermediate commits. Check both directions: a summary that is merely the branch title is as wrong as a transcript. |
+| 9 | Remove the checker, unset the hook path, run the existing dev-loop fixtures. Results should match today's recorded baseline. |
+| 10 | Put the repository into a state the checker cannot classify. No transition happens, and it says why. |
+| 11 | In the planning stage, give the agent a task that would require editing source. No source file changes. |
+| 12 | In one checkout with no worktrees, run the same feature through and assert it behaves identically; then commit on the default branch and on an unrelated branch and assert nothing was stamped and nothing was refused. |
+| 13 | Every agent-driven fixture runs on all three agents, fresh and under load. |
 
 ### Ways this could be cheated, each needing its own test
 
@@ -702,33 +774,40 @@ work on this project.
 Ordered so that each step is useful on its own and testable when it
 lands. No step depends on an unresolved question.
 
-1. Change the repository's squash-merge setting so per-commit messages
-   are discarded on merge. This is configuration, not code, and
-   statement 7 depends on it.
+1. Make the merge message an authored summary. Two parts: set the
+   repository's squash-merge option so per-commit messages are discarded
+   rather than accumulated, and have closure compose the message from the
+   spec's requirements, design and implementation sections. Statements 7
+   and 8 both depend on this, and without it the main branch collects a
+   transcript of the feature's internal commits.
 2. Write only the `facts` verb of the checker — read the repository,
    print plain `key=value` lines, no conclusions. Add a test per fact
    against a seeded repository.
 3. Add the list of allowed moves and the `check` verb, including the
-   "cannot determine" answer. Test statement 9.
+   "cannot determine" answer. Test statement 10.
 4. Add the commit-time hook: stamp the stage from the facts, refuse
    contradictions. Test statements 2 and 3, including the amend case.
 5. Add the going-back verbs with their required fields, the count, and
    the block on moving forward. Test statements 4, 5 and 6.
 6. Add the pre-push hook. Test that an inconsistent branch cannot be
    published.
-7. Teach the install tool to write the checker's absolute path into the
-   instruction files as it deploys them, and to point git at kdevkit's
-   hooks **per worktree** when a feature's worktree is created, undoing
-   it at closure. Test that the main checkout gains no hooks, that
-   another branch is unaffected, and that a project cloned without
-   kdevkit contains nothing belonging to it.
-8. Update the instruction files to mention the checker, and remove the
+7. Add the hook's self-scoping check as the first thing it does, and its
+   hand-off to any pre-existing hook. Test statement 12 in a single
+   checkout with no worktrees: the default branch and an unrelated branch
+   must be untouched.
+8. Teach the install tool to write the checker's absolute path into the
+   instruction files as it deploys them, and to set the hooks path —
+   scoped to the feature's worktree when there is one, locally when there
+   is not. Test statement 7 against a fresh clone of a real remote, and
+   test that a project cloned without kdevkit contains nothing belonging
+   to it.
+9. Update the instruction files to mention the checker, and remove the
    machine-readable field from the handoff section, leaving the prose.
-9. Add the capability list and translate it for Claude. Document the
-   Codex and Kiro limitations rather than working around them.
-10. Extend the agent-driven fixtures for statements 1, 4, 6, 8 and 10.
-    Three samples per agent, fresh and under load, ratios recorded.
-11. Correct the five inaccurate claims in the existing specs, listed
+10. Add the capability list and translate it for Claude. Document the
+    Codex and Kiro limitations rather than working around them.
+11. Extend the agent-driven fixtures for statements 1, 4, 6, 9, 11 and
+    12. Three samples per agent, fresh and under load, ratios recorded.
+12. Correct the five inaccurate claims in the existing specs, listed
     below.
 
 ### Notes for whoever builds it
@@ -812,9 +891,20 @@ is worth saying plainly.
 
 ## Still open
 
-- **The squash-merge setting has to change before statement 7 can pass.**
-  Under the current default, per-commit messages are kept, so the
-  bookkeeping would leak into mainline.
+- **Where does the merge summary come from?** Closure has to compose it
+  from the spec. kdevkit already generates a review briefing that becomes
+  the pull request body, so the raw material may already exist — but a
+  briefing is written to help a reviewer decide, and a merge message is
+  written to be read years later by someone with no context. They may not
+  be the same document. Settle this when building step 1.
+- **Branch rename breaks the hook's self-scoping**, because it matches a
+  spec against the branch name. The sturdier signal is that the branch's
+  history already carries a stage stamp, which cannot cover the first
+  commit — so probably either signal should activate it.
+- **Setting a hooks path displaces any hooks the user already has.**
+  Someone using a hook manager would silently lose it. kdevkit's hook
+  must hand off to whatever was there before; the mechanism for finding
+  it is not designed yet.
 - **`git commit --amend -m` erases the stamped stage**, and agents amend
   often. Re-stamping should handle it, but it needs a test proving an
   amended commit cannot launder a false claim.
@@ -877,6 +967,26 @@ is worth saying plainly.
   an AI sub-session as the checker; and doing without hooks, which is
   not possible while Kiro has no interception mechanism and Codex cannot
   let a project ship one.
+- **2026-08-31 · The hook scopes itself; worktrees are optional.**
+  Revises an earlier claim that worktree-scoped configuration keeps the
+  default branch clean. It does not, in a single checkout where branches
+  are merely switched — verified. So the hook's own first check decides
+  whether it applies, and does nothing on the default branch or on any
+  branch without a work-in-progress spec naming it. This works with or
+  without worktrees; worktree scoping remains available as a second
+  layer. Rejected: requiring worktrees, which would force a workflow on
+  every project using kdevkit.
+
+- **2026-08-31 · The merge commit carries an authored summary, not an
+  accumulated one.** Verified that git's default squash message copies
+  every branch commit message into the main branch, stage lines included.
+  The permanent record should be the feature's requirements, design and
+  approach, drawn from the spec. Rejected: relying only on the
+  repository's squash setting, which prevents the transcript but leaves
+  the message as a bare title. Accepted as fine, per review: the feature
+  branch stays visible on the remote with its stamps, and the spec file
+  itself lands on the main branch as intended documentation.
+
 - **2026-08-29 · Support down to Kiro and no further.** A supported
   agent must offer an instruction *directory*, an unattended shell, and
   tool restriction. Rejected: cloud agents and Aider, which fail that
