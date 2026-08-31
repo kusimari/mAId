@@ -188,30 +188,44 @@ messages go away, so none of this bookkeeping pollutes the main history
 ### Where the checking code can live
 
 We needed a small amount of code to answer factual questions about the
-repository. Three options:
+repository. The question is where it lives, and the answer has to satisfy
+two things that initially looked opposed: the agent must be able to find
+it without guessing, and **the project being worked on should not have to
+carry kdevkit's machinery.** A project should be developable by someone
+who has never heard of kdevkit, and two features in the same repository
+should be able to use different tooling.
 
-**A compiled program installed on the PATH.** Works well on every agent
-we support. Rejected because it means a build step and an install step
-for something that should travel with the repository.
+**A compiled program installed on the PATH.** Works on every agent.
+Rejected: it needs a build step, and a binary is platform-specific.
 
-**A script bundled inside the skill folder.** This works on Claude,
-which substitutes the skill's own directory into commands. It does not
-work elsewhere: Codex has no documented way for a skill to invoke its
-own script, and Kiro's own skills use bare relative paths that only
-resolve if the working directory happens to be the skill folder. So on
-two of three agents the path would have to be guessed — reintroducing
-exactly the unreliability we are trying to remove, with a silent failure
+**A script inside the skill folder, found at run time.** Claude can do
+this — it substitutes the skill's own directory into commands. Nothing
+else can: Codex has no documented way for a skill to invoke its own
+script, and Kiro's own skills use bare relative paths that only resolve
+if the working directory happens to be the skill folder. So on two of
+three agents the path would have to be guessed, with a silent failure
 when the guess is wrong.
 
-**A script committed in the repository at a fixed path.** Works
-everywhere, because the working directory is the repository root. No
-build, no install, no guessing. This is what we chose.
+**A script inside the skill folder, with its path fixed at install
+time.** This is what we chose, and it dissolves the apparent conflict.
+The install step already knows exactly where it is putting the skill, so
+it writes that absolute path into the instruction text as it deploys.
+The agent never resolves anything at run time and never guesses — it
+reads a literal path. Nothing lands in the project repository at all.
 
-One constraint follows: the script must use only tools that are
-definitely present. `jq` and `python3` are not — on this machine they
-come from a user-specific package profile, and the project's own
-development shell does not include them. So: POSIX shell, `git`, `awk`,
-`sed`.
+The earlier draft of this document proposed committing the script into
+each project. That was wrong, and the reason is worth recording: we had
+assumed the only way to get a reliable path was a repository-relative
+one. Substituting at install time gets the same reliability with none of
+the project pollution.
+
+On what the script may depend on: since the state lives in commit
+messages rather than a JSON document, the checker's output is
+`key=value` lines that `awk` handles, so `jq` is not needed. If a later
+need for it appears, the install step could carry helpers — but adding a
+runtime dependency to reach every supported platform is a real cost, so
+the working assumption is POSIX shell, `git`, `awk` and `sed`, and
+anything more has to justify itself.
 
 ### Asking an AI to do the checking is worse than it sounds
 
@@ -282,10 +296,13 @@ applies to it. This keeps everything that requires judgement: what
 "finished" means, when to go back a stage, what good work looks like. No
 judgement moves into code, ever.
 
-### 2. The checker — a shell script committed to the repository
+### 2. The checker — a shell script shipped with kdevkit
 
-Lives at a fixed path in the repository. It answers factual questions
-and has no opinions:
+Lives next to the instruction files, wherever kdevkit is installed. The
+install step writes its absolute path into the instructions, so the agent
+reads a literal path and never has to work one out. **Nothing is added to
+the project being worked on.** It answers factual questions and has no
+opinions:
 
 - Are all the checklist items in the implementation plan ticked?
 - Is there a commit on this branch that looks like real work rather than
@@ -311,7 +328,7 @@ phase advance --to dev       record the intent to move
 phase return --to plan       record going back, with reasons
 ```
 
-### 3. Two git hooks — also committed to the repository
+### 3. Two git hooks — shipped with kdevkit, active only in the feature's worktree
 
 Git runs these itself. The agent is not involved and does not need to
 know they exist.
@@ -326,6 +343,29 @@ the agent's claim, the agent cannot get it wrong by forgetting.
 a branch whose history does not add up. This deliberately gates the
 thing the agent wants — publishing its work — rather than trailing
 behind it.
+
+**Neither hook is committed, and neither affects the rest of the
+repository.** Git hooks are not versioned content; they are a local
+setting pointing at a directory. Two facts make this clean, and both were
+verified rather than assumed:
+
+- Git can be told where to find hooks **per worktree**, by enabling
+  worktree-scoped configuration and setting the hooks path inside the
+  feature's worktree only.
+- A hook installed that way fires for commits made in the feature
+  worktree and **does not fire** for commits made in the main checkout.
+
+So the hooks path points into kdevkit's own install directory, set when
+the feature's worktree is created and unset when the feature closes. The
+main branch never has hooks. Someone working on another branch, or
+another feature using entirely different tooling, is unaffected. Clone
+the project fresh without kdevkit and there is nothing to notice.
+
+This also answers the natural question of whether hooks can be avoided
+altogether. They cannot, if the guarantee is to reach every supported
+agent — the agent's own interception mechanisms do not exist on Kiro and
+cannot be shipped by a project on Codex. But scoping them to the feature
+worktree removes the reason to want to avoid them.
 
 ### 4. The stage capability list
 
@@ -391,9 +431,10 @@ check that cannot be passed.
 ## How each agent gets this
 
 The important part: **three of the four pieces need no per-agent work at
-all.** The checker and the hooks are files in the repository, and git
-runs the hooks. That is why the weakest agent we support still gets the
-main guarantee.
+all.** The checker is a shell script the agent runs by a literal path,
+and the hooks are run by git rather than by the agent. That is why the
+weakest agent we support still gets the main guarantee — and why none of
+it lands in the project being worked on.
 
 **Claude Code** — instruction files are symlinked into its skills
 directory, as today. The capability list becomes tool restrictions, so a
@@ -448,6 +489,114 @@ a project can ship enforcement — exactly the thing Codex cannot do. It
 is not portable and explicitly offers no backward compatibility, so we
 treat it as a picture of what good looks like rather than something to
 depend on.
+
+## What this looks like in use
+
+Two walkthroughs of the same feature, to show what a person actually
+experiences. The work is trivial on purpose; the point is the machinery
+around it.
+
+### With Claude Code
+
+**Starting.** You are in the project. You say: *"plan a feature to add a
+`--quiet` flag to the CLI."* The instructions are already installed, so
+the agent recognises this as planning work, creates a branch and a
+worktree, and writes a spec — what the flag does, the requirements, a
+checklist of steps. You read it and push back on a requirement; it
+revises. Nothing unusual so far; this is kdevkit today.
+
+Behind the scenes, creating the worktree also pointed git at kdevkit's
+hooks for that worktree only. You did not do anything, and your main
+checkout is untouched.
+
+**Committing the plan.** The agent commits the spec. Git adds a line to
+the bottom of the commit message: `Phase: planning`. You did not ask for
+it and the agent did not remember to do it.
+
+**Moving to dev.** You say *"looks good, build it."* The agent runs the
+checker, which reports the facts: the spec has requirements, a design,
+and a checklist with nothing ticked; there are no work commits. Moving to
+dev is allowed. It records the move, and the next commit carries
+`Phase: dev`.
+
+**Building.** It edits the source, commits, ticks checklist items as it
+completes them, runs the tests. Every commit gets stamped. If it tried to
+commit with the checklist half-ticked while claiming the stage was
+review, the commit would be refused with a message saying exactly which
+items were outstanding.
+
+**A refusal you might actually see.** It finishes, and tries to push
+before the tests pass. The pre-push hook refuses: *"cannot publish — the
+test command has not been run on the current commit."* It runs the tests,
+then pushes. You never had to notice.
+
+**Review.** You say *"get it ready for review."* It pushes, opens the
+pull request, and the stage becomes review. You read the change and find
+that the flag should suppress warnings too — something the requirement
+never said. That is a planning-stage mistake, not a coding one.
+
+You say so. The agent records going back: the stage at fault is
+requirements, the problem is that warning suppression was never
+specified, and the resolution is to amend the requirement and extend the
+tests. That is now on the record, it counts as one return, and **the
+feature cannot move forward to closure until it is discharged.**
+
+**Closure.** Requirement amended, code updated, tests extended, reviewed
+again, and you say *"ship it."* It squash-merges. The squashed commit on
+the main branch has a normal message — none of the `Phase:` lines survive,
+because the per-commit messages are discarded. The worktree goes away and
+with it the hooks setting. Your main branch has no trace of any of this.
+
+**If your session had died** at any point — crashed terminal, closed
+laptop, context exhausted — a new session reads the branch, finds the
+last stamped stage, and continues. It does not ask you where things
+stood, and it does not trust a stale line in a document.
+
+### With Codex
+
+Same feature, same four stages, same spec, same commit stamps, same
+refusals, same clean merge. **Everything in the walkthrough above happens
+identically**, because all of it is done by git and a shell script.
+
+Three differences, all of which you would notice only if you looked:
+
+**Stage isolation is done with separate sessions.** Claude can give each
+stage its own clean context inside one session. Codex cannot, so moving
+from planning to dev means starting a fresh Codex session in the same
+worktree. It reads the branch, learns the stage from the commit history,
+loads the dev instructions, and carries on. This is the case the whole
+design exists to make safe — a new session with no memory, recovering
+state from the repository.
+
+**The stage cannot be prevented from overstepping.** On Claude, the
+planning stage is denied the editing tools outright, so it *cannot* touch
+source code. On Codex the equivalent setting lives in your personal
+configuration rather than the project's, so kdevkit cannot ship it. The
+planning stage is therefore asked not to edit source, and if it does
+anyway, the commit hook catches it after the fact rather than the tool
+restriction preventing it up front. Detection instead of prevention.
+
+**The second safety net is missing unless you opt in.** Claude can run
+extra checks on file edits as well as commits. Codex can too, but only
+from your own configuration, so by default the guarantee rests on the git
+hooks alone. That is the floor this design was built to, and it is why
+the guarantee lives in git.
+
+**What is the same, and this is the point:** a Codex session that has
+lost the thread cannot record a stage it has not reached, cannot push an
+inconsistent branch, and cannot silently leave a stale stage behind for
+the next session to believe. The agent measured at roughly a third
+adherence on prose instructions gets the same guarantee as the one at
+nearly full adherence, because the guarantee stopped depending on the
+agent.
+
+### What a person has to do differently
+
+Close to nothing, which is the intent. You install kdevkit as you do
+today. You are occasionally told *no* with a reason — the refusals above.
+You provide the same judgement you provide now: is this plan right, is
+this change good, which stage was at fault. The bookkeeping you currently
+have to notice going wrong stops needing to be noticed.
 
 ## What must be true when we are done
 
@@ -567,9 +716,12 @@ lands. No step depends on an unresolved question.
    the block on moving forward. Test statements 4, 5 and 6.
 6. Add the pre-push hook. Test that an inconsistent branch cannot be
    published.
-7. Teach the install tool to point git at the hooks and mark the scripts
-   executable. Test that a fresh clone plus install gives a working
-   guarantee.
+7. Teach the install tool to write the checker's absolute path into the
+   instruction files as it deploys them, and to point git at kdevkit's
+   hooks **per worktree** when a feature's worktree is created, undoing
+   it at closure. Test that the main checkout gains no hooks, that
+   another branch is unaffected, and that a project cloned without
+   kdevkit contains nothing belonging to it.
 8. Update the instruction files to mention the checker, and remove the
    machine-readable field from the handoff section, leaving the prose.
 9. Add the capability list and translate it for Claude. Document the
@@ -711,10 +863,20 @@ is worth saying plainly.
   discarded on squash so mainline stays clean. Rejected: git notes, a
   locked side file, and the current markdown field, each for reasons
   recorded above.
-- **2026-08-29 · The checker is a committed POSIX shell script.** A
-  repository-relative path is the only one that resolves on every agent.
-  Rejected: an installed binary, a skill-bundled script, and an AI
-  sub-session.
+- **2026-08-31 · The checker and hooks ship with kdevkit, not with the
+  project; the hooks are scoped to the feature's worktree.** Revises an
+  earlier decision to commit the script into each project. The path
+  problem that drove that decision is solved by substituting the
+  absolute install path into the instructions at install time, which is
+  reliable on every agent without a run-time lookup. Worktree-scoped
+  hook configuration — verified to fire in the feature worktree and not
+  in the main checkout — keeps the main branch and every other branch
+  free of kdevkit, so a project stays independent of it and two features
+  may use different tooling. Rejected: an installed binary (build step,
+  platform-specific); a run-time skill-directory lookup (Claude only);
+  an AI sub-session as the checker; and doing without hooks, which is
+  not possible while Kiro has no interception mechanism and Codex cannot
+  let a project ship one.
 - **2026-08-29 · Support down to Kiro and no further.** A supported
   agent must offer an instruction *directory*, an unattended shell, and
   tool restriction. Rejected: cloud agents and Aider, which fail that
