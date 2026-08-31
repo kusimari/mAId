@@ -317,14 +317,39 @@ crossing a feature boundary — review sending work to plan, for instance.
 Otherwise the return count, which exists to make thrash visible, would be
 swamped by normal dev activity and tell us nothing.
 
-**Leaving dev requires the dev loop to have converged.** This is the one
-place the two loops genuinely meet. Dev is not finished because the agent
-believes it is; it is finished when the quality checks are clean, the
-tests have run and passed against the current commit, and any review
-findings are resolved. Those are all facts, so the checker computes them
-and they become preconditions for moving to review. The inner loop
-therefore needs no stamps of its own — its state is observable in the
-same way everything else is.
+**Leaving dev requires the dev loop to have converged, and that is
+verified rather than believed.** This is the one place the two loops
+genuinely meet. Dev is not finished because the agent says so; it is
+finished when the quality checks are clean, the tests pass, and review
+findings are resolved.
+
+The obvious implementation is to have the agent record that it ran them,
+and check the record. That is worth nothing — it is the same trust we are
+trying to remove. So instead **the hook runs the checks itself.** Verified:
+pushing with tests passing succeeds; pushing with tests failing is
+refused and the failing commit never reaches the remote.
+
+For anything that genuinely must be recorded rather than re-run, the
+record is keyed to the **tree hash** it was verified against, so editing
+any file invalidates it. Verified: changing one file changes the tree
+hash, so a claim carried over from before the edit is detectably stale.
+That closes the obvious laundering route of running the tests, then
+editing, then claiming green.
+
+**What we are deliberately not doing: enforcing the dev loop's internal
+order.** "Quality checks before tests before review" is a sequence of
+shell invocations and agent dispatches. Git cannot see any of them —
+verified that running the checks, the tests, or a review produces zero
+commits, so there is nothing for a stamp to ride on and nothing for the
+commit hook to observe. Gating that order would require intercepting tool
+calls, which means agent-level hooks, which **Kiro's CLI does not have.**
+It would therefore work on two agents and silently do nothing on the
+floor — precisely the asymmetry this design exists to avoid.
+
+So the dev loop is enforced on its **outcome, not its route**. A dev loop
+that reaches review with failing tests is refused. A dev loop that ran the
+linter after the tests, with both clean, is not something worth spending
+the floor's portability on.
 
 **The outer loop is out of scope, and inert rather than broken.** A
 project- or initiative-level session also commits — writing the project
@@ -754,12 +779,14 @@ are achieved.
 13. Iterating the dev loop — quality, tests, review, fix, repeat — does
     not change the recorded feature stage and does not count as going
     back a stage, however many times it turns.
-14. A feature cannot leave dev until the dev loop has converged on the
-    current commit: quality clean, tests passed, review findings
-    resolved.
-15. Commits made by project- or initiative-level work carry no feature
+14. A feature cannot leave dev until the dev loop has converged: quality
+    clean, tests passed, review findings resolved — with the checks
+    observed running, not merely reported as having run.
+15. Evidence that is recorded rather than re-run is invalidated by any
+    change to the files it was verified against.
+16. Commits made by project- or initiative-level work carry no feature
     stage at all.
-16. Statements 1 to 10 and 12 to 15 hold on Claude, Codex and Kiro.
+17. Statements 1 to 10 and 12 to 16 hold on Claude, Codex and Kiro.
 
 ## How we will test it
 
@@ -826,9 +853,10 @@ work on this project.
 | 11 | In the planning stage, give the agent a task that would require editing source. No source file changes. |
 | 12 | In one checkout with no worktrees, run the same feature through and assert it behaves identically; then commit on the default branch and on an unrelated branch and assert nothing was stamped and nothing was refused. |
 | 13 | Drive several dev-loop iterations — failing tests, then a review finding, then a fix. Assert the stage stayed `dev` throughout and the return count is still zero. This is the test that stops normal dev churn from being mistaken for thrash. |
-| 14 | With tests failing on the current commit, attempt to move to review. Refused, naming which condition failed. Fix, re-run, and assert it is now allowed. Repeat for an unresolved review finding. |
-| 15 | On a branch holding initiative-level work and no feature spec, commit. Assert no stage was stamped and the commit was not refused. Guards the boundary against a future change to the detection rule. |
-| 16 | Every agent-driven fixture runs on all three agents, fresh and under load. |
+| 14 | With tests failing, attempt to push. Refused, naming the condition, and the failing commit must not reach the remote — assert against the remote, not the local branch. Fix and assert the push now succeeds. |
+| 15 | Record evidence against one set of files, change a file, then attempt to advance. Refused as stale. |
+| 16 | On a branch holding initiative-level work and no feature spec, commit. Assert no stage was stamped and the commit was not refused. Guards the boundary against a future change to the detection rule. |
+| 17 | Every agent-driven fixture runs on all three agents, fresh and under load. |
 
 ### Ways this could be cheated, each needing its own test
 
@@ -863,7 +891,9 @@ lands. No step depends on an unresolved question.
    the block on moving forward. Test statements 4, 5 and 6, and test
    statement 13 — that dev-loop iterations do not touch the count.
 6. Add the dev-loop convergence facts and make them preconditions for
-   leaving dev. Test statement 14.
+   leaving dev, with the hook running the checks rather than trusting a
+   report, and recorded evidence keyed to the tree hash. Test statements
+   14 and 15.
 7. Add the pre-push hook. Test that an inconsistent branch cannot be
    published.
 8. Add the hook's self-scoping check as the first thing it does, and its
@@ -968,7 +998,15 @@ is worth saying plainly.
 
 ## Still open
 
-- **The outer and inner loops are noted but not addressed.** This work
+- **Should `pre-push` test the working tree or the pushed commit?**
+  Running the checks in place tests whatever is currently on disk, which
+  is not necessarily what is being pushed. Either require a clean tree
+  before pushing, or check the pushed commit out somewhere temporary and
+  test that — correct but slower. Not decided.
+- **The dev loop's internal order is out of scope on purpose**, because
+  git cannot observe non-committing steps and the alternative does not
+  reach Kiro. Revisit only if the floor changes.
+- **The outer loop is noted but not addressed.** This work
   stamps and gates the feature loop only. Whether the project and
   initiative levels eventually want the same treatment — and whether the
   dev loop wants its own record of how many times it turned — is left
