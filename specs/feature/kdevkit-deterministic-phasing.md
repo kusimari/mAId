@@ -1,6 +1,12 @@
-# Making phase transitions reliable in kdevkit
+# Feature: a record of where work stands, that cannot be forgotten
 
 Branch: `feat/kdevkit-deterministic-phasing`
+
+> **How to read this.** Everything up to *Handoff* is the proposal, and
+> stands on its own: what this is for, what must be true, how it works,
+> how it is tested, what is left to build. Everything after the divider is
+> how we got here — the research, the reversals, and the running log. You
+> do not need any of it to review the proposal.
 
 ## What this document is
 
@@ -9,8 +15,9 @@ live somewhere it cannot be forgotten. It is written to be read start to
 finish — what the problem is, what we measured, the design, how we will
 know it works, and how to build it.
 
-Some of the mechanism is built. The checklist near the end marks what is
-done, partly done, and not started.
+Some of the mechanism is built. *How to build it* marks each item done,
+partly done, or not started, and the two next items are the ones that
+matter most.
 
 ## What kdevkit is for
 
@@ -68,7 +75,8 @@ session reads it, believes it, and redoes work or skips a gate. A human
 watching catches this and corrects it, which is exactly the cost we are
 trying to remove.
 
-This is not hypothetical. A roughly 300-line instruction file, read fresh
+This is not hypothetical, and the full evidence is in the appendix. A
+roughly 300-line instruction file, read fresh
 and then asked to repeat its own rules back, was followed correctly:
 
 | Coding agent | Fresh session | After ~4.6KB of unrelated conversation |
@@ -91,222 +99,63 @@ stage, *what it decided and why* has to survive, because that is the only
 thing a later builder — or an initiative-level one — can read to know that
 dev kept failing because the design was wrong.
 
-## What we tried, and what we learned
+## What must be true when we are done
 
-We spent a long research session on this, partly reading what other
-people have built and partly running experiments. Here is what changed
-our minds, roughly in the order it changed them.
+Statements a person can check by reading the repository. They say nothing
+about how they are achieved. Grouped by the two jobs.
 
-### "Force the agent to do it" is not available
+**The record is trustworthy.**
 
-The obvious fix is to make the transition mandatory rather than
-requested. Every agent we support has a mechanism that can intercept an
-action and refuse it. So: intercept, check, refuse if wrong.
+1. A builder starting with no knowledge of prior work can determine the
+   current stage from the repository alone.
+2. A commit whose stage claim the repository contradicts does not land.
+3. Statement 2 holds even with `--no-verify`.
+4. The record never falls behind reality: work that has plainly been done
+   is reflected without anyone remembering to say so.
+5. The record never moves backwards except through a recorded return.
+6. When something cannot be determined, no transition happens.
 
-That works for *stopping* something. It does not work for *starting*
-something. None of these mechanisms can force the agent to take an
-action it never attempted. If the agent simply never updates the
-handoff, there is nothing to intercept.
+**Decisions survive.**
 
-We then looked at whether anyone else had solved this, and found that
-nobody had even tried. Every comparable system we examined **gates**
-transitions but does not **force** them:
+7. A return records the layer at fault, the problem, what would resolve
+   it, and how we will know — all readable from the branch afterwards.
+8. After a return, reaching a later stage again requires fresh work.
+9. Returns and repeated attempts are counted, and the counts are readable
+   without parsing prose.
+10. A builder can proceed past a gate by recording what it is skipping and
+    why; doing so is counted and visible.
 
-- **gastown**, a multi-agent workspace manager and the most
-  machinery-heavy example we found, still relies on an agent choosing to
-  run a "done" command.
-- **GitHub's spec-kit** enforces nothing at all — its stages are just
-  prompt files, and their ordering is a recommendation.
-- **Roo Code**, which has explicit modes for architecture, coding and
-  debugging, states plainly that nothing forces you to move from one to
-  the next.
+**The flow holds without correction.**
 
-So we stopped trying to guarantee the *right* transition happens, and
-settled on a weaker but achievable goal: **a wrong record must never
-become the accepted truth, and a session that has lost its memory must
-be able to recover the truth from the repository.**
+11. A builder following only what the framework tells it can get a feature
+    from planning to review without a human intervening.
+12. Iterating the dev loop does not change the stage and does not count as
+    going back.
+13. A feature cannot leave dev until its gates have been observed passing,
+    or an exception has been recorded.
+14. Recorded evidence is invalidated by changing the files it covered.
+15. Nothing is stamped or refused outside the piece of work it belongs to
+    — not the default branch, not an unrelated branch, not another
+    altitude.
+16. It works whether or not the work has its own worktree.
 
-### Replacing five rules with one command does not help
+**A higher-order builder can drive it.**
 
-Next idea: instead of five rules to remember, give the agent one command
-to run — `phase advance --to review` — and put the logic in the command.
-One thing to remember is easier than five.
+17. The framework can describe itself on request: the altitudes, the
+    stages, what finishing a stage requires, and what a return or
+    exception must record.
+18. A builder can ask which units of work are blocked and why, across a
+    whole initiative, without reading each branch by hand.
+19. The same verbs work at feature and initiative altitude, and the two
+    stage records do not collide.
 
-We found a project that had tried exactly this and measured the result.
-`spec-workflow-mcp` asks its agent to call a logging tool after
-completing each task. Across dozens of features, that tool was called
-**zero times**. Not rarely. Never.
+**Everywhere.**
 
-The cause was not that the instruction was unclear. It was *where the
-instruction sat*: it came after the step that marks the task complete.
-The agent marked the task done, considered the job finished, and never
-reached the next line.
-
-Our planned command would have sat in exactly the same place — after
-commit and push, at the point where the work already feels finished. So
-this idea was not an improvement. It was the same bug with a shorter
-instruction.
-
-That failure is what produced the actual design. If the agent cannot be
-relied on to record something *after* finishing, then the record has to
-be a **side effect of the finishing itself**.
-
-### The thing the agent cannot skip is a commit
-
-An agent doing dev work has to make commits. That is not optional and
-not forgettable — it is the work.
-
-Git can attach a line to the bottom of every commit message
-automatically, using a hook. This is not exotic: the `Signed-off-by:`
-line on Linux kernel patches works this way, and Gerrit has used a
-hook-inserted `Change-Id:` line as durable identity for about fifteen
-years.
-
-So the phase can be stamped into the commit message by git, at the
-moment of committing, without the agent doing anything. And the same
-hook can refuse the commit if the claimed state and the actual state
-disagree.
-
-We tested the details, because the details decide whether this works:
-
-| Hook | Can add the line | Can refuse the commit | Still runs with `--no-verify` |
-|---|---|---|---|
-| `commit-msg` | yes | yes | **no, skipped** |
-| `prepare-commit-msg` | yes | yes | **yes** |
-
-That difference matters. An agent that hits a refusal will sometimes
-retry with `--no-verify` to get past it. Using `prepare-commit-msg`
-closes that door.
-
-### Storing state in the spec file is the weak point
-
-We had assumed the handoff section was fine as a place to keep the
-current phase. Two projects showed us otherwise.
-
-**Backlog.md** stores task state as markdown in git, deliberately, and
-is well used. But it had a bug where two processes updating a task at
-once would silently lose one of the updates — measured at **seven of
-eight concurrent writes lost**, with both writers reporting success. The
-fix was file locking.
-
-**taskmaster-ai** keeps its state in a JSON file and accumulated a long
-run of problems: race conditions between multiple editor windows,
-several kinds of corruption caused by its own commands, and stale reads
-after a user hand-edited the file. It is now moving to a database for
-the transactions and to a line-per-entry format so git can merge it.
-
-kdevkit's version is the fragile end of this. One machine-readable field
-sits among four free-prose fields, inside a document humans are actively
-encouraged to edit, and the instruction is to replace the entire block
-each time — which is the worst possible shape for git merges. And
-kdevkit runs each feature in its own git worktree, so two sessions
-touching one spec is a normal occurrence, not an edge case.
-
-Commit messages avoid all of this. Each commit is its own entry, so
-there is nothing to overwrite. Nobody hand-edits history casually. And
-when the feature branch is squashed into the mainline, the per-commit
-messages go away, so none of this bookkeeping pollutes the main history
-— which is the behaviour we want anyway.
-
-### Where the checking code can live
-
-We needed a small amount of code to answer factual questions about the
-repository. The question is where it lives, and the answer has to satisfy
-two things that initially looked opposed: the agent must be able to find
-it without guessing, and **the project being worked on should not have to
-carry kdevkit's machinery.** A project should be developable by someone
-who has never heard of kdevkit, and two features in the same repository
-should be able to use different tooling.
-
-**A compiled program installed on the PATH.** Works on every agent.
-Rejected: it needs a build step, and a binary is platform-specific.
-
-**A script inside the skill folder, found at run time.** Claude can do
-this — it substitutes the skill's own directory into commands. Nothing
-else can: Codex has no documented way for a skill to invoke its own
-script, and Kiro's own skills use bare relative paths that only resolve
-if the working directory happens to be the skill folder. So on two of
-three agents the path would have to be guessed, with a silent failure
-when the guess is wrong.
-
-**A script inside the skill folder, with its path fixed at install
-time.** This is what we chose, and it dissolves the apparent conflict.
-The install step already knows exactly where it is putting the skill, so
-it writes that absolute path into the instruction text as it deploys.
-The agent never resolves anything at run time and never guesses — it
-reads a literal path. Nothing lands in the project repository at all.
-
-The earlier draft of this document proposed committing the script into
-each project. That was wrong, and the reason is worth recording: we had
-assumed the only way to get a reliable path was a repository-relative
-one. Substituting at install time gets the same reliability with none of
-the project pollution.
-
-On what the script may depend on: since the state lives in commit
-messages rather than a JSON document, the checker's output is
-`key=value` lines that `awk` handles, so `jq` is not needed. If a later
-need for it appears, the install step could carry helpers — but adding a
-runtime dependency to reach every supported platform is a real cost, so
-the working assumption is POSIX shell, `git`, `awk` and `sed`, and
-anything more has to justify itself.
-
-### Asking an AI to do the checking is worse than it sounds
-
-We seriously considered making the checker itself an AI sub-session:
-zero installation, works anywhere a skill works.
-
-Every question the checker needs to answer has an exact answer
-obtainable with `grep` — are all the checklist items ticked, does a
-commit of the right type exist, is there exactly one handoff section. An
-AI answering those adds nothing but variance.
-
-Worse, constrained output makes this actively dangerous. If you require
-the answer to be one of a fixed set of values, the model will pick one
-even when none of them is right — the documented behaviour is that it
-"will always try to adhere to the provided schema." A checker that
-cannot say "I don't know" is a checker that confidently says the wrong
-thing. And Kiro has no way to constrain output at all.
-
-We found no example of anyone using an AI for a mechanical state check.
-The nearest relevant project, Probity, deliberately splits the two:
-deterministic rules by default, AI only for genuine judgement calls.
-
-### Restricting what a stage can do beats checking what it did
-
-This came from looking at editor-based agents, and it was the most
-useful single idea we found. Cline, Roo Code and Kilo Code all have
-modes — planning, coding, asking — and **none of them enforces the order
-of the modes.** What they enforce is what each mode is *capable* of:
-
-- Cline's planning mode cannot modify files or run commands at all, and
-  its documentation says the constraint is deliberate.
-- Roo's architect mode can only edit markdown.
-- Kilo's planning mode can only write into its own plans directory.
-
-This is stronger than checking afterwards, because there is nothing to
-check — the stage physically cannot do the wrong thing. And every agent
-we support has some version of it.
-
-### One thing that nearly caught us out
-
-The mechanism we rely on can fail without saying so. There is a known
-class of bug where an interception hook stops working mid-session and
-the result looks identical to a session where nothing was wrong. As one
-bug report put it: a hook that does not fire looks exactly like a hook
-with nothing to object to.
-
-We tested the specific case that worried us most — kdevkit runs features
-in git worktrees, and there was a report of hooks dying when switching
-into one. It does not reproduce when the session *starts* in the
-worktree, which is how kdevkit works. Good news.
-
-But we did find a real one: running Claude with the `--bare` flag
-disables hooks entirely, exits successfully, and warns about nothing.
-That flag must never be used where we expect enforcement.
-
-The general lesson stands, and it is the reason the design puts the
-guarantee in git rather than in the agent: **git running a hook is not
-subject to the agent's session state at all.**
+20. After a feature merges, no stage bookkeeping remains on the main
+    branch, and the merge commit carries an authored summary rather than a
+    transcript of branch commits.
+21. With none of this installed, kdevkit behaves as it does today.
+22. Statements 1-19 hold on claude, codex and kiro.
 
 ## Where this sits among kdevkit's three loops
 
@@ -916,64 +765,6 @@ You provide the same judgement you provide now: is this plan right, is
 this change good, which stage was at fault. The bookkeeping you currently
 have to notice going wrong stops needing to be noticed.
 
-## What must be true when we are done
-
-Statements a person can check by reading the repository. They say nothing
-about how they are achieved. Grouped by the two jobs.
-
-**The record is trustworthy.**
-
-1. A builder starting with no knowledge of prior work can determine the
-   current stage from the repository alone.
-2. A commit whose stage claim the repository contradicts does not land.
-3. Statement 2 holds even with `--no-verify`.
-4. The record never falls behind reality: work that has plainly been done
-   is reflected without anyone remembering to say so.
-5. The record never moves backwards except through a recorded return.
-6. When something cannot be determined, no transition happens.
-
-**Decisions survive.**
-
-7. A return records the layer at fault, the problem, what would resolve
-   it, and how we will know — all readable from the branch afterwards.
-8. After a return, reaching a later stage again requires fresh work.
-9. Returns and repeated attempts are counted, and the counts are readable
-   without parsing prose.
-10. A builder can proceed past a gate by recording what it is skipping and
-    why; doing so is counted and visible.
-
-**The flow holds without correction.**
-
-11. A builder following only what the framework tells it can get a feature
-    from planning to review without a human intervening.
-12. Iterating the dev loop does not change the stage and does not count as
-    going back.
-13. A feature cannot leave dev until its gates have been observed passing,
-    or an exception has been recorded.
-14. Recorded evidence is invalidated by changing the files it covered.
-15. Nothing is stamped or refused outside the piece of work it belongs to
-    — not the default branch, not an unrelated branch, not another
-    altitude.
-16. It works whether or not the work has its own worktree.
-
-**A higher-order builder can drive it.**
-
-17. The framework can describe itself on request: the altitudes, the
-    stages, what finishing a stage requires, and what a return or
-    exception must record.
-18. A builder can ask which units of work are blocked and why, across a
-    whole initiative, without reading each branch by hand.
-19. The same verbs work at feature and initiative altitude, and the two
-    stage records do not collide.
-
-**Everywhere.**
-
-20. After a feature merges, no stage bookkeeping remains on the main
-    branch, and the merge commit carries an authored summary rather than a
-    transcript of branch commits.
-21. With none of this installed, kdevkit behaves as it does today.
-22. Statements 1-19 hold on claude, codex and kiro.
-
 ## How we will test it
 
 Tests are written from the statements above, not from the design. An
@@ -1109,59 +900,6 @@ partly, `[ ]` not started.
   recorded.
 - [ ] 22 · Correct the inaccurate claims in the existing specs.
 
-## Corrections to existing specs
-
-Five claims in the checked-in specs turned out to be wrong. Two of them
-were introduced during this research session and then corrected, which
-is worth saying plainly.
-
-1. **"No hooks are shipped for any agent today"** — wrong. The
-   project's own terminal session tracker already installs hooks into
-   the user's Claude settings and uses them to track session state.
-2. **The session tracker's "no extra parent process"** is a note about
-   how one wrapped process replaces itself, not a position on
-   orchestration. It has been cited as the latter.
-3. **The OpenAI citation about re-stating instructions** is narrower
-   than claimed: it is about markdown *formatting* drifting over a long
-   conversation, not instruction-following in general. The measured
-   Codex result stands on its own; this citation should not be leaned
-   on.
-4. **gastown's "never reuse a branch" rule** could not be found and is
-   contradicted by code that explicitly reuses branches. Remove the
-   citation.
-5. **gastown's argument against a remembering coordinator is real** — I
-   wrongly reported it as a misquote mid-session. The distinction is
-   worth keeping: routing work through a long-lived agent is fine, but
-   having that agent *remember* the progress of the work is the failure
-   mode, because it loses the thread when its context is compacted.
-
-## What we decided, and what we turned down
-
-- **State goes in commit messages, not a file.** Each commit is its own
-  entry, so concurrent writes cannot clobber each other; git writes it,
-  so the agent cannot forget; it vanishes on squash, so mainline stays
-  clean. Turned down: git notes (not pushed by default, orphaned by
-  amends, and merges need hand-resolution — all three verified); a
-  locked side file (solves the corruption but adds an artifact and still
-  needs the agent to call something); the current markdown field (whose
-  failure mode is measured elsewhere at seven of eight writes lost).
-- **The checker is a committed shell script.** Turned down: a compiled
-  program on the PATH (needs building and installing, and reaches no
-  agent without a local install); a script inside the skill folder
-  (resolves reliably on Claude only).
-- **An AI does not do the checking.** Every question has an exact
-  answer, constrained output forces a guess where none is right, and
-  Kiro cannot constrain output at all. Revisit only if the facts turn
-  out to leave a real judgement call behind.
-- **Forcing the right transition is out of scope.** Nothing achieves it.
-  We guarantee that a wrong record cannot become the truth.
-- **Approval is whoever supervises**, human or a parent session, and is
-  recorded with who gave it.
-- **The research stage is recordable but never gated.** There is no
-  factual test for "research is finished", so its exit is an approval,
-  not a check.
-- **Kiro is the floor; cloud agents and Aider are out.**
-
 ## Still open
 
 - **Should `pre-push` test the working tree or the pushed commit?**
@@ -1223,6 +961,285 @@ is worth saying plainly.
   remains after the facts are computed — build the facts first and see
   how small the remainder is. Also left: running stages as separate
   terminal sessions, which is its own piece of work.
+
+---
+
+# Appendix — how we got here
+
+The rest of this file is history, not contract. It records the research the
+design rests on, the decisions taken and reversed along the way, and the
+session log. Read it if you want to know why a choice was made; skip it if
+you want to know what the choice was.
+
+## What we tried, and what we learned
+
+We spent a long research session on this, partly reading what other
+people have built and partly running experiments. Here is what changed
+our minds, roughly in the order it changed them.
+
+### "Force the agent to do it" is not available
+
+The obvious fix is to make the transition mandatory rather than
+requested. Every agent we support has a mechanism that can intercept an
+action and refuse it. So: intercept, check, refuse if wrong.
+
+That works for *stopping* something. It does not work for *starting*
+something. None of these mechanisms can force the agent to take an
+action it never attempted. If the agent simply never updates the
+handoff, there is nothing to intercept.
+
+We then looked at whether anyone else had solved this, and found that
+nobody had even tried. Every comparable system we examined **gates**
+transitions but does not **force** them:
+
+- **gastown**, a multi-agent workspace manager and the most
+  machinery-heavy example we found, still relies on an agent choosing to
+  run a "done" command.
+- **GitHub's spec-kit** enforces nothing at all — its stages are just
+  prompt files, and their ordering is a recommendation.
+- **Roo Code**, which has explicit modes for architecture, coding and
+  debugging, states plainly that nothing forces you to move from one to
+  the next.
+
+So we stopped trying to guarantee the *right* transition happens, and
+settled on a weaker but achievable goal: **a wrong record must never
+become the accepted truth, and a session that has lost its memory must
+be able to recover the truth from the repository.**
+
+### Replacing five rules with one command does not help
+
+Next idea: instead of five rules to remember, give the agent one command
+to run — `phase advance --to review` — and put the logic in the command.
+One thing to remember is easier than five.
+
+We found a project that had tried exactly this and measured the result.
+`spec-workflow-mcp` asks its agent to call a logging tool after
+completing each task. Across dozens of features, that tool was called
+**zero times**. Not rarely. Never.
+
+The cause was not that the instruction was unclear. It was *where the
+instruction sat*: it came after the step that marks the task complete.
+The agent marked the task done, considered the job finished, and never
+reached the next line.
+
+Our planned command would have sat in exactly the same place — after
+commit and push, at the point where the work already feels finished. So
+this idea was not an improvement. It was the same bug with a shorter
+instruction.
+
+That failure is what produced the actual design. If the agent cannot be
+relied on to record something *after* finishing, then the record has to
+be a **side effect of the finishing itself**.
+
+### The thing the agent cannot skip is a commit
+
+An agent doing dev work has to make commits. That is not optional and
+not forgettable — it is the work.
+
+Git can attach a line to the bottom of every commit message
+automatically, using a hook. This is not exotic: the `Signed-off-by:`
+line on Linux kernel patches works this way, and Gerrit has used a
+hook-inserted `Change-Id:` line as durable identity for about fifteen
+years.
+
+So the phase can be stamped into the commit message by git, at the
+moment of committing, without the agent doing anything. And the same
+hook can refuse the commit if the claimed state and the actual state
+disagree.
+
+We tested the details, because the details decide whether this works:
+
+| Hook | Can add the line | Can refuse the commit | Still runs with `--no-verify` |
+|---|---|---|---|
+| `commit-msg` | yes | yes | **no, skipped** |
+| `prepare-commit-msg` | yes | yes | **yes** |
+
+That difference matters. An agent that hits a refusal will sometimes
+retry with `--no-verify` to get past it. Using `prepare-commit-msg`
+closes that door.
+
+### Storing state in the spec file is the weak point
+
+We had assumed the handoff section was fine as a place to keep the
+current phase. Two projects showed us otherwise.
+
+**Backlog.md** stores task state as markdown in git, deliberately, and
+is well used. But it had a bug where two processes updating a task at
+once would silently lose one of the updates — measured at **seven of
+eight concurrent writes lost**, with both writers reporting success. The
+fix was file locking.
+
+**taskmaster-ai** keeps its state in a JSON file and accumulated a long
+run of problems: race conditions between multiple editor windows,
+several kinds of corruption caused by its own commands, and stale reads
+after a user hand-edited the file. It is now moving to a database for
+the transactions and to a line-per-entry format so git can merge it.
+
+kdevkit's version is the fragile end of this. One machine-readable field
+sits among four free-prose fields, inside a document humans are actively
+encouraged to edit, and the instruction is to replace the entire block
+each time — which is the worst possible shape for git merges. And
+kdevkit runs each feature in its own git worktree, so two sessions
+touching one spec is a normal occurrence, not an edge case.
+
+Commit messages avoid all of this. Each commit is its own entry, so
+there is nothing to overwrite. Nobody hand-edits history casually. And
+when the feature branch is squashed into the mainline, the per-commit
+messages go away, so none of this bookkeeping pollutes the main history
+— which is the behaviour we want anyway.
+
+### Where the checking code can live
+
+We needed a small amount of code to answer factual questions about the
+repository. The question is where it lives, and the answer has to satisfy
+two things that initially looked opposed: the agent must be able to find
+it without guessing, and **the project being worked on should not have to
+carry kdevkit's machinery.** A project should be developable by someone
+who has never heard of kdevkit, and two features in the same repository
+should be able to use different tooling.
+
+**A compiled program installed on the PATH.** Works on every agent.
+Rejected: it needs a build step, and a binary is platform-specific.
+
+**A script inside the skill folder, found at run time.** Claude can do
+this — it substitutes the skill's own directory into commands. Nothing
+else can: Codex has no documented way for a skill to invoke its own
+script, and Kiro's own skills use bare relative paths that only resolve
+if the working directory happens to be the skill folder. So on two of
+three agents the path would have to be guessed, with a silent failure
+when the guess is wrong.
+
+**A script inside the skill folder, with its path fixed at install
+time.** This is what we chose, and it dissolves the apparent conflict.
+The install step already knows exactly where it is putting the skill, so
+it writes that absolute path into the instruction text as it deploys.
+The agent never resolves anything at run time and never guesses — it
+reads a literal path. Nothing lands in the project repository at all.
+
+The earlier draft of this document proposed committing the script into
+each project. That was wrong, and the reason is worth recording: we had
+assumed the only way to get a reliable path was a repository-relative
+one. Substituting at install time gets the same reliability with none of
+the project pollution.
+
+On what the script may depend on: since the state lives in commit
+messages rather than a JSON document, the checker's output is
+`key=value` lines that `awk` handles, so `jq` is not needed. If a later
+need for it appears, the install step could carry helpers — but adding a
+runtime dependency to reach every supported platform is a real cost, so
+the working assumption is POSIX shell, `git`, `awk` and `sed`, and
+anything more has to justify itself.
+
+### Asking an AI to do the checking is worse than it sounds
+
+We seriously considered making the checker itself an AI sub-session:
+zero installation, works anywhere a skill works.
+
+Every question the checker needs to answer has an exact answer
+obtainable with `grep` — are all the checklist items ticked, does a
+commit of the right type exist, is there exactly one handoff section. An
+AI answering those adds nothing but variance.
+
+Worse, constrained output makes this actively dangerous. If you require
+the answer to be one of a fixed set of values, the model will pick one
+even when none of them is right — the documented behaviour is that it
+"will always try to adhere to the provided schema." A checker that
+cannot say "I don't know" is a checker that confidently says the wrong
+thing. And Kiro has no way to constrain output at all.
+
+We found no example of anyone using an AI for a mechanical state check.
+The nearest relevant project, Probity, deliberately splits the two:
+deterministic rules by default, AI only for genuine judgement calls.
+
+### Restricting what a stage can do beats checking what it did
+
+This came from looking at editor-based agents, and it was the most
+useful single idea we found. Cline, Roo Code and Kilo Code all have
+modes — planning, coding, asking — and **none of them enforces the order
+of the modes.** What they enforce is what each mode is *capable* of:
+
+- Cline's planning mode cannot modify files or run commands at all, and
+  its documentation says the constraint is deliberate.
+- Roo's architect mode can only edit markdown.
+- Kilo's planning mode can only write into its own plans directory.
+
+This is stronger than checking afterwards, because there is nothing to
+check — the stage physically cannot do the wrong thing. And every agent
+we support has some version of it.
+
+### One thing that nearly caught us out
+
+The mechanism we rely on can fail without saying so. There is a known
+class of bug where an interception hook stops working mid-session and
+the result looks identical to a session where nothing was wrong. As one
+bug report put it: a hook that does not fire looks exactly like a hook
+with nothing to object to.
+
+We tested the specific case that worried us most — kdevkit runs features
+in git worktrees, and there was a report of hooks dying when switching
+into one. It does not reproduce when the session *starts* in the
+worktree, which is how kdevkit works. Good news.
+
+But we did find a real one: running Claude with the `--bare` flag
+disables hooks entirely, exits successfully, and warns about nothing.
+That flag must never be used where we expect enforcement.
+
+The general lesson stands, and it is the reason the design puts the
+guarantee in git rather than in the agent: **git running a hook is not
+subject to the agent's session state at all.**
+
+## What we decided, and what we turned down
+
+- **State goes in commit messages, not a file.** Each commit is its own
+  entry, so concurrent writes cannot clobber each other; git writes it,
+  so the agent cannot forget; it vanishes on squash, so mainline stays
+  clean. Turned down: git notes (not pushed by default, orphaned by
+  amends, and merges need hand-resolution — all three verified); a
+  locked side file (solves the corruption but adds an artifact and still
+  needs the agent to call something); the current markdown field (whose
+  failure mode is measured elsewhere at seven of eight writes lost).
+- **The checker is a committed shell script.** Turned down: a compiled
+  program on the PATH (needs building and installing, and reaches no
+  agent without a local install); a script inside the skill folder
+  (resolves reliably on Claude only).
+- **An AI does not do the checking.** Every question has an exact
+  answer, constrained output forces a guess where none is right, and
+  Kiro cannot constrain output at all. Revisit only if the facts turn
+  out to leave a real judgement call behind.
+- **Forcing the right transition is out of scope.** Nothing achieves it.
+  We guarantee that a wrong record cannot become the truth.
+- **Approval is whoever supervises**, human or a parent session, and is
+  recorded with who gave it.
+- **The research stage is recordable but never gated.** There is no
+  factual test for "research is finished", so its exit is an approval,
+  not a check.
+- **Kiro is the floor; cloud agents and Aider are out.**
+
+## Corrections to existing specs
+
+Five claims in the checked-in specs turned out to be wrong. Two of them
+were introduced during this research session and then corrected, which
+is worth saying plainly.
+
+1. **"No hooks are shipped for any agent today"** — wrong. The
+   project's own terminal session tracker already installs hooks into
+   the user's Claude settings and uses them to track session state.
+2. **The session tracker's "no extra parent process"** is a note about
+   how one wrapped process replaces itself, not a position on
+   orchestration. It has been cited as the latter.
+3. **The OpenAI citation about re-stating instructions** is narrower
+   than claimed: it is about markdown *formatting* drifting over a long
+   conversation, not instruction-following in general. The measured
+   Codex result stands on its own; this citation should not be leaned
+   on.
+4. **gastown's "never reuse a branch" rule** could not be found and is
+   contradicted by code that explicitly reuses branches. Remove the
+   citation.
+5. **gastown's argument against a remembering coordinator is real** — I
+   wrongly reported it as a misquote mid-session. The distinction is
+   worth keeping: routing work through a long-lived agent is fine, but
+   having that agent *remember* the progress of the work is the failure
+   mode, because it loses the thread when its context is compacted.
 
 ## Session log
 
