@@ -45,6 +45,22 @@ Copied onto PATH.
     - `quality: sh lint.sh`
     - `tests: sh test.sh`
 MD
+cat > src/greet.sh <<'MD'
+#!/bin/sh
+echo "Hello, $1!"
+MD
+cat > test.sh <<'MD'
+#!/bin/sh
+set -e
+out=$(sh src/greet.sh World)
+[ "$out" = "Hello, World!" ] || { echo "R1 failed: $out"; exit 1; }
+echo ok
+MD
+cat > lint.sh <<'MD'
+#!/bin/sh
+exit 0
+MD
+chmod +x src/greet.sh test.sh lint.sh
 cat > specs/feature/uppercase-flag.md <<'MD'
 # Feature: uppercase flag
 
@@ -77,53 +93,36 @@ Parse `-u` as the first argument; pipe the composed line through `tr`.
 
 ## Decision Log
 MD
-cat > src/greet.sh <<'MD'
-#!/bin/sh
-echo "Hello, $1!"
-MD
-cat > test.sh <<'MD'
-#!/bin/sh
-set -e
-out=$(sh src/greet.sh World)
-[ "$out" = "Hello, World!" ] || { echo "R1 failed: $out"; exit 1; }
-echo ok
-MD
-cat > lint.sh <<'MD'
-#!/bin/sh
-exit 0
-MD
-chmod +x src/greet.sh test.sh lint.sh
 git add -A && git commit -q -m "plan(uppercase-flag): initial spec"
 git checkout -q -b feat/uppercase-flag
-# Wire the phase tooling the way install does, so the agent inherits a
-# project where the hooks are already live.
+# Wire the phase tooling as install does, so the agent meets a project
+# where the hooks are already live.
 "$KDEVKIT_TOOLS/phase" install >/dev/null
 --- assert ---
 set -e
-# The dev work actually happened and the old behaviour still holds.
+# The dev work happened and the old behaviour survives.
 out=$(sh src/greet.sh World); [ "$out" = "Hello, World!" ]
 out=$(sh src/greet.sh -u World); [ "$out" = "HELLO, WORLD!" ]
 grep -qF 'HELLO, WORLD!' test.sh
 grep -qF -e '-u' test.sh
 sh test.sh >/dev/null
-# Plan items are ticked, which the dev gate requires before review.
+# Plan items ticked, which the dev gate requires before review.
 test -z "$(grep -F -e '- [ ]' specs/feature/uppercase-flag.md || true)"
 grep -qF -e '- [x]' specs/feature/uppercase-flag.md
-# The stage is recorded in git, by the hook, without the agent being
-# asked to remember. A no-op agent leaves only the seeded plan() commit,
-# which carries no stage at all because the hooks were wired after it.
+# The stage is recorded in git by the hook, not by the agent remembering.
+# The seeded plan() commit predates the hooks, so it carries nothing —
+# any stage present is the agent's own dev work.
 stage=$(git log --format='%(trailers:key=Feature-Phase,valueonly=true,unfold=true)' | grep . | head -1 | tr -d '[:space:]')
 test -n "$stage"
-# ...and it must have moved past planning, which is what the dev phase does.
-test "$stage" != "planning"
-# The recorded stage is a legal value, not junk or the template's list.
+# It must be a legal value, and must have moved past planning.
 printf '%s' "$stage" | grep -qE '^(dev|review)$'
 # Dev-loop churn must not read as going backwards.
 test "$(git log --format='%(trailers:key=Return-To,valueonly=true,unfold=true)' | grep -c . || true)" = "0"
-# Dev-type commits exist — an agent still in planning would produce plan().
+# Dev-type commits exist — an agent still in planning produces plan().
 git log --no-decorate --oneline feat/uppercase-flag | grep -qE ' (feat|fix|refactor|test)(\(|:)'
-# Closure did not run: no explicit cue was given.
+# Closure did not run: no cue was given.
 test -z "$(git log --no-decorate --oneline feat/uppercase-flag | grep -E '^[[:alnum:]]+ close\(' || true)"
-# The handoff block keeps exactly one section and no machine field, since
-# the stage now lives in git rather than in prose.
+# The handoff block keeps one section and no machine field.
 test "$(grep -c '^## Handoff' specs/feature/uppercase-flag.md)" = 1
+# main is untouched: no stage stamped on it.
+test -z "$(git log main --format='%B' | grep -E 'Feature-Phase' || true)"
