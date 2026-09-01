@@ -2,7 +2,13 @@
 
 `phase` reads git and the feature spec to answer factual questions about
 where a feature stands, and refuses stage changes the repository
-contradicts. The two hooks let git do the recording, so the stage is
+contradicts. It also owns the map: a phase module states what it must
+achieve and asks `phase advance --next` where that leads, so adding a
+stage never means editing the module before it.
+
+`advance` moves forward only, along a closed table. Going back is
+`return`, which accepts any earlier stage but demands the fault, the
+issue, the expected fix and the acceptance criterion. The two hooks let git do the recording, so the stage is
 never something an agent has to remember to write.
 
 Nothing here is installed into the project being worked on. `phase
@@ -12,8 +18,10 @@ chaining any hook that was already there.
     phase install                     wire git to these hooks
     phase show                        where does this feature stand?
     phase facts                       every fact, one key=value per line
+    phase next                        what follows the current stage?
+    phase advance --next              move on, without naming where
     phase check --to review           may we move there?
-    phase advance --to review         record the move
+    phase advance --to review         record a named move
     phase return --to planning \
         --fault-entered requirements \
         --issue ... --expected-fix ... --acceptance ...

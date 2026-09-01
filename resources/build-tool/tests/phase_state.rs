@@ -752,6 +752,74 @@ fn a_verdict_never_hides_its_inputs() {
     }
 }
 
+// ── the tooling owns the map ──────────────────────────────────────
+
+#[test]
+fn the_onward_stage_comes_from_the_tooling_not_the_caller() {
+    let f = Fixture::new();
+    f.start_feature("feat/x");
+    // A caller that knows only "I am done" gets told where that leads.
+    let (code, out) = phase(f.path(), &["next"]);
+    assert_eq!(code, 0, "next failed:\n{out}");
+    assert_eq!(out.trim(), "dev", "planning must lead to dev:\n{out}");
+}
+
+#[test]
+fn advance_next_moves_on_without_the_caller_naming_a_destination() {
+    let f = Fixture::new();
+    f.start_feature("feat/x");
+    let (code, out) = phase(f.path(), &["advance", "--next", "--ack", "human"]);
+    assert_eq!(code, 0, "advance --next failed:\n{out}");
+    std::fs::write(f.path().join("src.txt"), "v2\n").unwrap();
+    git_ok(f.path(), &["add", "-A"]);
+    git_ok(f.path(), &["commit", "-q", "-m", "feat: work"]);
+    assert_eq!(f.recorded_stage(), "dev");
+}
+
+#[test]
+fn advance_next_still_refuses_when_the_exit_condition_does_not_hold() {
+    let f = Fixture::new();
+    f.start_feature("feat/x");
+    phase(f.path(), &["advance", "--next"]);
+    std::fs::write(f.path().join("src.txt"), "v2\n").unwrap();
+    git_ok(f.path(), &["add", "-A"]);
+    git_ok(f.path(), &["commit", "-q", "-m", "feat: work"]);
+    assert_eq!(f.recorded_stage(), "dev");
+
+    // dev -> review is the legal next move, but the plan is unticked and
+    // nothing is verified. Asking for "next" must not bypass that.
+    let (code, out) = phase(f.path(), &["advance", "--next"]);
+    assert_ne!(
+        code, 0,
+        "--next must be gated exactly as a named move is:\n{out}"
+    );
+    assert!(out.contains("unticked"), "must say why:\n{out}");
+}
+
+#[test]
+fn a_closed_feature_has_no_onward_stage() {
+    let f = Fixture::new();
+    f.start_feature("feat/x");
+    // Walk to closed the short way, then ask.
+    for stage in ["dev", "review", "closure", "closed"] {
+        git_ok(
+            f.path(),
+            &[
+                "commit",
+                "-q",
+                "--allow-empty",
+                "--no-verify",
+                "-m",
+                &format!("chore: at {stage}\n\nFeature-Phase: {stage}"),
+            ],
+        );
+    }
+    assert_eq!(f.recorded_stage(), "closed");
+    let (code, out) = phase(f.path(), &["next"]);
+    assert_eq!(code, 3, "a closed feature has nowhere to go:\n{out}");
+    assert!(out.contains("closed"), "must say why:\n{out}");
+}
+
 // ── install wiring ───────────────────────────────────────────────
 
 #[test]

@@ -319,15 +319,18 @@ succeeded.
 
 ### Leaving dev
 
-Once the gates pass, run **`phase advance --to review`**. It reads
-git and the spec, refuses if the move does not hold — unticked plan
-items, no implementation commit, checks not observed passing — and
-records the move so the next commit carries it. The stage is written
-by git, not by you; you do not need to remember to record it.
+**Dev is finished when** the Implementation Plan is fully ticked, an
+implementation commit exists, and the project's dev gates have been
+observed passing. That is this module's exit condition, and it is all
+this module needs to know — **it does not name what comes next.**
+
+Once it holds, run **`phase advance --next`**. The tooling owns the
+map: it decides what follows dev, refuses if the exit condition does
+not actually hold, and records the move so the next commit carries it.
+The stage is written by git, not by you.
 
 If `phase` is not installed, **rewrite the `## Handoff` block** (§5)
-**with `Phase: review`** yourself — the phase now starting — before
-handing to human review. The gates are the readiness signal; a Push that
+with the phase now starting, before handing to human review. The gates are the readiness signal; a Push that
 couldn't run for want of a remote (see the Push Gate above) does
 not hold this rewrite back — name the skipped Push in *Carry
 forward* and proceed. Re-author every field: `Phase:` is not

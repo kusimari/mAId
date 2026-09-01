@@ -483,6 +483,34 @@ may write specs but not source. Review may read but not write. Where the
 agent supports limiting its own tools, this is applied so the stage
 cannot overstep in the first place.
 
+### Who owns the map
+
+A phase module states **what it must achieve**, not what follows it. Dev's
+instruction file says dev is finished when the plan is ticked, an
+implementation commit exists and the gates have been observed passing —
+and then asks `phase advance --next`. It never names `review`.
+
+This matters for two reasons. A module that named its successor would
+duplicate the table of legal moves, and the duplicate would drift the
+moment a stage was added or reordered. And a module that knows only its
+own exit condition can be dropped into a different sequence unchanged —
+adding a `review.md` later requires no edit to `dev.md`.
+
+So the division of labour is:
+
+- **The agent decides** whether the work is actually finished, and when
+  something is wrong, which layer the fault entered. Both are judgement,
+  and neither is computable.
+- **The tooling owns** which moves exist and whether the observable facts
+  permit one. It refuses `--next` exactly as it refuses a named move, so
+  asking "where next" is not a way around a gate.
+
+Neither half is sufficient. The agent without the tooling forgets the
+map under load, which is the bug this feature exists to fix. The tooling
+without the agent cannot tell whether the work is any good. The value is
+the pairing, and the line between them is: **judgement is the agent's,
+the map is the code's.**
+
 ### Where the state actually lives
 
 In the commit messages, as a line like `Phase: dev`, plus `Return-To:`
@@ -548,6 +576,8 @@ branch.
 | Decision | Decided by |
 |---|---|
 | Which instruction file to load | The router, from what the checker reports |
+| What comes after this stage | The checker's table — never the phase module |
+| Whether the work in this stage is finished | The agent, against the module's stated exit condition |
 | Whether a move forward is allowed | The checker, from facts |
 | Whether to actually make that move | Whoever is supervising the session |
 | Which stage a mistake belongs to | The agent proposes; it must give reasons |
@@ -795,20 +825,38 @@ assertion may describe what someone would find in the repository. It may
 not describe which script ran, or in what order. If we rebuilt this a
 completely different way, these tests should still pass unchanged.
 
-### Two kinds of test
+### Three kinds of test, and why all three are needed
 
-**Tests with no AI involved.** Set up a throwaway repository, run git
-commands the way a person would, check the result. These cover
-statements 2, 3, 5, 6, 7 and 9 — the guarantees that must hold no matter
-how any model behaves. They are fast, free, repeatable, and run on every
-build.
+**Unit — one guarantee at a time, no AI.** Set up a throwaway repository,
+drive it with git commands, check the result. Fast, free, repeatable, on
+every build.
 
-**Tests that drive real agents.** These extend the project's existing
-fixture format, which already works the right way: each fixture poses a
-task the way a person would phrase it, lets the agent work, and then
-checks the repository afterwards. It never inspects the agent's
-reasoning. These cover statements 1, 4, 8, 10 and 11, because those are
-the ones that depend on an agent actually behaving.
+**Lifecycle — the guarantees together, no AI.** A feature driven from
+nothing to closed: every stage, the dev loop turning several times, a
+return that goes back two stages and recovers, a long session with side
+quests onto other branches. This layer exists because the unit tests can
+all pass while the whole never actually works — "does the checker refuse
+an unticked plan" is a different question from "does a feature get
+through all five stages".
+
+**Agent-driven — does a real agent actually do this?** The project's
+existing fixture format: pose a task the way a person would phrase it,
+let the agent work, then check the repository. Never inspect the agent's
+reasoning.
+
+**All three are load-bearing, and the first two cannot substitute for the
+third.** The mechanism holding when the steps are taken is a different
+claim from an agent choosing to take them — and the whole premise of this
+feature is that agents *don't* reliably do what prose asks. A green
+`just ci` proves the tooling works; only a run against claude, codex and
+kiro proves the skill and the tooling together achieve the intent. Every
+agent-driven fixture therefore runs on all three, fresh and under load,
+sampled at least three times, with the ratio recorded rather than a
+verdict.
+
+Equally, the third cannot substitute for the first two: agent runs cost
+money, vary between runs, and tell you *that* something failed rather
+than *which* guarantee broke.
 
 ### Rules for writing the assertions
 
@@ -838,25 +886,27 @@ work on this project.
 
 ### Coverage
 
-| Statement | Test |
-|---|---|
-| 1 | Set up a half-finished feature branch, start a session knowing nothing, ask what state the feature is in. It should name the right stage without asking. |
-| 2 | Hand-write a commit claiming a stage the repository contradicts. The commit should not exist afterwards, and the error should say why. |
-| 3 | Repeat with `--no-verify`. Same outcome. |
-| 4 | Set up a review-stage branch where the original requirement was wrong. Feed in that review outcome. The recorded reason should name the stage, the problem and the resolution. |
-| 5 | With an undischarged problem recorded, try to move forward. Refused. Discharge it. Now allowed. |
-| 6 | Record two returns. The count reads as two, without parsing prose. |
-| 7 | Merge a feature branch into a real remote, then clone it fresh. The clone must show no stage bookkeeping anywhere in its history, no hooks path configured, and no hook files. Assert against the clone, not the working copy — the working copy still has the feature branch and will pass by accident. |
-| 8 | Merge a feature and read the resulting commit message. It must contain the feature's summary and must *not* contain the subjects of the branch's intermediate commits. Check both directions: a summary that is merely the branch title is as wrong as a transcript. |
-| 9 | Remove the checker, unset the hook path, run the existing dev-loop fixtures. Results should match today's recorded baseline. |
-| 10 | Put the repository into a state the checker cannot classify. No transition happens, and it says why. |
-| 11 | In the planning stage, give the agent a task that would require editing source. No source file changes. |
-| 12 | In one checkout with no worktrees, run the same feature through and assert it behaves identically; then commit on the default branch and on an unrelated branch and assert nothing was stamped and nothing was refused. |
-| 13 | Drive several dev-loop iterations — failing tests, then a review finding, then a fix. Assert the stage stayed `dev` throughout and the return count is still zero. This is the test that stops normal dev churn from being mistaken for thrash. |
-| 14 | With tests failing, attempt to push. Refused, naming the condition, and the failing commit must not reach the remote — assert against the remote, not the local branch. Fix and assert the push now succeeds. |
-| 15 | Record evidence against one set of files, change a file, then attempt to advance. Refused as stale. |
-| 16 | On a branch holding initiative-level work and no feature spec, commit. Assert no stage was stamped and the commit was not refused. Guards the boundary against a future change to the detection rule. |
-| 17 | Every agent-driven fixture runs on all three agents, fresh and under load. |
+Layer key: **U** unit, **L** lifecycle, **A** agent-driven.
+
+| Statement | Layer | Test |
+|---|---|---|
+| 1 | U L A | Set up a half-finished feature branch, start a session knowing nothing, ask what state the feature is in. It should name the right stage without asking. |
+| 2 | U | Hand-write a commit claiming a stage the repository contradicts. The commit should not exist afterwards, and the error should say why. |
+| 3 | U | Repeat with `--no-verify`. Same outcome. |
+| 4 | U L | Set up a review-stage branch where the original requirement was wrong. Feed in that review outcome. The recorded reason should name the stage, the problem and the resolution. |
+| 5 | U L | With an undischarged problem recorded, try to move forward. Refused. Discharge it. Now allowed. |
+| 6 | U L | Record two returns. The count reads as two, without parsing prose. |
+| 7 | L | Merge a feature branch into a real remote, then clone it fresh. The clone must show no stage bookkeeping anywhere in its history, no hooks path configured, and no hook files. Assert against the clone, not the working copy — the working copy still has the feature branch and will pass by accident. |
+| 8 | L | Merge a feature and read the resulting commit message. It must contain the feature's summary and must *not* contain the subjects of the branch's intermediate commits. Check both directions: a summary that is merely the branch title is as wrong as a transcript. |
+| 9 | L A | Remove the checker, unset the hook path, run the existing dev-loop fixtures. Results should match today's recorded baseline. |
+| 10 | U | Put the repository into a state the checker cannot classify. No transition happens, and it says why. |
+| 11 | A | In the planning stage, give the agent a task that would require editing source. No source file changes. |
+| 12 | U L | In one checkout with no worktrees, run the same feature through and assert it behaves identically; then commit on the default branch and on an unrelated branch and assert nothing was stamped and nothing was refused. |
+| 13 | U L A | Drive several dev-loop iterations — failing tests, then a review finding, then a fix. Assert the stage stayed `dev` throughout and the return count is still zero. This is the test that stops normal dev churn from being mistaken for thrash. |
+| 14 | U L | With tests failing, attempt to push. Refused, naming the condition, and the failing commit must not reach the remote — assert against the remote, not the local branch. Fix and assert the push now succeeds. |
+| 15 | U | Record evidence against one set of files, change a file, then attempt to advance. Refused as stale. |
+| 16 | U | On a branch holding initiative-level work and no feature spec, commit. Assert no stage was stamped and the commit was not refused. Guards the boundary against a future change to the detection rule. |
+| 17 | A | Every agent-driven fixture runs on all three agents, fresh and under load. |
 
 ### Ways this could be cheated, each needing its own test
 
@@ -1088,6 +1138,24 @@ is worth saying plainly.
   an AI sub-session as the checker; and doing without hooks, which is
   not possible while Kiro has no interception mechanism and Codex cannot
   let a project ship one.
+- **2026-09-01 · A phase module states its exit condition; the tooling
+  owns the map.** Rationale: a module that names its successor duplicates
+  the table of legal moves and will drift when a stage is added, and it
+  cannot be reused in a different sequence. `advance --next` asks the
+  tooling where the module's exit condition leads, and is gated exactly as
+  a named move is, so it is not a way around a check. The division: the
+  agent judges whether the work is done and which layer a fault entered;
+  the code owns which moves exist and whether the facts permit one.
+  Rejected: keeping the destination in each module's prose, which is the
+  duplication this feature set out to remove.
+
+- **2026-09-01 · Per-project gate commands live in `specs/project.md`,
+  not git config.** Rationale: git config is per-clone, so a fresh clone
+  would silently have no gates to run and verification would report
+  nothing to check; and the project already declares its reviewer in that
+  block, so there is one place to look. Rejected: git config, which does
+  not travel with the repository.
+
 - **2026-08-31 · The hook scopes itself; worktrees are optional.**
   Revises an earlier claim that worktree-scoped configuration keeps the
   default branch clean. It does not, in a single checkout where branches

@@ -22,6 +22,8 @@ usage: phase <command> [options]
   facts                              print what is true, one key=value per line
   show                               current stage, facts, return count
   check --to <stage>                 may we move there? 0 yes, 1 no, 3 undetermined
+  next                               the onward stage, from the table
+  advance --next [--ack WHO]         move on, without naming where
   advance --to <stage> [--ack WHO]   record intent to move
   return --to <stage> --fault-entered L --issue T --expected-fix T --acceptance T
   verify                             run the project's checks, record the tree
@@ -229,6 +231,31 @@ legal_forward() {
     esac
 }
 
+# The onward stage, from the table rather than from any phase module's
+# prose. A module states what it must achieve and asks where that leads,
+# so adding a stage never means editing the module before it.
+next_stage() {
+    from=${1:-}
+    case "${from:-unrecorded}" in
+        unrecorded) echo planning ;;
+        research)   echo planning ;;
+        planning)   echo dev ;;
+        dev)        echo review ;;
+        review)     echo closure ;;
+        closure)    echo closed ;;
+        *)          return 3 ;;
+    esac
+}
+
+cmd_next() {
+    in_repo
+    n=$(next_stage "$(stage_recorded)") || {
+        echo "no onward stage: the feature is closed" >&2
+        return 3
+    }
+    echo "$n"
+}
+
 valid_stage() {
     for s in $STAGES; do [ "$1" = "$s" ] && return 0; done
     return 1
@@ -315,6 +342,7 @@ cmd_advance() {
     while [ $# -gt 0 ]; do
         case $1 in
             --to) to=${2:-}; shift 2 ;;
+            --next) to=$(next_stage "$(stage_recorded)") || die "the feature is closed; there is no onward stage"; shift ;;
             --ack) ack=${2:-}; shift 2 ;;
             *) usage ;;
         esac
@@ -455,6 +483,7 @@ case $sub in
     advance) cmd_advance "$@" ;;
     return)  cmd_return "$@" ;;
     stamp)   cmd_stamp ;;
+    next)    cmd_next ;;
     verify)  cmd_verify ;;
     install) cmd_install ;;
     uninstall) cmd_uninstall ;;

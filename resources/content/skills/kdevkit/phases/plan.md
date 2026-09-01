@@ -204,11 +204,12 @@ what to keep as a decision, what to relocate rather than delete.
 Skip only if the spec carries no alternatives, Q&A, or revision
 narration; there is then nothing to strip.
 
-**2 · Run `phase advance --to dev`.** It refuses if the spec is not
-committed or the handoff section is ambiguous, and records the move so
-the next commit carries it. If `phase` is not installed, write the
-`## Handoff` block (§5) **with `Phase: dev`** yourself —
-the phase now starting. Re-author every field; do not leave a
+**2 · Run `phase advance --next`.** Planning is finished when the spec
+is consolidated and committed and its handoff section is unambiguous —
+that is this module's exit condition, and the tooling decides what
+follows it. It refuses if the condition does not hold. If `phase` is not
+installed, write the `## Handoff` block (§5) with the phase now
+starting. Re-author every field; do not leave a
 previous or placeholder value in `Phase:` while only updating the
 others. From planning, the fields that matter most beyond `Phase:`
 are *Carry forward* — a constraint the interviews surfaced that the
