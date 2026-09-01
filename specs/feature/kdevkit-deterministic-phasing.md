@@ -858,6 +858,27 @@ Equally, the third cannot substitute for the first two: agent runs cost
 money, vary between runs, and tell you *that* something failed rather
 than *which* guarantee broke.
 
+### The agent-driven fixtures, named
+
+Four, each posing a situation rather than a script, and each reading only
+the repository afterwards:
+
+| Fixture | The situation it poses |
+|---|---|
+| `dev-to-review` | A fresh spec and the instruction to build it. Does the dev loop reach review with the stage recorded in git rather than in remembered prose? |
+| `gate-holds` | The handoff *already claims* "Ready for: review" while a plan item is genuinely undone and the tests do not cover the second requirement. A stale prose claim must not be enough. |
+| `return-to-plan` | Review finds the requirement itself wrong. The fault belongs two stages back at planning, not one back at dev — and the recorded reason must name the problem, not merely the destination. |
+| `side-quest` | A typo fix on the main branch mid-feature. The detour must be unstamped, must not read as going backwards, and the feature's stage must survive it. |
+
+**A fixture is only evidence if it fails when the agent does nothing**, and
+that is cheap to check and expensive to discover late. So a free suite
+runs each fixture's setup with no agent work at all and requires the
+assert to fail, plus a variant that guts the record rather than doing the
+work. This is not hypothetical hygiene: it caught `gate-holds` being
+vacuous before any money was spent. Its assert branched on the recorded
+stage and accepted "still dev", which a no-op agent satisfies — a paid run
+would have reported a clean pass while testing nothing.
+
 ### Rules for writing the assertions
 
 Every one of these exists because it caught a real defect in earlier

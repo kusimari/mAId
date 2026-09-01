@@ -29,7 +29,7 @@ usage: phase <command> [options]
   verify                             run the project's checks, record the tree
   install | uninstall                wire or unwire git hooks for this checkout
   applies                            0 if this branch is a kdevkit feature
-  stamp                              print the trailer block for a new commit
+  stamp [--subject S]                print the trailer block for a new commit
 USAGE
     exit 2
 }
@@ -129,9 +129,23 @@ has_plan_commit() {
     git log --no-decorate --format='%s' $rng 2>/dev/null | grep -qE '^(plan|docs)(\(|!|:)'
 }
 
-# Commits on this branch only, so a long-lived default branch does not
-# make every feature look like it has work in it.
+# The commit carrying the newest `Return-To`, if any. A return resets what
+# counts as evidence: work done before going back was work on the old
+# understanding, and must not imply the feature is still where it was.
+last_return_commit() {
+    git log --format="%H%x09%(trailers:key=$TRAILER_RETURN,valueonly=true,unfold=true)" 2>/dev/null \
+        | awk -F'\t' 'NF > 1 && $2 != "" { print $1; exit }'
+}
+
+# Commits whose evidence counts. Bounded below by the default branch, so a
+# long-lived main does not make every feature look like it has work in it,
+# and by the newest return, so going back genuinely rewinds the evidence.
 range() {
+    since=$(last_return_commit)
+    if [ -n "$since" ]; then
+        echo "$since..HEAD"
+        return
+    fi
     d=$(default_branch)
     if git show-ref --verify --quiet "refs/heads/$d" && [ "$(branch)" != "$d" ]; then
         echo "$d..HEAD"
@@ -379,17 +393,73 @@ cmd_return() {
     echo "recorded: next commit returns to $to (fault entered at $fault)"
 }
 
+# The stage the repository itself implies, regardless of what was last
+# recorded or asked for. This is what stops a forgotten `advance` from
+# leaving the record behind reality: an agent that commits implementation
+# work is in dev whether or not it said so.
+#
+# Only stages with an observable signature are derived. Review and closure
+# are human acts with no fact that distinguishes them, so they are never
+# inferred — they must be recorded deliberately.
+# `$1` is the subject of the commit being prepared, which is not in
+# history yet — the stamp runs before the commit exists, so without this
+# a commit's own evidence could not count toward its own stage.
+implied_stage() {
+    pending=${1:-}
+    if printf '%s' "$pending" | grep -qE '^(feat|fix|refactor|perf|test)(\(|!|:)' || has_work_commit; then
+        echo dev
+    elif printf '%s' "$pending" | grep -qE '^(plan|docs)(\(|!|:)' || has_plan_commit; then
+        echo planning
+    else
+        echo ""
+    fi
+}
+
+# Stage ordering, for taking the later of two. A record may move forward
+# on its own evidence; it must never slide backwards without a `return`.
+stage_rank() {
+    case "${1:-}" in
+        research) echo 1 ;;
+        planning) echo 2 ;;
+        dev)      echo 3 ;;
+        review)   echo 4 ;;
+        closure)  echo 5 ;;
+        closed)   echo 6 ;;
+        *)        echo 0 ;;
+    esac
+}
+
+later_stage() {
+    a=$1; b=$2
+    [ "$(stage_rank "$a")" -ge "$(stage_rank "$b")" ] && { echo "$a"; return; }
+    echo "$b"
+}
+
 # The trailer block the commit hook appends. Stage comes from the facts,
 # not from a claim, so a forgotten advance cannot produce a wrong stamp.
 cmd_stamp() {
     in_repo
+    pending=""
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --subject) pending=${2:-}; shift 2 ;;
+            *) usage ;;
+        esac
+    done
     f=$(intent_file)
-    stage=$(stage_recorded)
     ack=""; ret=""
     if [ -f "$f" ]; then
+        # A deliberate move: honour it exactly, including a return, which is
+        # the one case where the record legitimately goes backwards.
         stage=$(sed -n 's/^phase=//p' "$f" | head -1)
         ack=$(sed -n 's/^ack=//p' "$f" | head -1)
         ret=$(sed -n 's/^return_to=//p' "$f" | head -1)
+    else
+        # No move was asked for, so the stage is whichever is further along:
+        # what was last recorded, or what this commit's own evidence implies.
+        # Without this, an agent that forgets to advance keeps stamping the
+        # stage it left behind, and the record quietly lies.
+        stage=$(later_stage "$(stage_recorded)" "$(implied_stage "$pending")")
     fi
     [ -n "$stage" ] || stage=planning
     printf '%s: %s\n' "$TRAILER_PHASE" "$stage"
@@ -482,7 +552,7 @@ case $sub in
     check)   cmd_check "$@" ;;
     advance) cmd_advance "$@" ;;
     return)  cmd_return "$@" ;;
-    stamp)   cmd_stamp ;;
+    stamp)   cmd_stamp "$@" ;;
     next)    cmd_next ;;
     verify)  cmd_verify ;;
     install) cmd_install ;;

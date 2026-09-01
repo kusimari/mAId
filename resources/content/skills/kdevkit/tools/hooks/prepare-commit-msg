@@ -51,7 +51,10 @@ if grep -qE '^Feature-Phase:' "$MSG_FILE"; then
     exit 0
 fi
 
-block=$("$PHASE" stamp) || exit 0
+# The subject of the message being written is evidence about this commit's
+# own stage, and it is not in history yet.
+subject=$(sed -n '/^[^#]/{p;q;}' "$MSG_FILE" 2>/dev/null || true)
+block=$("$PHASE" stamp --subject "$subject") || exit 0
 [ -n "$block" ] || { chain "$@"; exit 0; }
 
 # interpret-trailers places each line in the footer, creating one if the

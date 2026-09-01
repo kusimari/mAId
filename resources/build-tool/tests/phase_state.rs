@@ -752,6 +752,142 @@ fn a_verdict_never_hides_its_inputs() {
     }
 }
 
+// ── the record cannot fall behind reality ─────────────────────────
+
+#[test]
+fn implementation_work_records_dev_even_if_the_agent_never_advanced() {
+    // Found by a paid agent run: all three agents did the work and committed
+    // without calling `advance`, and the stamp carried `planning` forward, so
+    // the record silently lied. The stage must follow the evidence.
+    let f = Fixture::new();
+    f.start_feature("feat/x");
+    assert_eq!(f.recorded_stage(), "planning");
+
+    // No advance. Just implementation work, as an agent under load does.
+    std::fs::write(f.path().join("src.txt"), "implemented\n").unwrap();
+    git_ok(f.path(), &["add", "-A"]);
+    git_ok(
+        f.path(),
+        &["commit", "-q", "-m", "feat: implement the thing"],
+    );
+
+    assert_eq!(
+        f.recorded_stage(),
+        "dev",
+        "a commit that is implementation work is dev, said or not"
+    );
+}
+
+#[test]
+fn the_record_never_slides_backwards_on_its_own() {
+    let f = Fixture::new();
+    f.start_feature("feat/x");
+    phase(f.path(), &["advance", "--to", "dev"]);
+    // Distinct from the fixture's seeded content, or there is nothing to commit.
+    std::fs::write(f.path().join("src.txt"), "implemented\n").unwrap();
+    git_ok(f.path(), &["add", "-A"]);
+    git_ok(f.path(), &["commit", "-q", "-m", "feat: work"]);
+    f.write_spec("feat/x", &["- [x] 1 · done"]);
+    f.set_checks("true", "true");
+    phase(f.path(), &["verify"]);
+    phase(f.path(), &["advance", "--to", "review"]);
+    std::fs::write(f.path().join("src.txt"), "v2\n").unwrap();
+    git_ok(f.path(), &["add", "-A"]);
+    git_ok(f.path(), &["commit", "-q", "-m", "test: cover it"]);
+    assert_eq!(f.recorded_stage(), "review");
+
+    // A further implementation commit implies dev, but the record is already
+    // at review. Going back is a `return`, never a side effect of a commit.
+    std::fs::write(f.path().join("src.txt"), "v3\n").unwrap();
+    git_ok(f.path(), &["add", "-A"]);
+    git_ok(
+        f.path(),
+        &["commit", "-q", "-m", "fix: address a review note"],
+    );
+    assert_eq!(
+        f.recorded_stage(),
+        "review",
+        "the record must not slide back to dev without a return"
+    );
+}
+
+#[test]
+fn a_return_rewinds_what_counts_as_evidence() {
+    // Without this, the commit that records a return is immediately pulled
+    // forward again by the implementation commits that preceded it — the
+    // return would be undone by the next commit. Caught first by the
+    // lifecycle suite; pinned here so it fails at both layers.
+    let f = Fixture::new();
+    f.start_feature("feat/x");
+    phase(f.path(), &["advance", "--to", "dev"]);
+    std::fs::write(f.path().join("src.txt"), "implemented\n").unwrap();
+    git_ok(f.path(), &["add", "-A"]);
+    git_ok(f.path(), &["commit", "-q", "-m", "feat: implement"]);
+    assert_eq!(f.recorded_stage(), "dev");
+
+    phase(
+        f.path(),
+        &[
+            "return",
+            "--to",
+            "planning",
+            "--fault-entered",
+            "requirements",
+            "--issue",
+            "i",
+            "--expected-fix",
+            "fx",
+            "--acceptance",
+            "a",
+        ],
+    );
+    std::fs::write(f.path().join("src.txt"), "returned\n").unwrap();
+    git_ok(f.path(), &["add", "-A"]);
+    git_ok(f.path(), &["commit", "-q", "-m", "plan: record the return"]);
+    assert_eq!(
+        f.recorded_stage(),
+        "planning",
+        "the return must take effect"
+    );
+
+    // The next commit is planning work. The earlier feat( commits must no
+    // longer imply dev, or the return silently evaporates.
+    std::fs::write(f.path().join("src.txt"), "amended\n").unwrap();
+    git_ok(f.path(), &["add", "-A"]);
+    git_ok(
+        f.path(),
+        &["commit", "-q", "-m", "plan: amend the requirement"],
+    );
+    assert_eq!(
+        f.recorded_stage(),
+        "planning",
+        "work done before the return must not pull the record forward again"
+    );
+}
+
+#[test]
+fn review_and_closure_are_never_inferred_from_facts() {
+    // They are human acts with no observable signature. Inferring them would
+    // let the machinery claim a review happened that never did.
+    let f = Fixture::new();
+    f.start_feature("feat/x");
+    f.write_spec("feat/x", &["- [x] 1 · done"]);
+    f.set_checks("true", "true");
+    std::fs::write(f.path().join("src.txt"), "done\n").unwrap();
+    git_ok(f.path(), &["add", "-A"]);
+    git_ok(
+        f.path(),
+        &["commit", "-q", "-m", "feat: everything is finished"],
+    );
+    phase(f.path(), &["verify"]);
+    // Every precondition for review now holds, and still:
+    assert_eq!(
+        f.recorded_stage(),
+        "dev",
+        "review must be recorded deliberately, never inferred"
+    );
+}
+
 // ── the tooling owns the map ──────────────────────────────────────
 
 #[test]
