@@ -879,6 +879,29 @@ vacuous before any money was spent. Its assert branched on the recorded
 stage and accepted "still dev", which a no-op agent satisfies — a paid run
 would have reported a clean pass while testing nothing.
 
+### What the first paid run found
+
+Worth recording, because it is the argument for this layer existing at
+all. The first run of `dev-to-review` failed on **all three agents** with
+the same result: the stage read `planning` after the agent had plainly
+done and committed dev work. None of the three called `advance`.
+
+The cause was in the mechanism, not the models. The stamp carried the last
+recorded stage forward, so a forgotten `advance` left the record sitting
+at whatever the previous stage was — a wrong record quietly becoming the
+truth, which is the one thing this feature promises cannot happen.
+
+**No amount of unit or lifecycle testing would have caught it**, because
+those tests call `advance` before committing. They were written by someone
+who knew the design. The agents did not, and nothing compelled them to.
+
+The fix was to derive the stage from evidence — a commit that is
+implementation work is dev whether or not anything said so — taking
+whichever is further along, the recorded stage or the implied one. Only
+stages with an observable signature are derived; review and closure are
+human acts and are never inferred. The same fixture then passed on all
+three agents.
+
 ### Rules for writing the assertions
 
 Every one of these exists because it caught a real defect in earlier
@@ -1108,6 +1131,12 @@ is worth saying plainly.
   instead. If so, our instructions may be loaded as always-on context
   rather than on demand. This affects cost, not correctness, and is
   unverified.
+- **Nothing yet forces `advance` to be called.** The evidence-derivation
+  fix means a forgotten `advance` no longer produces a *wrong* record, but
+  the stage then moves without an `Acked-By` attribution — so the audit
+  trail of who approved a move is only as complete as the agent's
+  diligence. Whether that matters depends on whether approval is meant to
+  be evidence or merely a courtesy, which is not settled.
 - **How is a silently dead agent-level hook detected?** The idea is for
   the hook to leave a mark that a later check requires, so absence is
   detectable — but that must not reintroduce a state file.

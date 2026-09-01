@@ -41,7 +41,8 @@ shape: read each and resolve. Then sweep open Decision Log
 entries and unresolved questions the same way.
 
 **Clear the `## Handoff` block** — replace its fields with
-`Phase: closed`. The feature is done, so a live handoff pointing at
+`phase advance --next`, which records the feature as closed. The
+feature is done, so a live handoff pointing at
 a next phase is a lie the next reader will act on.
 
 **Resolve it before clearing it.** The block is the last place two

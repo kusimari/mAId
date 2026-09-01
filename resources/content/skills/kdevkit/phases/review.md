@@ -183,9 +183,10 @@ content: **Approach** (bullets covering the changes).
 
 ### Leaving review
 
-On the dev → closure cue, **rewrite the `## Handoff` block** (§5)
-with `Phase: closure` — the phase now starting. (Closure itself
-clears it to `Phase: closed` when it is done.)
+**Review is finished when** the human has given the closure cue and
+nothing they raised is still open and unrecorded. On that cue run
+**`phase advance --next`** — the tooling decides what follows review.
+Then rewrite the `## Handoff` block (§5) for the phase now starting.
 From review, *Carry forward* is what closure must reconcile — a
 review comment accepted but deferred, a follow-up promised in the
 thread — and *Deliberately left* is anything the reviewer raised
@@ -195,9 +196,29 @@ comment is a promise lost.
 
 A loop-back is a legitimate outcome here: review can return work to
 dev, or to planning when the *requirement* was wrong rather than
-the code. Say which layer the fault entered and why in the block
-before going back — that line is what stops a loop-back becoming a
-silent plan amendment (§9).
+the code. **Record it with `phase return`**, which needs four things
+and refuses without them:
+
+    phase return --to planning \
+      --fault-entered requirements \
+      --issue "warning suppression was never specified" \
+      --expected-fix "amend R2 and extend the tests" \
+      --acceptance "warnings are suppressed with the flag"
+
+**Do not simply amend the spec and carry on.** Editing the
+requirement and continuing is how a loop-back becomes a silent plan
+amendment (§9) — it looks like progress and leaves nothing countable
+behind. `return` is what makes the trip back visible, so repeated
+bouncing between phases shows up instead of hiding, and it is what
+tells the machinery that work done before the fault no longer counts
+as evidence.
+
+Which layer the fault entered is your judgement — return to where
+the mistake was *made*, not where it surfaced. The tooling records
+that judgement; it cannot make it.
+
+If `phase` is not installed, say which layer the fault entered and
+why in the block before going back.
 
 **Refuse-on-fail.** A prior gate (Quality / Test / Code Review)
 failed or noted residual issues → no review. Surface failure;

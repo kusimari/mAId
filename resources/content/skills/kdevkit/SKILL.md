@@ -391,13 +391,16 @@ crossed the last boundary.
 
 Two rules that keep it honest:
 
-- **Rewrite the block, never append — and re-author every field,
-  not just `Phase:`.** Relabelling the phase while leaving
-  `Ready for:` and `Carry forward:` as the previous phase wrote
-  them produces exactly the stale record this exists to prevent,
-  and it reads as current. This cuts both ways: relabelling
-  `Phase:` while carrying an old field's *sentence* forward
-  unchanged is the same mistake in the other field — write what
+- **The live phase is not in this block.** It is a trailer on the
+  branch's commits, written by git at commit time rather than by you.
+  Read it with `phase show`; move it with `phase advance --next` or
+  `phase return`. Nothing you write in the block sets it, so a
+  `Phase:` line here is a leftover and should be deleted.
+
+- **Rewrite the block, never append — and re-author every field.**
+  Carrying `Ready for:` and `Carry forward:` forward as the previous
+  phase wrote them produces exactly the stale record this exists to
+  prevent, and it reads as current. Write what
   is true now, in your own words, not the previous phase's phrasing
   with a new label on top. It carries current state, not history.
   History has homes already: the Session Log for observations, the
