@@ -902,6 +902,31 @@ stages with an observable signature are derived; review and closure are
 human acts and are never inferred. The same fixture then passed on all
 three agents.
 
+### A limit of the pre-install test stage, found the hard way
+
+`return-to-plan` failed on all three agents twice — once for a real
+defect, and once for a reason that is not a defect in this feature at all.
+
+The first failure was real: the loop-back instruction never mentioned
+`phase return`, so no agent could use a verb it had not been told about.
+All three did the right *work* — amended the requirement, reimplemented,
+retested — but none recorded a return, so the trip back was invisible and
+uncountable. Unlike a forgotten `advance`, this cannot be fixed by
+deriving from evidence: which layer a fault entered is judgement and
+leaves no observable trace. The only available fix is prose.
+
+The second failure is a harness limit. The pre-install test stage inlines
+**only `SKILL.md`** into the prompt, not the phase modules, so the
+instruction added to `phases/review.md` is invisible at that stage no
+matter how well written. The fixture must run post-install, against a
+deployed tree, where the agent loads modules from disk.
+
+That has a useful corollary, though. `dev-to-review` and `gate-holds` both
+pass at the pre-install stage — meaning the deterministic half works even
+when the agent cannot see the phase module at all. The split is clean and
+slightly humbling: what the hooks enforce survives an agent that has read
+almost nothing, and what depends on prose does not survive at all.
+
 ### Rules for writing the assertions
 
 Every one of these exists because it caught a real defect in earlier

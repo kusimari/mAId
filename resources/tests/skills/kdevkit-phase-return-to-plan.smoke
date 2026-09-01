@@ -1,5 +1,10 @@
 skill: kdevkit
 tools: claude,kiro,codex
+# NOTE: this fixture only means anything at the INTEGRATION (post-install)
+# stage. Recording a loop-back needs `phase return`, and the instruction to
+# use it lives in phases/review.md — which the pre-install `enact` stage
+# does not carry, because that stage inlines only SKILL.md. Run it with
+# `verify` against a deployed tree, not with `check`.
 --- enact ---
 task: I reviewed the uppercase-flag change. The requirement itself is wrong — R2 should also suppress the trailing exclamation mark, which we never specified. Handle it.
 --- setup ---
