@@ -4,52 +4,72 @@ Branch: `feat/kdevkit-deterministic-phasing`
 
 ## What this document is
 
-A proposal to fix one specific bug in how kdevkit tracks its own
-progress. It is written to be read start to finish. It covers what the
-problem is, what we measured, what we tried and rejected, the design we
-arrived at, how we will know it works, and how to build it.
+A proposal for one part of kdevkit: making the record of where work stands
+live somewhere it cannot be forgotten. It is written to be read start to
+finish — what the problem is, what we measured, the design, how we will
+know it works, and how to build it.
 
-The mechanism described here is now built and tested; the checklist near
-the end marks what is done, partly done, and not started.
+Some of the mechanism is built. The checklist near the end marks what is
+done, partly done, and not started.
 
-## Background: what kdevkit is
+## What kdevkit is for
 
-kdevkit is a set of instructions that guides an AI coding agent through
-building a feature. It is not a program. It is markdown files that the
-agent reads, in the same way a new team member might read a
-CONTRIBUTING guide — except the agent reads them fresh in every
-session, and follows them by choosing to.
+kdevkit is a **pragmatic framework for building software with coding
+agents**. Someone picking up a piece of work — at project, initiative or
+feature altitude — is guided through it: what stage the work is in, what
+finishing that stage means, what to do when something turns out to be
+wrong. The guidance uses judgement, because building software does. It is
+not a pipeline.
 
-A feature moves through four stages:
+Two things carry the record, and both are ordinary artefacts rather than
+new machinery:
 
-1. **Plan** — write down what we are building and why, as a spec file
-   checked into the repository.
-2. **Dev** — build it, committing as you go, running the tests.
-3. **Review** — a human reads the change and gives feedback.
-4. **Closure** — merge it, tidy up, record what was learned.
+- **Branches** hold what happened — the commits, in order, on the working
+  branch for that piece of work.
+- **Specs** hold what is intended and how this project works: the project
+  itself, each feature, how contributions are configured, what reviews
+  should focus on. The spec tree is the project's own documentation, not a
+  side-file for the framework.
 
-Work can also go backwards. If review finds that the *requirement* was
-wrong, you go back to planning; if the requirement was right but the
-code is wrong, you go back to dev. The rule is to return to the stage
-where the mistake was actually made.
+**The person doing the building is called the builder, and a coding agent
+can be one.** That is the point of the framework being written down
+carefully: an agent should be able to pick up a feature or an initiative
+and run the whole flow, in the role a human would otherwise play. What
+makes that possible is that the builder can **reconstruct where things
+stand, what has been tried, and what went wrong where — without the
+conversation that produced it.**
 
-Each stage has its own instruction file, and the feature's current
-stage is written down in a `## Handoff` section inside the spec file, so
-that a new session can pick up where the last one left off. That
-handoff section is the thing this document is about.
+So this feature has two jobs, and they pull in slightly different
+directions:
+
+1. **Make the flow hold across coding agents without the human
+   constantly correcting it.** Today a human notices when an agent drifts
+   and steers it back. That correction is the cost being removed.
+2. **Make kdevkit itself drivable by a higher-order builder** — an agent
+   working at initiative altitude, defining the macro plan and running the
+   streams inside it, treating each feature the way a human treats a
+   ticket.
+
+The tension between them is real and is resolved in the design: **enforce
+that the record is consistent and articulate; never enforce permission.**
+A gate exists to make a builder *say* what it is doing, not to stop it
+doing it. A framework that blocks a legitimate judgement cannot be driven
+by anyone, human or agent.
 
 ## The problem
 
-The agent is told, in prose: *when you finish dev, update the handoff
-section to say you have moved to review.*
+The record of where work stands lives in prose the builder is asked to
+maintain. kdevkit tells the agent: *when you finish dev, update the
+handoff section to say you have moved to review.*
 
-In a short session, it does. In a long one, it often does not — and
-nothing notices. The spec still says `Phase: dev` after dev is over. The
-next session reads that, believes it, and redoes work or skips a gate.
+In a short session it does. In a long one it often does not — and nothing
+notices. The spec still says `Phase: dev` after dev is over. The next
+session reads it, believes it, and redoes work or skips a gate. A human
+watching catches this and corrects it, which is exactly the cost we are
+trying to remove.
 
-This is not a hypothetical. We measured it. A roughly 300-line
-instruction file, read fresh and then asked to repeat its own rules
-back, was followed correctly:
+This is not hypothetical. A roughly 300-line instruction file, read fresh
+and then asked to repeat its own rules back, was followed correctly:
 
 | Coding agent | Fresh session | After ~4.6KB of unrelated conversation |
 |---|---|---|
@@ -57,16 +77,19 @@ back, was followed correctly:
 | Kiro | ~100% | slight dip, inconclusive |
 | Codex | ~50%, rising to 80% after rewriting the prose | **~33%** |
 
-The last cell is the finding. We rewrote the instructions to be clearer,
-added a checklist, added a self-check at the end — and it worked, in a
-fresh session. Under a realistic amount of prior conversation, the
-improvement vanished entirely and the same rule was dropped in the same
-way as before.
+We rewrote the instructions, added a checklist, added a self-check. It
+worked in a fresh session and the improvement vanished entirely under a
+realistic amount of prior conversation.
 
-So the conclusion is uncomfortable but clear: **for at least one agent
-we support, no amount of better writing makes a prose instruction
-survive a long session.** And kdevkit's whole premise is work that spans
-sessions.
+So: **for at least one agent we support, no amount of better writing makes
+a prose instruction survive a long session** — and a framework whose whole
+premise is work spanning sessions cannot rest the record on prose.
+
+Two consequences that shape everything below. The record has to be written
+by something that cannot forget. And when a builder decides to go back a
+stage, *what it decided and why* has to survive, because that is the only
+thing a later builder — or an initiative-level one — can read to know that
+dev kept failing because the design was wrong.
 
 ## What we tried, and what we learned
 
@@ -483,6 +506,106 @@ may write specs but not source. Review may read but not write. Where the
 agent supports limiting its own tools, this is applied so the stage
 cannot overstep in the first place.
 
+### Guidance first, refusal second
+
+The checker's main job is to answer *where am I and what is expected of
+me*, and only then to refuse things. That ordering matters because the
+builder — human or agent — is making the decisions.
+
+So every answer carries the facts it was based on, and a refusal always
+says what would resolve it. "Three plan items unticked" is not useful on
+its own. "Three items unticked — tick them, or record why you are
+proceeding without them" tells a builder what to do next. A refusal a
+builder cannot act on turns into a retry loop; one that names the way
+forward turns into a decision.
+
+### Proceeding anyway, on the record
+
+Humans do this constantly: *known issue, shipping anyway, follow-up
+filed.* A framework with no way to express it blocks the first time
+judgement disagrees with a precondition, and then nobody can drive it —
+least of all an agent at initiative altitude.
+
+So every gate has an exception path, and the exception is **expensive by
+construction rather than forbidden**:
+
+- it must name what is being skipped and why,
+- it is recorded on the branch like a return,
+- it is counted, and the count is visible at every altitude above it.
+
+Nothing is prohibited. Everything is legible. That is the same trade the
+return record makes, and it is what keeps a gate from becoming a wall.
+
+The obvious worry is that a builder simply excepts past everything. The
+answer is visibility, not prohibition: a feature that reached closure with
+four recorded exceptions looks exactly as bad as it is, to a human or to
+an initiative-level builder reading the same record.
+
+### Repeated failure is evidence about a different stage
+
+If the dev loop cannot get the tests passing after several attempts, the
+fault is probably not in the code. That is ordinary engineering judgement,
+and the framework should put the evidence in front of the builder rather
+than making it notice on its own.
+
+So attempts and returns are counted, and the counts are surfaced —
+"third time round this loop" — as **input to a decision, never as a
+decision.** The code counts; the builder judges where the fault entered.
+No threshold decides anything on its own, because the right response to
+three failed attempts depends entirely on what the failures were.
+
+### Which layer the fault entered
+
+A return needs to say more than "go back one". The layers a fault can
+enter are finer than the stages:
+
+| Layer | What being wrong here means |
+|---|---|
+| requirements | we built the wrong thing |
+| design | right thing, wrong shape |
+| implementation | right shape, wrong code |
+| test | the code may be fine; the test was wrong |
+
+The builder judges which one, because nothing observable distinguishes
+them. The framework's job is to make that judgement **survive** — the
+layer, the problem, what would resolve it, and how we will know it is
+resolved are all recorded on the branch. Those four things are the record
+a later builder reads. Discarding them, which an earlier version of this
+design did, removes the reason the feature exists.
+
+The stages stay four. Design is a *layer*, not a stage, because returning
+to "planning" to rework a design is the same stage doing different work,
+and splitting it would multiply the transition table without telling a
+builder anything it did not already know from the fault layer.
+
+### Working at more than one altitude
+
+The same framework applies to a feature, an initiative, and a project. So
+the tooling must not be hardcoded to features: which altitude a piece of
+work sits at is read from the spec that names the branch, and the stage
+record is scoped to that altitude so a feature's stage and an initiative's
+stage never collide.
+
+An initiative-level builder needs one thing beyond that, and it is the
+capability most clearly missing today: **it must be able to ask across
+units.** *Which streams in this initiative are blocked, and why?* That is
+a question about many branches at once, and answering it every cycle is
+how a higher-order builder decides what to do next.
+
+### Describing itself
+
+"Self-documented enough for a coding agent to drive it" has to mean
+legible to a program, not only readable by a person. A builder that has
+just started should be able to ask the framework what altitudes exist,
+what stages each has, what finishing a stage requires, and what a return
+or an exception must record — rather than inferring it from prose it may
+not have loaded.
+
+That is a small surface: the shape of the framework, printed on request,
+from the same source the enforcement uses. Two copies of that knowledge —
+one in prose and one in code — is the drift this feature set out to
+remove.
+
 ### Who owns the map
 
 A phase module states **what it must achieve**, not what follows it. Dev's
@@ -575,6 +698,9 @@ branch.
 
 | Decision | Decided by |
 |---|---|
+| Whether the work is good | The builder, always |
+| Which layer a fault entered | The builder; the framework records it |
+| Whether to proceed despite a gate | The builder, on the record |
 | Which instruction file to load | The router, from what the checker reports |
 | What comes after this stage | The checker's table — never the phase module |
 | Whether the work in this stage is finished | The agent, against the module's stated exit condition |
@@ -593,15 +719,27 @@ two guesses agreeing.
 
 ### Going backwards
 
-Any earlier stage can be returned to. That is not restricted, because
-deciding where a mistake belongs is judgement and code cannot do it.
+Any earlier stage can be returned to, and that is not restricted —
+deciding where a mistake belongs is judgement, and code cannot do it.
 
-What *is* enforced is that the return is not vague. It must name the
-stage at fault, the problem, and what would resolve it. Returns are
-counted, so repeated bouncing between stages becomes visible instead of
-hidden. And until the recorded problem is discharged, the feature cannot
-move forward again — otherwise "go back" becomes a way of escaping a
-check that cannot be passed.
+What the framework enforces is that the decision **survives**. A return
+records four things, and refuses without them:
+
+| Recorded | Why a later builder needs it |
+|---|---|
+| the layer at fault | tells it whether to rethink the requirement, the design, or the code |
+| the problem | tells it what was actually wrong |
+| what would resolve it | tells it what to do |
+| how we will know | tells it when it is done |
+
+These are written onto the branch, not into a scratch file, because the
+branch is what a later builder reads. Returns are counted, so repeated
+bouncing is visible rather than hidden.
+
+A return also **rewinds what counts as evidence**: work done before the
+fault was work on the old understanding, so reaching a later stage again
+needs fresh work. And a return is open while it is the newest thing on the
+branch — the work that addresses it is what closes it.
 
 ## How each agent gets this
 
@@ -780,287 +918,196 @@ have to notice going wrong stops needing to be noticed.
 
 ## What must be true when we are done
 
-These are the statements the tests are written against. They describe
-outcomes a person can check, and deliberately say nothing about how they
-are achieved.
+Statements a person can check by reading the repository. They say nothing
+about how they are achieved. Grouped by the two jobs.
 
-1. A session starting with no knowledge of prior work can determine the
-   feature's current stage from the repository alone.
-2. A commit whose stage claim contradicts the repository does not land.
-3. Statement 2 still holds when the commit is made with `--no-verify`.
-4. Going back a stage records the stage at fault, the problem, and what
-   would resolve it.
-5. After going back, the feature cannot move forward again until the
-   recorded problem is discharged.
-6. Going back is countable, so repeated bouncing is visible.
-7. After a feature is merged, no stage bookkeeping remains on the main
-   branch, and the main branch has no hooks configured or installed.
-8. The merge commit on the main branch carries an authored summary of the
-   feature — what was built, why, and how — and does not contain a copy
-   of the branch's intermediate commit messages.
-9. With none of this installed, kdevkit behaves exactly as it does
-   today.
-10. When the checker cannot determine an answer, no transition happens.
-11. Where the agent can restrict tools, a stage cannot act outside its
-    remit.
-12. A feature works the same way whether or not it has its own worktree,
-    and in a single checkout the machinery stays inert on every branch
-    that is not a kdevkit feature.
-13. Iterating the dev loop — quality, tests, review, fix, repeat — does
-    not change the recorded feature stage and does not count as going
-    back a stage, however many times it turns.
-14. A feature cannot leave dev until the dev loop has converged: quality
-    clean, tests passed, review findings resolved — with the checks
-    observed running, not merely reported as having run.
-15. Evidence that is recorded rather than re-run is invalidated by any
-    change to the files it was verified against.
-16. Commits made by project- or initiative-level work carry no feature
-    stage at all.
-17. Statements 1 to 10 and 12 to 16 hold on Claude, Codex and Kiro.
+**The record is trustworthy.**
+
+1. A builder starting with no knowledge of prior work can determine the
+   current stage from the repository alone.
+2. A commit whose stage claim the repository contradicts does not land.
+3. Statement 2 holds even with `--no-verify`.
+4. The record never falls behind reality: work that has plainly been done
+   is reflected without anyone remembering to say so.
+5. The record never moves backwards except through a recorded return.
+6. When something cannot be determined, no transition happens.
+
+**Decisions survive.**
+
+7. A return records the layer at fault, the problem, what would resolve
+   it, and how we will know — all readable from the branch afterwards.
+8. After a return, reaching a later stage again requires fresh work.
+9. Returns and repeated attempts are counted, and the counts are readable
+   without parsing prose.
+10. A builder can proceed past a gate by recording what it is skipping and
+    why; doing so is counted and visible.
+
+**The flow holds without correction.**
+
+11. A builder following only what the framework tells it can get a feature
+    from planning to review without a human intervening.
+12. Iterating the dev loop does not change the stage and does not count as
+    going back.
+13. A feature cannot leave dev until its gates have been observed passing,
+    or an exception has been recorded.
+14. Recorded evidence is invalidated by changing the files it covered.
+15. Nothing is stamped or refused outside the piece of work it belongs to
+    — not the default branch, not an unrelated branch, not another
+    altitude.
+16. It works whether or not the work has its own worktree.
+
+**A higher-order builder can drive it.**
+
+17. The framework can describe itself on request: the altitudes, the
+    stages, what finishing a stage requires, and what a return or
+    exception must record.
+18. A builder can ask which units of work are blocked and why, across a
+    whole initiative, without reading each branch by hand.
+19. The same verbs work at feature and initiative altitude, and the two
+    stage records do not collide.
+
+**Everywhere.**
+
+20. After a feature merges, no stage bookkeeping remains on the main
+    branch, and the merge commit carries an authored summary rather than a
+    transcript of branch commits.
+21. With none of this installed, kdevkit behaves as it does today.
+22. Statements 1-19 hold on claude, codex and kiro.
 
 ## How we will test it
 
-The tests are written from the statements above, not from the design. An
-assertion may describe what someone would find in the repository. It may
-not describe which script ran, or in what order. If we rebuilt this a
-completely different way, these tests should still pass unchanged.
+Tests are written from the statements above, not from the design. An
+assertion may describe what someone would find in the repository; it may
+not describe which script ran. If the mechanism were rebuilt differently,
+these should still pass.
 
-### Three kinds of test, and why all three are needed
+### Four layers, and what each can and cannot prove
 
-**Unit — one guarantee at a time, no AI.** Set up a throwaway repository,
-drive it with git commands, check the result. Fast, free, repeatable, on
-every build.
+**Unit — one statement at a time, no agent.** A throwaway repository
+driven with git commands. Fast, free, repeatable, every build. Proves the
+mechanism behaves. Cannot prove the pieces work together, and cannot
+prove a builder will use them.
 
-**Lifecycle — the guarantees together, no AI.** A feature driven from
-nothing to closed: every stage, the dev loop turning several times, a
-return that goes back two stages and recovers, a long session with side
-quests onto other branches. This layer exists because the unit tests can
-all pass while the whole never actually works — "does the checker refuse
-an unticked plan" is a different question from "does a feature get
-through all five stages".
+**Lifecycle — the statements together, no agent.** A piece of work driven
+from nothing to closed: every stage, the dev loop turning, a return two
+stages back that then recovers, a long session with detours. Proves the
+whole holds when the steps are taken. Still cannot prove anyone takes
+them.
 
-**Agent-driven — does a real agent actually do this?** The project's
-existing fixture format: pose a task the way a person would phrase it,
-let the agent work, then check the repository. Never inspect the agent's
-reasoning.
+**Fixture integrity — free, and it guards the paid layer.** Runs each
+agent fixture's setup with *no agent work* and requires the assert to
+fail; also guts the record instead of doing the work and requires that to
+fail. Without this a paid run can report a clean pass while testing
+nothing — which has already happened once here.
 
-**All three are load-bearing, and the first two cannot substitute for the
-third.** The mechanism holding when the steps are taken is a different
-claim from an agent choosing to take them — and the whole premise of this
-feature is that agents *don't* reliably do what prose asks. A green
-`just ci` proves the tooling works; only a run against claude, codex and
-kiro proves the skill and the tooling together achieve the intent. Every
-agent-driven fixture therefore runs on all three, fresh and under load,
-sampled at least three times, with the ratio recorded rather than a
-verdict.
+**Agent runs — the only layer that tests the actual claim.** A real
+builder, on claude, codex and kiro. Everything above proves the tooling;
+only this proves the framework. Nothing substitutes for it, and it is
+worth the money precisely because the first two layers are written by
+someone who knows the design and will unconsciously test what they built.
 
-Equally, the third cannot substitute for the first two: agent runs cost
-money, vary between runs, and tell you *that* something failed rather
-than *which* guarantee broke.
+### What the agent runs must measure
 
-### The agent-driven fixtures, named
+The metric is **correction burden** — how often a human has to step in —
+not obedience. Every defect found in this work so far was found by a human
+noticing something wrong, which is the cost the feature exists to remove.
+So the fixtures assert:
 
-Four, each posing a situation rather than a script, and each reading only
-the repository afterwards:
+- **Did the builder get from A to B unaided?** Statement 11. This needs a
+  fixture that poses a situation and reads the end state, with no
+  intervening correction.
+- **Did the decision survive?** Statement 7. Not "did it go back" but "can
+  the four things it recorded be read afterwards".
+- **Did it reach for the right mechanism when judgement was needed?** When
+  a gate cannot be passed honestly, did the builder record an exception or
+  a return, rather than either stalling or quietly proceeding?
+- **Did it stay inside its own work?** Statement 15, with detours onto
+  other branches.
 
-| Fixture | The situation it poses |
-|---|---|
-| `dev-to-review` | A fresh spec and the instruction to build it. Does the dev loop reach review with the stage recorded in git rather than in remembered prose? |
-| `gate-holds` | The handoff *already claims* "Ready for: review" while a plan item is genuinely undone and the tests do not cover the second requirement. A stale prose claim must not be enough. |
-| `return-to-plan` | Review finds the requirement itself wrong. The fault belongs two stages back at planning, not one back at dev — and the recorded reason must name the problem, not merely the destination. |
-| `side-quest` | A typo fix on the main branch mid-feature. The detour must be unstamped, must not read as going backwards, and the feature's stage must survive it. |
+Two rules on sampling, from this project's own experience: **one run
+proves nothing** — at least three per fixture per agent, with the ratio
+recorded rather than a verdict; and every fixture also runs **under load**,
+with unrelated prior conversation prepended, because the entire problem
+only appears under load.
 
-**A fixture is only evidence if it fails when the agent does nothing**, and
-that is cheap to check and expensive to discover late. So a free suite
-runs each fixture's setup with no agent work at all and requires the
-assert to fail, plus a variant that guts the record rather than doing the
-work. This is not hypothetical hygiene: it caught `gate-holds` being
-vacuous before any money was spent. Its assert branched on the recorded
-stage and accepted "still dev", which a no-op agent satisfies — a paid run
-would have reported a clean pass while testing nothing.
+### Rules the assertions must obey
 
-### What the first paid run found
+Each of these exists because it caught a real defect here.
 
-Worth recording, because it is the argument for this layer existing at
-all. The first run of `dev-to-review` failed on **all three agents** with
-the same result: the stage read `planning` after the agent had plainly
-done and committed dev work. None of the three called `advance`.
+- **An assertion must fail if the work was not done.** Write down what a
+  no-op builder leaves behind and what a careless one leaves behind, and
+  confirm both fail.
+- **Never assert only an absence.** "No stale stage" is satisfied by
+  deleting the field. Assert it exists, is legal, and is right.
+- **Assert against the artefact a reader would see** — a fresh clone, not
+  the working copy; the remote, not the local branch.
+- **Seed the project's real formats.** A fixture that seeds a format the
+  project does not use tests nothing: this is how a format mismatch
+  survived every layer here undetected.
+- **Check exit codes and error text, not just success.**
 
-The cause was in the mechanism, not the models. The stamp carried the last
-recorded stage forward, so a forgotten `advance` left the record sitting
-at whatever the previous stage was — a wrong record quietly becoming the
-truth, which is the one thing this feature promises cannot happen.
+### Which statements each layer proves
 
-**No amount of unit or lifecycle testing would have caught it**, because
-those tests call `advance` before committing. They were written by someone
-who knew the design. The agents did not, and nothing compelled them to.
+| Statements | Unit | Lifecycle | Agent |
+|---|---|---|---|
+| 1-6 · record is trustworthy | ✓ | ✓ | ✓ (1, 4) |
+| 7-10 · decisions survive | ✓ | ✓ | ✓ (7, 10) |
+| 11 · no correction needed | — | — | **✓ only here** |
+| 12-16 · flow holds | ✓ | ✓ | ✓ (12, 15) |
+| 17-19 · higher-order use | ✓ | ✓ (18) | ✓ (19) |
+| 20-21 · merge and degradation | — | ✓ | ✓ (21) |
+| 22 · all three agents | — | — | **✓ only here** |
 
-The fix was to derive the stage from evidence — a commit that is
-implementation work is dev whether or not anything said so — taking
-whichever is further along, the recorded stage or the implied one. Only
-stages with an observable signature are derived; review and closure are
-human acts and are never inferred. The same fixture then passed on all
-three agents.
-
-### A limit of the pre-install test stage, found the hard way
-
-`return-to-plan` failed on all three agents twice — once for a real
-defect, and once for a reason that is not a defect in this feature at all.
-
-The first failure was real: the loop-back instruction never mentioned
-`phase return`, so no agent could use a verb it had not been told about.
-All three did the right *work* — amended the requirement, reimplemented,
-retested — but none recorded a return, so the trip back was invisible and
-uncountable. Unlike a forgotten `advance`, this cannot be fixed by
-deriving from evidence: which layer a fault entered is judgement and
-leaves no observable trace. The only available fix is prose.
-
-The second failure is a harness limit. The pre-install test stage inlines
-**only `SKILL.md`** into the prompt, not the phase modules, so the
-instruction added to `phases/review.md` is invisible at that stage no
-matter how well written. The fixture must run post-install, against a
-deployed tree, where the agent loads modules from disk.
-
-That has a useful corollary, though. `dev-to-review` and `gate-holds` both
-pass at the pre-install stage — meaning the deterministic half works even
-when the agent cannot see the phase module at all. The split is clean and
-slightly humbling: what the hooks enforce survives an agent that has read
-almost nothing, and what depends on prose does not survive at all.
-
-### Rules for writing the assertions
-
-Every one of these exists because it caught a real defect in earlier
-work on this project.
-
-- **An assertion must fail if the work was not done.** For each new
-  assertion, write down what a lazy agent that does nothing would leave
-  behind, and what a careless agent that does the wrong thing would
-  leave behind, and confirm both fail. An assertion that passes without
-  the work being done is worse than none.
-- **Never check only that something is absent.** "No stale stage" is
-  satisfied by deleting the field entirely. Check that the field exists,
-  *and* holds a legal value, *and* is not the value it should have moved
-  on from.
-- **Watch out for the template.** The spec template lists every legal
-  stage on one line, so a naive match succeeds against untouched
-  boilerplate. Exclude it explicitly.
-- **Check exit codes and error output, not just success output.** A
-  silent failure that prints nothing otherwise reads as a pass.
-- **One run proves nothing.** Sample at least three runs per fixture per
-  agent and record the ratio, not a verdict.
-- **Test under load.** Every agent-driven fixture must also run with a
-  large block of unrelated prior conversation prepended, because the
-  entire problem being solved only appears under load. A fixture that
-  passes fresh and fails loaded has found the bug, not a flake.
-
-### Coverage
-
-Layer key: **U** unit, **L** lifecycle, **A** agent-driven.
-
-| Statement | Layer | Test |
-|---|---|---|
-| 1 | U L A | Set up a half-finished feature branch, start a session knowing nothing, ask what state the feature is in. It should name the right stage without asking. |
-| 2 | U | Hand-write a commit claiming a stage the repository contradicts. The commit should not exist afterwards, and the error should say why. |
-| 3 | U | Repeat with `--no-verify`. Same outcome. |
-| 4 | U L | Set up a review-stage branch where the original requirement was wrong. Feed in that review outcome. The recorded reason should name the stage, the problem and the resolution. |
-| 5 | U L | With an undischarged problem recorded, try to move forward. Refused. Discharge it. Now allowed. |
-| 6 | U L | Record two returns. The count reads as two, without parsing prose. |
-| 7 | L | Merge a feature branch into a real remote, then clone it fresh. The clone must show no stage bookkeeping anywhere in its history, no hooks path configured, and no hook files. Assert against the clone, not the working copy — the working copy still has the feature branch and will pass by accident. |
-| 8 | L | Merge a feature and read the resulting commit message. It must contain the feature's summary and must *not* contain the subjects of the branch's intermediate commits. Check both directions: a summary that is merely the branch title is as wrong as a transcript. |
-| 9 | L A | Remove the checker, unset the hook path, run the existing dev-loop fixtures. Results should match today's recorded baseline. |
-| 10 | U | Put the repository into a state the checker cannot classify. No transition happens, and it says why. |
-| 11 | A | In the planning stage, give the agent a task that would require editing source. No source file changes. |
-| 12 | U L | In one checkout with no worktrees, run the same feature through and assert it behaves identically; then commit on the default branch and on an unrelated branch and assert nothing was stamped and nothing was refused. |
-| 13 | U L A | Drive several dev-loop iterations — failing tests, then a review finding, then a fix. Assert the stage stayed `dev` throughout and the return count is still zero. This is the test that stops normal dev churn from being mistaken for thrash. |
-| 14 | U L | With tests failing, attempt to push. Refused, naming the condition, and the failing commit must not reach the remote — assert against the remote, not the local branch. Fix and assert the push now succeeds. |
-| 15 | U | Record evidence against one set of files, change a file, then attempt to advance. Refused as stale. |
-| 16 | U | On a branch holding initiative-level work and no feature spec, commit. Assert no stage was stamped and the commit was not refused. Guards the boundary against a future change to the detection rule. |
-| 17 | A | Every agent-driven fixture runs on all three agents, fresh and under load. |
-
-### Ways this could be cheated, each needing its own test
-
-- Amending a commit to replace its message, erasing the stamped stage.
-- Hand-editing the handoff prose so it disagrees with the commit
-  history.
-- Making the change through a shell here-document instead of the editing
-  tool, so an agent-level hook never fires.
-- Going backwards to escape a forward check that cannot be passed.
-- Running with the flag that disables hooks, and checking the failure is
-  loud rather than silent.
+Statement 11 and statement 22 have no non-agent proof at all. That is the
+argument for the paid layer stated as plainly as it can be.
 
 ## How to build it
 
-Ordered so that each step is useful on its own and testable when it
-lands. No step depends on an unresolved question.
+Ordered so each step is useful alone. Items marked `[x]` are done, `[~]`
+partly, `[ ]` not started.
 
-1. [ ] Make the merge message an authored summary. Two parts: set the
-   repository's squash-merge option so per-commit messages are discarded
-   rather than accumulated, and have closure compose the message from the
-   spec's requirements, design and implementation sections. Statements 7
-   and 8 both depend on this, and without it the main branch collects a
-   transcript of the feature's internal commits.
-2. [x] Write only the `facts` verb of the checker — read the repository,
-   print plain `key=value` lines, no conclusions. Add a test per fact
-   against a seeded repository.
-3. [x] Add the list of allowed moves and the `check` verb, including the
-   "cannot determine" answer. Test statement 10.
-4. [x] Add the commit-time hook: stamp the stage from the facts, refuse
-   contradictions. Test statements 2 and 3, including the amend case.
-5. [x] Add the going-back verbs with their required fields, the count, and
-   the block on moving forward. Test statements 4, 5 and 6, and test
-   statement 13 — that dev-loop iterations do not touch the count.
-6. [x] Add the dev-loop convergence facts and make them preconditions for
-   leaving dev, with the hook running the checks rather than trusting a
-   report, and recorded evidence keyed to the tree hash. Test statements
-   14 and 15.
-7. [x] Add the pre-push hook. Test that an inconsistent branch cannot be
-   published.
-8. [x] Add the hook's self-scoping check as the first thing it does, and its
-   hand-off to any pre-existing hook. Test statement 12 in a single
-   checkout with no worktrees, and statement 15 on an initiative branch:
-   the default branch, an unrelated branch and initiative work must all
-   be untouched.
-9. [~] Teach the install tool to write the checker's absolute path into the
-   instruction files as it deploys them, and to set the hooks path —
-   scoped to the feature's worktree when there is one, locally when there
-   is not. Test statement 7 against a fresh clone of a real remote, and
-   test that a project cloned without kdevkit contains nothing belonging
-   to it.
-10. [x] Update the instruction files to mention the checker, and remove the
-    machine-readable field from the handoff section, leaving the prose.
-11. [ ] Add the capability list and translate it for Claude. Document the
-    Codex and Kiro limitations rather than working around them.
-12. [ ] Extend the agent-driven fixtures for statements 1, 4, 6, 9, 11, 12
-    and 13. Three samples per agent, fresh and under load, ratios
-    recorded.
-13. [ ] Correct the five inaccurate claims in the existing specs, listed
-    below.
-
-### Notes for whoever builds it
-
-Write the checker in POSIX shell using only `git`, `awk` and `sed`.
-Make each fact a separate one-line function so it can be tested alone,
-and have `facts` print all of them every time, so a conclusion can never
-hide the inputs that produced it.
-
-Read the stage with
-`git log --format='%(trailers:key=Phase,valueonly=true,unfold=true)'`.
-Note that this emits a trailing newline, which will silently break a
-naive string comparison. Write with `git interpret-trailers --in-place`
-rather than editing the message text yourself.
-
-Put the refusal logic in `prepare-commit-msg`, not `commit-msg`. Only
-the former still runs under `--no-verify`, and that difference is the
-whole of statement 3. Re-stamp on every commit including amends, because
-an amend replaces the entire message.
-
-Make every refusal say what was wrong *and* what would fix it. A
-refusal the agent cannot act on turns into a retry loop; a refusal that
-names the problem turns into a correction.
-
-Keep the short-lived intent file inside the git directory, at the path
-`git rev-parse --git-path kdevkit-intent` returns, so it is
-per-worktree and cannot be committed.
+- [x] 1 · The checker's `facts` verb, and a test per fact.
+- [x] 2 · The closed table of stage moves, and `check`, including the
+  cannot-determine answer.
+- [x] 3 · The commit-time hook: stamp the stage from evidence, refuse
+  contradictions, survive `--no-verify`.
+- [x] 4 · Derive the stage from evidence so the record cannot fall behind,
+  never inferring stages that are human acts.
+- [x] 5 · A return rewinds what counts as evidence.
+- [x] 6 · The pre-push gate, running the project's declared checks.
+- [x] 7 · The hook scopes itself, and chains any hook already installed.
+- [ ] 8 · **Fix the spec-format match.** The checker identifies a unit of
+  work by matching the branch name in a spec; it matches a format this
+  project does not use, so the mechanism is currently inert on every real
+  spec. Test against the project's actual specs, not a seeded format.
+- [ ] 9 · **Persist the return record.** The four fields are validated and
+  then discarded. Write them onto the branch and make them readable.
+  Statement 7.
+- [ ] 10 · **Add the exception path.** Proceed past a gate by recording
+  what and why; count it; surface it. Statements 10 and 11.
+- [ ] 11 · **Fix the push gate's control flow**, which currently makes its
+  own refusal message unreachable and blocks pushes when a project
+  declares no gates.
+- [ ] 12 · **Surface the counts** — returns, exceptions, attempts — as
+  decision input. Statement 9.
+- [ ] 13 · **Make it altitude-generic**: read the altitude from the spec
+  that names the branch; scope the stage record to it. Statement 19.
+- [ ] 14 · **Add the across-units query**: which units are blocked and
+  why. Statement 18.
+- [ ] 15 · **Add self-description**: the framework's shape, printed from
+  the same source the enforcement uses. Statement 17.
+- [ ] 16 · **Reachability**: name the install and verify steps in the
+  prose, and substitute the tool's real path at install time. Without this
+  no real deployment wires anything up.
+- [ ] 17 · Make every refusal name what would resolve it.
+- [ ] 18 · Add a shell linter to the quality gate; the guarantee now lives
+  in shell and nothing checks it.
+- [ ] 19 · Authored merge summary. Statement 20.
+- [ ] 20 · Per-stage capability limits where the agent supports them.
+- [ ] 21 · Rebuild the agent fixtures around correction burden, seeded
+  with real formats; three samples per agent, fresh and under load, ratios
+  recorded.
+- [ ] 22 · Correct the inaccurate claims in the existing specs.
 
 ## Corrections to existing specs
 
@@ -1213,6 +1260,39 @@ is worth saying plainly.
   an AI sub-session as the checker; and doing without hooks, which is
   not possible while Kiro has no interception mechanism and Codex cannot
   let a project ship one.
+- **2026-09-01 · The intent is a framework a builder is guided through,
+  not a guard against a forgetful agent.** Rationale: the original problem
+  statement was "the agent forgets to update the handoff", which produced a
+  design made almost entirely of refusals. The actual purpose is that any
+  builder — human, or a coding agent playing that role at feature or
+  initiative altitude — can reconstruct where things stand, what has been
+  tried, and what went wrong where, without the conversation that produced
+  it. Consequences: guidance before refusal; the return record becomes the
+  point rather than a side effect of a gate; gates force articulation, not
+  obedience, so every gate gains a recorded-exception path; counts are
+  surfaced as decision input; and the tooling must work at more than one
+  altitude and be able to answer questions across units. Rejected: keeping
+  the guard framing and treating the higher-order use as a later feature —
+  it changes what the record must contain, which is not a bolt-on.
+
+- **2026-09-01 · Enforce record consistency, never permission.** Rationale:
+  the two jobs — a flow that holds without human correction, and a flow an
+  agent can drive — conflict wherever a gate can refuse a legitimate
+  decision, because the driver is then stuck with no way forward. A gate
+  that makes a builder *say* what it is doing serves both. Exceptions are
+  made expensive by construction (named, counted, visible at every altitude
+  above) rather than forbidden. Rejected: hard gates with no override,
+  which dead-end the first time judgement disagrees; and soft gates with no
+  record, which is where we started.
+
+- **2026-09-01 · Design is a fault layer, not a stage.** Rationale: a
+  return must say which layer the fault entered — requirements, design,
+  implementation or test — and that precision belongs in the record, not in
+  the transition table. Returning to planning to rework a design is the
+  same stage doing different work. Rejected: splitting design into its own
+  stage, which multiplies the table without telling a builder anything the
+  fault layer does not already say.
+
 - **2026-09-01 · A phase module states its exit condition; the tooling
   owns the map.** Rationale: a module that names its successor duplicates
   the table of legal moves and will drift when a stage is added, and it
