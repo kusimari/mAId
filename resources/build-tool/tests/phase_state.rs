@@ -77,9 +77,10 @@ impl Fixture {
         let repo = tmp.path().join("project");
         std::fs::create_dir_all(&repo).unwrap();
         git_ok(&repo, &["init", "-q", "-b", "main", "."]);
+        // git refuses to commit without an identity; nothing else here is
+        // configuration kdevkit needs.
         git_ok(&repo, &["config", "user.email", "dev@example.com"]);
         git_ok(&repo, &["config", "user.name", "dev"]);
-        git_ok(&repo, &["config", "commit.gpgsign", "false"]);
         // What install does: point git at kdevkit's own hooks.
         git_ok(
             &repo,
@@ -140,10 +141,33 @@ impl Fixture {
         out.lines().filter(|l| !l.trim().is_empty()).count()
     }
 
-    /// Configure the project's own check commands, as a project would.
+    /// Declare the project's dev gates where kdevkit declares everything
+    /// else about a project: `specs/project.md`.
     fn set_checks(&self, quality: &str, tests: &str) {
-        git_ok(self.path(), &["config", "kdevkit.qualityCommand", quality]);
-        git_ok(self.path(), &["config", "kdevkit.testCommand", tests]);
+        let dir = self.repo.join("specs");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("project.md"),
+            format!(
+                "# Project\n\n## Agent Development\n\n### kdevkit\n\
+                 - `gates:`\n  - `dev:`\n    - `quality: {quality}`\n    - `tests: {tests}`\n"
+            ),
+        )
+        .unwrap();
+        // A project's own declaration is committed, like any project file —
+        // and leaving it uncommitted would make the tree dirty, which
+        // `verify` refuses for good reason.
+        git_ok(self.path(), &["add", "-A"]);
+        git_ok(
+            self.path(),
+            &[
+                "commit",
+                "-q",
+                "--no-verify",
+                "-m",
+                "chore: declare dev gates",
+            ],
+        );
     }
 }
 

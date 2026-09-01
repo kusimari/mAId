@@ -19,14 +19,15 @@ if ! "$PHASE" applies >/dev/null 2>&1; then
     exit 0
 fi
 
-# Verification is the checker's job; the hook only decides that it must
-# happen before anything is published. Absent configured commands there
-# is nothing to verify and nothing to refuse.
-if [ -n "$(git config --get kdevkit.qualityCommand 2>/dev/null || true)$(git config --get kdevkit.testCommand 2>/dev/null || true)" ]; then
-    if ! "$PHASE" verify; then
-        echo "kdevkit: refusing to push — the checks did not pass on what you are publishing." >&2
-        exit 1
-    fi
+# Verification is the checker's job, and which commands to run is the
+# project's declaration in specs/project.md — the hook only decides that
+# it must happen before anything is published. `verify` reports 3 when
+# the project declares no gates, which is nothing to refuse.
+"$PHASE" verify
+rc=$?
+if [ "$rc" = "1" ]; then
+    echo "kdevkit: refusing to push — the checks did not pass on what you are publishing." >&2
+    exit 1
 fi
 
 chain "$@"

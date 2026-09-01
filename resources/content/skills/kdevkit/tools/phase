@@ -65,6 +65,40 @@ applies() {
     [ -n "$(spec_file 2>/dev/null)" ] || [ -n "$(stage_recorded)" ]
 }
 
+# Per-project settings live in specs/project.md under `### kdevkit`, the
+# same place kdevkit already declares things like the code reviewer —
+# not in git config, which is per-clone and invisible to the repo.
+#
+#   ### kdevkit
+#   - `gates:`
+#     - `dev:`
+#       - `quality: just lint`
+#       - `tests: just test`
+#
+# Read as: the value on the first `key: value` line under the named
+# stage's block. Absent configuration means nothing to verify.
+gate_command() {
+    stage=$1; key=$2
+    f=specs/project.md
+    [ -f "$f" ] || return 0
+    awk -v stage="$stage:" -v key="$key:" '
+        /^#/            { in_kdevkit = ($0 ~ /kdevkit/) }
+        !in_kdevkit     { next }
+        $0 ~ stage      { in_stage = 1; next }
+        in_stage && /`[a-z_]+:`[[:space:]]*$/ { in_stage = 0 }
+        in_stage {
+            line = $0
+            gsub(/`/, "", line)
+            sub(/^[[:space:]]*-[[:space:]]*/, "", line)
+            if (index(line, key) == 1) {
+                sub(/^[^:]*:[[:space:]]*/, "", line)
+                print line
+                exit
+            }
+        }
+    ' "$f"
+}
+
 # ── facts ────────────────────────────────────────────────────────
 # Each fact is one function so it can be tested alone.
 
@@ -341,10 +375,10 @@ cmd_stamp() {
 # rather than a report: the commands are observed running here.
 cmd_verify() {
     in_repo
-    quality=$(git config --get kdevkit.qualityCommand 2>/dev/null || true)
-    tests=$(git config --get kdevkit.testCommand 2>/dev/null || true)
+    quality=$(gate_command dev quality)
+    tests=$(gate_command dev tests)
     if [ -z "$quality$tests" ]; then
-        echo "cannot determine: no kdevkit.qualityCommand or kdevkit.testCommand configured" >&2
+        echo "cannot determine: specs/project.md declares no dev gates under '### kdevkit'" >&2
         return 3
     fi
     if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
