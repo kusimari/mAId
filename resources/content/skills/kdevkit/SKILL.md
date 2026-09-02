@@ -393,8 +393,8 @@ Two rules that keep it honest:
 
 - **The live phase is not in this block.** It is a trailer on the
   branch's commits, written by git at commit time rather than by you.
-  Read it with `phase show`; move it with `phase advance --next` or
-  `phase return`. Nothing you write in the block sets it, so a
+  Read it with `feature-loop show`; move it with `feature-loop advance --next` or
+  `feature-loop return`. Nothing you write in the block sets it, so a
   `Phase:` line here is a leftover and should be deleted.
 
 - **Rewrite the block, never append — and re-author every field.**

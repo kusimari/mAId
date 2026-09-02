@@ -10,9 +10,10 @@ set -eu
 MSG_FILE=${1:-}
 [ -n "$MSG_FILE" ] || exit 0
 
+# shellcheck disable=SC1007  # CDPATH= is deliberate, not a typo
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-PHASE="$here/../phase"
-[ -x "$PHASE" ] || exit 0
+LOOP="$here/../feature-loop"
+[ -x "$LOOP" ] || exit 0
 
 # Hand off to whatever hook was here before us, so pointing git at this
 # directory does not silently disable someone's existing tooling.
@@ -24,7 +25,7 @@ chain() {
 
 # Do nothing outside a kdevkit feature: not the default branch, not an
 # unrelated branch, not initiative-level work.
-if ! "$PHASE" applies >/dev/null 2>&1; then
+if ! "$LOOP" applies >/dev/null 2>&1; then
     chain "$@"
     exit 0
 fi
@@ -32,13 +33,20 @@ fi
 intent=$(git rev-parse --git-path kdevkit-intent)
 if [ -f "$intent" ]; then
     want=$(sed -n 's/^phase=//p' "$intent" | head -1)
-    if [ -n "$want" ] && ! sed -n 's/^return_to=//p' "$intent" | grep -q .; then
+    # A return goes backwards deliberately, and an exception waives a
+    # precondition deliberately. Re-checking either would refuse the very
+    # thing the builder just recorded a reason for.
+    deliberate=no
+    sed -n 's/^return_to=//p' "$intent" | grep -q . && deliberate=yes
+    sed -n 's/^exception=//p' "$intent" | grep -q . && deliberate=yes
+    if [ -n "$want" ] && [ "$deliberate" = no ]; then
         # A recorded intent to move forward must still hold at commit
         # time; the tree may have changed since it was recorded.
-        if ! out=$("$PHASE" check --to "$want" 2>&1); then
+        if ! out=$("$LOOP" check --to "$want" 2>&1); then
             echo "kdevkit: refusing this commit." >&2
             echo "$out" | sed -n '/^refused:\|^cannot determine:/p' >&2
-            echo "Fix the condition above, or run: phase return --to <stage> ..." >&2
+            echo "Resolve it, or record a deliberate move: 'feature-loop return ...'" >&2
+            echo "or 'feature-loop except --skipping ... --why ...'" >&2
             exit 1
         fi
     fi
@@ -46,7 +54,7 @@ fi
 
 # Never stamp twice — an amend re-runs this hook on a message that may
 # already carry the trailers.
-if grep -qE '^Feature-Phase:' "$MSG_FILE"; then
+if grep -qE '^Kdevkit-Feature-Stage:' "$MSG_FILE"; then
     chain "$@"
     exit 0
 fi
@@ -54,7 +62,7 @@ fi
 # The subject of the message being written is evidence about this commit's
 # own stage, and it is not in history yet.
 subject=$(sed -n '/^[^#]/{p;q;}' "$MSG_FILE" 2>/dev/null || true)
-block=$("$PHASE" stamp --subject "$subject") || exit 0
+block=$("$LOOP" stamp --subject "$subject") || exit 0
 [ -n "$block" ] || { chain "$@"; exit 0; }
 
 # interpret-trailers places each line in the footer, creating one if the

@@ -96,10 +96,10 @@ Parse `-u` as the first argument; pipe the composed line through `tr`.
 MD
 git add -A && git commit -q -m "plan(uppercase-flag): initial spec"
 git checkout -q -b feat/uppercase-flag
-"$KDEVKIT_TOOLS/phase" install >/dev/null
+"$KDEVKIT_TOOLS/feature-loop" install >/dev/null
 git commit -q --allow-empty -m "feat(uppercase-flag): begin
 
-Feature-Phase: dev"
+Kdevkit-Feature-Stage: dev"
 --- assert ---
 set -e
 # The side quest happened, on main, where it belongs.
@@ -107,14 +107,14 @@ git log main --oneline | grep -qiE 'typo|readme|greeting'
 test -z "$(grep -F 'greting' README.md 2>/dev/null || true)"
 # A commit on main must carry no feature stage — the machinery is inert
 # outside a kdevkit feature branch.
-test -z "$(git log main --format='%B' | grep -E 'Feature-Phase|Acked-By|Return-To' || true)"
+test -z "$(git log main --format='%B' | grep -E 'Kdevkit-Feature-Stage|Kdevkit-Feature-Ack|Return-To' || true)"
 # The feature came back and finished: the flag works and tests cover R2.
 git checkout -q feat/uppercase-flag
 out=$(sh src/greet.sh -u World); [ "$out" = "HELLO, WORLD!" ]
 grep -qF 'HELLO, WORLD!' test.sh
 sh test.sh >/dev/null
 # The detour must not have been recorded as going backwards.
-test "$(git log --format='%(trailers:key=Return-To,valueonly=true,unfold=true)' | grep -c . || true)" = "0"
+test "$(git log --format='%(trailers:key=Kdevkit-Feature-Return,valueonly=true,unfold=true)' | grep -c . || true)" = "0"
 # And the feature's stage survived the detour as a legal value.
-stage=$(git log --format='%(trailers:key=Feature-Phase,valueonly=true,unfold=true)' | grep . | head -1 | tr -d '[:space:]')
+stage=$(git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' | grep . | head -1 | tr -d '[:space:]')
 printf '%s' "$stage" | grep -qE '^(dev|review)$'

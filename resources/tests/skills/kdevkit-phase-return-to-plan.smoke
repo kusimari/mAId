@@ -1,7 +1,7 @@
 skill: kdevkit
 tools: claude,kiro,codex
 # NOTE: this fixture only means anything at the INTEGRATION (post-install)
-# stage. Recording a loop-back needs `phase return`, and the instruction to
+# stage. Recording a loop-back needs `feature-loop return`, and the instruction to
 # use it lives in phases/review.md — which the pre-install `enact` stage
 # does not carry, because that stage inlines only SKILL.md. Run it with
 # `verify` against a deployed tree, not with `check`.
@@ -114,15 +114,15 @@ MD
 chmod +x src/greet.sh test.sh
 git add -A && git commit -q -m "plan(uppercase-flag): initial spec"
 git checkout -q -b feat/uppercase-flag
-"$KDEVKIT_TOOLS/phase" install >/dev/null
+"$KDEVKIT_TOOLS/feature-loop" install >/dev/null
 git commit -q --allow-empty -m "feat(uppercase-flag): implement and test
 
-Feature-Phase: review"
+Kdevkit-Feature-Stage: review"
 --- assert ---
 set -e
 # The fault entered at the requirement, so the feature must go back to
 # planning — not to dev, which is where it surfaced.
-returns=$(git log --format='%(trailers:key=Return-To,valueonly=true,unfold=true)' | grep . | head -1 | tr -d '[:space:]')
+returns=$(git log --format='%(trailers:key=Kdevkit-Feature-Return,valueonly=true,unfold=true)' | grep . | head -1 | tr -d '[:space:]')
 test -n "$returns"
 printf '%s' "$returns" | grep -qE '^(planning|plan)$'
 # The return must be reviewable: the recorded reason names the problem,

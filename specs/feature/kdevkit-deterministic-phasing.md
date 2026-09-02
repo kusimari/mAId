@@ -964,19 +964,19 @@ partly, `[ ]` not started.
 - [x] 5 · A return rewinds what counts as evidence.
 - [x] 6 · The pre-push gate, running the project's declared checks.
 - [x] 7 · The hook scopes itself, and chains any hook already installed.
-- [ ] 8 · **Fix the spec-format match.** The checker identifies a unit of
+- [x] 8 · **Fix the spec-format match.** The checker identifies a unit of
   work by matching the branch name in a spec; it matches a format this
   project does not use, so the mechanism is currently inert on every real
   spec. Test against the project's actual specs, not a seeded format.
-- [ ] 9 · **Persist the return record.** The four fields are validated and
+- [x] 9 · **Persist the return record.** The four fields are validated and
   then discarded. Write them onto the branch and make them readable.
   Statement 7.
-- [ ] 10 · **Add the exception path.** Proceed past a gate by recording
+- [x] 10 · **Add the exception path.** Proceed past a gate by recording
   what and why; count it; surface it. Statements 10 and 11.
-- [ ] 11 · **Fix the push gate's control flow**, which currently makes its
+- [x] 11 · **Fix the push gate's control flow**, which currently makes its
   own refusal message unreachable and blocks pushes when a project
   declares no gates.
-- [ ] 12 · **Surface the counts** — returns, exceptions, attempts — as
+- [x] 12 · **Surface the counts** — returns, exceptions, attempts — as
   decision input. Statement 9.
 - [ ] 13 · **Make it altitude-generic**: read the altitude from the spec
   that names the branch; scope the stage record to it. Statement 19.
@@ -987,19 +987,19 @@ partly, `[ ]` not started.
 - [ ] 16 · **Reachability**: name the install and verify steps in the
   prose, and substitute the tool's real path at install time. Without this
   no real deployment wires anything up.
-- [ ] 17 · Make every refusal name what would resolve it.
-- [ ] 18 · Add a shell linter to the quality gate; the guarantee now lives
+- [x] 17 · Make every refusal name what would resolve it.
+- [x] 18 · Add a shell linter to the quality gate; the guarantee now lives
   in shell and nothing checks it.
 - [ ] 19 · Authored merge summary. Statement 20.
 - [ ] 20 · Per-stage capability limits where the agent supports them.
 - [ ] 21 · Rebuild the agent fixtures around correction burden, seeded
   with real formats; three samples per agent, fresh and under load, ratios
   recorded.
-- [ ] 22 · **Rename the artefacts for the loop they serve**: the checker
+- [x] 22 · **Rename the artefacts for the loop they serve**: the checker
   becomes `tools/feature-loop`, and the trailers gain the
   `Kdevkit-Feature-` prefix, so the outer loops can be added without
   migration.
-- [ ] 23 · **Move verification evidence out of shared config** into the
+- [x] 23 · **Move verification evidence out of shared config** into the
   per-worktree git directory, so two features in flight cannot overwrite
   each other. Test with two worktrees.
 - [ ] 24 · **Re-point the four existing fixtures** that read the handoff's

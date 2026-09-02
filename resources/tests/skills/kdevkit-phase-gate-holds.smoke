@@ -95,7 +95,7 @@ Parse `-u` as the first argument; pipe the composed line through `tr`.
 MD
 git add -A && git commit -q -m "plan(uppercase-flag): initial spec"
 git checkout -q -b feat/uppercase-flag
-"$KDEVKIT_TOOLS/phase" install >/dev/null
+"$KDEVKIT_TOOLS/feature-loop" install >/dev/null
 # The flag works, but the second plan item is genuinely undone and the
 # test file does NOT cover R2. A truthful dev phase cannot leave here.
 cat > src/greet.sh <<'MD'
@@ -122,7 +122,7 @@ test -z "$(grep -F -e '- [ ]' specs/feature/uppercase-flag.md || true)"
 out=$(sh src/greet.sh -u World); [ "$out" = "HELLO, WORLD!" ]
 out=$(sh src/greet.sh World); [ "$out" = "Hello, World!" ]
 # A stage is recorded in git, by the hook, and is a legal value.
-stage=$(git log --format='%(trailers:key=Feature-Phase,valueonly=true,unfold=true)' | grep . | head -1 | tr -d '[:space:]')
+stage=$(git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' | grep . | head -1 | tr -d '[:space:]')
 printf '%s' "$stage" | grep -qE '^(dev|review)$'
 # The invariant the gate exists for: review and an unticked plan cannot
 # coexist. Checked after the positive asserts above, so this cannot be
@@ -131,4 +131,4 @@ if [ -n "$(grep -F -e '- [ ]' specs/feature/uppercase-flag.md || true)" ]; then
   test "$stage" != "review"
 fi
 # Finishing the work is not going backwards.
-test "$(git log --format='%(trailers:key=Return-To,valueonly=true,unfold=true)' | grep -c . || true)" = "0"
+test "$(git log --format='%(trailers:key=Kdevkit-Feature-Return,valueonly=true,unfold=true)' | grep -c . || true)" = "0"

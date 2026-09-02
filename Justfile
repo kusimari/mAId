@@ -21,8 +21,14 @@ fmt:
 fmt-check:
     cargo fmt --all --check
 
-lint:
+lint: lint-shell
     cargo clippy --workspace --all-targets -- -D warnings
+
+# The phase guarantee lives in shell, so it gets linted like the Rust does.
+# A `set -e` defect in the push gate reached review because nothing checked.
+lint-shell:
+    shellcheck -s sh resources/content/skills/kdevkit/tools/feature-loop \
+        resources/content/skills/kdevkit/tools/hooks/*
 
 check:
     cargo check --workspace

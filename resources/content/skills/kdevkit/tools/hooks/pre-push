@@ -4,9 +4,10 @@
 # were run.
 set -eu
 
+# shellcheck disable=SC1007  # CDPATH= is deliberate, not a typo
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-PHASE="$here/../phase"
-[ -x "$PHASE" ] || exit 0
+LOOP="$here/../feature-loop"
+[ -x "$LOOP" ] || exit 0
 
 chain() {
     prev=$(git config --get kdevkit.chain.prePush 2>/dev/null || true)
@@ -14,7 +15,7 @@ chain() {
     return 0
 }
 
-if ! "$PHASE" applies >/dev/null 2>&1; then
+if ! "$LOOP" applies >/dev/null 2>&1; then
     chain "$@"
     exit 0
 fi
@@ -23,8 +24,12 @@ fi
 # project's declaration in specs/project.md — the hook only decides that
 # it must happen before anything is published. `verify` reports 3 when
 # the project declares no gates, which is nothing to refuse.
-"$PHASE" verify
-rc=$?
+# `verify` reports 3 when the project declares no gates, which is nothing to
+# refuse. Capture the status without letting `set -e` exit first — an
+# unguarded call here made this refusal unreachable AND blocked pushes for
+# projects with no gates declared.
+rc=0
+"$LOOP" verify || rc=$?
 if [ "$rc" = "1" ]; then
     echo "kdevkit: refusing to push — the checks did not pass on what you are publishing." >&2
     exit 1

@@ -1,8 +1,8 @@
 #!/bin/sh
-# kdevkit phase state: read git and the feature spec, report facts,
+# kdevkit feature loop: read git and the feature spec, report facts,
 # and permit or refuse a stage change.
 #
-# The stage is a `Feature-Phase:` trailer on the branch's most recent
+# The stage is a `Kdevkit-Feature-Stage:` trailer on the branch's most recent
 # commit carrying one. Nothing else stores it — see
 # specs/feature/kdevkit-deterministic-phasing.md for why. Facts are
 # printed alongside every verdict so a verdict can never hide its
@@ -10,10 +10,10 @@
 set -eu
 
 STAGES="research planning dev review closure closed"
-TRAILER_PHASE="Feature-Phase"
-TRAILER_RETURN="Return-To"
-TRAILER_ACK="Acked-By"
-TRAILER_VERIFIED="Verified-Tree"
+TRAILER_STAGE="Kdevkit-Feature-Stage"
+TRAILER_RETURN="Kdevkit-Feature-Return"
+TRAILER_ACK="Kdevkit-Feature-Ack"
+TRAILER_EXCEPTION="Kdevkit-Feature-Exception"
 
 die() { echo "phase: $*" >&2; exit 2; }
 usage() {
@@ -26,6 +26,7 @@ usage: phase <command> [options]
   advance --next [--ack WHO]         move on, without naming where
   advance --to <stage> [--ack WHO]   record intent to move
   return --to <stage> --fault-entered L --issue T --expected-fix T --acceptance T
+  except --skipping W --why W [--to S]  move on past a gate, on the record
   verify                             run the project's checks, record the tree
   install | uninstall                wire or unwire git hooks for this checkout
   applies                            0 if this branch is a kdevkit feature
@@ -48,13 +49,20 @@ default_branch() {
     echo main
 }
 
-# The spec naming this branch. Searched in the working tree, so the
-# very first commit of a feature (which creates the spec) still counts.
+# The spec naming this branch. Searched in the working tree, so the very
+# first commit of a feature (which creates the spec) still counts.
+#
+# Specs write the branch line in several shapes, and a literal match on one
+# of them made the whole mechanism silently inert on every real spec in this
+# project. Match the branch NAME with the surrounding punctuation optional:
+# `Branch: x`, `- Branch: \`x\``, `**Branch:** x` all count. Anchored on the
+# name so a branch mentioned in prose elsewhere does not qualify a spec.
 spec_file() {
     b=$(branch)
     [ -n "$b" ] || return 1
     [ -d specs/feature ] || return 1
-    grep -rlF "Branch: $b" specs/feature 2>/dev/null | head -1
+    grep -rlE "^[-*[:space:]]*(\*\*)?Branch:?(\*\*)?:?[[:space:]]*.?${b}.?[[:space:]]*$" \
+        specs/feature 2>/dev/null | head -1
 }
 
 # Is this branch under kdevkit's feature loop? Anything else — the
@@ -105,7 +113,7 @@ gate_command() {
 # Each fact is one function so it can be tested alone.
 
 stage_recorded() {
-    git log --format="%(trailers:key=$TRAILER_PHASE,valueonly=true,unfold=true)" 2>/dev/null \
+    git log --format="%(trailers:key=$TRAILER_STAGE,valueonly=true,unfold=true)" 2>/dev/null \
         | tr -d '\r' | grep . | head -1 | sed 's/[[:space:]]*$//'
 }
 
@@ -119,14 +127,14 @@ return_count() {
 has_work_commit() {
     rng=$(range)
     [ -n "$rng" ] || return 1
-    git log --no-decorate --format='%s' $rng 2>/dev/null \
+    git log --no-decorate --format='%s' "$rng" 2>/dev/null \
         | grep -qE '^(feat|fix|refactor|perf|test)(\(|!|:)'
 }
 
 has_plan_commit() {
     rng=$(range)
     [ -n "$rng" ] || return 1
-    git log --no-decorate --format='%s' $rng 2>/dev/null | grep -qE '^(plan|docs)(\(|!|:)'
+    git log --no-decorate --format='%s' "$rng" 2>/dev/null | grep -qE '^(plan|docs)(\(|!|:)'
 }
 
 # The commit carrying the newest `Return-To`, if any. A return resets what
@@ -181,10 +189,16 @@ remote_branch_exists() {
 tree_hash() { git rev-parse "HEAD^{tree}" 2>/dev/null || echo ""; }
 
 # Evidence recorded against a tree other than the current one is stale:
-# something was edited after it was gathered. Kept in local config, not
-# in a commit — it describes a working tree, and must never be published.
+# something was edited after it was gathered.
+#
+# Kept in the worktree's own git directory, NOT in git config: config is
+# shared across worktrees, so two features in flight would overwrite each
+# other's record. Never committed either — it describes a working tree.
+verified_file() { git rev-parse --git-path kdevkit-verified; }
+
 verified_tree() {
-    git config --get kdevkit.verifiedTree 2>/dev/null || true
+    f=$(verified_file)
+    [ -f "$f" ] && cat "$f" || true
 }
 
 checks_verified() {
@@ -223,10 +237,27 @@ cmd_facts() {
 
 cmd_show() {
     in_repo
-    s=$(stage_recorded)
-    echo "stage=${s:-unrecorded}"
+    st=$(stage_recorded)
+    echo "stage=${st:-unrecorded}"
     echo "returns=$(return_count)"
+    echo "exceptions=$(exception_count)"
+    echo "attempts_in_stage=$(attempts_in_stage)"
+    # Counts are decision input, not a decision. Nothing here refuses on a
+    # threshold; a builder reads it and judges where the fault actually is.
+    r=$(return_count)
+    a=$(attempts_in_stage)
+    [ "$a" -ge 3 ] 2>/dev/null && echo "note=this is attempt $a in ${st:-this stage}; if the same thing keeps failing, the fault may be in an earlier layer"
+    [ "$r" -ge 2 ] 2>/dev/null && echo "note=this feature has gone back $r times; consider whether the requirement or design is what is wrong"
     cmd_facts
+}
+
+# How many commits have been made in the current stage. Repeated failure at
+# one stage is evidence about a different one.
+attempts_in_stage() {
+    st=$(stage_recorded)
+    [ -n "$st" ] || { echo 0; return; }
+    git log --format="%(trailers:key=$TRAILER_STAGE,valueonly=true,unfold=true)" 2>/dev/null \
+        | awk -v s="$st" 'BEGIN{n=0} {gsub(/[[:space:]]/,"")} $0==s{n++; next} $0!=""{exit} END{print n}'
 }
 
 # ── the closed table of moves ────────────────────────────────────
@@ -286,38 +317,45 @@ preconditions() {
     hb=$(handoff_blocks)
     if [ "$hb" != "1" ]; then
         echo "refused: the spec must have exactly one '## Handoff' section, found $hb"
+        echo "  to resolve: leave one block and delete the others"
         return 1
     fi
     r=$(open_return)
     if [ -n "$r" ]; then
-        echo "refused: a return to '$r' is the newest thing on this branch — do that work and commit it before moving on"
+        echo "refused: a return to '$r' is the newest thing on this branch"
+        echo "  to resolve: do the work it asks for and commit it; that discharges the return"
         return 1
     fi
     case "$to" in
         dev)
             if ! has_plan_commit; then
-                echo "refused: no plan commit on this branch — the spec is not committed yet"
+                echo "refused: the spec is not committed yet"
+                echo "  to resolve: commit the spec as plan(<feature>): ..."
                 return 1
             fi
             ;;
         review)
             if ! has_work_commit; then
                 echo "refused: no implementation commit on this branch"
+                echo "  to resolve: commit the work, or record an exception if there is genuinely none"
                 return 1
             fi
             open=$(plan_items_open)
             if [ "$open" != "0" ]; then
                 echo "refused: $open implementation plan item(s) still unticked"
+                echo "  to resolve: tick them, or run 'except --skipping \"plan items\" --why ...'"
                 return 1
             fi
             if ! checks_verified; then
-                echo "refused: the dev loop has not been verified on this tree — quality and tests must be observed passing (see 'phase facts')"
+                echo "refused: the gates have not been observed passing on this tree"
+                echo "  to resolve: run 'feature-loop verify', or record an exception"
                 return 1
             fi
             ;;
         closure)
             if ! remote_branch_exists; then
                 echo "refused: branch $(branch) is not on the remote, so it cannot have been reviewed"
+                echo "  to resolve: push it, or record an exception if review happened elsewhere"
                 return 1
             fi
             ;;
@@ -338,7 +376,8 @@ cmd_check() {
     valid_stage "$to" || die "unknown stage '$to' (expected one of: $STAGES)"
     from=$(stage_recorded)
     if ! legal_forward "$from" "$to"; then
-        echo "refused: ${from:-unrecorded} -> $to is not a forward move; use 'return' to go back"
+        echo "refused: ${from:-unrecorded} -> $to is not a forward move"
+        echo "  to resolve: use 'return' to go back, naming the layer at fault"
         cmd_facts
         return 1
     fi
@@ -447,13 +486,14 @@ cmd_stamp() {
         esac
     done
     f=$(intent_file)
-    ack=""; ret=""
+    ack=""; ret=""; exc=""
     if [ -f "$f" ]; then
         # A deliberate move: honour it exactly, including a return, which is
         # the one case where the record legitimately goes backwards.
         stage=$(sed -n 's/^phase=//p' "$f" | head -1)
         ack=$(sed -n 's/^ack=//p' "$f" | head -1)
         ret=$(sed -n 's/^return_to=//p' "$f" | head -1)
+        exc=$(sed -n 's/^exception=//p' "$f" | head -1)
     else
         # No move was asked for, so the stage is whichever is further along:
         # what was last recorded, or what this commit's own evidence implies.
@@ -462,10 +502,62 @@ cmd_stamp() {
         stage=$(later_stage "$(stage_recorded)" "$(implied_stage "$pending")")
     fi
     [ -n "$stage" ] || stage=planning
-    printf '%s: %s\n' "$TRAILER_PHASE" "$stage"
+    printf '%s: %s\n' "$TRAILER_STAGE" "$stage"
     [ -n "$ack" ] && printf '%s: %s\n' "$TRAILER_ACK" "$ack"
-    [ -n "$ret" ] && printf '%s: %s\n' "$TRAILER_RETURN" "$ret"
+    # A return's four fields ARE the record a later builder reads, so they go
+    # onto the branch. Validating them and discarding them, which an earlier
+    # version did, removed the reason this exists.
+    if [ -n "$ret" ]; then
+        printf '%s: %s\n' "$TRAILER_RETURN" "$ret"
+        for pair in "Fault:fault" "Issue:issue" "Fix:fix" "Acceptance:acceptance"; do
+            label=${pair%%:*}; key=${pair#*:}
+            val=$(sed -n "s/^$key=//p" "$f" | head -1)
+            [ -n "$val" ] && printf '%s-%s: %s\n' "$TRAILER_RETURN" "$label" "$val"
+        done
+    fi
+    # An exception is a gate passed deliberately, recorded the same way.
+    if [ -n "$exc" ]; then
+        printf '%s: %s\n' "$TRAILER_EXCEPTION" "$exc"
+        val=$(sed -n 's/^exception_why=//p' "$f" | head -1)
+        [ -n "$val" ] && printf '%s-Why: %s\n' "$TRAILER_EXCEPTION" "$val"
+    fi
     return 0
+}
+
+# Proceed past a gate deliberately. Nothing is forbidden; the exception is
+# made expensive by being named, counted, and visible at every altitude
+# above. A framework that blocks a legitimate judgement cannot be driven.
+cmd_except() {
+    in_repo
+    to=""; skipping=""; why=""
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --to) to=${2:-}; shift 2 ;;
+            --skipping) skipping=${2:-}; shift 2 ;;
+            --why) why=${2:-}; shift 2 ;;
+            *) usage ;;
+        esac
+    done
+    [ -n "$to" ] || to=$(next_stage "$(stage_recorded)") || die "the feature is closed"
+    valid_stage "$to" || die "unknown stage '$to' (expected one of: $STAGES)"
+    for pair in "skipping:$skipping" "why:$why"; do
+        name=${pair%%:*}; val=${pair#*:}
+        [ -n "$val" ] || die "an exception needs --$name; an unexplained one is not reviewable"
+    done
+    # The edge must still be legal: an exception waives a precondition, not
+    # the order of the stages.
+    from=$(stage_recorded)
+    legal_forward "$from" "$to" \
+        || die "${from:-unrecorded} -> $to is not a forward move; an exception does not reorder stages"
+    printf 'phase=%s\nack=%s\nexception=%s\nexception_why=%s\n' \
+        "$to" "exception" "$skipping" "$why" > "$(intent_file)"
+    echo "recorded: moving to $to with a stated exception ($skipping)"
+    echo "this is counted and visible to anything reading this branch"
+}
+
+exception_count() {
+    git log --format="%(trailers:key=$TRAILER_EXCEPTION,valueonly=true,unfold=true)" 2>/dev/null \
+        | grep -c . || true
 }
 
 # Run the project's own quality and test commands and record the tree
@@ -493,7 +585,7 @@ cmd_verify() {
         fi
         echo "verified: $label"
     done
-    git config kdevkit.verifiedTree "$(tree_hash)"
+    tree_hash > "$(verified_file)"
     echo "recorded: verified against tree $(tree_hash)"
 }
 
@@ -504,7 +596,9 @@ cmd_verify() {
 # untouched.
 cmd_install() {
     in_repo
-    here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+    # shellcheck disable=SC1007  # CDPATH= is deliberate, not a typo
+    # shellcheck disable=SC1007  # CDPATH= is deliberate, not a typo
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
     hooks="$here/hooks"
     [ -d "$hooks" ] || die "no hooks directory at $hooks"
 
@@ -525,7 +619,7 @@ cmd_install() {
     fi
     git config $scope core.hooksPath "$hooks"
     echo "hooks path set ($scope): $hooks"
-    echo "note: set kdevkit.qualityCommand and kdevkit.testCommand for this project"
+    echo "note: declare this project's gates under '### kdevkit' in specs/project.md"
 }
 
 cmd_uninstall() {
@@ -538,7 +632,7 @@ cmd_uninstall() {
     for key in prepareCommitMsg prePush; do
         git config --unset "kdevkit.chain.$key" 2>/dev/null || true
     done
-    git config --unset kdevkit.verifiedTree 2>/dev/null || true
+    rm -f "$(verified_file)" 2>/dev/null || true
     echo "hooks path unset; kdevkit state cleared"
 }
 
@@ -555,6 +649,7 @@ case $sub in
     stamp)   cmd_stamp "$@" ;;
     next)    cmd_next ;;
     verify)  cmd_verify ;;
+    except)  cmd_except "$@" ;;
     install) cmd_install ;;
     uninstall) cmd_uninstall ;;
     applies) cmd_applies ;;

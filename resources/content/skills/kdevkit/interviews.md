@@ -105,7 +105,7 @@ Part of initiative: [[<name>]]
 
      The live phase is NOT recorded here. It is a trailer on the
      branch's commits, written by git rather than by you, so it
-     cannot be forgotten or left stale. Read it with `phase show`.
+     cannot be forgotten or left stale. Read it with `feature-loop show`.
      A `Phase:` line in this block is a leftover from before that
      and should be deleted, not maintained. -->
 

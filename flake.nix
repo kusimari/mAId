@@ -26,6 +26,9 @@
           buildInputs = [
             rustToolchain
             pkgs.just
+            # kdevkit's phase guarantee is shell, so the quality gate
+            # lints it; without this `just lint` depends on the host.
+            pkgs.shellcheck
             # The browser MCP server runs on Node; bundling it here
             # (vs. the user's PATH) is what keeps that runtime
             # self-contained — the launcher enters this flake to reach it.

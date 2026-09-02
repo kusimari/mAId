@@ -25,7 +25,7 @@ fn tools_dir() -> PathBuf {
 }
 
 fn phase_bin() -> PathBuf {
-    tools_dir().join("phase")
+    tools_dir().join("feature-loop")
 }
 
 /// Run a command in `dir`, returning (exit code, stdout+stderr).
@@ -126,7 +126,7 @@ impl Fixture {
             self.path(),
             &[
                 "log",
-                "--format=%(trailers:key=Feature-Phase,valueonly=true,unfold=true)",
+                "--format=%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)",
             ],
         );
         out.lines()
@@ -479,7 +479,7 @@ fn commits_on_the_default_branch_are_untouched() {
 
     let (_, msg) = git(f.path(), &["log", "-1", "--format=%B"]);
     assert!(
-        !msg.contains("Feature-Phase"),
+        !msg.contains("Kdevkit-Feature-Stage"),
         "main must not be stamped:\n{msg}"
     );
 }
@@ -498,7 +498,7 @@ fn commits_on_an_unrelated_branch_are_untouched() {
 
     let (_, msg) = git(f.path(), &["log", "-1", "--format=%B"]);
     assert!(
-        !msg.contains("Feature-Phase"),
+        !msg.contains("Kdevkit-Feature-Stage"),
         "an unrelated branch must not be stamped:\n{msg}"
     );
 }
@@ -524,7 +524,7 @@ fn initiative_work_carries_no_feature_stage() {
 
     let (_, msg) = git(f.path(), &["log", "-1", "--format=%B"]);
     assert!(
-        !msg.contains("Feature-Phase"),
+        !msg.contains("Kdevkit-Feature-Stage"),
         "initiative work must carry no feature stage:\n{msg}"
     );
 }
@@ -578,7 +578,10 @@ fn leaving_dev_requires_the_checks_to_have_been_observed_passing() {
     // Plan ticked and work committed, but nothing verified yet.
     let (code, out) = phase(f.path(), &["check", "--to", "review"]);
     assert_ne!(code, 0, "review must be refused unverified:\n{out}");
-    assert!(out.contains("not been verified"), "must say why:\n{out}");
+    assert!(
+        out.contains("gates have not been observed passing"),
+        "must say why:\n{out}"
+    );
 
     // Verify with a passing check, then it is allowed.
     f.set_checks("true", "true");
@@ -946,7 +949,7 @@ fn a_closed_feature_has_no_onward_stage() {
                 "--allow-empty",
                 "--no-verify",
                 "-m",
-                &format!("chore: at {stage}\n\nFeature-Phase: {stage}"),
+                &format!("chore: at {stage}\n\nKdevkit-Feature-Stage: {stage}"),
             ],
         );
     }
@@ -954,6 +957,259 @@ fn a_closed_feature_has_no_onward_stage() {
     let (code, out) = phase(f.path(), &["next"]);
     assert_eq!(code, 3, "a closed feature has nowhere to go:\n{out}");
     assert!(out.contains("closed"), "must say why:\n{out}");
+}
+
+// ── the return record survives on the branch ──────────────────────
+
+/// Trailer values for a key, newest first.
+fn trailers(dir: &Path, key: &str) -> Vec<String> {
+    let (_, out) = git(
+        dir,
+        &[
+            "log",
+            &format!("--format=%(trailers:key={key},valueonly=true,unfold=true)"),
+        ],
+    );
+    out.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn a_return_records_all_four_of_its_reasons_on_the_branch() {
+    // The four fields ARE the record a later builder reads. An earlier
+    // version validated them and threw them away, which removed the reason
+    // this feature exists.
+    let f = Fixture::new();
+    f.start_feature("feat/x");
+    phase(
+        f.path(),
+        &[
+            "return",
+            "--to",
+            "planning",
+            "--fault-entered",
+            "requirements",
+            "--issue",
+            "warning suppression was never specified",
+            "--expected-fix",
+            "amend R2 and extend the tests",
+            "--acceptance",
+            "warnings are suppressed with the flag",
+        ],
+    );
+    std::fs::write(f.path().join("src.txt"), "recorded\n").unwrap();
+    git_ok(f.path(), &["add", "-A"]);
+    git_ok(f.path(), &["commit", "-q", "-m", "plan: record the return"]);
+
+    // Read them back the way a later builder would: from the branch.
+    for (key, expect) in [
+        ("Kdevkit-Feature-Return", "planning"),
+        ("Kdevkit-Feature-Return-Fault", "requirements"),
+        (
+            "Kdevkit-Feature-Return-Issue",
+            "warning suppression was never specified",
+        ),
+        (
+            "Kdevkit-Feature-Return-Fix",
+            "amend R2 and extend the tests",
+        ),
+        (
+            "Kdevkit-Feature-Return-Acceptance",
+            "warnings are suppressed with the flag",
+        ),
+    ] {
+        let got = trailers(f.path(), key);
+        assert_eq!(
+            got.first().map(String::as_str),
+            Some(expect),
+            "{key} must be readable from the branch; found {got:?}"
+        );
+    }
+}
+
+// ── proceeding past a gate, on the record ─────────────────────────
+
+#[test]
+fn an_exception_needs_what_and_why() {
+    let f = Fixture::new();
+    f.start_feature("feat/x");
+    for args in [
+        vec!["except", "--to", "dev"],
+        vec!["except", "--to", "dev", "--skipping", "plan items"],
+    ] {
+        let (code, out) = phase(f.path(), &args);
+        assert_ne!(code, 0, "{args:?} must be refused:\n{out}");
+    }
+}
+
+#[test]
+fn an_exception_gets_past_a_gate_and_is_recorded_and_counted() {
+    let f = Fixture::new();
+    f.start_feature("feat/x");
+    phase(f.path(), &["advance", "--to", "dev"]);
+    std::fs::write(f.path().join("src.txt"), "work\n").unwrap();
+    git_ok(f.path(), &["add", "-A"]);
+    git_ok(f.path(), &["commit", "-q", "-m", "feat: work"]);
+
+    // The gate genuinely refuses: plan unticked, nothing verified.
+    let (code, _) = phase(f.path(), &["advance", "--to", "review"]);
+    assert_ne!(code, 0, "the gate should refuse first");
+
+    let (code, out) = phase(
+        f.path(),
+        &[
+            "except",
+            "--to",
+            "review",
+            "--skipping",
+            "the dev gates",
+            "--why",
+            "release deadline; follow-up filed as #12",
+        ],
+    );
+    assert_eq!(code, 0, "an explained exception must be allowed:\n{out}");
+    std::fs::write(f.path().join("src.txt"), "shipping\n").unwrap();
+    git_ok(f.path(), &["add", "-A"]);
+    git_ok(f.path(), &["commit", "-q", "-m", "test: ship it"]);
+
+    assert_eq!(f.recorded_stage(), "review", "the move must have happened");
+    assert_eq!(
+        trailers(f.path(), "Kdevkit-Feature-Exception")
+            .first()
+            .map(String::as_str),
+        Some("the dev gates"),
+        "what was skipped must be on the branch"
+    );
+    assert_eq!(
+        trailers(f.path(), "Kdevkit-Feature-Exception-Why")
+            .first()
+            .map(String::as_str),
+        Some("release deadline; follow-up filed as #12"),
+    );
+    let out = phase(f.path(), &["show"]).1;
+    assert!(
+        out.contains("exceptions=1"),
+        "an exception must be visible at a glance:\n{out}"
+    );
+}
+
+#[test]
+fn an_exception_cannot_reorder_the_stages() {
+    // It waives a precondition, not the sequence.
+    let f = Fixture::new();
+    f.start_feature("feat/x");
+    let (code, out) = phase(
+        f.path(),
+        &[
+            "except",
+            "--to",
+            "closure",
+            "--skipping",
+            "everything",
+            "--why",
+            "because",
+        ],
+    );
+    assert_ne!(code, 0, "skipping stages must still be refused:\n{out}");
+    assert!(out.contains("not reorder"), "must say why:\n{out}");
+}
+
+// ── counts are surfaced as decision input ─────────────────────────
+
+#[test]
+fn repeated_attempts_in_one_stage_are_surfaced_as_a_hint() {
+    let f = Fixture::new();
+    f.start_feature("feat/x");
+    phase(f.path(), &["advance", "--to", "dev"]);
+    for i in 0..3 {
+        std::fs::write(f.path().join("src.txt"), format!("try{i}\n")).unwrap();
+        git_ok(f.path(), &["add", "-A"]);
+        git_ok(
+            f.path(),
+            &["commit", "-q", "-m", &format!("fix: attempt {i}")],
+        );
+    }
+    let out = phase(f.path(), &["show"]).1;
+    assert!(
+        out.contains("attempts_in_stage=3"),
+        "attempts must be counted:\n{out}"
+    );
+    assert!(
+        out.contains("fault may be in an earlier layer"),
+        "repeated failure must be surfaced as decision input:\n{out}"
+    );
+}
+
+// ── the branch line is matched in the shapes specs really use ─────
+
+#[test]
+fn the_spec_is_found_in_every_branch_line_format_this_project_uses() {
+    // A literal match on one shape made the mechanism silently inert on
+    // every real spec in this repository.
+    for form in [
+        "Branch: feat/x",
+        "- Branch: `feat/x`",
+        "**Branch:** feat/x",
+        "- **Branch:** `feat/x`",
+    ] {
+        let f = Fixture::new();
+        git_ok(f.path(), &["checkout", "-q", "-b", "feat/x"]);
+        let dir = f.path().join("specs/feature");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("f.md"),
+            format!("# F\n\n{form}\n\n## Handoff\n\n- **Ready for:** dev\n"),
+        )
+        .unwrap();
+        let (_, facts) = phase(f.path(), &["facts"]);
+        assert_eq!(
+            fact(&facts, "applies"),
+            "yes",
+            "format {form:?} must be recognised:\n{facts}"
+        );
+    }
+}
+
+#[test]
+fn a_branch_merely_mentioned_in_prose_does_not_qualify_a_spec() {
+    let f = Fixture::new();
+    git_ok(f.path(), &["checkout", "-q", "-b", "feat/x"]);
+    let dir = f.path().join("specs/feature");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("f.md"),
+        "# F\n\nSee also feat/x for context.\n\n## Handoff\n",
+    )
+    .unwrap();
+    let (_, facts) = phase(f.path(), &["facts"]);
+    assert_eq!(fact(&facts, "applies"), "no", "{facts}");
+}
+
+// ── every refusal names the way forward ──────────────────────────
+
+#[test]
+fn every_refusal_says_what_would_resolve_it() {
+    let f = Fixture::new();
+    f.start_feature("feat/x");
+    phase(f.path(), &["advance", "--to", "dev"]);
+    std::fs::write(f.path().join("src.txt"), "work\n").unwrap();
+    git_ok(f.path(), &["add", "-A"]);
+    git_ok(f.path(), &["commit", "-q", "-m", "feat: work"]);
+
+    for args in [
+        vec!["check", "--to", "review"],
+        vec!["check", "--to", "closure"],
+    ] {
+        let (code, out) = phase(f.path(), &args);
+        assert_ne!(code, 0, "{args:?} should refuse here:\n{out}");
+        assert!(
+            out.contains("to resolve:"),
+            "{args:?} refused without naming a way forward:\n{out}"
+        );
+    }
 }
 
 // ── install wiring ───────────────────────────────────────────────

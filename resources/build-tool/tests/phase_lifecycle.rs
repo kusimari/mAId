@@ -49,7 +49,11 @@ fn git_ok(dir: &Path, args: &[&str]) {
 }
 
 fn phase(dir: &Path, args: &[&str]) -> (i32, String) {
-    run_in(dir, tools_dir().join("phase").to_str().unwrap(), args)
+    run_in(
+        dir,
+        tools_dir().join("feature-loop").to_str().unwrap(),
+        args,
+    )
 }
 
 fn phase_ok(dir: &Path, args: &[&str]) -> String {
@@ -144,7 +148,7 @@ impl Project {
             self.path(),
             &[
                 "log",
-                "--format=%(trailers:key=Feature-Phase,valueonly=true,unfold=true)",
+                "--format=%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)",
             ],
         );
         out.lines()
@@ -159,7 +163,7 @@ impl Project {
             self.path(),
             &[
                 "log",
-                "--format=%(trailers:key=Return-To,valueonly=true,unfold=true)",
+                "--format=%(trailers:key=Kdevkit-Feature-Return,valueonly=true,unfold=true)",
             ],
         );
         out.lines().filter(|l| !l.trim().is_empty()).count()
@@ -172,7 +176,7 @@ impl Project {
             &[
                 "log",
                 "--reverse",
-                "--format=%(trailers:key=Feature-Phase,valueonly=true,unfold=true)",
+                "--format=%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)",
             ],
         );
         out.lines()
@@ -216,6 +220,16 @@ impl Project {
     }
 }
 
+/// One fact's value, as a reader would see it.
+fn fact_of(dir: &Path, key: &str) -> String {
+    let (_, out) = phase(dir, &["facts"]);
+    out.lines()
+        .find_map(|l| l.strip_prefix(&format!("{key}=")))
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
 // ── 1 · starting a feature ───────────────────────────────────────
 
 #[test]
@@ -246,7 +260,7 @@ fn starting_a_feature_sets_everything_up_and_leaves_other_branches_alone() {
     );
     let (_, main_log) = git(p.path(), &["log", "main", "--format=%B"]);
     assert!(
-        !main_log.contains("Feature-Phase"),
+        !main_log.contains("Kdevkit-Feature-Stage"),
         "main must carry no stage:\n{main_log}"
     );
 }
@@ -361,11 +375,11 @@ fn a_feature_goes_all_the_way_through_and_records_every_stage() {
     // Who approved each move is on the record, including a parent session.
     let (_, log) = git(p.path(), &["log", "--format=%B"]);
     assert!(
-        log.contains("Acked-By: human"),
+        log.contains("Kdevkit-Feature-Ack: human"),
         "human acks missing:\n{log}"
     );
     assert!(
-        log.contains("Acked-By: session:parent-1"),
+        log.contains("Kdevkit-Feature-Ack: session:parent-1"),
         "a parent session's ack must be attributed:\n{log}"
     );
 }
@@ -389,7 +403,14 @@ fn skipping_the_dev_gates_stops_the_feature_leaving_dev() {
     git_ok(p.path(), &["commit", "-q", "-m", "docs(f): tick"]);
     let (code, out) = phase(p.path(), &["advance", "--to", "review"]);
     assert_ne!(code, 0, "still refused without verification:\n{out}");
-    assert!(out.contains("not been verified"), "{out}");
+    assert!(
+        out.contains("gates have not been observed passing"),
+        "must name the unmet condition:\n{out}"
+    );
+    assert!(
+        out.contains("to resolve:"),
+        "a refusal must name the way forward:\n{out}"
+    );
 
     // Verify, and only then is it allowed.
     phase_ok(p.path(), &["verify"]);
@@ -557,7 +578,7 @@ fn a_long_session_with_side_quests_does_not_lose_the_stage() {
             git_ok(p.path(), &["commit", "-q", "-m", "chore: unrelated fix"]);
             let (_, msg) = git(p.path(), &["log", "-1", "--format=%B"]);
             assert!(
-                !msg.contains("Feature-Phase"),
+                !msg.contains("Kdevkit-Feature-Stage"),
                 "a side quest on main must not be stamped:\n{msg}"
             );
             git_ok(p.path(), &["checkout", "-q", "feat/quiet"]);
@@ -595,7 +616,7 @@ fn a_side_quest_on_another_feature_branch_does_not_cross_contaminate() {
     git_ok(p.path(), &["commit", "-q", "-m", "chore: tidy up"]);
     let (_, msg) = git(p.path(), &["log", "-1", "--format=%B"]);
     assert!(
-        !msg.contains("Feature-Phase"),
+        !msg.contains("Kdevkit-Feature-Stage"),
         "chore branch stamped:\n{msg}"
     );
 
@@ -622,6 +643,105 @@ fn a_resumed_session_needs_nothing_but_the_repository() {
         out.contains("checks_verified=no"),
         "a resumed session must not inherit a verification it did not do:\n{out}"
     );
+}
+
+// ── two features in flight ───────────────────────────────────────
+
+#[test]
+fn two_features_in_separate_worktrees_do_not_share_verification() {
+    // Verification evidence used to live in git config, which is shared
+    // across worktrees — so one feature verifying clobbered the other's
+    // record. Parallel features are only possible via worktrees, so this is
+    // exactly the case that broke.
+    let p = Project::new();
+    p.start_feature("feat/one", &["- [x] 1 · one"]);
+    p.commit("feat(one): work", "one");
+
+    // A second worktree on its own feature branch.
+    let wt = p.path().parent().unwrap().join("wt-two");
+    git_ok(
+        p.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            wt.to_str().unwrap(),
+            "-b",
+            "feat/two",
+            "main",
+        ],
+    );
+    phase_ok(&wt, &["install"]);
+    let dir = wt.join("specs/feature");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("g.md"),
+        "# G\n\n- Branch: `feat/two`\n\n## Handoff\n\n- **Ready for:** dev\n\n         ## Implementation Plan\n\n- [x] 1 · two\n",
+    )
+    .unwrap();
+    git_ok(&wt, &["add", "-A"]);
+    git_ok(&wt, &["commit", "-q", "-m", "plan(two): spec"]);
+
+    // Verify feature one, then feature two.
+    phase_ok(p.path(), &["verify"]);
+    let one_before = fact_of(p.path(), "verified_tree");
+    assert!(!one_before.is_empty(), "feature one should be verified");
+    phase_ok(&wt, &["verify"]);
+
+    // Feature one's record must be untouched by feature two verifying.
+    let one_after = fact_of(p.path(), "verified_tree");
+    assert_eq!(
+        one_before, one_after,
+        "one feature verifying must not overwrite another's record"
+    );
+    assert_ne!(
+        fact_of(&wt, "verified_tree"),
+        one_after,
+        "the two features cover different trees, so the records must differ"
+    );
+    assert_eq!(fact_of(p.path(), "checks_verified"), "yes");
+    assert_eq!(fact_of(&wt, "checks_verified"), "yes");
+}
+
+#[test]
+fn each_worktree_keeps_its_own_stage() {
+    let p = Project::new();
+    p.start_feature("feat/one", &["- [x] 1 · one"]);
+    phase_ok(p.path(), &["advance", "--to", "dev"]);
+    p.commit("feat(one): work", "one");
+    assert_eq!(p.stage(), "dev");
+
+    let wt = p.path().parent().unwrap().join("wt-three");
+    // From main, the way starting a feature does — branching off another
+    // feature would legitimately inherit its history.
+    git_ok(
+        p.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            wt.to_str().unwrap(),
+            "-b",
+            "feat/three",
+            "main",
+        ],
+    );
+    let dir = wt.join("specs/feature");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("h.md"),
+        "# H\n\n- Branch: `feat/three`\n\n## Handoff\n\n- **Ready for:** dev\n",
+    )
+    .unwrap();
+    git_ok(&wt, &["add", "-A"]);
+    git_ok(&wt, &["commit", "-q", "-m", "plan(three): spec"]);
+
+    let (_, out) = phase(&wt, &["show"]);
+    assert!(
+        out.contains("stage=planning"),
+        "the new feature starts at planning regardless of the other:\n{out}"
+    );
+    assert_eq!(p.stage(), "dev", "the first feature is unaffected");
 }
 
 // ── what reaches main ────────────────────────────────────────────
@@ -658,7 +778,12 @@ fn an_authored_squash_message_keeps_stage_lines_out_of_a_fresh_clone() {
         log.contains("add a --quiet flag"),
         "the summary must survive:\n{log}"
     );
-    for leak in ["Feature-Phase", "Acked-By", "Return-To", "Squashed commit"] {
+    for leak in [
+        "Kdevkit-Feature-Stage",
+        "Kdevkit-Feature-Ack",
+        "Return-To",
+        "Squashed commit",
+    ] {
         assert!(
             !log.contains(leak),
             "'{leak}' must not reach a fresh clone of main:\n{log}"
@@ -680,7 +805,7 @@ fn the_default_squash_message_would_leak_and_is_therefore_not_used() {
     git_ok(p.path(), &["merge", "--squash", "-q", "feat/quiet"]);
     let squash_msg = std::fs::read_to_string(p.path().join(".git/SQUASH_MSG")).unwrap();
     assert!(
-        squash_msg.contains("Feature-Phase"),
+        squash_msg.contains("Kdevkit-Feature-Stage"),
         "git's default squash message does carry stage lines — the authored \
          summary is what prevents that, so this must stay true:\n{squash_msg}"
     );

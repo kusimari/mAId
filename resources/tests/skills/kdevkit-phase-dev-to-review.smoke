@@ -97,7 +97,7 @@ git add -A && git commit -q -m "plan(uppercase-flag): initial spec"
 git checkout -q -b feat/uppercase-flag
 # Wire the phase tooling as install does, so the agent meets a project
 # where the hooks are already live.
-"$KDEVKIT_TOOLS/phase" install >/dev/null
+"$KDEVKIT_TOOLS/feature-loop" install >/dev/null
 --- assert ---
 set -e
 # The dev work happened and the old behaviour survives.
@@ -112,12 +112,12 @@ grep -qF -e '- [x]' specs/feature/uppercase-flag.md
 # The stage is recorded in git by the hook, not by the agent remembering.
 # The seeded plan() commit predates the hooks, so it carries nothing —
 # any stage present is the agent's own dev work.
-stage=$(git log --format='%(trailers:key=Feature-Phase,valueonly=true,unfold=true)' | grep . | head -1 | tr -d '[:space:]')
+stage=$(git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' | grep . | head -1 | tr -d '[:space:]')
 test -n "$stage"
 # It must be a legal value, and must have moved past planning.
 printf '%s' "$stage" | grep -qE '^(dev|review)$'
 # Dev-loop churn must not read as going backwards.
-test "$(git log --format='%(trailers:key=Return-To,valueonly=true,unfold=true)' | grep -c . || true)" = "0"
+test "$(git log --format='%(trailers:key=Kdevkit-Feature-Return,valueonly=true,unfold=true)' | grep -c . || true)" = "0"
 # Dev-type commits exist — an agent still in planning produces plan().
 git log --no-decorate --oneline feat/uppercase-flag | grep -qE ' (feat|fix|refactor|test)(\(|:)'
 # Closure did not run: no cue was given.
@@ -125,4 +125,4 @@ test -z "$(git log --no-decorate --oneline feat/uppercase-flag | grep -E '^[[:al
 # The handoff block keeps one section and no machine field.
 test "$(grep -c '^## Handoff' specs/feature/uppercase-flag.md)" = 1
 # main is untouched: no stage stamped on it.
-test -z "$(git log main --format='%B' | grep -E 'Feature-Phase' || true)"
+test -z "$(git log main --format='%B' | grep -E "Kdevkit-Feature-Stage" || true)"
