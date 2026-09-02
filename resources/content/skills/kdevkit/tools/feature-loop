@@ -572,8 +572,9 @@ cmd_verify() {
         echo "cannot determine: specs/project.md declares no dev gates under '### kdevkit'" >&2
         return 3
     fi
-    if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
-        echo "refused: the working tree is dirty, so a result would not describe any commit" >&2
+    if ! git diff-index --quiet HEAD -- 2>/dev/null; then
+        echo "refused: tracked files are modified, so a result would describe no commit" >&2
+        echo "  to resolve: commit or stash them, then verify" >&2
         return 1
     fi
     for pair in "quality checks:$quality" "tests:$tests"; do

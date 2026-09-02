@@ -125,10 +125,16 @@ set -e
 returns=$(git log --format='%(trailers:key=Kdevkit-Feature-Return,valueonly=true,unfold=true)' | grep . | head -1 | tr -d '[:space:]')
 test -n "$returns"
 printf '%s' "$returns" | grep -qE '^(planning|plan)$'
-# The return must be reviewable: the recorded reason names the problem,
-# not just the destination. A bare "went back" is what this rejects.
-body=$(git log -1 --format='%B')
-printf '%s' "$body" | grep -qiE 'requirement|specif'
+# The return must be reviewable: the four things it recorded are readable
+# from the BRANCH, not just from whichever commit happens to be newest.
+# Statement 7 -- this is the record a later builder reads.
+tr() { git log --format="%(trailers:key=$1,valueonly=true,unfold=true)" | grep . | head -1; }
+test -n "$(tr Kdevkit-Feature-Return-Fault)"
+test -n "$(tr Kdevkit-Feature-Return-Issue)"
+test -n "$(tr Kdevkit-Feature-Return-Fix)"
+test -n "$(tr Kdevkit-Feature-Return-Acceptance)"
+# The fault must be named as a layer, not restated as a stage.
+tr Kdevkit-Feature-Return-Fault | grep -qiE 'requirement|design|spec'
 # The requirement itself must have been amended, since that is the fix.
 grep -qiE 'exclamation|!' specs/feature/uppercase-flag.md
 # And the spec must not still claim it is ready for closure.

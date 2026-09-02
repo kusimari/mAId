@@ -646,15 +646,42 @@ fn verification_is_invalidated_by_editing_the_files_it_covered() {
 }
 
 #[test]
-fn verify_refuses_on_a_dirty_tree_because_the_result_would_describe_nothing() {
+fn verify_refuses_when_tracked_files_are_modified() {
     let f = Fixture::new();
     f.start_feature("feat/x");
     f.set_checks("true", "true");
+    // A modified tracked file changes the tree, so a result recorded against
+    // it would describe no commit.
     std::fs::write(f.path().join("src.txt"), "uncommitted\n").unwrap();
 
     let (code, out) = phase(f.path(), &["verify"]);
-    assert_ne!(code, 0, "a dirty tree must refuse:\n{out}");
-    assert!(out.contains("dirty"), "must say why:\n{out}");
+    assert_ne!(code, 0, "modified tracked files must refuse:\n{out}");
+    assert!(
+        out.contains("tracked files are modified"),
+        "must say why:\n{out}"
+    );
+    assert!(
+        out.contains("to resolve:"),
+        "must name the way forward:\n{out}"
+    );
+}
+
+#[test]
+fn verify_ignores_untracked_files_because_they_are_not_in_the_tree() {
+    // A real agent run hit this: an unrelated untracked file made `verify`
+    // refuse, so the agent had to record an exception for something
+    // mundane. Untracked files do not change the tree hash, so they cannot
+    // invalidate a result recorded against it — and forcing exceptions for
+    // trivia would make exceptions routine and therefore meaningless.
+    let f = Fixture::new();
+    f.start_feature("feat/x");
+    f.set_checks("true", "true");
+    std::fs::write(f.path().join("NOTES-not-mine.md"), "unrelated\n").unwrap();
+
+    let (code, out) = phase(f.path(), &["verify"]);
+    assert_eq!(code, 0, "an untracked file must not block verify:\n{out}");
+    let (_, facts) = phase(f.path(), &["facts"]);
+    assert_eq!(fact(&facts, "checks_verified"), "yes", "{facts}");
 }
 
 // ── the push gate ────────────────────────────────────────────────
