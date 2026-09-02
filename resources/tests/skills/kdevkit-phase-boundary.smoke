@@ -58,7 +58,6 @@ Parse `-u` as the first argument; pipe the composed line through `tr`.
 `test.sh` asserts both R1 and R2.
 
 ## Handoff
-- **Phase:** planning
 - **Ready for:** dev, once the plan is approved.
 - **Carry forward:** `tr` is available; no new dependency needed.
 - **Deliberately left:** long-form `--upper` alias — `-u` only for now.
@@ -115,7 +114,7 @@ test -z "$(git log --no-decorate --oneline feat/uppercase-flag | grep -E '^[[:al
 # claims planning is live. A stale handoff is what a resuming agent acts on.
 [ "$(grep -c '^## Handoff' specs/feature/uppercase-flag.md)" = 1 ]
 # A Phase field must still EXIST — deleting it would satisfy a bare negative.
-awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /^- \*\*Phase:\*\*/' specs/feature/uppercase-flag.md | grep -q .
+git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' | grep -q .
 # The block was authored, not pasted: the template placeholder lists every
 # legal value on one line, which would satisfy a naive negative check.
 test -z "$(grep -F 'planning | dev | review' specs/feature/uppercase-flag.md || true)"

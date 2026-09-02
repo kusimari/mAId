@@ -20,7 +20,6 @@ User can set and see a due date on any to-do.
 A nullable due field on the record; a --due flag parses it.
 
 ## Handoff
-- **Phase:** review
 - **Ready for:** closure on the cue.
 - **Carry forward:** nothing outstanding from review.
 - **Deliberately left:** recurring due dates — separate feature.
@@ -108,7 +107,7 @@ grep -qF -- '- [x]' "$spec"
 # acts on. Portable pattern — \< is a GNU awk extension that matches nothing
 # under mawk, which would make this pass vacuously.
 [ "$(grep -c '^## Handoff' "$spec")" = 1 ]
-awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /^- \*\*Phase:\*\*/' "$spec" | grep -q .
+git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' | grep -q .
 # The block was authored, not pasted: the template placeholder lists every
 # legal value on one line, which would satisfy a naive negative check.
 test -z "$(grep -F 'planning | dev | review' "$spec" || true)"

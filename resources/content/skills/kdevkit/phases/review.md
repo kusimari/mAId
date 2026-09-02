@@ -185,7 +185,7 @@ content: **Approach** (bullets covering the changes).
 
 **Review is finished when** the human has given the closure cue and
 nothing they raised is still open and unrecorded. On that cue run
-**`feature-loop advance --next`** — the tooling decides what follows review.
+**`feature-loop advance --next`** (see §The feature-loop tools) — the tooling decides what follows review.
 Then rewrite the `## Handoff` block (§5) for the phase now starting.
 From review, *Carry forward* is what closure must reconcile — a
 review comment accepted but deferred, a follow-up promised in the
@@ -196,7 +196,7 @@ comment is a promise lost.
 
 A loop-back is a legitimate outcome here: review can return work to
 dev, or to planning when the *requirement* was wrong rather than
-the code. **Record it with `feature-loop return`**, which needs four things
+the code. **Record it with `"$(git config kdevkit.tools)/feature-loop" return`**, which needs four things
 and refuses without them:
 
     feature-loop return --to planning \

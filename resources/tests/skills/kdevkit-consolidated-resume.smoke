@@ -49,7 +49,6 @@ cat > specs/feature/iso-flag.md <<'MD'
 of the default format.
 
 ## Handoff
-- **Phase:** dev
 - **Ready for:** implementation; both slices below.
 - **Carry forward:** none.
 - **Deliberately left:** timezone override — separate feature.

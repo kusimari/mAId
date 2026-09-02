@@ -53,7 +53,6 @@ A title with punctuation at either end no longer produces a slug with
 leading or trailing dashes.
 
 ## Handoff
-- **Phase:** dev
 - **Ready for:** human review, once the Push Gate passes.
 - **Carry forward:** strip dashes only at the ENDS. A blanket `tr -d '-'`
   also eats the separator dashes and silently breaks R1 — that is how the
@@ -137,7 +136,7 @@ grep -qF 'R2. `slug.sh "!Hello World!"`' specs/feature/trim-dashes.md
 # Portable patterns only: \< is a GNU awk extension that silently matches
 # nothing under mawk/BusyBox, which would make these pass vacuously.
 # A Phase field must still EXIST — deleting it would satisfy a bare negative.
-awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /^- \*\*Phase:\*\*/' specs/feature/trim-dashes.md | grep -q .
+git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' | grep -q .
 # The block was authored, not pasted: the template placeholder lists every
 # legal value on one line, which would satisfy a naive negative check.
 test -z "$(grep -F 'planning | dev | review' specs/feature/trim-dashes.md || true)"

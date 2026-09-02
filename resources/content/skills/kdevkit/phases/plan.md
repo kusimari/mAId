@@ -204,7 +204,7 @@ what to keep as a decision, what to relocate rather than delete.
 Skip only if the spec carries no alternatives, Q&A, or revision
 narration; there is then nothing to strip.
 
-**2 · Run `feature-loop advance --next`.** Planning is finished when the spec
+**2 · Run `"$(git config kdevkit.tools)/feature-loop" advance --next`.** Planning is finished when the spec
 is consolidated and committed and its handoff section is unambiguous —
 that is this module's exit condition, and the tooling decides what
 follows it. It refuses if the condition does not hold. If `phase` is not

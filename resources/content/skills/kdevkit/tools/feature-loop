@@ -29,6 +29,7 @@ usage: phase <command> [options]
   except --skipping W --why W [--to S]  move on past a gate, on the record
   verify                             run the project's checks, record the tree
   install | uninstall                wire or unwire git hooks for this checkout
+  where                              print this tool's directory
   applies                            0 if this branch is a kdevkit feature
   stamp [--subject S]                print the trailer block for a new commit
 USAGE
@@ -618,7 +619,12 @@ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
         scope=--worktree
     fi
     git config $scope core.hooksPath "$hooks"
+    # Record where the tools are so the instructions can name them
+    # portably: `$(git config kdevkit.tools)/feature-loop`. Read-only after
+    # install and identical for every worktree, so nothing contends.
+    git config kdevkit.tools "$here"
     echo "hooks path set ($scope): $hooks"
+    echo "tools recorded: git config kdevkit.tools -> $here"
     echo "note: declare this project's gates under '### kdevkit' in specs/project.md"
 }
 
@@ -632,11 +638,17 @@ cmd_uninstall() {
     for key in prepareCommitMsg prePush; do
         git config --unset "kdevkit.chain.$key" 2>/dev/null || true
     done
+    git config --unset kdevkit.tools 2>/dev/null || true
     rm -f "$(verified_file)" 2>/dev/null || true
     echo "hooks path unset; kdevkit state cleared"
 }
 
 cmd_applies() { in_repo; applies; }
+
+cmd_where() {
+    # shellcheck disable=SC1007  # CDPATH= is deliberate, not a typo
+    (CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+}
 
 [ $# -gt 0 ] || usage
 sub=$1; shift
@@ -653,5 +665,6 @@ case $sub in
     install) cmd_install ;;
     uninstall) cmd_uninstall ;;
     applies) cmd_applies ;;
+    where)   cmd_where ;;
     *)       usage ;;
 esac

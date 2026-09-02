@@ -41,7 +41,7 @@ shape: read each and resolve. Then sweep open Decision Log
 entries and unresolved questions the same way.
 
 **Clear the `## Handoff` block** — replace its fields with
-`feature-loop advance --next`, which records the feature as closed. The
+`"$(git config kdevkit.tools)/feature-loop" advance --next`, which records the feature as closed. The
 feature is done, so a live handoff pointing at
 a next phase is a lie the next reader will act on.
 

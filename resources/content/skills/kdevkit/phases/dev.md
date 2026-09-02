@@ -24,7 +24,7 @@ condition** — it means planning converged but
 must run it now, before step 1 below and before any code:
 inline-Read `interviews.md`'s consolidation checklist, strip the
 deliberation, relocate load-bearing rationale to the Decision Log,
-and record the move with `feature-loop advance --next`. This check is not
+and record the move with `"$(git config kdevkit.tools)/feature-loop" advance --next`. This check is not
 optional and not skippable because "the cue already fired" — the
 cue starting dev is exactly when this must be verified, since
 nothing else in the workflow checks it.
@@ -324,7 +324,7 @@ implementation commit exists, and the project's dev gates have been
 observed passing. That is this module's exit condition, and it is all
 this module needs to know — **it does not name what comes next.**
 
-Once it holds, run **`feature-loop advance --next`**. The tooling owns the
+Once it holds, run **`feature-loop advance --next`** (see §The feature-loop tools). The tooling owns the
 map: it decides what follows dev, refuses if the exit condition does
 not actually hold, and records the move so the next commit carries it.
 The stage is written by git, not by you.
