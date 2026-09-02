@@ -3,7 +3,7 @@ tools: claude,kiro,codex
 --- enact ---
 task: The spec for uppercase-flag is written and I've read it — start the build. Implement it and get it ready for me to look at.
 --- setup ---
-git init -q
+git init -q -b main
 git config user.email dev@example.com
 git config user.name dev
 mkdir -p specs/feature src

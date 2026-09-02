@@ -3,7 +3,7 @@ tools: claude,kiro,codex
 --- enact ---
 task: The spec for this feature is written and I've read it — spec looks good, start the build. Implement it, then get it ready for me to look at. Do the work now in this repo.
 --- setup ---
-git init -q
+git init -q -b main
 git config user.email dev@example.com
 git config user.name dev
 mkdir -p specs/feature src

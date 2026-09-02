@@ -1,9 +1,9 @@
 skill: kdevkit
 tools: claude,kiro,codex
 --- enact ---
-task: The uppercase-flag work is done as far as I can tell — get it ready for my review.
+task: Finish the uppercase-flag feature. The flag itself is in; take it the rest of the way.
 --- setup ---
-git init -q
+git init -q -b main
 git config user.email dev@example.com
 git config user.name dev
 mkdir -p specs/feature src

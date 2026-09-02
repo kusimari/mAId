@@ -8,7 +8,7 @@ tools: claude,kiro,codex
 --- enact ---
 task: I reviewed the uppercase-flag change. The requirement itself is wrong — R2 should also suppress the trailing exclamation mark, which we never specified. Handle it.
 --- setup ---
-git init -q
+git init -q -b main
 git config user.email dev@example.com
 git config user.name dev
 mkdir -p specs/feature src

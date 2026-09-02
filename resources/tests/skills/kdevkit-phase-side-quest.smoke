@@ -3,7 +3,7 @@ tools: claude,kiro,codex
 --- enact ---
 task: Before you carry on with uppercase-flag — there's a typo in README.md, the word "greting". Fix that on main first, then get back to the feature and finish it.
 --- setup ---
-git init -q
+git init -q -b main
 git config user.email dev@example.com
 git config user.name dev
 mkdir -p specs/feature src
