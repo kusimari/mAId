@@ -156,6 +156,11 @@ about how they are achieved. Grouped by the two jobs.
     transcript of branch commits.
 21. With none of this installed, kdevkit behaves as it does today.
 22. Statements 1-19 hold on claude, codex and kiro.
+23. A feature built by a different builder using different tooling is
+    still readable: kdevkit needs the repository, the specs and the
+    branch's commits, and nothing else. No database, no service, no state
+    outside the repo, and nothing that must have been present while the
+    work was done.
 
 ## Where this sits among kdevkit's three loops
 
@@ -168,7 +173,7 @@ project  →  [optional initiative]  →  feature            outer loop
                                         │
         [optional research] → plan → dev → review → closure   feature loop
                                      │
-                    quality → test → code review → fix → …    dev loop
+                code → quality → test → code review → fix → …  dev loop
 ```
 
 **This work operates on the feature loop only.** The stamp records which
@@ -179,8 +184,8 @@ Three consequences follow, and each is a robustness requirement rather
 than a note.
 
 **The dev loop must not look like feature movement.** The dev loop
-iterates: run the quality checks, run the tests, get the change reviewed,
-fix what came back, go round again. That produces many commits, and it
+iterates: write the code, run the quality checks, run the tests, get the
+change reviewed, fix what came back, go round again. That produces many commits, and it
 produces genuine backwards movement *within* dev. None of that is a
 feature-stage change. So every commit made during dev is stamped `dev`,
 however many times the inner loop turns, and **inner-loop iterations are
@@ -208,17 +213,23 @@ hash, so a claim carried over from before the edit is detectably stale.
 That closes the obvious laundering route of running the tests, then
 editing, then claiming green.
 
-**What we are deliberately not doing: enforcing the dev loop's internal
-order.** "Quality checks before tests before review" is a sequence of
-shell invocations and agent dispatches. Git cannot see any of them —
-verified that running the checks, the tests, or a review produces zero
-commits, so there is nothing for a stamp to ride on and nothing for the
-commit hook to observe. Gating that order would require intercepting tool
-calls, which means agent-level hooks, which **Kiro's CLI does not have.**
-It would therefore work on two agents and silently do nothing on the
-floor — precisely the asymmetry this design exists to avoid.
+**The dev loop's own steps could use this same mechanism, one altitude
+down.** Nothing about the design is specific to features. The steps inside
+dev — code, quality, test, review, fix — are a loop with stages, and the
+same record could be kept for them on a `dev/<feature>` branch off the
+feature branch, with `Kdevkit-Dev-Stage:` trailers and the same verbs. That
+is the natural shape and the naming already anticipates it.
 
-So the dev loop is enforced on its **outcome, not its route**. A dev loop
+We are not building it now, and the reason is cost rather than principle:
+git only sees commits, and three of the dev loop's five steps produce none
+— verified, running the checks, the tests or a review creates zero commits.
+Making them visible would mean committing at each step, which is a real
+change to how dev feels and wants its own evidence that it helps. The
+branch-off-a-branch shape makes it cheap to try later without disturbing
+the feature loop.
+
+So for now the dev loop is enforced on its **outcome, not its route**.
+ A dev loop
 that reaches review with failing tests is refused. A dev loop that ran the
 linter after the tests, with both clean, is not something worth spending
 the floor's portability on.
@@ -483,6 +494,28 @@ without the agent cannot tell whether the work is any good. The value is
 the pairing, and the line between them is: **judgement is the agent's,
 the map is the code's.**
 
+### Naming: everything says which loop it serves
+
+This feature addresses one loop — the feature loop — and the outer loops
+(a project, an initiative, a series of features) are coming. So nothing is
+named as though it were the only loop.
+
+| Thing | Name |
+|---|---|
+| The checker | `tools/feature-loop` |
+| Its hooks | `tools/hooks/` (resolved relative to the checker) |
+| The stage record | `Kdevkit-Feature-Stage:` |
+| A return | `Kdevkit-Feature-Return:` |
+| An approval | `Kdevkit-Feature-Ack:` |
+| A recorded exception | `Kdevkit-Feature-Exception:` |
+
+Two reasons for the `Kdevkit-Feature-` prefix on the trailers. Commit
+messages are a shared namespace — other tools read trailers, and a bare
+`Phase:` would collide. And when an initiative loop arrives it adds
+`Kdevkit-Initiative-Stage:` beside these without ambiguity or migration:
+a commit can legitimately carry both, because a commit on a feature branch
+inside an initiative belongs to both loops.
+
 ### Where the state actually lives
 
 In the commit messages, as a line like `Phase: dev`, plus `Return-To:`
@@ -506,6 +539,34 @@ machine-readable field remains in it.
 One piece of short-lived state — "the next commit should move us to
 review" — is written inside the `.git` directory, where it is specific
 to one worktree and can never be committed by accident.
+
+### Two features at once
+
+Hooks are a per-checkout setting, not versioned content, so the question is
+what happens when two features are in flight.
+
+**In a single checkout, they cannot be.** Git allows one checked-out branch
+at a time, verified. So parallel features mean worktrees, and there is no
+"hooks installed per feature session" problem to solve — repeated installs
+are idempotent, and the hook self-scopes by reading the branch it is
+running on.
+
+**Git has no per-branch hooks and will not grow them.** That is why the
+scoping lives in the hook rather than in where it is installed: one script,
+which does nothing unless the branch it finds itself on is a kdevkit
+feature. It is correct whether the hooks path is set per-worktree or shared.
+
+**But shared state between worktrees is a real problem, and one instance of
+it is a bug in what is built.** Verification evidence is currently kept in
+the checkout's git config, and config is shared across worktrees —
+verified: two worktrees see and overwrite each other's value. So feature A
+verifying its tree clobbers feature B's record. The fix is to keep it
+where the transient intent already lives, in the per-worktree git
+directory, which no other worktree can see.
+
+The general rule this yields: **anything about one unit of work belongs
+either on its branch or in its own worktree's git directory — never in
+shared configuration.**
 
 ### What reaches the main branch
 
@@ -535,7 +596,11 @@ Two things deliberately do reach the main branch, and both are fine:
 - **The feature's spec file.** It is checked-in documentation, which is
   the point of kdevkit. Its handoff section is cleared at closure, so a
   newcomer reads the spec's content and finds no stage state in it.
-- **Nothing else.**
+- **The merge commit's authored summary** — what was built, why, and how it
+  was approached, drawn from the spec. That is the permanent record of the
+  feature, and it is the one thing the main branch *should* gain.
+
+Nothing else does.
 
 The feature branch itself remains visible on the remote while its pull
 request is open, and after merge if it is not deleted. Its stage stamps
@@ -821,6 +886,38 @@ recorded rather than a verdict; and every fixture also runs **under load**,
 with unrelated prior conversation prepended, because the entire problem
 only appears under load.
 
+### The tests kdevkit already has
+
+kdevkit has ten fixtures predating this work. The intent of kdevkit has not
+changed, so most of them stay true — what changes is the mechanics
+underneath. Reviewed one by one:
+
+| Fixture | Disposition |
+|---|---|
+| `kdevkit-planning` | **Keep as-is.** Tests planning behaviour; untouched by where the stage is recorded. |
+| `kdevkit-dev-loop` | **Keep as-is.** Explains the loop; the loop is unchanged. |
+| `kdevkit-code-review-panel` | **Keep as-is.** Nothing to do with the record. |
+| `kdevkit-module-load` | **Keep as-is.** Which module loads is unchanged. |
+| `kdevkit-agents-md` | **Keep as-is.** Unrelated. |
+| `kdevkit-consolidate` | **Keep as-is.** Spec consolidation is unchanged. |
+| `kdevkit-closure` | **Update.** Seeds and asserts a `Phase:` field in the handoff block. The behaviour it tests — closure clearing the handoff — is still right; the field it reads has moved to the branch. |
+| `kdevkit-handoff-resume` | **Update.** Same: the *intent* (a resuming session finds where it is, and does not merely relabel one field) is exactly right and now stronger, because the stage cannot be relabelled at all. Re-point at the branch record. |
+| `kdevkit-consolidated-resume` | **Update.** Seeds `Phase: dev`; needs the branch record instead. |
+| `kdevkit-phase-boundary` | **Update.** The closest predecessor of this work — it asserts a boundary was crossed by reading the handoff. Same assertions, read from the branch. |
+
+So four fixtures need re-pointing and six need nothing. **None of them
+were wrong**, which is worth saying: they were testing the right
+behaviours through the only record that existed at the time. This is a
+mechanics change, and the fixtures that break are breaking because they
+name a mechanism rather than an outcome — which the new assertion rules
+are written to avoid repeating.
+
+Two of them get better as a side effect. `kdevkit-handoff-resume` had to
+assert "not merely a one-token relabel" because relabelling was possible;
+now it is not. And `kdevkit-phase-boundary` needed a defensive check
+against the template's placeholder line listing every legal stage; with no
+stage field in the template, that trap is gone.
+
 ### Rules the assertions must obey
 
 Each of these exists because it caught a real defect here.
@@ -898,7 +995,22 @@ partly, `[ ]` not started.
 - [ ] 21 · Rebuild the agent fixtures around correction burden, seeded
   with real formats; three samples per agent, fresh and under load, ratios
   recorded.
-- [ ] 22 · Correct the inaccurate claims in the existing specs.
+- [ ] 22 · **Rename the artefacts for the loop they serve**: the checker
+  becomes `tools/feature-loop`, and the trailers gain the
+  `Kdevkit-Feature-` prefix, so the outer loops can be added without
+  migration.
+- [ ] 23 · **Move verification evidence out of shared config** into the
+  per-worktree git directory, so two features in flight cannot overwrite
+  each other. Test with two worktrees.
+- [ ] 24 · **Re-point the four existing fixtures** that read the handoff's
+  `Phase:` field at the branch record — `kdevkit-closure`,
+  `kdevkit-handoff-resume`, `kdevkit-consolidated-resume`,
+  `kdevkit-phase-boundary`.
+- [ ] 25 · **Interoperability check** (statement 23): a feature whose
+  branch was built without kdevkit installed at all must still be readable
+  — clone, run the checker, get a truthful answer or an honest
+  "cannot determine".
+- [ ] 26 · Correct the inaccurate claims in the existing specs.
 
 ## Still open
 
@@ -1109,12 +1221,22 @@ if the working directory happens to be the skill folder. So on two of
 three agents the path would have to be guessed, with a silent failure
 when the guess is wrong.
 
-**A script inside the skill folder, with its path fixed at install
-time.** This is what we chose, and it dissolves the apparent conflict.
-The install step already knows exactly where it is putting the skill, so
-it writes that absolute path into the instruction text as it deploys.
-The agent never resolves anything at run time and never guesses — it
-reads a literal path. Nothing lands in the project repository at all.
+**A script inside the skill folder, reached by a relative path.** This is
+what we chose. The hooks resolve it relative to their own location, so a
+hook always runs the checker that shipped beside it — no absolute path is
+recorded anywhere, and two installed versions of kdevkit cannot end up
+sharing one checker.
+
+That robustness is the point. An absolute path baked in at install time
+works until something moves, upgrades, or is installed twice; a relative
+one keeps each version self-contained. It also means nothing has to be
+rewritten when the skill directory moves.
+
+One case cannot be relative: prose telling a builder to run the checker,
+on an agent with no variable for its own skill directory. There,
+install-time substitution of that one invocation is the fallback — and
+because each install substitutes its own path, versions still do not
+collide.
 
 The earlier draft of this document proposed committing the script into
 each project. That was wrong, and the reason is worth recording: we had
@@ -1277,6 +1399,43 @@ is worth saying plainly.
   an AI sub-session as the checker; and doing without hooks, which is
   not possible while Kiro has no interception mechanism and Codex cannot
   let a project ship one.
+- **2026-09-02 · Everything is named for the loop it serves.** The checker
+  becomes `tools/feature-loop`; trailers gain a `Kdevkit-Feature-` prefix.
+  Rationale: commit messages are a shared namespace, so a bare `Phase:`
+  would collide with other tooling; and an initiative loop can then add its
+  own trailers beside these without migration, since a commit on a feature
+  branch inside an initiative legitimately belongs to both loops. Rejected:
+  keeping unqualified names and renaming later, which would mean rewriting
+  history or reading two formats.
+
+- **2026-09-02 · The checker is reached by a relative path, never an
+  absolute one baked in at install.** Rationale: hooks resolve it relative
+  to their own location, so a hook always runs the checker that shipped
+  beside it and two installed versions cannot share one. An absolute path
+  works until something moves, upgrades, or is installed twice. Accepted
+  exception: prose telling a builder to run the checker on an agent with no
+  skill-directory variable, where install-time substitution of that single
+  invocation is the fallback — per-install, so versions still do not
+  collide.
+
+- **2026-09-02 · Anything about one unit of work lives on its branch or in
+  its own worktree's git directory, never in shared configuration.**
+  Rationale: verified that git config is shared across worktrees, so
+  verification evidence kept there lets two features in flight overwrite
+  each other. Parallel features require worktrees in any case, because git
+  allows one checked-out branch per checkout — so the shared-config path is
+  precisely the one that breaks. Rejected: per-branch hooks, which git does
+  not have; the scoping stays in the hook, which does nothing unless the
+  branch it finds itself on is a kdevkit feature.
+
+- **2026-09-02 · The dev loop's own steps are deferred, not rejected.**
+  Rationale: the same mechanism would work one altitude down, on a
+  `dev/<feature>` branch with `Kdevkit-Dev-Stage:` trailers. It is not built
+  now because three of the loop's five steps produce no commits, so making
+  them visible means committing at each step — a real change to how dev
+  feels, which wants its own evidence. The naming and the branch-off-a-branch
+  shape keep it cheap to try later.
+
 - **2026-09-01 · The intent is a framework a builder is guided through,
   not a guard against a forgetful agent.** Rationale: the original problem
   statement was "the agent forgets to update the handoff", which produced a
