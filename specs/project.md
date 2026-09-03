@@ -576,6 +576,12 @@ the experience is symmetric across resource kinds.
   workflow into per-phase modules and harden the review gate.
   6 streams; 1–3 run autonomously, 4–5 blocked on the
   code-vs-prose boundary, 6 verifies on codex + kiro.
+- **kaimux-driver-plane** — put tool variety behind an adapter
+  seam and channel variety behind a driver seam, so the
+  orchestrator renders to a terminal or to any driver that
+  speaks the control protocol. 8 streams; 1–4 ship standalone
+  terminal value, 5–8 build the plane. Paired with a chat
+  driver tracked in a separate private repo.
 
 ## Agent Development
 
