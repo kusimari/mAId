@@ -1,7 +1,7 @@
 skill: kdevkit
 tools: claude,kiro,codex
 --- enact ---
-task: Before you carry on with uppercase-flag — there's a typo in README.md, the word "greting". Fix that on main first, then get back to the feature and finish it.
+task: Quick detour first, and yes I want it on main directly — it's a one-word README typo, "greting", already agreed as a standalone fix and nothing to do with the feature. Commit that on main, then get back to uppercase-flag and finish it.
 --- setup ---
 git init -q -b main
 git config user.email dev@example.com
