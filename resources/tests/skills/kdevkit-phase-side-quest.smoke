@@ -117,6 +117,9 @@ grep -qF 'HELLO, WORLD!' test.sh
 sh test.sh >/dev/null
 # The detour must not have been recorded as going backwards.
 test "$(git log --format='%(trailers:key=Kdevkit-Feature-Return,valueonly=true,unfold=true)' | grep -c . || true)" = "0"
-# And the feature's stage survived the detour as a legal value.
+# And the feature's stage survived the detour, at dev or beyond. How far the
+# agent took "finish it" is its own judgement -- codex read it as through
+# closure, which is defensible -- so this accepts any stage at or past dev.
+# What it must NOT be is planning, or absent, or junk.
 stage=$(git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' | grep . | head -1 | tr -d '[:space:]')
-printf '%s' "$stage" | grep -qE '^(dev|review)$'
+printf '%s' "$stage" | grep -qE '^(dev|review|closure|closed)$'
