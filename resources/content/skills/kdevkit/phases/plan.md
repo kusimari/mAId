@@ -204,14 +204,17 @@ what to keep as a decision, what to relocate rather than delete.
 Skip only if the spec carries no alternatives, Q&A, or revision
 narration; there is then nothing to strip.
 
-**2 · Write the `## Handoff` block** (§5) **with `Phase: dev`** —
-the phase now starting. Re-author every field; do not leave a
-previous or placeholder value in `Phase:` while only updating the
-others. From planning, the fields that matter most beyond `Phase:`
-are *Carry forward* — a constraint the interviews surfaced that the
-Implementation Plan doesn't state — and *Deliberately left*, so dev
-doesn't relitigate a decision or read a deliberate gap as an
-oversight.
+**2 · Run `"$(git config kdevkit.tools)/feature-loop" advance --next`.** Planning is finished when the spec
+is consolidated and committed and its handoff section is unambiguous —
+that is this module's exit condition, and the tooling decides what
+follows it. It refuses if the condition does not hold. If `phase` is not
+installed, write the `## Handoff` block (§5) with the phase now
+starting. Re-author every field; do not leave a previous or
+placeholder value in one while only updating the others. From
+planning, the fields that matter most are *Carry forward* — a
+constraint the interviews surfaced that the Implementation Plan
+doesn't state — and *Deliberately left*, so dev doesn't redo a
+decision or mistake a gap for an oversight.
 
 Commit both as `plan(<feature>): consolidate spec` and rewrite the
 review body from the consolidated spec: a reviewer reading the

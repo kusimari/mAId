@@ -1,0 +1,81 @@
+#!/bin/sh
+# kdevkit-feature-loop-hook — sentinel: install uses this to recognise
+# a copy of itself at any path and refuse to chain to it (infinite recursion).
+# Stamp the feature stage into the commit message, and refuse a commit
+# whose claim the repository contradicts.
+#
+# prepare-commit-msg rather than commit-msg deliberately: it is the only
+# message hook that still runs under `git commit --no-verify`, and that
+# difference is the whole guarantee.
+set -eu
+
+MSG_FILE=${1:-}
+[ -n "$MSG_FILE" ] || exit 0
+
+# shellcheck disable=SC1007  # CDPATH= is deliberate, not a typo
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+LOOP="$here/../feature-loop"
+[ -x "$LOOP" ] || exit 0
+
+# Hand off to whatever hook was here before us, so pointing git at this
+# directory does not silently disable someone's existing tooling.
+chain() {
+    prev=$(git config --get kdevkit.chain.prepareCommitMsg 2>/dev/null || true)
+    [ -n "$prev" ] && [ -x "$prev" ] && "$prev" "$@"
+    return 0
+}
+
+# Do nothing outside a kdevkit feature: not the default branch, not an
+# unrelated branch, not initiative-level work.
+if ! "$LOOP" applies >/dev/null 2>&1; then
+    chain "$@"
+    exit 0
+fi
+
+intent=$(git rev-parse --git-path kdevkit-intent)
+if [ -f "$intent" ]; then
+    want=$(sed -n 's/^phase=//p' "$intent" | head -1)
+    # A return goes backwards deliberately, and an exception waives a
+    # precondition deliberately. Re-checking either would refuse the very
+    # thing the builder just recorded a reason for.
+    deliberate=no
+    sed -n 's/^return_to=//p' "$intent" | grep -q . && deliberate=yes
+    sed -n 's/^exception=//p' "$intent" | grep -q . && deliberate=yes
+    if [ -n "$want" ] && [ "$deliberate" = no ]; then
+        # A recorded intent to move forward must still hold at commit
+        # time; the tree may have changed since it was recorded.
+        if ! out=$("$LOOP" check --to "$want" 2>&1); then
+            echo "kdevkit: refusing this commit." >&2
+            echo "$out" | sed -n '/^refused:\|^cannot determine:/p' >&2
+            echo "Resolve it, or record a deliberate move: 'feature-loop return ...'" >&2
+            echo "or 'feature-loop except --skipping ... --why ...'" >&2
+            exit 1
+        fi
+    fi
+fi
+
+# Never stamp twice — an amend re-runs this hook on a message that may
+# already carry the trailers.
+if grep -qE '^Kdevkit-Feature-Stage:' "$MSG_FILE"; then
+    chain "$@"
+    exit 0
+fi
+
+# The subject of the message being written is evidence about this commit's
+# own stage, and it is not in history yet.
+subject=$(sed -n '/^[^#]/{p;q;}' "$MSG_FILE" 2>/dev/null || true)
+block=$("$LOOP" stamp --subject "$subject") || exit 0
+[ -n "$block" ] || { chain "$@"; exit 0; }
+
+# interpret-trailers places each line in the footer, creating one if the
+# message has none.
+printf '%s\n' "$block" | while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    git interpret-trailers --in-place --trailer "$line" "$MSG_FILE"
+done
+
+# The intent is consumed: it described this commit and no other.
+rm -f "$intent"
+
+chain "$@"
+exit 0

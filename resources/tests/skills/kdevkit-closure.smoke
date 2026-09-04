@@ -6,9 +6,12 @@ task: I'm on branch feat/add-due-dates and the work is done — the --due flag a
 git init -q
 git config user.email t@t.t && git config user.name t
 git checkout -q -b feat/add-due-dates
+"$KDEVKIT_TOOLS/feature-loop" install >/dev/null
 mkdir -p specs/feature
 cat > specs/feature/add-due-dates.md <<'MD'
 # Feature: add-due-dates
+
+- Branch: `feat/add-due-dates`
 
 ## Feature Brief
 Let a to-do carry a due date.
@@ -20,7 +23,6 @@ User can set and see a due date on any to-do.
 A nullable due field on the record; a --due flag parses it.
 
 ## Handoff
-- **Phase:** review
 - **Ready for:** closure on the cue.
 - **Carry forward:** nothing outstanding from review.
 - **Deliberately left:** recurring due dates — separate feature.
@@ -108,14 +110,16 @@ grep -qF -- '- [x]' "$spec"
 # acts on. Portable pattern — \< is a GNU awk extension that matches nothing
 # under mawk, which would make this pass vacuously.
 [ "$(grep -c '^## Handoff' "$spec")" = 1 ]
-awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /^- \*\*Phase:\*\*/' "$spec" | grep -q .
+git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' | grep -q .
 # The block was authored, not pasted: the template placeholder lists every
 # legal value on one line, which would satisfy a naive negative check.
 test -z "$(grep -F 'planning | dev | review' "$spec" || true)"
-test -z "$(awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*review([^a-zA-Z]|$)/' "$spec")"
+test "$(git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' \
+  | grep . | head -1 | tr -d '[:space:]')" != review
 # ...and it must positively say `closed`. Without this an agent can leave a
 # maximally LIVE handoff (Phase: closure, Ready for: squash-merge) and pass.
-awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*closed([^a-zA-Z]|$)/' "$spec" | grep -q .
+git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' \
+  | grep . | head -1 | tr -d '[:space:]' | grep -qE '^(closure|closed)$'
 # Not a one-token relabel: close.md says replace its FIELDS, so review's
 # values must be gone too, not just the Phase label flipped.
 test -z "$(grep -F 'closure on the cue' "$spec" || true)"

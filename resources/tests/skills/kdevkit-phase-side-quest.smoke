@@ -1,0 +1,139 @@
+skill: kdevkit
+tools: claude,kiro,codex
+--- enact ---
+task: Quick detour first, and yes I want it on main directly — it's a one-word README typo, "greting", already agreed as a standalone fix and nothing to do with the feature. Commit that on main, then get back to uppercase-flag and finish it.
+--- setup ---
+git init -q -b main
+git config user.email dev@example.com
+git config user.name dev
+mkdir -p specs/feature src
+cat > AGENTS.md <<'MD'
+# greet-cli — agent guide
+
+## Build & test
+- Test: `sh test.sh`
+- Lint: `sh lint.sh`
+MD
+cat > specs/project.md <<'MD'
+# Project: greet-cli
+
+## Mission
+A tiny shell greeting tool.
+
+## Architecture
+One shell script, `src/greet.sh`.
+
+## Tech Stack
+POSIX shell.
+
+## Layout
+src/greet.sh, test.sh, lint.sh.
+
+## Testing
+`sh test.sh` is load-bearing. Commands live in AGENTS.md.
+
+## Deployment
+Copied onto PATH.
+
+## Agent Development
+
+### kdevkit
+- `code_review:`
+  - `reviewer: host-native`
+- `gates:`
+  - `dev:`
+    - `quality: sh lint.sh`
+    - `tests: sh test.sh`
+MD
+cat > src/greet.sh <<'MD'
+#!/bin/sh
+echo "Hello, $1!"
+MD
+cat > test.sh <<'MD'
+#!/bin/sh
+set -e
+out=$(sh src/greet.sh World)
+[ "$out" = "Hello, World!" ] || { echo "R1 failed: $out"; exit 1; }
+echo ok
+MD
+cat > lint.sh <<'MD'
+#!/bin/sh
+exit 0
+MD
+chmod +x src/greet.sh test.sh lint.sh
+printf '# greet-cli\n\nA tiny greting tool.\n' > README.md
+cat > specs/feature/uppercase-flag.md <<'MD'
+# Feature: uppercase flag
+
+Branch: feat/uppercase-flag
+
+## Feature Brief
+`greet.sh` gains a `-u` flag that upper-cases the greeting.
+
+## Requirements
+- R1. `greet.sh World` prints `Hello, World!` as today.
+- R2. `greet.sh -u World` prints `HELLO, WORLD!`.
+
+## Design
+Parse `-u` as the first argument; pipe the composed line through `tr`.
+
+## Test Strategy
+`test.sh` asserts both R1 and R2.
+
+## Handoff
+
+- **Ready for:** dev is in flight.
+- **Carry forward:** `tr` is available; no new dependency needed.
+- **Deliberately left:** nothing.
+
+## Implementation Plan
+- [ ] 1 · Add `-u` parsing to `src/greet.sh`.
+- [ ] 2 · Add the R2 case to `test.sh`.
+
+## Session Log
+
+## Decision Log
+MD
+git add -A && git commit -q -m "plan(uppercase-flag): initial spec"
+git checkout -q -b feat/uppercase-flag
+"$KDEVKIT_TOOLS/feature-loop" install >/dev/null
+git commit -q --allow-empty -m "feat(uppercase-flag): begin
+
+Kdevkit-Feature-Stage: dev"
+--- assert ---
+set -e
+# The side quest happened, on main, where it belongs.
+git log main --oneline | grep -qiE 'typo|readme|greeting'
+# Read main's copy explicitly: the fix belongs there, and the working tree
+# may be on either branch when this runs.
+test -z "$(git show main:README.md 2>/dev/null | grep -F 'greting' || true)"
+# A commit on main must carry no feature stage — the machinery is inert
+# outside a kdevkit feature branch.
+test -z "$(git log main --format='%B' | grep -E 'Kdevkit-Feature-Stage|Kdevkit-Feature-Ack|Return-To' || true)"
+# The feature came back and finished. Do NOT assume which branch is checked
+# out: an agent that read "finish it" as through closure will have merged and
+# deleted the feature branch, which is legitimate. Assert on the work, from
+# wherever the agent left the tree.
+out=$(sh src/greet.sh -u World); [ "$out" = "HELLO, WORLD!" ]
+out=$(sh src/greet.sh World); [ "$out" = "Hello, World!" ]
+grep -qF 'HELLO, WORLD!' test.sh
+sh test.sh >/dev/null
+# The feature's own work was committed, somewhere reachable.
+git log --all --no-decorate --format='%s' | grep -qE '^(feat|fix|refactor|test)\(uppercase-flag\)'
+# The detour must not have been recorded as going backwards, anywhere.
+test "$(git log --all --format='%(trailers:key=Kdevkit-Feature-Return,valueonly=true,unfold=true)' | grep -c . || true)" = "0"
+# The stage record is BRANCH-scoped by design: it vanishes from mainline when
+# a feature is squash-merged, which is the no-bookkeeping-in-mainline rule
+# working, not failing. So what must be true depends on where the agent left
+# the feature, and demanding a trailer unconditionally would contradict that
+# rule. Both outcomes are legitimate; neither may be silent.
+if git rev-parse --verify -q feat/uppercase-flag >/dev/null; then
+  # Still in flight: the branch must carry a stage at dev or beyond.
+  stage=$(git log feat/uppercase-flag --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' | grep . | head -1 | tr -d '[:space:]')
+  printf '%s' "$stage" | grep -qE '^(dev|review|closure|closed)$'
+else
+  # Closed and merged: the work is on main, and mainline must carry NO
+  # feature bookkeeping at all.
+  git log main --no-decorate --format='%s' | grep -qiE 'uppercase|--?u\b|quiet'
+  test -z "$(git log main --format='%B' | grep -E 'Kdevkit-Feature-(Stage|Ack|Return|Exception)' || true)"
+fi

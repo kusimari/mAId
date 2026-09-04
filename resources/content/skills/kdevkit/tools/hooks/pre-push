@@ -1,0 +1,41 @@
+#!/bin/sh
+# kdevkit-feature-loop-hook — sentinel: install uses this to recognise
+# a copy of itself at any path and refuse to chain to it (infinite recursion).
+# Refuse to publish a branch whose state does not add up, and verify the
+# dev loop by RUNNING its checks rather than trusting a report that they
+# were run.
+set -eu
+
+# shellcheck disable=SC1007  # CDPATH= is deliberate, not a typo
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+LOOP="$here/../feature-loop"
+[ -x "$LOOP" ] || exit 0
+
+chain() {
+    prev=$(git config --get kdevkit.chain.prePush 2>/dev/null || true)
+    [ -n "$prev" ] && [ -x "$prev" ] && "$prev" "$@"
+    return 0
+}
+
+if ! "$LOOP" applies >/dev/null 2>&1; then
+    chain "$@"
+    exit 0
+fi
+
+# Verification is the checker's job, and which commands to run is the
+# project's declaration in specs/project.md — the hook only decides that
+# it must happen before anything is published. `verify` reports 3 when
+# the project declares no gates, which is nothing to refuse.
+# `verify` reports 3 when the project declares no gates, which is nothing to
+# refuse. Capture the status without letting `set -e` exit first — an
+# unguarded call here made this refusal unreachable AND blocked pushes for
+# projects with no gates declared.
+rc=0
+"$LOOP" verify || rc=$?
+if [ "$rc" = "1" ]; then
+    echo "kdevkit: refusing to push — the checks did not pass on what you are publishing." >&2
+    exit 1
+fi
+
+chain "$@"
+exit 0

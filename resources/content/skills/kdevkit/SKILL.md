@@ -376,6 +376,42 @@ ticked spec is part of the dev commit, not a closure-time
 sweep. §8.1 reconcile is the safety net for slices ticked
 late or missed; the live discipline lives here.
 
+### The feature-loop tools (always-on)
+
+kdevkit ships a small shell tool beside these instructions. It reads git
+and the spec to tell you where a feature stands, and it installs two git
+hooks that record the stage for you so you never have to remember to.
+
+**Find it once per repository, then install it:**
+
+```sh
+K=$(ls -d ~/.claude/skills/kdevkit/tools ~/.codex/skills/kdevkit/tools \
+       ~/.kiro/skills/kdevkit/tools ~/.kiro/steering/skills/kdevkit/tools \
+       2>/dev/null | head -1)
+"$K/feature-loop" install
+```
+
+**After that, name it from the repository** — install records where it is,
+so you never need an absolute path:
+
+```sh
+"$(git config kdevkit.tools)/feature-loop" show
+```
+
+The verbs you will actually use:
+
+| Verb | When |
+|---|---|
+| `show` | at the start of any session — where does this feature stand? |
+| `verify` | before leaving dev; runs the project's own gates and records that they passed |
+| `advance --next` | when a stage's exit condition holds; the tool decides what follows |
+| `return --to <stage> --fault-entered … --issue … --expected-fix … --acceptance …` | when a fault belongs to an earlier layer |
+| `except --skipping … --why …` | when a gate cannot be passed honestly and you are proceeding anyway, on the record |
+
+If the tool is absent, everything below still applies — write the
+`## Handoff` block yourself. The tool makes the record reliable; it is not
+what makes the workflow work.
+
 ### The spec is the handoff record (always-on)
 
 **A phase writes its `## Handoff` block into the feature spec
@@ -391,13 +427,16 @@ crossed the last boundary.
 
 Two rules that keep it honest:
 
-- **Rewrite the block, never append — and re-author every field,
-  not just `Phase:`.** Relabelling the phase while leaving
-  `Ready for:` and `Carry forward:` as the previous phase wrote
-  them produces exactly the stale record this exists to prevent,
-  and it reads as current. This cuts both ways: relabelling
-  `Phase:` while carrying an old field's *sentence* forward
-  unchanged is the same mistake in the other field — write what
+- **The live phase is not in this block.** It is a trailer on the
+  branch's commits, written by git at commit time rather than by you.
+  Read it with `feature-loop show`; move it with `feature-loop advance --next` or
+  `feature-loop return`. Nothing you write in the block sets it, so a
+  `Phase:` line here is a leftover and should be deleted.
+
+- **Rewrite the block, never append — and re-author every field.**
+  Carrying `Ready for:` and `Carry forward:` forward as the previous
+  phase wrote them produces exactly the stale record this exists to
+  prevent, and it reads as current. Write what
   is true now, in your own words, not the previous phase's phrasing
   with a new label on top. It carries current state, not history.
   History has homes already: the Session Log for observations, the

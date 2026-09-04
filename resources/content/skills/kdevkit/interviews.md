@@ -91,8 +91,6 @@ Part of initiative: [[<name>]]
      ~15 lines: it carries what the next phase can't derive, not
      a summary of the work.
 
-     Phase:             which phase is live now, or `closed` once
-                        closure has finished with the feature.
      Ready for:         the next phase, and what gates it.
      Carry forward:     what the next phase would otherwise have
                         to rediscover — a constraint found late, a
@@ -103,9 +101,14 @@ Part of initiative: [[<name>]]
 
      Derivable facts (branch, unticked plan items, gate results)
      are READ from git and this spec at entry — don't copy them
-     here and let them rot. This block is judgement only. -->
+     here and let them rot. This block is judgement only.
 
-- **Phase:** <planning | dev | review | closure | closed>
+     The live phase is NOT recorded here. It is a trailer on the
+     branch's commits, written by git rather than by you, so it
+     cannot be forgotten or left stale. Read it with `feature-loop show`.
+     A `Phase:` line in this block is a leftover from before that
+     and should be deleted, not maintained. -->
+
 - **Ready for:** <next phase, and its gate>
 - **Carry forward:** <what the next phase must know>
 - **Deliberately left:** <what's unresolved, and why>

@@ -504,10 +504,16 @@ fn run_behavioral(agent: Agent, prompt: &str, setup: &str, assert: &str, label: 
 /// Run a shell fragment in `dir`, returning its combined output on
 /// failure. `set -e` so a fixture's first broken command stops it.
 fn shell(script: &str, dir: &Path) -> std::result::Result<String, String> {
+    // A fixture that exercises kdevkit's phase tooling has to wire it into
+    // the scratch repo, and it cannot find the checkout from a temp dir.
+    let tools = crate::shared::repo_root()
+        .map(|r| r.join("resources/content/skills/kdevkit/tools"))
+        .unwrap_or_default();
     let out = std::process::Command::new("bash")
         .arg("-c")
         .arg(format!("set -e\n{script}"))
         .current_dir(dir)
+        .env("KDEVKIT_TOOLS", tools)
         .output()
         .map_err(|e| e.to_string())?;
     let combined = format!(

@@ -24,7 +24,7 @@ condition** — it means planning converged but
 must run it now, before step 1 below and before any code:
 inline-Read `interviews.md`'s consolidation checklist, strip the
 deliberation, relocate load-bearing rationale to the Decision Log,
-and write the Handoff with `Phase: dev`. This check is not
+and record the move with `"$(git config kdevkit.tools)/feature-loop" advance --next`. This check is not
 optional and not skippable because "the cue already fired" — the
 cue starting dev is exactly when this must be verified, since
 nothing else in the workflow checks it.
@@ -312,25 +312,31 @@ passes. After exhausting `retry_budget`, behavior splits on
 
 Once Quality + Test + Code Review pass (the latter per
 `authority`), push. **No remote configured is an environment gap,
-not a reason to hold at `Phase: dev`** — the gates are what decide
+not a reason to stay in dev** — the gates are what decide
 readiness, and they've already passed; report the missing remote
 and proceed with the Handoff rewrite below exactly as if Push had
 succeeded.
 
 ### Leaving dev
 
-Once the gates pass, **rewrite the `## Handoff` block** (§5)
-**with `Phase: review`** — the phase now starting — before handing
-to human review. The gates are the readiness signal; a Push that
-couldn't run for want of a remote (see the Push Gate above) does
-not hold this rewrite back — name the skipped Push in *Carry
-forward* and proceed. Re-author every field: `Phase:` is not
-exempt just because *Carry forward* and *Deliberately left* are
-the fields carrying the most information. Leaving `Phase:` at its
-prior value while updating the others is the exact stale record §5
-warns against, and it is easy to miss precisely because those
-other two fields *do* get real content and look like the update
-happened.
+**Dev is finished when** the Implementation Plan is fully ticked, an
+implementation commit exists, and the project's dev gates have been
+observed passing. That is this module's exit condition, and it is all
+this module needs to know — **it does not name what comes next.**
+
+Once it holds, run **`feature-loop advance --next`** (see §The feature-loop tools). The tooling owns the
+map: it decides what follows dev, refuses if the exit condition does
+not actually hold, and records the move so the next commit carries it.
+The stage is written by git, not by you.
+
+The gates are the readiness signal; a Push that couldn't run for
+want of a remote (see the Push Gate above) does not hold the move
+back — name the skipped Push in *Carry forward* and proceed.
+
+Then rewrite the `## Handoff` block (§5) for the phase now starting,
+re-authoring every field rather than carrying a previous phase's
+sentences forward. If `phase` is not installed, that block is the
+only record, so write it carefully.
 
 **This rewrite is never a `plan()`-typed commit.** Review has no
 entry cue of its own (§1): it is the back half of the dev loop,
