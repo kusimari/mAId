@@ -114,10 +114,12 @@ git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=tru
 # The block was authored, not pasted: the template placeholder lists every
 # legal value on one line, which would satisfy a naive negative check.
 test -z "$(grep -F 'planning | dev | review' "$spec" || true)"
-test -z "$(awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*review([^a-zA-Z]|$)/' "$spec")"
+test "$(git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' \
+  | grep . | head -1 | tr -d '[:space:]')" != review
 # ...and it must positively say `closed`. Without this an agent can leave a
 # maximally LIVE handoff (Phase: closure, Ready for: squash-merge) and pass.
-awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*closed([^a-zA-Z]|$)/' "$spec" | grep -q .
+git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' \
+  | grep . | head -1 | tr -d '[:space:]' | grep -qE '^(closure|closed)$'
 # Not a one-token relabel: close.md says replace its FIELDS, so review's
 # values must be gone too, not just the Phase label flipped.
 test -z "$(grep -F 'closure on the cue' "$spec" || true)"

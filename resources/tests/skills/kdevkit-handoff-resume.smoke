@@ -138,15 +138,18 @@ grep -qF 'R2. `slug.sh "!Hello World!"`' specs/feature/trim-dashes.md
 [ "$(grep -c '^## Handoff' specs/feature/trim-dashes.md)" = 1 ]
 # Portable patterns only: \< is a GNU awk extension that silently matches
 # nothing under mawk/BusyBox, which would make these pass vacuously.
-# A Phase field must still EXIST — deleting it would satisfy a bare negative.
+# A stage must still EXIST on the branch — a bare negative would be
+# satisfied by there being no record at all.
 git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' | grep -q .
 # The block was authored, not pasted: the template placeholder lists every
 # legal value on one line, which would satisfy a naive negative check.
 test -z "$(grep -F 'planning | dev | review' specs/feature/trim-dashes.md || true)"
 # ...and the value is a legal phase, not junk like TBD.
-awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*(review|closure)([^a-zA-Z]|$)/' specs/feature/trim-dashes.md | grep -q .
+git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' \
+  | grep . | head -1 | tr -d '[:space:]' | grep -qE '^(review|closure)$'
 # ...and it must no longer name the phase that has finished.
-test -z "$(awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*dev([^a-zA-Z]|$)/' specs/feature/trim-dashes.md)"
+test "$(git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' \
+  | grep . | head -1 | tr -d '[:space:]')" != dev
 # Not a one-token relabel: the other fields moved on too. Flipping `Phase:`
 # while leaving dev's `Ready for:` and `Carry forward:` in place is the stale
 # record the rule exists to prevent, and it reads as current.

@@ -116,12 +116,15 @@ test -z "$(git log --no-decorate --oneline feat/uppercase-flag | grep -E '^[[:al
 # The handoff was REWRITTEN, not appended: exactly one block, and it no longer
 # claims planning is live. A stale handoff is what a resuming agent acts on.
 [ "$(grep -c '^## Handoff' specs/feature/uppercase-flag.md)" = 1 ]
-# A Phase field must still EXIST — deleting it would satisfy a bare negative.
+# A stage must still EXIST on the branch — a bare negative would be
+# satisfied by there being no record at all.
 git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' | grep -q .
 # The block was authored, not pasted: the template placeholder lists every
 # legal value on one line, which would satisfy a naive negative check.
 test -z "$(grep -F 'planning | dev | review' specs/feature/uppercase-flag.md || true)"
 # ...and the value is a legal phase, not junk like TBD.
-awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*(dev|review)([^a-zA-Z]|$)/' specs/feature/uppercase-flag.md | grep -q .
+git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' \
+  | grep . | head -1 | tr -d '[:space:]' | grep -qE '^(dev|review)$'
 # ...and it must no longer name planning, the phase that has finished.
-test -z "$(awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*planning([^a-zA-Z]|$)/' specs/feature/uppercase-flag.md)"
+test "$(git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' \
+  | grep . | head -1 | tr -d '[:space:]')" != planning
