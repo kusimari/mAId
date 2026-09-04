@@ -110,16 +110,19 @@ test -z "$(git show main:README.md 2>/dev/null | grep -F 'greting' || true)"
 # A commit on main must carry no feature stage — the machinery is inert
 # outside a kdevkit feature branch.
 test -z "$(git log main --format='%B' | grep -E 'Kdevkit-Feature-Stage|Kdevkit-Feature-Ack|Return-To' || true)"
-# The feature came back and finished: the flag works and tests cover R2.
-git checkout -q feat/uppercase-flag 2>/dev/null || git checkout -q -f feat/uppercase-flag
+# The feature came back and finished. Do NOT assume which branch is checked
+# out: an agent that read "finish it" as through closure will have merged and
+# deleted the feature branch, which is legitimate. Assert on the work, from
+# wherever the agent left the tree.
 out=$(sh src/greet.sh -u World); [ "$out" = "HELLO, WORLD!" ]
+out=$(sh src/greet.sh World); [ "$out" = "Hello, World!" ]
 grep -qF 'HELLO, WORLD!' test.sh
 sh test.sh >/dev/null
-# The detour must not have been recorded as going backwards.
-test "$(git log --format='%(trailers:key=Kdevkit-Feature-Return,valueonly=true,unfold=true)' | grep -c . || true)" = "0"
-# And the feature's stage survived the detour, at dev or beyond. How far the
-# agent took "finish it" is its own judgement -- codex read it as through
-# closure, which is defensible -- so this accepts any stage at or past dev.
-# What it must NOT be is planning, or absent, or junk.
-stage=$(git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' | grep . | head -1 | tr -d '[:space:]')
+# The feature's own work was committed, somewhere reachable.
+git log --all --no-decorate --format='%s' | grep -qE '^(feat|fix|refactor|test)\(uppercase-flag\)'
+# The detour must not have been recorded as going backwards, anywhere.
+test "$(git log --all --format='%(trailers:key=Kdevkit-Feature-Return,valueonly=true,unfold=true)' | grep -c . || true)" = "0"
+# A stage was recorded for the feature, at dev or beyond — how far the agent
+# took "finish it" is its own judgement. Never planning, absent, or junk.
+stage=$(git log --all --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' | grep . | head -1 | tr -d '[:space:]')
 printf '%s' "$stage" | grep -qE '^(dev|review|closure|closed)$'
