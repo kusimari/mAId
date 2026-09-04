@@ -494,6 +494,24 @@ without the agent cannot tell whether the work is any good. The value is
 the pairing, and the line between them is: **judgement is the agent's,
 the map is the code's.**
 
+### The stage record is branch-scoped, and that is deliberate
+
+A consequence worth stating because it looks like a gap until you follow it
+through: **a feature that has been closed and merged has no stage record.**
+The trailers lived on the feature branch's commits; squashing into mainline
+discards them, and deleting the branch removes the rest.
+
+That is not a loss. It is the no-bookkeeping-in-mainline rule doing exactly
+what it exists for. The stage is a fact about work in progress, and once the
+work is finished the permanent record is the merge commit's summary and the
+spec, not the stage it passed through on the way.
+
+The practical consequence is for anything reading the record: "no stage" is
+ambiguous between *not started* and *finished and merged*, and those are
+distinguished by looking at the branch, not the stage. A check that demands a
+stage unconditionally will contradict this rule — found the hard way, by a
+fixture that did exactly that while an agent legitimately closed the feature.
+
 ### Naming: everything says which loop it serves
 
 This feature addresses one loop — the feature loop — and the outer loops

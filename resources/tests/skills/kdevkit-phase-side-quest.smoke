@@ -122,7 +122,18 @@ sh test.sh >/dev/null
 git log --all --no-decorate --format='%s' | grep -qE '^(feat|fix|refactor|test)\(uppercase-flag\)'
 # The detour must not have been recorded as going backwards, anywhere.
 test "$(git log --all --format='%(trailers:key=Kdevkit-Feature-Return,valueonly=true,unfold=true)' | grep -c . || true)" = "0"
-# A stage was recorded for the feature, at dev or beyond — how far the agent
-# took "finish it" is its own judgement. Never planning, absent, or junk.
-stage=$(git log --all --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' | grep . | head -1 | tr -d '[:space:]')
-printf '%s' "$stage" | grep -qE '^(dev|review|closure|closed)$'
+# The stage record is BRANCH-scoped by design: it vanishes from mainline when
+# a feature is squash-merged, which is the no-bookkeeping-in-mainline rule
+# working, not failing. So what must be true depends on where the agent left
+# the feature, and demanding a trailer unconditionally would contradict that
+# rule. Both outcomes are legitimate; neither may be silent.
+if git rev-parse --verify -q feat/uppercase-flag >/dev/null; then
+  # Still in flight: the branch must carry a stage at dev or beyond.
+  stage=$(git log feat/uppercase-flag --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' | grep . | head -1 | tr -d '[:space:]')
+  printf '%s' "$stage" | grep -qE '^(dev|review|closure|closed)$'
+else
+  # Closed and merged: the work is on main, and mainline must carry NO
+  # feature bookkeeping at all.
+  git log main --no-decorate --format='%s' | grep -qiE 'uppercase|--?u\b|quiet'
+  test -z "$(git log main --format='%B' | grep -E 'Kdevkit-Feature-(Stage|Ack|Return|Exception)' || true)"
+fi
