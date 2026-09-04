@@ -44,6 +44,8 @@ MD
 cat > specs/feature/iso-flag.md <<'MD'
 # Feature: -i flag prints ISO 8601
 
+- Branch: `feat/iso-flag`
+
 ## Feature Brief
 `stamp.sh` gains a `-i` flag that prints an ISO 8601 timestamp instead
 of the default format.
@@ -96,6 +98,7 @@ MD
 chmod +x src/stamp.sh test.sh lint.sh
 git add -A && git commit -q -m "plan(iso-flag): consolidate spec"
 git checkout -q -b feat/iso-flag
+"$KDEVKIT_TOOLS/feature-loop" install >/dev/null
 --- assert ---
 set -e
 # The spec's ALREADY-CONSOLIDATED Decision Log — lettered rejected

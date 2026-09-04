@@ -6,9 +6,12 @@ task: I'm on branch feat/add-due-dates and the work is done — the --due flag a
 git init -q
 git config user.email t@t.t && git config user.name t
 git checkout -q -b feat/add-due-dates
+"$KDEVKIT_TOOLS/feature-loop" install >/dev/null
 mkdir -p specs/feature
 cat > specs/feature/add-due-dates.md <<'MD'
 # Feature: add-due-dates
+
+- Branch: `feat/add-due-dates`
 
 ## Feature Brief
 Let a to-do carry a due date.

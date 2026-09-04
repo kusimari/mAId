@@ -48,6 +48,8 @@ MD
 cat > specs/feature/trim-dashes.md <<'MD'
 # Feature: trim leading and trailing dashes
 
+- Branch: `feat/trim-dashes`
+
 ## Feature Brief
 A title with punctuation at either end no longer produces a slug with
 leading or trailing dashes.
@@ -100,6 +102,7 @@ MD
 chmod +x src/slug.sh test.sh lint.sh
 git add -A && git commit -q -m "plan(trim-dashes): initial spec"
 git checkout -q -b feat/trim-dashes
+"$KDEVKIT_TOOLS/feature-loop" install >/dev/null
 git commit -q --allow-empty -m "feat(slug): lower-case and dash-separate"
 --- assert ---
 set -e
