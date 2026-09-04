@@ -1002,7 +1002,7 @@ partly, `[ ]` not started.
   why. Statement 18.
 - [ ] 15 · **Add self-description**: the framework's shape, printed from
   the same source the enforcement uses. Statement 17.
-- [ ] 16 · **Reachability**: name the install and verify steps in the
+- [x] 16 · **Reachability**: name the install and verify steps in the
   prose, and substitute the tool's real path at install time. Without this
   no real deployment wires anything up.
 - [x] 17 · Make every refusal name what would resolve it.
@@ -1010,7 +1010,7 @@ partly, `[ ]` not started.
   in shell and nothing checks it.
 - [ ] 19 · Authored merge summary. Statement 20.
 - [ ] 20 · Per-stage capability limits where the agent supports them.
-- [ ] 21 · Rebuild the agent fixtures around correction burden, seeded
+- [~] 21 · Rebuild the agent fixtures around correction burden, seeded
   with real formats; three samples per agent, fresh and under load, ratios
   recorded.
 - [x] 22 · **Rename the artefacts for the loop they serve**: the checker
@@ -1020,7 +1020,7 @@ partly, `[ ]` not started.
 - [x] 23 · **Move verification evidence out of shared config** into the
   per-worktree git directory, so two features in flight cannot overwrite
   each other. Test with two worktrees.
-- [ ] 24 · **Re-point the four existing fixtures** that read the handoff's
+- [x] 24 · **Re-point the four existing fixtures** that read the handoff's
   `Phase:` field at the branch record — `kdevkit-closure`,
   `kdevkit-handoff-resume`, `kdevkit-consolidated-resume`,
   `kdevkit-phase-boundary`.
