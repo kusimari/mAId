@@ -909,7 +909,10 @@ fn a_close_commit_records_closure_without_anyone_advancing() {
 
     std::fs::write(f.path().join("src.txt"), "closing\n").unwrap();
     git_ok(f.path(), &["add", "-A"]);
-    git_ok(f.path(), &["commit", "-q", "-m", "close(x): archive the spec"]);
+    git_ok(
+        f.path(),
+        &["commit", "-q", "-m", "close(x): archive the spec"],
+    );
     assert_eq!(
         f.recorded_stage(),
         "closure",
