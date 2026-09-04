@@ -1273,6 +1273,53 @@ fn install_wires_the_hooks_and_uninstall_removes_them() {
 }
 
 #[test]
+fn install_never_chains_a_kdevkit_hook_to_itself() {
+    // A real agent run hit this: another checkout's copy of the same hook
+    // has a different path, passed a path-equality guard, and got chained —
+    // so prepare-commit-msg called itself until the shell died at depth
+    // 1000, which bricks committing. Identify ours by content, not path.
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("p");
+    let twin = tmp.path().join("another-checkout-of-kdevkit/hooks");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::create_dir_all(&twin).unwrap();
+    // A copy of our own hooks at a different path.
+    for h in ["prepare-commit-msg", "pre-push"] {
+        std::fs::copy(tools_dir().join("hooks").join(h), twin.join(h)).unwrap();
+    }
+
+    git_ok(&repo, &["init", "-q", "-b", "main", "."]);
+    git_ok(&repo, &["config", "user.email", "d@e.f"]);
+    git_ok(&repo, &["config", "user.name", "d"]);
+    git_ok(&repo, &["config", "core.hooksPath", twin.to_str().unwrap()]);
+
+    let (code, out) = phase(&repo, &["install"]);
+    assert_eq!(code, 0, "install failed:\n{out}");
+    assert!(
+        !out.contains("chained existing"),
+        "install must not chain a copy of itself:\n{out}"
+    );
+    for key in ["kdevkit.chain.prepareCommitMsg", "kdevkit.chain.prePush"] {
+        assert_eq!(
+            git(&repo, &["config", "--get", key]).0,
+            1,
+            "{key} must not be set to a copy of our own hook"
+        );
+    }
+
+    // And committing must actually work rather than recursing to death.
+    std::fs::create_dir_all(repo.join("specs/feature")).unwrap();
+    std::fs::write(
+        repo.join("specs/feature/f.md"),
+        "# F\n\n- Branch: `main`\n\n## Handoff\n",
+    )
+    .unwrap();
+    git_ok(&repo, &["add", "-A"]);
+    let (code, out) = git(&repo, &["commit", "-q", "-m", "chore: init"]);
+    assert_eq!(code, 0, "committing must not recurse:\n{out}");
+}
+
+#[test]
 fn install_does_not_silently_displace_an_existing_hook() {
     let tmp = TempDir::new().unwrap();
     let repo = tmp.path().join("p");

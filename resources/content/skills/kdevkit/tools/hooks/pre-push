@@ -1,4 +1,6 @@
 #!/bin/sh
+# kdevkit-feature-loop-hook — sentinel: install uses this to recognise
+# a copy of itself at any path and refuse to chain to it (infinite recursion).
 # Refuse to publish a branch whose state does not add up, and verify the
 # dev loop by RUNNING its checks rather than trusting a report that they
 # were run.

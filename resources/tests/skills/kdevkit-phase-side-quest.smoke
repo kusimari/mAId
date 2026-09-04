@@ -104,12 +104,14 @@ Kdevkit-Feature-Stage: dev"
 set -e
 # The side quest happened, on main, where it belongs.
 git log main --oneline | grep -qiE 'typo|readme|greeting'
-test -z "$(grep -F 'greting' README.md 2>/dev/null || true)"
+# Read main's copy explicitly: the fix belongs there, and the working tree
+# may be on either branch when this runs.
+test -z "$(git show main:README.md 2>/dev/null | grep -F 'greting' || true)"
 # A commit on main must carry no feature stage — the machinery is inert
 # outside a kdevkit feature branch.
 test -z "$(git log main --format='%B' | grep -E 'Kdevkit-Feature-Stage|Kdevkit-Feature-Ack|Return-To' || true)"
 # The feature came back and finished: the flag works and tests cover R2.
-git checkout -q feat/uppercase-flag
+git checkout -q feat/uppercase-flag 2>/dev/null || git checkout -q -f feat/uppercase-flag
 out=$(sh src/greet.sh -u World); [ "$out" = "HELLO, WORLD!" ]
 grep -qF 'HELLO, WORLD!' test.sh
 sh test.sh >/dev/null

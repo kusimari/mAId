@@ -1,4 +1,6 @@
 #!/bin/sh
+# kdevkit-feature-loop-hook — sentinel: install uses this to recognise
+# a copy of itself at any path and refuse to chain to it (infinite recursion).
 # Stamp the feature stage into the commit message, and refuse a commit
 # whose claim the repository contradicts.
 #

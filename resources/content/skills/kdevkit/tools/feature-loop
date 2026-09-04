@@ -14,6 +14,9 @@ TRAILER_STAGE="Kdevkit-Feature-Stage"
 TRAILER_RETURN="Kdevkit-Feature-Return"
 TRAILER_ACK="Kdevkit-Feature-Ack"
 TRAILER_EXCEPTION="Kdevkit-Feature-Exception"
+# Sentinel identifying a hook as ours, so install can recognise a copy of
+# itself at any path rather than only at the one it knows about.
+MARKER="kdevkit-feature-loop-hook"
 
 die() { echo "phase: $*" >&2; exit 2; }
 usage() {
@@ -605,7 +608,13 @@ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
     [ -d "$hooks" ] || die "no hooks directory at $hooks"
 
     prev=$(git config --get core.hooksPath 2>/dev/null || true)
-    if [ -n "$prev" ] && [ "$prev" != "$hooks" ]; then
+    # Never chain a kdevkit hook to itself. Comparing paths is not enough:
+    # another checkout's copy of the same hook has a different path, and
+    # chaining it makes prepare-commit-msg call itself until the shell dies
+    # at depth 1000 — which bricks committing entirely. Found by an agent
+    # run, not by any test. Identify ours by content, not location.
+    if [ -n "$prev" ] && [ "$prev" != "$hooks" ] \
+       && ! grep -qs "$MARKER" "$prev/prepare-commit-msg" "$prev/pre-push"; then
         # Remember the displaced hooks so ours can call them.
         for h in prepare-commit-msg pre-push; do
             [ -x "$prev/$h" ] || continue
