@@ -441,21 +441,36 @@ cmd_return() {
 # leaving the record behind reality: an agent that commits implementation
 # work is in dev whether or not it said so.
 #
-# Only stages with an observable signature are derived. Review and closure
-# are human acts with no fact that distinguishes them, so they are never
-# inferred — they must be recorded deliberately.
+# Only stages with an observable signature are derived: planning from a
+# plan commit, dev from an implementation commit, closure from a close
+# commit. Review has no signature — nothing a commit contains distinguishes
+# "a human has reviewed this" — so review is never inferred and must be
+# recorded deliberately.
 # `$1` is the subject of the commit being prepared, which is not in
 # history yet — the stamp runs before the commit exists, so without this
 # a commit's own evidence could not count toward its own stage.
 implied_stage() {
     pending=${1:-}
-    if printf '%s' "$pending" | grep -qE '^(feat|fix|refactor|perf|test)(\(|!|:)' || has_work_commit; then
+    # kdevkit's own convention gives closure an observable signature: a
+    # `close(...)` commit is what closing a feature produces. Found by an
+    # agent that did the closure work correctly without calling `advance`,
+    # leaving the record behind reality — the same class of bug the
+    # derivation exists to prevent, one stage further along.
+    if printf '%s' "$pending" | grep -qE '^close(\(|!|:)' || has_close_commit; then
+        echo closure
+    elif printf '%s' "$pending" | grep -qE '^(feat|fix|refactor|perf|test)(\(|!|:)' || has_work_commit; then
         echo dev
     elif printf '%s' "$pending" | grep -qE '^(plan|docs)(\(|!|:)' || has_plan_commit; then
         echo planning
     else
         echo ""
     fi
+}
+
+has_close_commit() {
+    rng=$(range)
+    [ -n "$rng" ] || return 1
+    git log --no-decorate --format='%s' "$rng" 2>/dev/null | grep -qE '^close(\(|!|:)'
 }
 
 # Stage ordering, for taking the later of two. A record may move forward

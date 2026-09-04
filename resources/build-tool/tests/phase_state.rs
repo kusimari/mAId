@@ -896,9 +896,32 @@ fn a_return_rewinds_what_counts_as_evidence() {
 }
 
 #[test]
-fn review_and_closure_are_never_inferred_from_facts() {
-    // They are human acts with no observable signature. Inferring them would
-    // let the machinery claim a review happened that never did.
+fn a_close_commit_records_closure_without_anyone_advancing() {
+    // Found by an agent that did the closure work correctly but never called
+    // `advance`, leaving the record at dev. kdevkit's own convention gives
+    // closure a signature -- a `close(...)` commit -- so it is derivable.
+    let f = Fixture::new();
+    f.start_feature("feat/x");
+    std::fs::write(f.path().join("src.txt"), "implemented\n").unwrap();
+    git_ok(f.path(), &["add", "-A"]);
+    git_ok(f.path(), &["commit", "-q", "-m", "feat: implement"]);
+    assert_eq!(f.recorded_stage(), "dev");
+
+    std::fs::write(f.path().join("src.txt"), "closing\n").unwrap();
+    git_ok(f.path(), &["add", "-A"]);
+    git_ok(f.path(), &["commit", "-q", "-m", "close(x): archive the spec"]);
+    assert_eq!(
+        f.recorded_stage(),
+        "closure",
+        "a close() commit is closure, said or not"
+    );
+}
+
+#[test]
+fn review_is_never_inferred_because_nothing_observable_marks_it() {
+    // Review alone has no signature: nothing a commit contains distinguishes
+    // "a human has reviewed this". Inferring it would let the machinery claim
+    // a review happened that never did.
     let f = Fixture::new();
     f.start_feature("feat/x");
     f.write_spec("feat/x", &["- [x] 1 · done"]);
