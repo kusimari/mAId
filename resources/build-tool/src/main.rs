@@ -9,7 +9,7 @@
 //!   just resources::status-skills [agent]     report each managed symlink's current state
 //!   just resources::smoke-skills [agent]      verify against the deployed tree
 //!   just resources::verify-skills [agent]     both verification stages
-//! An optional `--agent <claude|kiro|codex>` scopes any of them to one
+//! An optional `--agent <claude|kiro|codex|agy>` scopes any of them to one
 //! coding agent (the verification verbs take a comma list); the default
 //! is all of them.
 
@@ -41,7 +41,7 @@ struct VerifyArgs {
     /// Comma-separated kinds; default every kind this stage owns.
     #[arg(long)]
     kind: Option<String>,
-    /// Scope to one or more coding agents (claude|kiro|codex, comma
+    /// Scope to one or more coding agents (claude|kiro|codex|agy, comma
     /// separated); default all.
     #[arg(long)]
     agent: Option<String>,
@@ -63,7 +63,7 @@ struct DeployArgs {
     /// Act even where something not ours is in the way.
     #[arg(long)]
     force: bool,
-    /// Scope to one coding agent (claude|kiro|codex); default all.
+    /// Scope to one coding agent (claude|kiro|codex|agy); default all.
     #[arg(long)]
     agent: Option<String>,
 }
