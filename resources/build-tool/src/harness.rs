@@ -790,6 +790,16 @@ pub fn invocation(
                 cwd: None,
             }
         }
+        Agent::Agy => Invocation {
+            program: owned("agy"),
+            args: vec![
+                owned("--print"),
+                owned("--dangerously-skip-permissions"),
+                prompt.to_string(),
+            ],
+            reply_file: None,
+            cwd: workdir.map(Path::to_path_buf),
+        },
     }
 }
 
@@ -803,6 +813,7 @@ pub fn agent_available(agent: Agent) -> bool {
         Agent::Claude => "claude",
         Agent::Kiro => "kiro-cli",
         Agent::Codex => "codex",
+        Agent::Agy => "agy",
     };
     std::env::var_os("PATH")
         .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
@@ -1958,6 +1969,7 @@ FAIL — omits the guardrail entirely";
             (Agent::Claude, "claude"),
             (Agent::Kiro, "kiro-cli"),
             (Agent::Codex, "codex"),
+            (Agent::Agy, "agy"),
         ] {
             let inv = invocation(agent, "the-prompt", Authority::ReadOnly, None, reply);
             assert_eq!(inv.program, program);
