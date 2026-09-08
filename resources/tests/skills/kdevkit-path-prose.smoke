@@ -127,5 +127,12 @@ stage=$(awk '/^## Handoff/{f=1;next} /^## /{f=0} f' specs/feature/uppercase-flag
 printf '%s' "$stage" | grep -qE '^(dev|review)$'
 # The crossings list is append-only: the opening line must still be there.
 grep -qF '(feature opened)' specs/feature/uppercase-flag.md
+# The work is COMMITTED, not merely edited. Without this the prose arm is
+# satisfiable by uncommitted file changes while the tooling arm requires a
+# commit to carry its trailer -- so the two arms would demand different things
+# and the comparison between them would measure the difference in demand
+# rather than the difference in mechanism.
+test -z "$(git status --porcelain -- src test.sh specs || true)"
+git log --no-decorate --oneline | grep -qE ' (feat|fix|refactor|test)(\(|:)'
 # One path only: no trailers were written, since no tooling was installed.
 test -z "$(git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' | grep . || true)"
