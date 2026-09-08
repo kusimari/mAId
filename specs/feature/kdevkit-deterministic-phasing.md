@@ -185,7 +185,17 @@ decision against it.
 21. With none of this installed, kdevkit behaves as it does today.
 22. Statements 1-19 hold on claude, codex and kiro. Antigravity is intended
     and untested — see above.
-23. A feature built by a different builder using different tooling is
+23. Every verb has a defined, checkable record on **both** paths: a trailer
+    on the tooling path, a `Crossings` line on the prose path.
+24. A feature's path is determinable from the repository, and the tooling
+    refuses to install onto a branch already carrying prose crossings
+    unless explicitly overridden.
+25. The prose path's `Crossings` log is append-only, so returns are
+    countable there too.
+26. **The tooling path is measurably better than the prose path** — same
+    scenarios, same agents, and the tooling path holds where prose drifts.
+    If it does not, this feature is not worth its cost.
+27. A feature built by a different builder using different tooling is
     still readable: kdevkit needs the repository, the specs and the
     branch's commits, and nothing else. No database, no service, no state
     outside the repo, and nothing that must have been present while the
@@ -280,6 +290,89 @@ migration and without ambiguity about which loop a line refers to. A bare
 arrives; a name that says which loop it belongs to will not.
 
 ## The design
+
+### The invariant, and two ways to keep it
+
+**Every stage boundary is crossed with judgement, and the crossing is
+recorded. A stage that ended without a record did not finish.** That is the
+invariant. Everything below is mechanism for keeping it.
+
+There are two mechanisms, and they are **equals rather than a primary and a
+fallback**:
+
+| | Tooling path | Prose path |
+|---|---|---|
+| Where the record lives | commit trailers on the branch | the spec's `## Handoff` section |
+| Who writes it | git, via a hook | the builder |
+| Verbs | `show` `advance` `return` `except` `verify` | the same five, carried out by hand |
+| Counts | free — trailers are append-only | require an append-only log (below) |
+| Available | wherever the tooling installs | always |
+
+The verbs are deliberately identical. A builder learns one vocabulary, and
+what changes between paths is only where the record is written. An earlier
+draft framed prose as a degraded fallback, which was wrong twice over: prose
+is the only path on some runtimes, and two vocabularies for one concept is
+worse than one.
+
+**Same verbs must mean same records, or unifying the names loses the
+guarantee.** Each verb has a defined outcome in both paths — a trailer, or a
+line in the spec — so "I advanced" is checkable either way rather than being
+a claim.
+
+### The prose path's record
+
+The handoff block today is replaced wholesale on each crossing. That works
+for current state and destroys history — which in the tooling path is where
+counts come from. So the prose record has two parts:
+
+```markdown
+## Handoff
+
+- **Stage:** dev
+- **Ready for:** review, once the gates pass
+- **Carry forward:** `tr` is available; no new dependency
+- **Deliberately left:** long-form `--upper` alias
+
+### Crossings
+<!-- Append one line per crossing. Never edit or delete a line;
+     the history is what makes repeated returns visible. -->
+- planning → dev
+- dev → planning · RETURN · fault: requirements · issue: warning
+  suppression was never specified · fix: amend R2 and extend the tests ·
+  done when: warnings are suppressed with the flag
+- planning → dev
+- dev → review · EXCEPTION · skipping: the dev gates · why: deadline,
+  follow-up filed as #12
+```
+
+Current state is replaced; **Crossings is append-only**. That is what makes
+prose equivalent to trailers rather than a lossy imitation: the stage is on
+the first line, a return's reasoning is unmissable, and the count of returns
+is a `grep`.
+
+What the prose path deliberately does **not** record: who acknowledged a
+move. It matters for audit and not for deciding what to do next, and prose is
+expensive enough that the marginal line should earn its place.
+
+### One path per feature
+
+**A feature is done on the path it started on.** Mixing splits the record
+across two stores so that neither is complete, and a later builder reads half
+the truth without knowing it.
+
+Telling which path a feature is on is cheap, and the skill states the test
+rather than leaving a resuming builder to guess: **does this branch carry
+`Kdevkit-Feature-Stage` trailers?** If yes it is the tooling path — trust git,
+do not hand-write crossings. If no it is the prose path — trust the spec.
+
+Switching mid-feature is possible and lossy: existing crossings stay in prose
+while new ones become trailers, leaving the branch permanently half-and-half.
+So the tooling **refuses to install on a branch that already has prose
+crossings**, with an explicit override for someone who means it. That is the
+one place the design enforces something other than record consistency, and it
+is justified on the same grounds: a split record is not a judgement being
+blocked, it is a record that cannot be read.
+
 
 Four pieces. Only one of them is new code, and it is small.
 
@@ -1058,6 +1151,18 @@ partly, `[ ]` not started.
   — clone, run the checker, get a truthful answer or an honest
   "cannot determine".
 - [ ] 26 · Correct the inaccurate claims in the existing specs.
+- [ ] 27 · **Restructure the tools by invoker**: `driver` (what the agent
+  runs, including install), `hooks/` (what git runs), `state` (the record —
+  read, store, update). Delete the shim and `lib/`.
+- [ ] 28 · **Make the prose path first-class**: the invariant stated first,
+  the same five verbs on both paths, the `Crossings` append-only log, and
+  the test for which path a feature is on.
+- [ ] 29 · **Refuse to install onto a prose-path branch**, with an override.
+- [ ] 30 · **A/B the two paths on real agents** (statement 26). Same
+  scenarios on both, three agents. This is the experiment that decides
+  whether the tooling earns its keep.
+- [ ] 31 · Record the bundling/packaging gap as a backlog item: mAId ships
+  as symlinks and relative paths rather than as an installed unit.
 
 ## Still open
 
