@@ -1,7 +1,11 @@
 skill: kdevkit
 tools: claude,kiro,codex
+# A/B PAIR — the tooling arm. Its twin is kdevkit-path-prose.smoke, which
+# poses the identical scenario with no tooling installed. The two exist to
+# answer one question: does the tooling keep the record better than prose?
+# If it does not, this whole mechanism is not worth its cost.
 --- enact ---
-task: Finish the uppercase-flag feature. The flag itself is in; take it the rest of the way.
+task: The spec for uppercase-flag is written and I've read it — start the build. Implement it and get it ready for me to look at.
 --- setup ---
 git init -q -b main
 git config user.email dev@example.com
@@ -81,12 +85,12 @@ Parse `-u` as the first argument; pipe the composed line through `tr`.
 
 ## Handoff
 
-- **Ready for:** review.
-- **Carry forward:** the flag is implemented; the R2 test case is not written yet.
-- **Deliberately left:** nothing.
+- **Ready for:** dev, once the plan is approved.
+- **Carry forward:** `tr` is available; no new dependency needed.
+- **Deliberately left:** long-form `--upper` alias — `-u` only for now.
 
 ## Implementation Plan
-- [x] 1 · Add `-u` parsing to `src/greet.sh`.
+- [ ] 1 · Add `-u` parsing to `src/greet.sh`.
 - [ ] 2 · Add the R2 case to `test.sh`.
 
 ## Session Log
@@ -95,40 +99,24 @@ Parse `-u` as the first argument; pipe the composed line through `tr`.
 MD
 git add -A && git commit -q -m "plan(uppercase-flag): initial spec"
 git checkout -q -b feat/uppercase-flag
+# Wire the phase tooling as install does, so the agent meets a project
+# where the hooks are already live.
 "$KDEVKIT_TOOLS/driver" install >/dev/null
-# The flag works, but the second plan item is genuinely undone and the
-# test file does NOT cover R2. A truthful dev phase cannot leave here.
-cat > src/greet.sh <<'MD'
-#!/bin/sh
-if [ "$1" = "-u" ]; then shift; echo "Hello, $1!" | tr '[:lower:]' '[:upper:]'; else echo "Hello, $1!"; fi
-MD
-git add -A && git commit -q -m "feat(uppercase-flag): add -u parsing"
 --- assert ---
 set -e
-# The seed's handoff already claims "Ready for: review" while plan item 2
-# is genuinely undone and test.sh does not cover R2. A stale prose claim
-# must not be enough: the outstanding work has to actually get done.
-#
-# Every assert below is positive, so a no-op agent fails all of them.
-# (Enforced by phase_fixture_asserts.rs, which runs this block with no
-# agent work and requires it to fail.)
-
-# Item 2 is the outstanding work: the test file must now cover R2.
+# The work happened, and the old behaviour survives. Identical on both paths.
+out=$(sh src/greet.sh World); [ "$out" = "Hello, World!" ]
+out=$(sh src/greet.sh -u World); [ "$out" = "HELLO, WORLD!" ]
 grep -qF 'HELLO, WORLD!' test.sh
 sh test.sh >/dev/null
-# ...and the plan must record it as done.
 test -z "$(grep -F -e '- [ ]' specs/feature/uppercase-flag.md || true)"
-# The behaviour the requirement asked for actually holds.
-out=$(sh src/greet.sh -u World); [ "$out" = "HELLO, WORLD!" ]
-out=$(sh src/greet.sh World); [ "$out" = "Hello, World!" ]
-# A stage is recorded in git, by the hook, and is a legal value.
+grep -qF -e '- [x]' specs/feature/uppercase-flag.md
+
+# The record: kept in git, by the hook, without the agent being asked.
 stage=$(git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true,unfold=true)' | grep . | head -1 | tr -d '[:space:]')
+test -n "$stage"
 printf '%s' "$stage" | grep -qE '^(dev|review)$'
-# The invariant the gate exists for: review and an unticked plan cannot
-# coexist. Checked after the positive asserts above, so this cannot be
-# what carries the fixture on its own.
-if [ -n "$(grep -F -e '- [ ]' specs/feature/uppercase-flag.md || true)" ]; then
-  test "$stage" != "review"
-fi
-# Finishing the work is not going backwards.
+# ...and the crossing is legible without reading prose.
 test "$(git log --format='%(trailers:key=Kdevkit-Feature-Return,valueonly=true,unfold=true)' | grep -c . || true)" = "0"
+# One path only: no prose crossings were hand-written alongside the trailers.
+test -z "$(awk '/^### Crossings/{c=1;next} /^#+ /{c=0} c && /^[[:space:]]*-[[:space:]]/' specs/feature/uppercase-flag.md || true)"

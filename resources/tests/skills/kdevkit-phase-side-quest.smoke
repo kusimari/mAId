@@ -96,7 +96,7 @@ Parse `-u` as the first argument; pipe the composed line through `tr`.
 MD
 git add -A && git commit -q -m "plan(uppercase-flag): initial spec"
 git checkout -q -b feat/uppercase-flag
-"$KDEVKIT_TOOLS/feature-loop" install >/dev/null
+"$KDEVKIT_TOOLS/driver" install >/dev/null
 git commit -q --allow-empty -m "feat(uppercase-flag): begin
 
 Kdevkit-Feature-Stage: dev"

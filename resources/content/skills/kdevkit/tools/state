@@ -1,14 +1,19 @@
 #!/bin/sh
-# kdevkit feature loop — WHAT THE REPOSITORY SHOWS.
+# kdevkit feature loop — THE RECORD.
 #
-# This file only reads. It computes facts and answers whether a stage change
-# is legal; it never writes, never installs, and never decides what to do
-# about an answer. Sourced by two callers who must agree on the facts:
+# Everything that reads, stores or updates the feature's record lives here,
+# and nothing else touches git for it. The record is commit trailers on the
+# branch; this file is the only place that knows that.
 #
-#   ../driver              what a coding agent invokes
-#   ../hooks/*             what git invokes
+# It reports facts. It does NOT decide what to do about them — that is the
+# driver's job — and it installs nothing.
 #
-# Read this first: everything else is a consumer of these answers.
+# Sourced by the two callers who must agree on the record:
+#
+#   ./driver     what a coding agent invokes
+#   ./hooks/*    what git invokes
+#
+# Read this first: everything else consumes these answers.
 
 # shellcheck disable=SC2034  # constants are read by the files that source this
 STAGES="research planning dev review closure closed"
@@ -166,6 +171,29 @@ plan_items_done() {
     grep -cE '^[[:space:]]*-[[:space:]]*\[[xX]\]' "$f" 2>/dev/null || true
 }
 
+# The prose path's record: an append-only `### Crossings` list inside the
+# handoff section. Read only to answer "which path is this feature on" and
+# "would installing split the record" — the tooling never writes it.
+prose_crossings() {
+    f=$(spec_file 2>/dev/null) || { echo 0; return; }
+    [ -n "$f" ] || { echo 0; return; }
+    awk '/^### Crossings/{c=1;next} /^#{1,3} /{c=0} c && /^[[:space:]]*-[[:space:]]/' "$f" \
+        2>/dev/null | grep -c . || true
+}
+
+# Which mechanism is keeping the invariant on this branch. Stated as a fact
+# so a resuming builder never has to guess, and so install can refuse to
+# split a record that is already being kept in prose.
+record_path() {
+    if [ -n "$(stage_recorded)" ]; then
+        echo tooling
+    elif [ "$(prose_crossings)" != "0" ]; then
+        echo prose
+    else
+        echo unstarted
+    fi
+}
+
 handoff_blocks() {
     f=$(spec_file 2>/dev/null) || { echo 0; return; }
     [ -n "$f" ] || { echo 0; return; }
@@ -278,62 +306,7 @@ valid_stage() {
     return 1
 }
 
-# Conditions beyond edge legality. Returns 0 permit, 1 refuse, 3 cannot
-# determine. Prints the reason on refusal.
-preconditions() {
-    to=$1
-    if [ -z "$(spec_file 2>/dev/null)" ]; then
-        echo "cannot determine: no spec in specs/feature names branch $(branch)"
-        return 3
-    fi
-    hb=$(handoff_blocks)
-    if [ "$hb" != "1" ]; then
-        echo "refused: the spec must have exactly one '## Handoff' section, found $hb"
-        echo "  to resolve: leave one block and delete the others"
-        return 1
-    fi
-    r=$(open_return)
-    if [ -n "$r" ]; then
-        echo "refused: a return to '$r' is the newest thing on this branch"
-        echo "  to resolve: do the work it asks for and commit it; that discharges the return"
-        return 1
-    fi
-    case "$to" in
-        dev)
-            if ! has_plan_commit; then
-                echo "refused: the spec is not committed yet"
-                echo "  to resolve: commit the spec as plan(<feature>): ..."
-                return 1
-            fi
-            ;;
-        review)
-            if ! has_work_commit; then
-                echo "refused: no implementation commit on this branch"
-                echo "  to resolve: commit the work, or record an exception if there is genuinely none"
-                return 1
-            fi
-            open=$(plan_items_open)
-            if [ "$open" != "0" ]; then
-                echo "refused: $open implementation plan item(s) still unticked"
-                echo "  to resolve: tick them, or run 'except --skipping \"plan items\" --why ...'"
-                return 1
-            fi
-            if ! checks_verified; then
-                echo "refused: the gates have not been observed passing on this tree"
-                echo "  to resolve: run 'feature-loop verify', or record an exception"
-                return 1
-            fi
-            ;;
-        closure)
-            if ! remote_branch_exists; then
-                echo "refused: branch $(branch) is not on the remote, so it cannot have been reviewed"
-                echo "  to resolve: push it, or record an exception if review happened elsewhere"
-                return 1
-            fi
-            ;;
-    esac
-    return 0
-}
+
 
 # The stage the repository itself implies, regardless of what was last
 # recorded or asked for. This is what stops a forgotten `advance` from

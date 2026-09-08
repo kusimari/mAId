@@ -114,7 +114,7 @@ MD
 chmod +x src/greet.sh test.sh
 git add -A && git commit -q -m "plan(uppercase-flag): initial spec"
 git checkout -q -b feat/uppercase-flag
-"$KDEVKIT_TOOLS/feature-loop" install >/dev/null
+"$KDEVKIT_TOOLS/driver" install >/dev/null
 git commit -q --allow-empty -m "feat(uppercase-flag): implement and test
 
 Kdevkit-Feature-Stage: review"

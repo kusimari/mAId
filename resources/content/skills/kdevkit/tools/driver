@@ -1,26 +1,27 @@
 #!/bin/sh
 # kdevkit feature loop — WHAT A CODING AGENT INVOKES.
 #
-# The driver side. A builder runs these verbs to ask where the work stands,
-# to move it on, to go back, or to proceed past a gate on the record. Every
-# verb prints the facts it acted on, so an answer can never hide its inputs.
+# Everything a builder runs: wiring git once, then asking where the work
+# stands, moving it on, going back, or proceeding past a gate on the record.
+# Every verb prints the facts it acted on, so an answer never hides its
+# inputs.
 #
-# It decides nothing a builder should decide. It refuses what the repository
-# contradicts and says what would resolve it; it never refuses a judgement.
+# This file decides. It refuses what the repository contradicts and says what
+# would resolve it — but it never refuses a judgement, only an inconsistent
+# or unarticulated record.
 #
-#   ./install     wires git so the hooks run          (installer side)
-#   ./lib/state.sh   what the repository shows         (facts, read-only)
-#   ./hooks/*     what git invokes                     (recording side)
+#   ./state      the record: read, store, update       (all git access)
+#   ./hooks/*    what git invokes                      (recording side)
 set -eu
 
-# shellcheck source=lib/state.sh
+# shellcheck source=state
 # shellcheck disable=SC1007  # CDPATH= is deliberate, not a typo
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-. "$HERE/lib/state.sh"
+. "$HERE/state"
 
 usage() {
     cat >&2 <<'USAGE'
-usage: feature-loop <command> [options]
+usage: driver <command> [options]
 
   ASKING
     show                             where does this feature stand?
@@ -45,6 +46,61 @@ USAGE
     exit 2
 }
 
+preconditions() {
+    to=$1
+    if [ -z "$(spec_file 2>/dev/null)" ]; then
+        echo "cannot determine: no spec in specs/feature names branch $(branch)"
+        return 3
+    fi
+    hb=$(handoff_blocks)
+    if [ "$hb" != "1" ]; then
+        echo "refused: the spec must have exactly one '## Handoff' section, found $hb"
+        echo "  to resolve: leave one block and delete the others"
+        return 1
+    fi
+    r=$(open_return)
+    if [ -n "$r" ]; then
+        echo "refused: a return to '$r' is the newest thing on this branch"
+        echo "  to resolve: do the work it asks for and commit it; that discharges the return"
+        return 1
+    fi
+    case "$to" in
+        dev)
+            if ! has_plan_commit; then
+                echo "refused: the spec is not committed yet"
+                echo "  to resolve: commit the spec as plan(<feature>): ..."
+                return 1
+            fi
+            ;;
+        review)
+            if ! has_work_commit; then
+                echo "refused: no implementation commit on this branch"
+                echo "  to resolve: commit the work, or record an exception if there is genuinely none"
+                return 1
+            fi
+            open=$(plan_items_open)
+            if [ "$open" != "0" ]; then
+                echo "refused: $open implementation plan item(s) still unticked"
+                echo "  to resolve: tick them, or run 'except --skipping \"plan items\" --why ...'"
+                return 1
+            fi
+            if ! checks_verified; then
+                echo "refused: the gates have not been observed passing on this tree"
+                echo "  to resolve: run 'feature-loop verify', or record an exception"
+                return 1
+            fi
+            ;;
+        closure)
+            if ! remote_branch_exists; then
+                echo "refused: branch $(branch) is not on the remote, so it cannot have been reviewed"
+                echo "  to resolve: push it, or record an exception if review happened elsewhere"
+                return 1
+            fi
+            ;;
+    esac
+    return 0
+}
+
 cmd_facts() {
     in_repo
     echo "branch=$(branch)"
@@ -63,6 +119,8 @@ cmd_facts() {
     echo "tree=$(tree_hash)"
     echo "verified_tree=$(verified_tree)"
     echo "checks_verified=$(yn checks_verified)"
+    echo "record_path=$(record_path)"
+    echo "prose_crossings=$(prose_crossings)"
 }
 
 cmd_show() {
@@ -284,6 +342,76 @@ cmd_where() {
     (CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 }
 
+cmd_install() {
+    in_repo
+    force=no
+    [ "${1:-}" = "--force" ] && force=yes
+    # A feature is finished on the path it started on. Installing onto a
+    # branch already keeping its record in prose would leave the crossings
+    # split across two stores, so a later builder reads half the truth
+    # without knowing it. This is the one refusal that is not about an
+    # inconsistent record being written — it is about a record that could
+    # not be read afterwards.
+    if [ "$(record_path)" = prose ] && [ "$force" = no ]; then
+        echo "refused: this branch already keeps its record in prose" >&2
+        echo "  $(prose_crossings) crossing(s) are recorded in $(spec_file)" >&2
+        echo "  Installing now would split the record across two stores." >&2
+        echo "  to resolve: finish this feature on the prose path, or pass" >&2
+        echo "              --force if you accept a half-and-half record" >&2
+        return 1
+    fi
+    # shellcheck disable=SC1007  # CDPATH= is deliberate, not a typo
+    # shellcheck disable=SC1007  # CDPATH= is deliberate, not a typo
+
+    hooks="$HERE/hooks"
+    [ -d "$hooks" ] || die "no hooks directory at $hooks"
+
+    prev=$(git config --get core.hooksPath 2>/dev/null || true)
+    # Never chain a kdevkit hook to itself. Comparing paths is not enough:
+    # another checkout's copy of the same hook has a different path, and
+    # chaining it makes prepare-commit-msg call itself until the shell dies
+    # at depth 1000 — which bricks committing entirely. Found by an agent
+    # run, not by any test. Identify ours by content, not location.
+    if [ -n "$prev" ] && [ "$prev" != "$hooks" ] \
+       && ! grep -qs "$MARKER" "$prev/prepare-commit-msg" "$prev/pre-push"; then
+        # Remember the displaced hooks so ours can call them.
+        for h in prepare-commit-msg pre-push; do
+            [ -x "$prev/$h" ] || continue
+            key=$(printf '%s' "$h" | awk -F- '{printf "%s", $1; for(i=2;i<=NF;i++) printf "%s%s", toupper(substr($i,1,1)), substr($i,2)}')
+            git config "kdevkit.chain.$key" "$prev/$h"
+            echo "chained existing $h -> $prev/$h"
+        done
+    fi
+
+    scope=--local
+    if [ "$(git config --get extensions.worktreeConfig 2>/dev/null || true)" = "true" ]; then
+        scope=--worktree
+    fi
+    git config $scope core.hooksPath "$hooks"
+    # Record where the tools are so the instructions can name them
+    # portably: `$(git config kdevkit.tools)/feature-loop`. Read-only after
+    # install and identical for every worktree, so nothing contends.
+    git config kdevkit.tools "$HERE"
+    echo "hooks path set ($scope): $hooks"
+    echo "tools recorded: git config kdevkit.tools -> $HERE"
+    echo "note: declare this project's gates under '### kdevkit' in specs/project.md"
+}
+
+cmd_uninstall() {
+    in_repo
+    scope=--local
+    if [ "$(git config --get extensions.worktreeConfig 2>/dev/null || true)" = "true" ]; then
+        scope=--worktree
+    fi
+    git config $scope --unset core.hooksPath 2>/dev/null || true
+    for key in prepareCommitMsg prePush; do
+        git config --unset "kdevkit.chain.$key" 2>/dev/null || true
+    done
+    git config --unset kdevkit.tools 2>/dev/null || true
+    rm -f "$(verified_file)" 2>/dev/null || true
+    echo "hooks path unset; kdevkit state cleared"
+}
+
 [ $# -gt 0 ] || usage
 sub=$1; shift
 case $sub in
@@ -298,7 +426,7 @@ case $sub in
     applies) cmd_applies ;;
     stamp)   cmd_stamp "$@" ;;
     where)   cmd_where ;;
-    install|uninstall)
-        die "run ./install or ./install --uninstall; wiring git is a separate concern" ;;
+    install)   in_repo; cmd_install "$@" ;;
+    uninstall) in_repo; cmd_uninstall ;;
     *)       usage ;;
 esac

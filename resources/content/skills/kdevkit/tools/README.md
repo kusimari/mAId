@@ -3,13 +3,13 @@
 Split by role, so each part can be reviewed on its own. Read them in this
 order — each depends only on the ones above it.
 
-| File | Role | Writes? |
+Three files, split by **who invokes them**:
+
+| File | Invoked by | Role |
 |---|---|---|
-| `lib/state.sh` | **What the repository shows.** Facts, and whether a stage change is legal. | never |
-| `driver` | **What a coding agent invokes.** Asks where work stands, moves it on, goes back, proceeds on the record. | the intent file only |
-| `hooks/prepare-commit-msg`, `hooks/pre-push` | **What git invokes.** Records the stage as a side effect of committing; gates the push. | commit messages |
-| `install` | **Wiring git for one checkout.** Points git at the hooks; records where these tools are. | git config |
-| `feature-loop` | compatibility shim forwarding to `driver` / `install` | — |
+| `driver` | the coding agent | `install`, and every verb a builder runs. Decides; refuses an inconsistent record, never a judgement. |
+| `hooks/*` | git | records the stage as a side effect of committing; gates the push |
+| `state` | both of the above | the record itself — read, store, update. The only place that knows the record is commit trailers. |
 
 The split matters for one reason: **the stage is recorded by git, not by the
 agent.** `install` makes that possible, `hooks/*` do it, `driver` is how a
@@ -20,11 +20,19 @@ agree on.
 
 ```sh
 # once per checkout
-"$K/install"
+"$K/driver" install
 
 # afterwards, named from the repository — install records where the tools are
 "$(git config kdevkit.tools)/driver" show
 ```
+
+## The prose path
+
+The same five verbs can be carried out by hand, recorded in the spec's
+handoff section with an append-only `### Crossings` list. The two paths are
+equals, and a feature is finished on the one it started on — `driver install`
+refuses on a branch already keeping its record in prose. See `SKILL.md`,
+*Crossing a stage boundary*.
 
 Verbs, by what you are doing:
 

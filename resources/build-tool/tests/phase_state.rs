@@ -25,7 +25,7 @@ fn tools_dir() -> PathBuf {
 }
 
 fn phase_bin() -> PathBuf {
-    tools_dir().join("feature-loop")
+    tools_dir().join("driver")
 }
 
 /// Run a command in `dir`, returning (exit code, stdout+stderr).
@@ -1263,6 +1263,130 @@ fn every_refusal_says_what_would_resolve_it() {
             "{args:?} refused without naming a way forward:\n{out}"
         );
     }
+}
+
+// ── the two paths, and not mixing them ────────────────────────────
+
+/// A spec whose handoff keeps its record in prose, with an append-only
+/// crossings list — the other mechanism for the same invariant.
+fn write_prose_spec(dir: &Path, branch: &str, crossings: &[&str]) {
+    let d = dir.join("specs/feature");
+    std::fs::create_dir_all(&d).unwrap();
+    // Built line by line rather than as one long literal: a multi-line string
+    // gets its continuation indentation folded in, which silently indented
+    // the heading that terminates the crossings list.
+    let mut body = vec![
+        "# Feature".to_string(),
+        String::new(),
+        format!("- Branch: `{branch}`"),
+        String::new(),
+        "## Handoff".to_string(),
+        String::new(),
+        "- **Stage:** dev".to_string(),
+        "- **Ready for:** review".to_string(),
+        String::new(),
+        "### Crossings".to_string(),
+        String::new(),
+    ];
+    body.extend(crossings.iter().map(|c| c.to_string()));
+    body.extend([
+        String::new(),
+        "## Implementation Plan".to_string(),
+        String::new(),
+        "- [ ] 1 · x".to_string(),
+        String::new(),
+    ]);
+    std::fs::write(d.join("f.md"), body.join("\n")).unwrap();
+}
+
+#[test]
+fn an_unstarted_feature_has_no_path_yet() {
+    let f = Fixture::new();
+    git_ok(f.path(), &["checkout", "-q", "-b", "feat/x"]);
+    f.write_spec("feat/x", &["- [ ] 1 · x"]);
+    let (_, facts) = phase(f.path(), &["facts"]);
+    assert_eq!(fact(&facts, "record_path"), "unstarted", "{facts}");
+}
+
+#[test]
+fn a_branch_with_trailers_is_on_the_tooling_path() {
+    let f = Fixture::new();
+    f.start_feature("feat/x");
+    let (_, facts) = phase(f.path(), &["facts"]);
+    assert_eq!(fact(&facts, "record_path"), "tooling", "{facts}");
+}
+
+#[test]
+fn a_branch_with_prose_crossings_is_on_the_prose_path() {
+    let f = Fixture::new();
+    git_ok(f.path(), &["checkout", "-q", "-b", "feat/x"]);
+    write_prose_spec(f.path(), "feat/x", &["- planning → dev"]);
+    let (_, facts) = phase(f.path(), &["facts"]);
+    assert_eq!(fact(&facts, "record_path"), "prose", "{facts}");
+    assert_eq!(fact(&facts, "prose_crossings"), "1", "{facts}");
+}
+
+#[test]
+fn install_refuses_to_split_a_record_already_kept_in_prose() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("p");
+    std::fs::create_dir_all(&repo).unwrap();
+    git_ok(&repo, &["init", "-q", "-b", "main", "."]);
+    git_ok(&repo, &["config", "user.email", "d@e.f"]);
+    git_ok(&repo, &["config", "user.name", "d"]);
+    git_ok(
+        &repo,
+        &["commit", "-q", "--allow-empty", "-m", "chore: init"],
+    );
+    git_ok(&repo, &["checkout", "-q", "-b", "feat/x"]);
+    write_prose_spec(
+        &repo,
+        "feat/x",
+        &[
+            "- planning → dev",
+            "- dev → planning · RETURN · fault: requirements",
+        ],
+    );
+
+    let (code, out) = phase(&repo, &["install"]);
+    assert_ne!(code, 0, "install must refuse:\n{out}");
+    assert!(out.contains("already keeps its record in prose"), "{out}");
+    assert!(
+        out.contains("to resolve:"),
+        "must name the way forward:\n{out}"
+    );
+    assert_eq!(
+        git(&repo, &["config", "--get", "core.hooksPath"]).0,
+        1,
+        "nothing may have been wired"
+    );
+
+    // Someone who means it can override, because this is a judgement about
+    // an acceptable cost rather than a correctness rule.
+    let (code, out) = phase(&repo, &["install", "--force"]);
+    assert_eq!(code, 0, "--force must be honoured:\n{out}");
+    assert_eq!(git(&repo, &["config", "--get", "core.hooksPath"]).0, 0);
+}
+
+#[test]
+fn install_is_fine_on_a_feature_that_has_not_started() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("p");
+    std::fs::create_dir_all(&repo).unwrap();
+    git_ok(&repo, &["init", "-q", "-b", "main", "."]);
+    git_ok(&repo, &["config", "user.email", "d@e.f"]);
+    git_ok(&repo, &["config", "user.name", "d"]);
+    git_ok(
+        &repo,
+        &["commit", "-q", "--allow-empty", "-m", "chore: init"],
+    );
+    git_ok(&repo, &["checkout", "-q", "-b", "feat/x"]);
+    let d = repo.join("specs/feature");
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("f.md"), "# F\n\n- Branch: `feat/x`\n\n## Handoff\n").unwrap();
+
+    let (code, out) = phase(&repo, &["install"]);
+    assert_eq!(code, 0, "an unstarted feature must install cleanly:\n{out}");
 }
 
 // ── install wiring ───────────────────────────────────────────────

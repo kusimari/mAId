@@ -49,11 +49,7 @@ fn git_ok(dir: &Path, args: &[&str]) {
 }
 
 fn phase(dir: &Path, args: &[&str]) -> (i32, String) {
-    run_in(
-        dir,
-        tools_dir().join("feature-loop").to_str().unwrap(),
-        args,
-    )
+    run_in(dir, tools_dir().join("driver").to_str().unwrap(), args)
 }
 
 fn phase_ok(dir: &Path, args: &[&str]) -> String {

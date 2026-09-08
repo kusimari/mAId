@@ -14,7 +14,7 @@ project loop             ← project.md invariants. Cross-feature.
   initiative (optional)  ← groups multiple feature loops.
     feature loop         ← one branch, three phases, one squash-merge.
       ├─ planning phase    plan(<feature>): commits + Review Gate
-      ├─ dev loop          feat/fix/...: Quality → Test → Code Review → Push
+      ├─ dev loop          feat/fix/...: Code → Quality → Test → Code Review → Push
       │                    then human review: [Briefing] → Agent-dev Review Gate
       └─ closure phase     close(<feature>): reconcile + squash-merge
 ```
@@ -376,41 +376,99 @@ ticked spec is part of the dev commit, not a closure-time
 sweep. §8.1 reconcile is the safety net for slices ticked
 late or missed; the live discipline lives here.
 
-### The feature-loop tools (always-on)
+### Crossing a stage boundary (always-on)
 
-kdevkit ships a small shell tool beside these instructions. It reads git
-and the spec to tell you where a feature stands, and it installs two git
-hooks that record the stage for you so you never have to remember to.
+**Every stage boundary is crossed with judgement, and the crossing is
+recorded. A stage that ended without a record did not finish.** That is the
+rule. There are two ways to keep it, and they are equals — not a mechanism
+and a fallback.
 
-**Find it once per repository, then install it:**
-
-```sh
-K=$(ls -d ~/.claude/skills/kdevkit/tools ~/.codex/skills/kdevkit/tools \
-       ~/.kiro/skills/kdevkit/tools ~/.kiro/steering/skills/kdevkit/tools \
-       2>/dev/null | head -1)
-"$K/feature-loop" install
-```
-
-**After that, name it from the repository** — install records where it is,
-so you never need an absolute path:
-
-```sh
-"$(git config kdevkit.tools)/feature-loop" show
-```
-
-The verbs you will actually use:
+**The five verbs are the same either way.** What changes is only where the
+record is written.
 
 | Verb | When |
 |---|---|
 | `show` | at the start of any session — where does this feature stand? |
-| `verify` | before leaving dev; runs the project's own gates and records that they passed |
-| `advance --next` | when a stage's exit condition holds; the tool decides what follows |
-| `return --to <stage> --fault-entered … --issue … --expected-fix … --acceptance …` | when a fault belongs to an earlier layer |
-| `except --skipping … --why …` | when a gate cannot be passed honestly and you are proceeding anyway, on the record |
+| `verify` | before leaving dev: run the project's gates and record that they passed |
+| `advance` | a stage's exit condition holds; move on |
+| `return` | a fault belongs to an earlier layer — name the layer, the problem, the fix, and how we will know |
+| `except` | a gate cannot be passed honestly and you are proceeding anyway, on the record |
 
-If the tool is absent, everything below still applies — write the
-`## Handoff` block yourself. The tool makes the record reliable; it is not
-what makes the workflow work.
+#### Which path is this feature on?
+
+**Ask before you do anything else**, because a feature is finished on the
+path it started on:
+
+```sh
+git log --format='%(trailers:key=Kdevkit-Feature-Stage,valueonly=true)' | grep -q .
+```
+
+Trailers present → **tooling path**: trust git, run the verbs, and do not
+hand-write crossings. Nothing present, but the spec has a `### Crossings`
+list → **prose path**: trust the spec and keep writing it. Neither → the
+feature has not started, so either path is open.
+
+**Do not mix them.** A split record leaves a later builder reading half the
+truth without knowing it. If the tooling is available and the feature is
+unstarted, prefer it — the record is then written by git rather than by you.
+
+#### Tooling path
+
+Find the tools once per checkout, then wire them:
+
+```sh
+K=$(ls -d ~/.claude/skills/kdevkit/tools ~/.codex/skills/kdevkit/tools \
+       ~/.kiro/skills/kdevkit/tools ~/.kiro/steering/skills/kdevkit/tools \
+       ~/.agy/skills/kdevkit/tools 2>/dev/null | head -1)
+"$K/driver" install
+```
+
+Install records where the tools are, so afterwards name them from the
+repository and never by an absolute path:
+
+```sh
+"$(git config kdevkit.tools)/driver" show
+"$(git config kdevkit.tools)/driver" advance --next
+```
+
+Leave it installed. Two git hooks then record the stage for you as a side
+effect of committing, so there is nothing to remember. **Installing once per
+checkout is correct even with many branches in flight** — the hooks do
+nothing unless the branch they find themselves on is a kdevkit feature. The
+`uninstall` verb is for removing kdevkit, not for tidying up after a feature.
+
+Install will refuse on a branch already keeping its record in prose, rather
+than splitting it.
+
+#### Prose path
+
+Carry out the same five verbs by hand, recording each in the spec's handoff
+section. Current state is replaced; **`### Crossings` is append-only** —
+that history is what makes a repeated return visible.
+
+```markdown
+## Handoff
+
+- **Stage:** dev
+- **Ready for:** review, once the gates pass
+- **Carry forward:** `tr` is available; no new dependency
+- **Deliberately left:** long-form `--upper` alias
+
+### Crossings
+<!-- Append one line per crossing. Never edit or delete a line. -->
+- planning → dev
+- dev → planning · RETURN · fault: requirements · issue: warning
+  suppression was never specified · fix: amend R2 and extend the tests ·
+  done when: warnings are suppressed with the flag
+- planning → dev
+- dev → review · EXCEPTION · skipping: the dev gates · why: deadline,
+  follow-up filed as #12
+```
+
+A `return` still needs all four parts and an `except` still needs both; the
+verb is unchanged, only the place you write it. Recording who acknowledged a
+move is deliberately not part of the prose path — it is audit rather than
+decision, and prose costs more than a trailer.
 
 ### The spec is the handoff record (always-on)
 
@@ -429,8 +487,8 @@ Two rules that keep it honest:
 
 - **The live phase is not in this block.** It is a trailer on the
   branch's commits, written by git at commit time rather than by you.
-  Read it with `feature-loop show`; move it with `feature-loop advance --next` or
-  `feature-loop return`. Nothing you write in the block sets it, so a
+  Read it with `driver show`; move it with `driver advance --next` or
+  `driver return`. Nothing you write in the block sets it, so a
   `Phase:` line here is a leftover and should be deleted.
 
 - **Rewrite the block, never append — and re-author every field.**

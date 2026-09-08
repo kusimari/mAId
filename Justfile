@@ -31,10 +31,8 @@ lint: lint-shell
 # "library function looks unused". Warnings and errors still fail.
 lint-shell:
     shellcheck -s sh -S warning \
-        resources/content/skills/kdevkit/tools/feature-loop \
         resources/content/skills/kdevkit/tools/driver \
-        resources/content/skills/kdevkit/tools/install \
-        resources/content/skills/kdevkit/tools/lib/state.sh \
+        resources/content/skills/kdevkit/tools/state \
         resources/content/skills/kdevkit/tools/hooks/*
 
 check:

@@ -3,7 +3,7 @@
 #
 # The recording side. git runs this, not the agent, which is the whole point:
 # the stage is written as a side effect of committing rather than by anyone
-# remembering to write it. Installed by ../install; reads ../lib/state.sh
+# remembering to write it. Installed by `../driver install`; reads ../state
 # via ../driver.
 #
 # kdevkit-feature-loop-hook — sentinel: ../install uses this to recognise

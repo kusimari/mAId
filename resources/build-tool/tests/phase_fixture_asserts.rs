@@ -66,6 +66,10 @@ const PHASE_FIXTURES: &[&str] = &[
     "kdevkit-phase-gate-holds.smoke",
     "kdevkit-phase-return-to-plan.smoke",
     "kdevkit-phase-side-quest.smoke",
+    // The A/B pair. Both arms must detect a no-op agent, or the comparison
+    // between them measures nothing.
+    "kdevkit-path-tooling.smoke",
+    "kdevkit-path-prose.smoke",
 ];
 
 #[test]
