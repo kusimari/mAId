@@ -1,5 +1,12 @@
 #!/bin/sh
-# kdevkit-feature-loop-hook — sentinel: install uses this to recognise
+# kdevkit feature loop — WHAT GIT INVOKES.
+#
+# The recording side. git runs this, not the agent, which is the whole point:
+# the stage is written as a side effect of committing rather than by anyone
+# remembering to write it. Installed by ../install; reads ../lib/state.sh
+# via ../driver.
+#
+# kdevkit-feature-loop-hook — sentinel: ../install uses this to recognise
 # a copy of itself at any path and refuse to chain to it (infinite recursion).
 # Stamp the feature stage into the commit message, and refuse a commit
 # whose claim the repository contradicts.
@@ -14,8 +21,8 @@ MSG_FILE=${1:-}
 
 # shellcheck disable=SC1007  # CDPATH= is deliberate, not a typo
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-LOOP="$here/../feature-loop"
-[ -x "$LOOP" ] || exit 0
+DRIVER="$here/../driver"
+[ -x "$DRIVER" ] || exit 0
 
 # Hand off to whatever hook was here before us, so pointing git at this
 # directory does not silently disable someone's existing tooling.
@@ -27,7 +34,7 @@ chain() {
 
 # Do nothing outside a kdevkit feature: not the default branch, not an
 # unrelated branch, not initiative-level work.
-if ! "$LOOP" applies >/dev/null 2>&1; then
+if ! "$DRIVER" applies >/dev/null 2>&1; then
     chain "$@"
     exit 0
 fi
@@ -44,7 +51,7 @@ if [ -f "$intent" ]; then
     if [ -n "$want" ] && [ "$deliberate" = no ]; then
         # A recorded intent to move forward must still hold at commit
         # time; the tree may have changed since it was recorded.
-        if ! out=$("$LOOP" check --to "$want" 2>&1); then
+        if ! out=$("$DRIVER" check --to "$want" 2>&1); then
             echo "kdevkit: refusing this commit." >&2
             echo "$out" | sed -n '/^refused:\|^cannot determine:/p' >&2
             echo "Resolve it, or record a deliberate move: 'feature-loop return ...'" >&2
@@ -64,7 +71,7 @@ fi
 # The subject of the message being written is evidence about this commit's
 # own stage, and it is not in history yet.
 subject=$(sed -n '/^[^#]/{p;q;}' "$MSG_FILE" 2>/dev/null || true)
-block=$("$LOOP" stamp --subject "$subject") || exit 0
+block=$("$DRIVER" stamp --subject "$subject") || exit 0
 [ -n "$block" ] || { chain "$@"; exit 0; }
 
 # interpret-trailers places each line in the footer, creating one if the

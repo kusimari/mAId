@@ -1,5 +1,12 @@
 #!/bin/sh
-# kdevkit-feature-loop-hook — sentinel: install uses this to recognise
+# kdevkit feature loop — WHAT GIT INVOKES.
+#
+# The recording side. git runs this, not the agent, which is the whole point:
+# the stage is written as a side effect of committing rather than by anyone
+# remembering to write it. Installed by ../install; reads ../lib/state.sh
+# via ../driver.
+#
+# kdevkit-feature-loop-hook — sentinel: ../install uses this to recognise
 # a copy of itself at any path and refuse to chain to it (infinite recursion).
 # Refuse to publish a branch whose state does not add up, and verify the
 # dev loop by RUNNING its checks rather than trusting a report that they
@@ -8,8 +15,8 @@ set -eu
 
 # shellcheck disable=SC1007  # CDPATH= is deliberate, not a typo
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-LOOP="$here/../feature-loop"
-[ -x "$LOOP" ] || exit 0
+DRIVER="$here/../driver"
+[ -x "$DRIVER" ] || exit 0
 
 chain() {
     prev=$(git config --get kdevkit.chain.prePush 2>/dev/null || true)
@@ -17,7 +24,7 @@ chain() {
     return 0
 }
 
-if ! "$LOOP" applies >/dev/null 2>&1; then
+if ! "$DRIVER" applies >/dev/null 2>&1; then
     chain "$@"
     exit 0
 fi
@@ -31,7 +38,7 @@ fi
 # unguarded call here made this refusal unreachable AND blocked pushes for
 # projects with no gates declared.
 rc=0
-"$LOOP" verify || rc=$?
+"$DRIVER" verify || rc=$?
 if [ "$rc" = "1" ]; then
     echo "kdevkit: refusing to push — the checks did not pass on what you are publishing." >&2
     exit 1

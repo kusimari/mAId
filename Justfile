@@ -26,8 +26,15 @@ lint: lint-shell
 
 # The phase guarantee lives in shell, so it gets linted like the Rust does.
 # A `set -e` defect in the push gate reached review because nothing checked.
+# -S warning, not the default: the tools are split into a sourced library, so
+# info-level findings are all "cannot follow the source from here" and
+# "library function looks unused". Warnings and errors still fail.
 lint-shell:
-    shellcheck -s sh resources/content/skills/kdevkit/tools/feature-loop \
+    shellcheck -s sh -S warning \
+        resources/content/skills/kdevkit/tools/feature-loop \
+        resources/content/skills/kdevkit/tools/driver \
+        resources/content/skills/kdevkit/tools/install \
+        resources/content/skills/kdevkit/tools/lib/state.sh \
         resources/content/skills/kdevkit/tools/hooks/*
 
 check:

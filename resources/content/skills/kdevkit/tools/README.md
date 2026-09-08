@@ -1,37 +1,53 @@
 # kdevkit feature-loop tools
 
-`phase` reads git and the feature spec to answer factual questions about
-where a feature stands, and refuses stage changes the repository
-contradicts. It also owns the map: a phase module states what it must
-achieve and asks `feature-loop advance --next` where that leads, so adding a
-stage never means editing the module before it.
+Split by role, so each part can be reviewed on its own. Read them in this
+order — each depends only on the ones above it.
 
-`advance` moves forward only, along a closed table. Going back is
-`return`, which accepts any earlier stage but demands the fault, the
-issue, the expected fix and the acceptance criterion. The two hooks let git do the recording, so the stage is
-never something an agent has to remember to write.
+| File | Role | Writes? |
+|---|---|---|
+| `lib/state.sh` | **What the repository shows.** Facts, and whether a stage change is legal. | never |
+| `driver` | **What a coding agent invokes.** Asks where work stands, moves it on, goes back, proceeds on the record. | the intent file only |
+| `hooks/prepare-commit-msg`, `hooks/pre-push` | **What git invokes.** Records the stage as a side effect of committing; gates the push. | commit messages |
+| `install` | **Wiring git for one checkout.** Points git at the hooks; records where these tools are. | git config |
+| `feature-loop` | compatibility shim forwarding to `driver` / `install` | — |
 
-Nothing here is installed into the project being worked on. `phase
-install` points the checkout's `core.hooksPath` at this directory,
-chaining any hook that was already there.
+The split matters for one reason: **the stage is recorded by git, not by the
+agent.** `install` makes that possible, `hooks/*` do it, `driver` is how a
+builder asks about it, and `lib/state.sh` is the single answer all of them
+agree on.
 
-    feature-loop install                     wire git to these hooks
-    feature-loop show                        where does this feature stand?
-    feature-loop facts                       every fact, one key=value per line
-    feature-loop next                        what follows the current stage?
-    feature-loop advance --next              move on, without naming where
-    phase check --to review           may we move there?
-    feature-loop advance --to review         record a named move
-    feature-loop return --to planning \
-        --fault-entered requirements \
-        --issue ... --expected-fix ... --acceptance ...
-    feature-loop verify                      run the project's checks, record the tree
-    phase uninstall                   unwire and clear kdevkit state
+## Using it
 
-Two settings per project, read from git config, because every project
-names its own commands:
+```sh
+# once per checkout
+"$K/install"
 
-    git config kdevkit.qualityCommand 'just lint'
-    git config kdevkit.testCommand    'just test'
+# afterwards, named from the repository — install records where the tools are
+"$(git config kdevkit.tools)/driver" show
+```
+
+Verbs, by what you are doing:
+
+```
+ASKING   show · facts · next · check --to <stage>
+MOVING   advance --next · advance --to <stage>
+         return --to <stage> --fault-entered L --issue T --expected-fix T --acceptance T
+         except --skipping W --why W
+GATES    verify
+```
+
+## Per-project configuration
+
+Declared in `specs/project.md` under `### kdevkit`, where a project already
+declares its reviewer — not in git config, which is per-clone and would leave
+a fresh clone with nothing:
+
+```
+### kdevkit
+- `gates:`
+  - `dev:`
+    - `quality: just lint`
+    - `tests: just test`
+```
 
 Design and rationale: `specs/feature/kdevkit-deterministic-phasing.md`.
