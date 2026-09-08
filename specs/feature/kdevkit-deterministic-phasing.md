@@ -28,15 +28,26 @@ finishing that stage means, what to do when something turns out to be
 wrong. The guidance uses judgement, because building software does. It is
 not a pipeline.
 
-Two things carry the record, and both are ordinary artefacts rather than
-new machinery:
+Three things carry the record, and each is oriented differently — which is
+why they are separate rather than one store:
 
-- **Branches** hold what happened — the commits, in order, on the working
-  branch for that piece of work.
-- **Specs** hold what is intended and how this project works: the project
-  itself, each feature, how contributions are configured, what reviews
-  should focus on. The spec tree is the project's own documentation, not a
-  side-file for the framework.
+**1 · The specs.** These carry two kinds of thing at once: information about
+the project that has nothing to do with kdevkit, and information kdevkit
+needs. The first kind is the point — **anyone reading the code should not
+need to know kdevkit was ever used.** They read the specs to understand the
+project, and where they care, how a feature came to be added to it. The
+catch is the second kind: while a feature is *being built*, its spec file
+carries a lot that is kdevkit-oriented and of no interest afterwards.
+
+**2 · kdevkit itself, and its version** — the methodology. Some of it bleeds
+into the specs, but only because those parts need somewhere to live *across*
+feature and initiative runs. That bleed is a storage decision, not a claim
+that methodology belongs in a project's documentation.
+
+**3 · The git branch and its commits.** This is the record kdevkit uses
+*while running*, and it is oriented entirely towards how kdevkit runs. It is
+also the one a reader of the project never needs to look at, which is why it
+can carry bookkeeping the specs should not.
 
 **The person doing the building is called the builder, and a coding agent
 can be one.** That is the point of the framework being written down
@@ -46,22 +57,33 @@ makes that possible is that the builder can **reconstruct where things
 stand, what has been tried, and what went wrong where — without the
 conversation that produced it.**
 
-So this feature has two jobs, and they pull in slightly different
-directions:
+So the goal, stated in the order the things actually depend on each other:
 
-1. **Make the flow hold across coding agents without the human
-   constantly correcting it.** Today a human notices when an agent drifts
-   and steers it back. That correction is the cost being removed.
-2. **Make kdevkit itself drivable by a higher-order builder** — an agent
-   working at initiative altitude, defining the macro plan and running the
-   streams inside it, treating each feature the way a human treats a
-   ticket.
+**The flow kdevkit uses must hold without a human correcting it.** That is
+the whole objective. Today you notice when an agent drifts and steer it back,
+and that correction is the cost being removed.
 
-The tension between them is real and is resolved in the design: **enforce
-that the record is consistent and articulate; never enforce permission.**
-A gate exists to make a builder *say* what it is doing, not to stop it
-doing it. A framework that blocks a legitimate judgement cannot be driven
-by anyone, human or agent.
+**Making it work across coding agents is how that robustness is achieved**,
+not a second goal. An agent that only holds on one runtime is holding for
+reasons we do not understand; one that holds on three is holding because the
+mechanism is sound. So cross-agent support is the *test* of robustness as
+much as a feature of it — and it is the indirect route to the flow holding
+without human correction, because a mechanism robust enough for three
+different models is robust enough to not need a person watching it.
+
+**What falls out of that robustness is higher-order use.** Once the flow
+holds without a human in it, the thing driving it need not be a human at
+all: a project- or initiative-level agent workflow can run features through
+it. That is a consequence rather than a separate objective, and it is the
+reason to care about robustness beyond mere convenience — **kdevkit's job is
+that the flow holds even when what is driving it is another coding agent
+workflow.**
+
+One line follows from all of that, and it is the design's governing
+constraint: **enforce that the record is consistent and articulate; never
+enforce permission.** A gate exists to make a builder *say* what it is
+doing, not to stop it doing it — because a framework that blocks a
+legitimate judgement cannot be driven by anyone, human or agent.
 
 ## The problem
 
@@ -102,7 +124,13 @@ dev kept failing because the design was wrong.
 ## What must be true when we are done
 
 Statements a person can check by reading the repository. They say nothing
-about how they are achieved. Grouped by the two jobs.
+about how they are achieved.
+
+**Which agents "everywhere" means.** Claude Code, Codex CLI and Kiro today.
+**Antigravity is a target too, and is deliberately out of scope here** — it
+needs a machine this work cannot be run on, so claiming it without evidence
+would be worse than leaving it out. Noted so nobody reads its absence as a
+decision against it.
 
 **The record is trustworthy.**
 
@@ -155,7 +183,8 @@ about how they are achieved. Grouped by the two jobs.
     branch, and the merge commit carries an authored summary rather than a
     transcript of branch commits.
 21. With none of this installed, kdevkit behaves as it does today.
-22. Statements 1-19 hold on claude, codex and kiro.
+22. Statements 1-19 hold on claude, codex and kiro. Antigravity is intended
+    and untested — see above.
 23. A feature built by a different builder using different tooling is
     still readable: kdevkit needs the repository, the specs and the
     branch's commits, and nothing else. No database, no service, no state
