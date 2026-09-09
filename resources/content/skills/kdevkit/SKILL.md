@@ -398,6 +398,41 @@ mid-feature and lose nothing that crossed the last boundary.
 | **return** | a fault belongs to an earlier layer — name the layer, the problem, the fix, and how you will know it is fixed |
 | **except** | a gate cannot be passed honestly and you are proceeding anyway, on the record |
 
+#### Two ways to keep it
+
+**If kdevkit's tools are installed, they keep the record for you.** Two git
+hooks write the stage into the commits themselves, as a side effect of
+committing, so there is nothing to remember. Find them once per checkout and
+wire them:
+
+```sh
+K=$(ls -d ~/.claude/skills/kdevkit/tools ~/.codex/skills/kdevkit/tools \
+       ~/.kiro/skills/kdevkit/tools ~/.kiro/steering/skills/kdevkit/tools \
+       ~/.agy/skills/kdevkit/tools 2>/dev/null | head -1)
+"$K/driver" install
+```
+
+Afterwards name them from the repository, never by an absolute path:
+
+```sh
+"$(git config kdevkit.tools)/driver" show
+"$(git config kdevkit.tools)/driver" advance --next
+```
+
+Leave it installed. Installing once per checkout is right even with many
+branches in flight — the hooks do nothing unless the branch they find
+themselves on is a kdevkit feature.
+
+**Otherwise you keep the record yourself**, in the spec, exactly as described
+below.
+
+**A feature is finished on the path it started on.** The test costs one
+command — if the branch carries `Kdevkit-Feature-Stage` trailers the tools are
+keeping the record, so do not also hand-write crossings; if it carries prose
+crossings and no trailers, keep writing them. Mixing splits the record across
+two stores so neither is complete. `driver install` refuses on a branch
+already keeping its record in prose rather than splitting it.
+
 #### The record has two parts, and they behave differently
 
 **Current state — replace it.** Four fields, re-authored at every crossing.
