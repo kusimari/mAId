@@ -115,14 +115,26 @@ because the whole problem only appears under load.
 - [x] 6 · Fix the dev-loop overview: `code → quality → test → code review →
   push`.
 - [x] 7 · Add `kdevkit-crossings-appended`.
-- [ ] 8 · Run the A/B against main (statement 10), three samples per agent,
-  fresh and under load.
+- [~] 8 · Run the A/B against main (statement 10). Measured under load:
+  claude 3/3, kiro 5/6, codex 3/3 — 11 of 12. Existing handoff fixtures
+  show no regression. **What this does not settle** is below.
 
 ## Still open
 
-- **Statement 10 is unproven.** Everything else is prose that reads correctly;
-  whether agents keep the record better because of it is exactly what the A/B
-  is for, and it has not run.
+- **Statement 10 is partly evidenced and not settled.** Under load the new
+  fixture holds 11 of 12 times, and codex — the agent that measured ~33% on
+  prose under this exact kind of load — is 3 of 3. But it is **one fixture**,
+  testing the append-only property rather than the whole handoff discipline.
+  And there is no main-side number to compare against, because main's skill
+  *cannot* run this fixture: it replaces the block wholesale, so a seeded
+  crossing is destroyed by definition. The comparison is therefore "a property
+  main cannot have" rather than "main does this worse", which is weaker
+  evidence than a true A/B.
+- **Kiro failed once out of six and did not repeat across three further
+  samples**, so it reads as noise. That cannot be proven, because the run
+  captured only PASS/FAIL and the diagnostic log was discarded — a process
+  error worth not repeating, since a ratio without diagnostics is not
+  actionable.
 - **Nothing enforces any of this.** That is inherent to the prose path, not a
   gap in the work — and it is why the tooling path is being explored
   separately rather than abandoned.
