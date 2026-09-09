@@ -204,7 +204,7 @@ what to keep as a decision, what to relocate rather than delete.
 Skip only if the spec carries no alternatives, Q&A, or revision
 narration; there is then nothing to strip.
 
-**2 · Cross the boundary** (§ Crossing a stage boundary). Planning is
+**2 · Cross the boundary** (§ The handoff record). Planning is
 finished when the spec is consolidated and committed and its handoff
 section is unambiguous — that is this module's exit condition, and the
 map in the always-on file says what follows. Rewrite the four

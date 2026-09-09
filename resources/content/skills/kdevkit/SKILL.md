@@ -376,12 +376,17 @@ ticked spec is part of the dev commit, not a closure-time
 sweep. §8.1 reconcile is the safety net for slices ticked
 late or missed; the live discipline lives here.
 
-### Crossing a stage boundary (always-on)
+### The handoff record (always-on)
 
 **Every stage boundary is crossed with judgement, and the crossing is
-recorded. A stage that ended without a record did not finish.**
+recorded in the feature spec. A stage that ended without a record did not
+finish.**
 
-That is the invariant. It does not depend on how the record is kept.
+That is the whole invariant, and it is what makes the phase modules
+independently runnable: the spec is checked in, so the next stage — a fresh
+agent, a new session tomorrow, or the same thread continuing — gets what it
+needs without the conversation that produced it. A session can die
+mid-feature and lose nothing that crossed the last boundary.
 
 #### The five things you do at a boundary
 
@@ -393,32 +398,18 @@ That is the invariant. It does not depend on how the record is kept.
 | **return** | a fault belongs to an earlier layer — name the layer, the problem, the fix, and how you will know it is fixed |
 | **except** | a gate cannot be passed honestly and you are proceeding anyway, on the record |
 
-#### How the record is kept
+#### The record has two parts, and they behave differently
 
-There are two mechanisms for keeping the invariant, and which one applies is
-a property of the repository rather than a preference:
+**Current state — replace it.** Four fields, re-authored at every crossing.
+Never leave a previous value in one field while updating another: a
+half-updated block reads as current and is exactly the stale record this
+exists to prevent. Write what is true now, in your own words, not the
+previous stage's phrasing with a new label on top.
 
-- **Tooling and git.** kdevkit can ship a small tool that installs two git
-  hooks, so the stage is written into the commits themselves as a side effect
-  of committing. **That tooling is not part of this version of kdevkit** —
-  the branch point is named here because the invariant is the same either way,
-  and a later version filling it in should not change anything above.
-- **Prose and the feature spec.** What this version does. The record lives in
-  the spec's `## Handoff` section, and you write it. Everything below assumes
-  this path.
-
-#### Keeping the record in prose
-
-The handoff section has two parts, and they behave differently:
-
-**Current state — replaced at every crossing.** Four fields, re-authored
-each time. Never leave a previous value in one field while updating another;
-a half-updated block reads as current and is the stale record this exists to
-prevent.
-
-**`### Crossings` — appended to, never edited.** One line per crossing. This
-is what makes a repeated return visible: the count of `RETURN` lines is the
-number of times this feature has gone back, and nothing else records that.
+**`### Crossings` — append to it, never edit it.** One line per crossing.
+This is the only record of how many times a feature has gone back, so
+replacing it destroys the thing it exists for. The count of `RETURN` lines
+is that number, and nothing else carries it.
 
 ```markdown
 ## Handoff
@@ -451,6 +442,23 @@ code may be fine, the test was wrong).
 Nothing is forbidden; an exception is made expensive by being written down
 and counted, not by being refused.
 
+#### Only judgement goes in the record
+
+What the next stage can *derive* it must derive, at entry, from git and the
+spec: the branch, which plan items are ticked, which gates ran, what findings
+are open. Copying those into prose is how a spec starts lying. Current state
+carries what cannot be read off the repo — a constraint found late, a trap,
+why something was left.
+
+History has homes already: the Session Log for observations, the Decision Log
+for choices, the PR/CR thread for discussion. `Crossings` is not a second
+Session Log — one line per boundary, and nothing else.
+
+**On entry to any stage, read the record first**, then derive the rest. If it
+names a different stage than the one you are about to run, trust the repo over
+the record and say so — a stale handoff means the previous stage was
+interrupted, which is itself the most useful thing to know.
+
 #### Where the stages go
 
 The map is here, in the always-on file, so a phase module never names its
@@ -463,51 +471,6 @@ successor and adding a stage does not mean editing the module before it:
 Forward is one step at a time. **Going back may skip stages** — review can
 return work to planning without passing through dev — because the criterion
 is which layer the fault entered, not how far back that is.
-
-### The spec is the handoff record (always-on)
-
-**A phase writes its `## Handoff` block into the feature spec
-before the boundary it is crossing. A phase that ended without one
-did not finish.**
-
-That is the whole invariant, and it is what makes the phase modules
-independently runnable: the spec is checked in, so the next phase —
-a fresh agent, a new session tomorrow, or the same thread
-continuing — gets what it needs without the conversation that
-produced it. A session can die mid-feature and lose nothing that
-crossed the last boundary.
-
-Two rules that keep it honest:
-
-- **Rewrite the block, never append — and re-author every field,
-  not just `Phase:`.** Relabelling the phase while leaving
-  `Ready for:` and `Carry forward:` as the previous phase wrote
-  them produces exactly the stale record this exists to prevent,
-  and it reads as current. This cuts both ways: relabelling
-  `Phase:` while carrying an old field's *sentence* forward
-  unchanged is the same mistake in the other field — write what
-  is true now, in your own words, not the previous phase's phrasing
-  with a new label on top. It carries current state, not history.
-  History has homes already: the Session Log for observations, the
-  Decision Log for choices, the PR/CR thread for discussion. A
-  handoff that accumulates becomes a second Session Log — the exact
-  bloat the module split exists to remove.
-- **Only judgement goes in it.** What the next phase can *derive*
-  it must derive, at entry, from git and the spec: the branch,
-  which plan items are ticked, which gates ran, what findings are
-  open. Copying those into prose is how a spec starts lying. The
-  block carries what cannot be read off the repo — a constraint
-  found late, a trap, why something was left.
-
-**On entry to any phase, read the block first**, then derive the
-rest. If it names a different phase than the one you are about to
-run, trust the repo over the block and say so — a stale handoff
-means the previous phase was interrupted, which is itself the most
-useful thing to know.
-
-The template and field semantics are in `interviews.md`; each phase
-module states where in its own flow the write happens.
-
 ### Initiative-stream auto-link
 
 When this feature is a stream of an active initiative, §6

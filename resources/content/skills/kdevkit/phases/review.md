@@ -199,7 +199,7 @@ wrong rather than the code. The criterion is which layer the fault
 entered, not how far back that is.
 
 **Record it as a `RETURN` line in `### Crossings`** with all four parts
-(§ Crossing a stage boundary):
+(§ The handoff record):
 
 ```
 - review → planning · RETURN · fault: requirements · issue: warning

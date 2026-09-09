@@ -85,7 +85,7 @@ Part of initiative: [[<name>]]
 
 ## Handoff
 
-<!-- Two parts, behaving differently (§ Crossing a stage boundary):
+<!-- Two parts, behaving differently (§ The handoff record):
 
      CURRENT STATE is rewritten at every boundary by the phase that
      is ENDING, and read on entry by the phase that is starting.
