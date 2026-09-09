@@ -59,7 +59,7 @@ cat > specs/feature/running-total.md <<'MD'
 `ledger.sh` sums a list of whitespace-separated integer amounts.
 
 ## Handoff
-- **Phase:** dev
+- **Stage:** dev
 - **Ready for:** human review after Push.
 - **Carry forward:** none.
 - **Deliberately left:** negative amounts — out of scope, ledger is

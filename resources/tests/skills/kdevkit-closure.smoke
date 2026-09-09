@@ -20,7 +20,7 @@ User can set and see a due date on any to-do.
 A nullable due field on the record; a --due flag parses it.
 
 ## Handoff
-- **Phase:** review
+- **Stage:** review
 - **Ready for:** closure on the cue.
 - **Carry forward:** nothing outstanding from review.
 - **Deliberately left:** recurring due dates — separate feature.
@@ -108,16 +108,16 @@ grep -qF -- '- [x]' "$spec"
 # acts on. Portable pattern — \< is a GNU awk extension that matches nothing
 # under mawk, which would make this pass vacuously.
 [ "$(grep -c '^## Handoff' "$spec")" = 1 ]
-awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /^- \*\*Phase:\*\*/' "$spec" | grep -q .
+awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /^- \*\*Stage:\*\*/' "$spec" | grep -q .
 # The block was authored, not pasted: the template placeholder lists every
 # legal value on one line, which would satisfy a naive negative check.
-test -z "$(grep -F 'planning | dev | review' "$spec" || true)"
-test -z "$(awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*review([^a-zA-Z]|$)/' "$spec")"
+test -z "$(grep -F 'research | planning | dev' "$spec" || true)"
+test -z "$(awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Stage[^a-zA-Z]*review([^a-zA-Z]|$)/' "$spec")"
 # ...and it must positively say `closed`. Without this an agent can leave a
-# maximally LIVE handoff (Phase: closure, Ready for: squash-merge) and pass.
-awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*closed([^a-zA-Z]|$)/' "$spec" | grep -q .
+# maximally LIVE handoff (Stage: closure, Ready for: squash-merge) and pass.
+awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Stage[^a-zA-Z]*closed([^a-zA-Z]|$)/' "$spec" | grep -q .
 # Not a one-token relabel: close.md says replace its FIELDS, so review's
-# values must be gone too, not just the Phase label flipped.
+# values must be gone too, not just the Stage label flipped.
 test -z "$(grep -F 'closure on the cue' "$spec" || true)"
 test -z "$(grep -F 'nothing outstanding from review' "$spec" || true)"
 # Deliberately-left work was resolved before clearing, not silently dropped:

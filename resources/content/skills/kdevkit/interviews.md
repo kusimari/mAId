@@ -85,15 +85,21 @@ Part of initiative: [[<name>]]
 
 ## Handoff
 
-<!-- Rewritten at every phase boundary by the phase that is
-     ENDING; read on entry by the phase that is starting. Not a
-     log — replace the whole block, don't append. Keep it under
-     ~15 lines: it carries what the next phase can't derive, not
-     a summary of the work.
+<!-- Two parts, behaving differently (§ Crossing a stage boundary):
 
-     Phase:             which phase is live now, or `closed` once
+     CURRENT STATE is rewritten at every boundary by the phase that
+     is ENDING, and read on entry by the phase that is starting.
+     Replace all four fields; don't append, and don't leave one
+     field stale while updating another. Keep it under ~15 lines:
+     it carries what the next phase can't derive, not a summary.
+
+     CROSSINGS is appended to and never edited. One line per
+     crossing. The count of RETURN lines is the only record of how
+     many times this feature has gone back.
+
+     Stage:             which stage is live now, or `closed` once
                         closure has finished with the feature.
-     Ready for:         the next phase, and what gates it.
+     Ready for:         the next stage, and what gates it.
      Carry forward:     what the next phase would otherwise have
                         to rediscover — a constraint found late, a
                         finding still open, a trap.
@@ -105,10 +111,18 @@ Part of initiative: [[<name>]]
      are READ from git and this spec at entry — don't copy them
      here and let them rot. This block is judgement only. -->
 
-- **Phase:** <planning | dev | review | closure | closed>
-- **Ready for:** <next phase, and its gate>
-- **Carry forward:** <what the next phase must know>
+- **Stage:** <research | planning | dev | review | closure | closed>
+- **Ready for:** <next stage, and its gate>
+- **Carry forward:** <what the next stage must know>
 - **Deliberately left:** <what's unresolved, and why>
+
+### Crossings
+
+<!-- Append one line per crossing; never edit or delete a line.
+     A RETURN needs four parts: fault / issue / fix / done when.
+     An EXCEPTION needs two: skipping / why. -->
+
+- <from> → <to>
 
 ## Requirements
 

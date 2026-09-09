@@ -14,7 +14,7 @@ project loop             ← project.md invariants. Cross-feature.
   initiative (optional)  ← groups multiple feature loops.
     feature loop         ← one branch, three phases, one squash-merge.
       ├─ planning phase    plan(<feature>): commits + Review Gate
-      ├─ dev loop          feat/fix/...: Quality → Test → Code Review → Push
+      ├─ dev loop          feat/fix/...: Code → Quality → Test → Code Review → Push
       │                    then human review: [Briefing] → Agent-dev Review Gate
       └─ closure phase     close(<feature>): reconcile + squash-merge
 ```
@@ -375,6 +375,94 @@ checkbox shape (`- [ ]`), tick the corresponding box to
 ticked spec is part of the dev commit, not a closure-time
 sweep. §8.1 reconcile is the safety net for slices ticked
 late or missed; the live discipline lives here.
+
+### Crossing a stage boundary (always-on)
+
+**Every stage boundary is crossed with judgement, and the crossing is
+recorded. A stage that ended without a record did not finish.**
+
+That is the invariant. It does not depend on how the record is kept.
+
+#### The five things you do at a boundary
+
+| | When |
+|---|---|
+| **look** | at the start of any session — where does this feature stand, and what is outstanding? |
+| **verify** | before leaving dev — run the project's own gates and record that they passed |
+| **advance** | a stage's exit condition holds; move to the next stage |
+| **return** | a fault belongs to an earlier layer — name the layer, the problem, the fix, and how you will know it is fixed |
+| **except** | a gate cannot be passed honestly and you are proceeding anyway, on the record |
+
+#### How the record is kept
+
+There are two mechanisms for keeping the invariant, and which one applies is
+a property of the repository rather than a preference:
+
+- **Tooling and git.** kdevkit can ship a small tool that installs two git
+  hooks, so the stage is written into the commits themselves as a side effect
+  of committing. **That tooling is not part of this version of kdevkit** —
+  the branch point is named here because the invariant is the same either way,
+  and a later version filling it in should not change anything above.
+- **Prose and the feature spec.** What this version does. The record lives in
+  the spec's `## Handoff` section, and you write it. Everything below assumes
+  this path.
+
+#### Keeping the record in prose
+
+The handoff section has two parts, and they behave differently:
+
+**Current state — replaced at every crossing.** Four fields, re-authored
+each time. Never leave a previous value in one field while updating another;
+a half-updated block reads as current and is the stale record this exists to
+prevent.
+
+**`### Crossings` — appended to, never edited.** One line per crossing. This
+is what makes a repeated return visible: the count of `RETURN` lines is the
+number of times this feature has gone back, and nothing else records that.
+
+```markdown
+## Handoff
+
+- **Stage:** dev
+- **Ready for:** review, once the gates pass
+- **Carry forward:** `tr` is available; no new dependency needed
+- **Deliberately left:** long-form `--upper` alias — `-u` only for now
+
+### Crossings
+<!-- Append one line per crossing. Never edit or delete a line. -->
+- planning → dev
+- dev → planning · RETURN · fault: requirements · issue: warning
+  suppression was never specified · fix: amend R2 and extend the tests ·
+  done when: warnings are suppressed with the flag
+- planning → dev
+- dev → review · EXCEPTION · skipping: the dev gates · why: deadline,
+  follow-up filed as #12
+```
+
+**A `return` line needs all four parts** — the layer at fault, the problem,
+the fix, and how you will know. A bare "went back to planning" is the silent
+plan amendment §9 forbids: it looks like progress and leaves nothing a later
+session can act on. The layer is your judgement, and the layers are finer
+than the stages: *requirements* (we built the wrong thing), *design* (right
+thing, wrong shape), *implementation* (right shape, wrong code), *test* (the
+code may be fine, the test was wrong).
+
+**An `except` line needs both parts** — what is being skipped and why.
+Nothing is forbidden; an exception is made expensive by being written down
+and counted, not by being refused.
+
+#### Where the stages go
+
+The map is here, in the always-on file, so a phase module never names its
+successor and adding a stage does not mean editing the module before it:
+
+```
+[research] → planning → dev → review → closure → closed
+```
+
+Forward is one step at a time. **Going back may skip stages** — review can
+return work to planning without passing through dev — because the criterion
+is which layer the fault entered, not how far back that is.
 
 ### The spec is the handoff record (always-on)
 
