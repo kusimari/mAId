@@ -204,14 +204,15 @@ what to keep as a decision, what to relocate rather than delete.
 Skip only if the spec carries no alternatives, Q&A, or revision
 narration; there is then nothing to strip.
 
-**2 · Write the `## Handoff` block** (§5) **with `Phase: dev`** —
-the phase now starting. Re-author every field; do not leave a
-previous or placeholder value in `Phase:` while only updating the
-others. From planning, the fields that matter most beyond `Phase:`
-are *Carry forward* — a constraint the interviews surfaced that the
-Implementation Plan doesn't state — and *Deliberately left*, so dev
-doesn't relitigate a decision or read a deliberate gap as an
-oversight.
+**2 · Cross the boundary** (§ The handoff record). Planning is
+finished when the spec is consolidated and committed and its handoff
+section is unambiguous — that is this module's exit condition, and the
+map in the always-on file says what follows. Rewrite the four
+current-state fields, and **append one line to `### Crossings`**. From
+planning the fields that matter most are *Carry forward* — a constraint
+the interviews surfaced that the Implementation Plan doesn't state — and
+*Deliberately left*, so dev doesn't redo a decision or mistake a gap for
+an oversight.
 
 Commit both as `plan(<feature>): consolidate spec` and rewrite the
 review body from the consolidated spec: a reviewer reading the

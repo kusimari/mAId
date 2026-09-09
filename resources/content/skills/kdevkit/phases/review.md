@@ -184,8 +184,8 @@ content: **Approach** (bullets covering the changes).
 ### Leaving review
 
 On the dev → closure cue, **rewrite the `## Handoff` block** (§5)
-with `Phase: closure` — the phase now starting. (Closure itself
-clears it to `Phase: closed` when it is done.)
+for the stage now starting, and **append one line to `### Crossings`**.
+(Closure records `closed` when it is done.)
 From review, *Carry forward* is what closure must reconcile — a
 review comment accepted but deferred, a follow-up promised in the
 thread — and *Deliberately left* is anything the reviewer raised
@@ -194,10 +194,28 @@ sweeps the spec, not the review thread, so a promise made only in a
 comment is a promise lost.
 
 A loop-back is a legitimate outcome here: review can return work to
-dev, or to planning when the *requirement* was wrong rather than
-the code. Say which layer the fault entered and why in the block
-before going back — that line is what stops a loop-back becoming a
-silent plan amendment (§9).
+dev, or **skip straight back to planning** when the *requirement* was
+wrong rather than the code. The criterion is which layer the fault
+entered, not how far back that is.
+
+**Record it as a `RETURN` line in `### Crossings`** with all four parts
+(§ The handoff record):
+
+```
+- review → planning · RETURN · fault: requirements · issue: warning
+  suppression was never specified · fix: amend R2 and extend the tests ·
+  done when: warnings are suppressed with the flag
+```
+
+**Do not simply amend the spec and carry on.** Editing the requirement
+and continuing is how a loop-back becomes a silent plan amendment (§9):
+it looks like progress and leaves nothing countable behind. The
+`Crossings` line is what makes the trip back visible, so that a feature
+which has gone back three times reads as having gone back three times.
+
+Work done before the fault was work on the old understanding, so
+**reaching review again needs fresh work** — not merely a re-run of what
+was already there.
 
 **Refuse-on-fail.** A prior gate (Quality / Test / Code Review)
 failed or noted residual issues → no review. Surface failure;
