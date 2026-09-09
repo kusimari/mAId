@@ -324,7 +324,9 @@ for the stage now starting, before handing to human review. The gates
 are the readiness signal; a Push that couldn't run for want of a remote
 (see the Push Gate above) does not hold the crossing back — name the
 skipped Push in *Carry forward* and proceed. Re-author every field, and
-**append one line to `### Crossings`**.
+**record the crossing** — appending one line to `### Crossings` on the
+prose path, or letting the tools do it on the tooling path
+(§ The handoff record).
 
 **This rewrite is never a `plan()`-typed commit.** Review has no
 entry cue of its own (§1): it is the back half of the dev loop,

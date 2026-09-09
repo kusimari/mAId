@@ -184,7 +184,8 @@ content: **Approach** (bullets covering the changes).
 ### Leaving review
 
 On the dev → closure cue, **rewrite the `## Handoff` block** (§5)
-for the stage now starting, and **append one line to `### Crossings`**.
+for the stage now starting, and **record the crossing** the way this
+feature's path requires (§ The handoff record).
 (Closure records `closed` when it is done.)
 From review, *Carry forward* is what closure must reconcile — a
 review comment accepted but deferred, a follow-up promised in the
@@ -198,8 +199,10 @@ dev, or **skip straight back to planning** when the *requirement* was
 wrong rather than the code. The criterion is which layer the fault
 entered, not how far back that is.
 
-**Record it as a `RETURN` line in `### Crossings`** with all four parts
-(§ The handoff record):
+**Record the return with all four parts** (§ The handoff record). On the
+prose path that is a `RETURN` line in `### Crossings`; on the tooling path
+it is `driver return`, which refuses without them. Either way the shape is
+the same:
 
 ```
 - review → planning · RETURN · fault: requirements · issue: warning
