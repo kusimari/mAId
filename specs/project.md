@@ -394,6 +394,13 @@ boundary should have left, and pair every negative check with a
 positive one — "the block no longer says planning" passes if the
 block was deleted, which is not the behaviour wanted.
 
+The record's **append-only** half needs its own trap check. A
+count-based assertion ("there are crossings") passes when the list
+was *replaced* rather than appended to, which destroys the history
+the list exists for. Seed a crossing and assert it survives — the
+positive check for an append-only structure is that the *earlier*
+entry is still there, not that some entry is.
+
 ### Writing a skill
 
 A skill has to survive two things. Design for both.

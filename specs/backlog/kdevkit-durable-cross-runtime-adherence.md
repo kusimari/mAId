@@ -190,7 +190,31 @@ assuming either is complete on its own:
   toward code, but the *design* of what code, and how much, is
   exactly what this backlog item leaves open.
 
-## Trigger to promote
+## RESOLVED (2026-09-09)
+
+**Both paths were built and measured; prose won and shipped.**
+
+The prose path landed on `main` in #50: the invariant stated once, an
+append-only `### Crossings` log, and required shapes for a return and an
+exception. Measured under load — claude 3/3, kiro 5/6, codex 3/3. Codex is
+the agent whose ~33% adherence started this investigation, so the property
+that mattered most is the one that improved most.
+
+The tooling path — a shell tool and two git hooks writing the stage into
+commit trailers — is archived as tag `exploration/kdevkit-record-in-git`,
+whose annotation carries the transferable ideas (deriving the stage from
+evidence, `prepare-commit-msg` over `commit-msg`, identifying your own hook
+by sentinel rather than path, per-worktree state). It was not archived for
+being measured worse: the problem it existed for was substantially solved by
+prose, its residual benefit was countability the crossings log now provides,
+and it carried failure modes prose cannot have.
+
+Everything below is the investigation that produced that outcome. It is kept
+because the research is the valuable part — the runtime capability survey,
+the hook-liveness measurements, the field comparison — not because anything
+here is still pending.
+
+## Trigger to promote (historical)
 
 A dedicated session — the user has explicitly deferred this to
 "a separate session to solve for the problem," not a continuation of

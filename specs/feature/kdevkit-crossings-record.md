@@ -115,9 +115,9 @@ because the whole problem only appears under load.
 - [x] 6 · Fix the dev-loop overview: `code → quality → test → code review →
   push`.
 - [x] 7 · Add `kdevkit-crossings-appended`.
-- [~] 8 · Run the A/B against main (statement 10). Measured under load:
-  claude 3/3, kiro 5/6, codex 3/3 — 11 of 12. Existing handoff fixtures
-  show no regression. **What this does not settle** is below.
+- [x] 8 · Run the A/B against main (statement 10). Measured under load:
+  claude 3/3, kiro 5/6, codex 3/3 — 11 of 12. Existing handoff fixtures show
+  no regression. **What this does not settle** is below.
 
 ## Still open
 
@@ -141,13 +141,15 @@ because the whole problem only appears under load.
 
 ## Handoff
 
-- **Stage:** dev
-- **Ready for:** review, once the A/B against main has run.
-- **Carry forward:** the tooling path lives on
-  `kdevkit-deterministic-thru-tooling` and must not leak into this branch —
-  this branch changes markdown only.
-- **Deliberately left:** the tooling arm of the branch point in `SKILL.md`,
-  named but not filled in.
+- **Stage:** closed
+- **Ready for:** nothing — merged to `main` in #50 and closed.
+- **Carry forward:** nothing. The tooling path this feature deliberately
+  excluded was explored and archived as tag
+  `exploration/kdevkit-record-in-git`; its transferable ideas are in that
+  tag's annotation.
+- **Deliberately left:** nothing outstanding. The tooling arm named in an
+  early draft was removed at review and then explored separately, so there
+  is no unfinished branch point.
 
 ### Crossings
 
@@ -155,3 +157,6 @@ because the whole problem only appears under load.
 
 - (feature opened) → planning
 - planning → dev
+- dev → review
+- review → closure
+- closure → closed
