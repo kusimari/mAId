@@ -77,26 +77,35 @@ tri-tool. A transcript landing on `main` looks like a successful merge
 and is only noticed years later by whoever reads history, which is the
 silent-failure class `project.md` says earns a fixture.
 
-Seed a scratch repo with a `main` and a feature branch of *three*
-commits with transcript-flavoured subjects (`plan(...)`,
-`feat(...)`, `fix: the assert`), plus a review-stage spec. Task: close
-it out and squash-merge into the local `main`. Assert on `main`'s tip,
-pairing each negative with a positive so a no-op agent fails:
+Seed a scratch repo with a `main` and a feature branch of *four*
+commits with transcript-flavoured subjects (`plan(...)`, `feat(...)`,
+`fix: the assert`, `close(...)`), plus a reconciled spec. The
+`close(...)` tip is load-bearing: it is the subject nearest to hand at
+merge time and the one step 6 forbids reaching for. Task: squash-merge
+into the local `main`. Assert on `main`'s tip, pairing each negative
+with a positive so a no-op agent fails:
 
-- the body does **not** contain `fix: the assert` or the `plan(...)`
-  subject — the transcript did not land;
-- the body **does** carry prose — more than one line, a why-sentence
-  rather than a list of subjects;
-- the subject matches `feat(`, not `close(` or `plan(`;
+- the body does **not** contain `fix: the assert`, `plan(...)` or
+  `close(...)` — the transcript did not land;
+- the body **does** carry something the agent authored — host
+  boilerplate (trailers, attribution, URLs) discounted first, then a
+  surviving line must carry letters. **No length rule**: `close.md`
+  sets none, so a floor is a rule the skill doesn't carry;
+- the body is not a pointer to the history the squash is collapsing;
+- the subject matches `^feat[(:]` — scope optional — and so is neither
+  `close(` nor `plan(`;
 - `main`'s *tree* carries `due.py` — otherwise the assert reduces to
   "the tip has a nice message", which an empty commit satisfies;
-- no `Reading order` / `Read for intent:` / `## Verification` — the
-  review brief was authored down, not pasted across.
+- no `Reading order` / `Read for intent:` / `## Verification`, and no
+  *link* to the doomed branch.
 
-A **`playback` arm** carries what no assert can: whether a why is a
-why. The transcript reworded into prose bullets is indistinguishable
-from a written summary to `grep`, so the deterministic checks close the
-prefixed form and the judged arm covers the rest.
+**Whether a body is a why rather than a reworded what has no coverage
+— deterministic or judged.** The assert catches the changelog form
+that keeps its Conventional-Commits prefixes and nothing more. The
+`playback` arm does **not** close this: it asks a different question in
+a different run and never sees the body the merge wrote. It is a
+recitation arm, and it is pre-install, so it cannot see `close.md`
+either. The hole is accepted, not covered.
 
 **The fixture is post-install only.** `close.md` is a deferred module
 and the pre-install stage carries only `SKILL.md`, so a `check-skills`
@@ -109,9 +118,15 @@ just resources::install-skills
 just resources::verify-skills-one kdevkit-squash-message
 ```
 
-The `enact` arm of that run is expected to be uninformative — it is
-pre-install, so it carries only `SKILL.md` and cannot see the rule.
-`--kind integration,playback` scopes to the arms that can.
+**Only the `integration` arm can pass.** `playback` and `enact` both
+run pre-install, where the prompt carries `SKILL.md` alone, so neither
+can see a rule that lives in `phases/close.md` — expect both red, and
+don't read it as a regression. To run only the informative arm, the
+Just verb has no `--kind` pass-through; go to the binary:
+
+```
+cargo run -p build-tool --release -- verify kdevkit-squash-message --kind integration
+```
 
 Sample 3–5 runs per agent and record the ratio — adherence behavior is
 probabilistic.
@@ -140,7 +155,13 @@ same *Why*-first discipline §9's Review Gates already impose on a PR
 body, minus the parts that only mean something inside a review tool
 (Reading order, the verification dump, cross-branch pointers). Step 6
 is the only place this belongs — closure is the only phase that
-merges — so `SKILL.md` needs no edit (R4).
+merges.
+
+R4 turned out to need more than that. Stating the rule once is not the
+same as leaving no *competing* claim: both `SKILL.md` §5 and step 5
+credited the closure title rewrite with making `main` read as a feature
+ship, which is the mechanism this change stops relying on. Both are
+corrected to say the rewrite *supplies the subject* step 6 passes.
 
 **The floor — two repository settings.**
 
@@ -372,6 +393,13 @@ rather than a remembered override. The settings are one
   assert's comment claiming the hole was closed — a check whose comment
   overstates it is worse than the gap, because the next reader stops
   looking.
+- **Superseded: the `playback` arm carries nothing.** It asks a
+  different question in a different run and never sees the body the
+  merge wrote, and it is pre-install, so it cannot read `close.md`
+  either. Whether a body is a why rather than a reworded what has **no
+  coverage anywhere**, deterministic or judged. The hole is accepted;
+  the entry above was the same overclaiming it warns against, one layer
+  up.
 - **`PR_TITLE`, not `COMMIT_OR_PR_TITLE`.** Makes closure step 5's
   title rewrite authoritative on single-commit branches too. Rejected:
   leaving it — a one-commit branch would put `plan(...)` on `main`.

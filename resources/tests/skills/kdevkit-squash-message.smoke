@@ -226,9 +226,13 @@ printf '%s\n' "$authored" | grep -q '[[:alpha:]][[:alpha:]]'
 # collapse. "See the branch history" is the anti-pattern in its purest form: it
 # defers the why to precisely the thing being flattened. Run this on $body, not
 # $authored -- the URL strip above would otherwise hide the linked form, which is
-# the worst version of it. "see" must open a sentence, so an ordinary clause
-# ("users could not see the history of what was due") is not a pointer.
-test -z "$(printf '%s\n' "$body" | grep -iE '(^|[.;:][[:space:]]+)see[[:space:]]+(the[[:space:]]+)?(full[[:space:]]+)?(branch|commit|git)?[[:space:]]*(history|log|commits|messages)' || true)"
+# the worst version of it. "see" must OPEN a sentence, so an ordinary clause
+# ("users could not see the history of what was due") is not a pointer -- but
+# strip list markers, numbering and an opening paren first, or two characters of
+# prefix ("- See the branch history.") walk the anti-pattern straight back in.
+test -z "$(printf '%s\n' "$body" \
+  | sed 's/^[[:space:]]*[-*0-9.)(]*[[:space:]]*//' \
+  | grep -iE '(^|[.;:][[:space:]]+|\()see[[:space:]]+(the[[:space:]]+)?(full[[:space:]]+)?(branch|commit|git)?[[:space:]]*(history|log|commits|messages)' || true)"
 
 # The branch was not LINKED. close.md's exclusion list names links to branches
 # about to be deleted; a bare mention is not forbidden, so match only the
@@ -249,4 +253,6 @@ test -z "$(printf '%s\n' "$body" | grep -iE 'read for (intent|contract|plumbing)
 # this body. That hole is open and deliberately left open, because no
 # deterministic check separates a why from a reworded what. Don't read this line
 # as more than it is.
-test -z "$(printf '%s\n' "$body" | grep -iE '^[[:space:]]*([-*][[:space:]]+)?(feat|fix|plan|close|chore|docs|test|refactor)(\([a-z-]+\))?:' || true)"
+# The prefix group covers bullets AND numbering: `1. feat(todo): …` is the same
+# transcript wearing an ordered list.
+test -z "$(printf '%s\n' "$body" | grep -iE '^[[:space:]]*(([-*]|[0-9]+[.)])[[:space:]]+)?(feat|fix|plan|close|chore|docs|test|refactor)(\([a-z-]+\))?:' || true)"

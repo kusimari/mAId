@@ -147,9 +147,10 @@ rewritten to final shape; phase-specific content: **Approach**
 + **Verification** (required at close-out) + optional **Spec
 & docs touched at close-out**. **Title rewritten** to the
 dominant agent-dev subject (`feat(<scope>): subject` etc.) —
-*not* the `close(<feature>):` subject — so the squash-merge
-commit on `main` reads as a feature ship, not a closure
-mechanic.
+*not* the `close(<feature>):` subject. That rewrite is where
+step 6's authored squash message *sources* its subject; it does
+not by itself make `main` read as a feature ship, because the
+merge has to pass the message.
 
 **6 · Squash merge to `main`** — one logical commit per
 feature, carrying a message you wrote.
@@ -165,6 +166,10 @@ explicitly at the merge:
   just rewrote, verbatim. Where there is none, derive it from the
   branch's dev commits — never from the `close()` commit you just
   made, which is the phase mechanic step 5 exists to keep off `main`.
+  A branch that is *only* closure (no dev commits, as when a stream
+  closes without shipping code) has no dev subject to derive: use the
+  `close(<feature>):` subject there, since it is then the honest
+  description of what landed rather than a mechanic dressed as a ship.
 - **Body** — why the feature exists, for a reader who has only
   `main`. The same *Why*-first discipline §9 asks of a review body,
   minus what only means something inside a review tool: the Reading
