@@ -118,10 +118,12 @@ just resources::install-skills
 just resources::verify-skills-one kdevkit-squash-message
 ```
 
-**Only the `integration` arm can pass.** `playback` and `enact` both
-run pre-install, where the prompt carries `SKILL.md` alone, so neither
-can see a rule that lives in `phases/close.md` — expect both red, and
-don't read it as a regression. To run only the informative arm, the
+**Only the `integration` arm is informative.** `playback` and `enact`
+both run pre-install, where the prompt carries `SKILL.md` alone, so
+neither can see a rule that lives in `phases/close.md`. `enact` is
+behavioural, so it *can* go green on an agent's own habits — a verdict
+either way tells you nothing about the rule, which is not the same as
+"cannot pass". Don't read either arm's result as a regression. To run only the informative arm, the
 Just verb has no `--kind` pass-through; go to the binary:
 
 ```
@@ -393,6 +395,23 @@ rather than a remembered override. The settings are one
     "generated with" was discounted to nothing and failed — the
     false-failure class reappearing *inside* the fix that replaced the
     threshold, which is exactly what *Carry forward* warns about.
+  - **Round 3, two, and the substantive one was mine again.** The
+    closure-only carve-out contradicted step 5 three lines above, and
+    was unreachable on the path its own worked example lives on — step
+    6 takes step 5's title verbatim wherever a review tool exists,
+    which is the default. **Fourth instance of the twin-pair shape**,
+    and the second defect from that one carve-out, so it is reverted
+    and filed rather than expanded (see the Decision Log). Also: the
+    merge-happened check accepted a squash of `~1`, which lands both
+    asserted files while leaving the *unreconciled* spec on `main`;
+    the seeded backlog item exists only in the closure commit, so it
+    closes that. And "only `integration` can pass" overstated it —
+    `enact` is behavioural and can go green on an agent's own habits;
+    it is *uninformative*, not incapable.
+  - **The pattern, for whoever touches this next.** Seven of the
+    defects across all rounds were one shape: a rule corrected in one
+    place with an uncorrected twin left elsewhere. Grep for the
+    sentence, not the file, and fix every hit in the same commit.
 - **2026-09-12 · dev · probe re-run, 27 behaviours, all correct.**
 
 ## Decision Log
@@ -418,6 +437,18 @@ rather than a remembered override. The settings are one
   assert's comment claiming the hole was closed — a check whose comment
   overstates it is worse than the gap, because the next reader stops
   looking.
+- **The closure-only-branch carve-out is reverted, not fixed here.**
+  Added mid-dev in response to a review note, then removed: it sat
+  outside R1–R4, and it contradicted step 5 three lines above — which
+  forbids the `close()` subject absolutely — so the two could not both
+  be obeyed. It was also unreachable on the path its own worked example
+  (`4da8a94`) lives on, since step 6 takes step 5's title verbatim
+  wherever a review tool exists. Two rules an agent cannot both obey is
+  worse than a gap. Filed as
+  `specs/backlog/closure-only-branch-has-no-subject.md`; the real fix
+  changes steps 5 and 6 together. Rejected: mirroring the carve-out
+  into step 5 — correct, but scope this feature didn't ask for, and
+  this carve-out had already produced two defects.
 - **Superseded: the `playback` arm carries nothing.** It asks a
   different question in a different run and never sees the body the
   merge wrote, and it is pre-install, so it cannot read `close.md`

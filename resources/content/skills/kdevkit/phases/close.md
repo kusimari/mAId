@@ -166,10 +166,6 @@ explicitly at the merge:
   just rewrote, verbatim. Where there is none, derive it from the
   branch's dev commits — never from the `close()` commit you just
   made, which is the phase mechanic step 5 exists to keep off `main`.
-  A branch that is *only* closure (no dev commits, as when a stream
-  closes without shipping code) has no dev subject to derive: use the
-  `close(<feature>):` subject there, since it is then the honest
-  description of what landed rather than a mechanic dressed as a ship.
 - **Body** — why the feature exists, for a reader who has only
   `main`. The same *Why*-first discipline §9 asks of a review body,
   minus what only means something inside a review tool: the Reading
