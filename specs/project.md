@@ -599,6 +599,13 @@ the experience is symmetric across resource kinds.
 <!-- One line per in-flight initiative. Archived by the last
      stream's close(<feature>): commit. -->
 
+- **kaimux-driver-plane** — put tool variety behind an adapter
+  seam and channel variety behind a driver seam, so the
+  orchestrator renders to a terminal or to any driver that
+  speaks the control protocol. 8 streams; 1–4 ship standalone
+  terminal value, 5–8 build the plane. Paired with a chat
+  driver tracked in a separate private repo.
+
 ## Agent Development
 
 <!-- Skill-scoped preferences. Each subsection is a skill name. -->
