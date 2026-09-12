@@ -283,11 +283,31 @@ rather than a remembered override. The settings are one
   `close()` subject, partial squash, branch link in body, scopeless
   `feat:`, missing blank separator, and two whys shorter than the old
   floor.
-- **Open — the gate's `retry_budget` (2) is spent and these fixes are
-  unreviewed.** `authority` is unset in `project.md`, so `hard-stop`
-  applies: no push without an explicit override. Both fix rounds so
-  far introduced a new defect of the class they fixed, which is the
-  argument for spending a third cycle rather than accepting.
+- **2026-09-12 · dev · Code Review Gate cycle 3 (budget overridden):
+  FAIL.** The 4-word floor was **vacuous**: `🤖 Generated with [Claude
+  Code](…)` is 5 words, and claude — which appends that footer by
+  default — is the first of the three agents this fixture runs. So the
+  fixture proved the *host's default message* didn't land, not that a
+  message was *authored*. `See the branch history.` (4 words) passed
+  too, which is the anti-pattern in its purest form: deferring the why
+  to exactly the history the squash is collapsing.
+  - **The three attempts are the finding.** 2 lines → false failure;
+    15 words → false failure; 4 words → vacuous. A word count cannot
+    express "a why exists", and each round I re-tuned the threshold
+    instead of changing the tool. The check now **discounts host
+    boilerplate** — blank lines, git trailers, attribution and URL
+    lines — and requires something to survive, plus a named rejection
+    of history-pointer bodies. No threshold at all.
+  - Also: the commit-count comment enumerated the causes of a wrong
+    count, but a correct squash followed by one more commit on `main`
+    also trips it — enumeration dropped. And the branch-name check
+    rejected any *mention* while `close.md` forbids only *links*, so
+    the fixture was stricter than the prose it tests; now matches only
+    URL and markdown-link shapes.
+- **2026-09-12 · dev · probe re-run, 23 behaviours, all correct.** Both
+  cycle-3 cases now fail, and the false-failure directions pass: a
+  3-word why, a bare branch name beside a real why, and a why followed
+  by an attribution footer.
 
 ## Decision Log
 

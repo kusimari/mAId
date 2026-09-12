@@ -164,10 +164,9 @@ git add -A && git commit -q -m "close(add-due-dates): reconcile spec and clear h
 set -e
 
 # main moved by exactly one commit: the seed plus one squashed feature commit.
-# Any other count means the branch's own commits landed individually (a --no-ff
-# merge, a fast-forward, a rebase) or nothing landed at all. The exact count for
-# those depends on how much closure work the agent committed first, so don't
-# encode one here.
+# Don't enumerate the causes of a wrong count -- a --no-ff merge, a fast-forward
+# and a rebase all trip it, but so does a correct squash followed by one more
+# commit on main, and a reader pointed at a closed set of causes stops looking.
 [ "$(git rev-list --count main)" = 2 ]
 
 # The feature actually shipped. Without this the whole assert reduces to
@@ -200,17 +199,30 @@ test -z "$(printf '%s\n' "$body" | grep -F 'fix: the assert' || true)"
 test -z "$(printf '%s\n' "$body" | grep -F 'plan(add-due-dates)' || true)"
 test -z "$(printf '%s\n' "$body" | grep -F 'close(add-due-dates)' || true)"
 
-# ...and prose DID. The pairing is the point: an empty body satisfies every
-# negative above and is not the behaviour wanted, since it loses the why at the
-# one place that cannot be corrected cheaply. This floor does ONLY that job. A
-# minimal compliant why is a single short sentence -- close.md sets no length,
-# so any higher floor is a rule the skill doesn't carry, and length judgement
-# is not available deterministically.
-[ "$(printf '%s\n' "$body" | wc -w)" -ge 4 ]
+# ...and something the agent authored DID. Host boilerplate is discounted first:
+# an attribution footer is not a why, and claude -- which appends one by default
+# -- is the first of the three agents this fixture runs, so a raw word count
+# would let that footer alone satisfy the only positive check in this assert.
+authored=$(printf '%s\n' "$body" \
+  | grep -vE '^[[:space:]]*$' \
+  | grep -viE '^[[:space:]]*(co-authored-by|signed-off-by|reviewed-by|acked-by|generated with)' \
+  | grep -vE 'https?://' || true)
 
-# The branch link did not survive. close.md's exclusion list names links to
-# branches about to be deleted, and step 7 deletes this one.
-test -z "$(printf '%s\n' "$body" | grep -F 'feat/add-due-dates' || true)"
+# No word floor, deliberately. close.md sets no length, so every threshold tried
+# was wrong in one direction or the other: high enough to exclude boilerplate
+# also rejects a compliant "Deadlines were invisible." Discount the boilerplate,
+# then require that something survives.
+test -n "$authored"
+
+# ...and what survives is not a pointer to the history this squash is about to
+# collapse. "See the branch history" is the anti-pattern in its purest form: it
+# defers the why to precisely the thing being flattened.
+test -z "$(printf '%s\n' "$authored" | grep -iE 'see (the )?(branch|commit|full)?[[:space:]]*(history|log|messages|commits)' || true)"
+
+# The branch was not LINKED. close.md's exclusion list names links to branches
+# about to be deleted; a bare mention is not forbidden, so match only the
+# link-shaped form -- otherwise the fixture is stricter than the prose it tests.
+test -z "$(printf '%s\n' "$body" | grep -E 'https?://[^[:space:]]*feat/add-due-dates|\]\([^)]*feat/add-due-dates' || true)"
 
 # Not the review body pasted wholesale -- close.md asks for its Why-discipline
 # MINUS what only means something inside a review tool. A tripwire, not a
