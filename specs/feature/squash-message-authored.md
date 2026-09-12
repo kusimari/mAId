@@ -368,6 +368,31 @@ rather than a remembered override. The settings are one
     consistent in cycle 1 and it was load-bearing.
   - The setup comment claimed all four sibling playbacks share this
     one's unanswerable-pre-install position; two don't.
+- **2026-09-12 · review · briefing generator returned defects twice**,
+  so no briefing was published either time — its contract treats a
+  defect as proof the loop isn't complete.
+  - **Round 1, five.** The history-pointer check anchored `see` to line
+    start or sentence punctuation, so `- See the branch history.` — the
+    cycle-3 case the check exists to reject — passed the whole assert;
+    the changelog check had the same gap for numbering. `close.md` step
+    5 still carried the causal claim I corrected in `SKILL.md` at cycle
+    4, three lines above the rule contradicting it. The spec claimed a
+    judged `playback` arm covered the why-vs-what question, which the
+    fixture comment had already retracted mid-dev — the overclaiming
+    sin, in the spec this time. Plus five stale Test Strategy /
+    Design statements, and a `--kind` scoping that can't reach through
+    the Just verb. And step 6 had no answer for a closure-only branch,
+    which `4da8a94` on `main` shows is not hypothetical.
+  - **Round 2, two, one of them mine from round 1.** The closure-only
+    carve-out I added to `close.md` was not mirrored into the fixture's
+    `expect:` narrative, so a correct recitation was described by the
+    fixture as a wrong answer. **Third instance of the same twin-pair
+    shape** — `SKILL.md` vs step 5, step 5 vs step 6, now step 6 vs the
+    fixture that recites it. Also: the attribution filter was
+    unanchored, so a compliant why containing the ordinary-English
+    "generated with" was discounted to nothing and failed — the
+    false-failure class reappearing *inside* the fix that replaced the
+    threshold, which is exactly what *Carry forward* warns about.
 - **2026-09-12 · dev · probe re-run, 27 behaviours, all correct.**
 
 ## Decision Log

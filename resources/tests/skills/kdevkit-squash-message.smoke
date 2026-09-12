@@ -2,7 +2,7 @@ skill: kdevkit
 tools: claude,kiro,codex
 --- playback ---
 task: When you squash-merge a closed-out feature into main, where does the commit message come from?
-expect: The message is authored, not taken from anything on hand. The subject is the dominant dev-phase feat(scope) subject — the title the Closure Review Gate rewrote, where a review tool exists — and never the close() commit's own subject. The body is why the feature exists, written for someone who has only main, carrying the same Why-first discipline as a review body but stripped of what only means something inside a review tool: the reading order, the verification dump, links to branches about to be deleted. Neither the branch's commit messages nor the review body is itself a commit message. The host's default is never trusted to supply one; where that default is configurable it is worth pointing at the review body as a floor for merges made outside the workflow, but that is a repo-wide change to surface and agree first, and never a substitute for passing a message. Wrong answers: that the message comes from the PR/CR body, or from the branch's commit messages, or from whatever the host or forge produces by default; that the subject is the close() commit's subject; that flipping the forge's squash-message setting is an alternative to passing a message, or that it may be flipped without surfacing it. Judge whether the answer has the message authored, names where the subject comes from, and treats no available artefact as being a commit message. An answer MORE precise than this narrative — naming the review-body sections to strip, or that a single-commit branch is still squashed — is correct, not wrong; verify against the skill before failing such a claim.
+expect: The message is authored, not taken from anything on hand. The subject is the dominant dev-phase feat(scope) subject — the title the Closure Review Gate rewrote, where a review tool exists — and never the close() commit's own subject — except on a branch that is only closure and has no dev commits at all, where the close() subject is the honest description of what landed. The body is why the feature exists, written for someone who has only main, carrying the same Why-first discipline as a review body but stripped of what only means something inside a review tool: the reading order, the verification dump, links to branches about to be deleted. Neither the branch's commit messages nor the review body is itself a commit message. The host's default is never trusted to supply one; where that default is configurable it is worth pointing at the review body as a floor for merges made outside the workflow, but that is a repo-wide change to surface and agree first, and never a substitute for passing a message. Wrong answers: that the message comes from the PR/CR body, or from the branch's commit messages, or from whatever the host or forge produces by default; that the subject is the close() commit's subject on a branch that HAS dev commits; that flipping the forge's squash-message setting is an alternative to passing a message, or that it may be flipped without surfacing it. Judge whether the answer has the message authored, names where the subject comes from, and treats no available artefact as being a commit message. An answer MORE precise than this narrative — naming the review-body sections to strip, or that a single-commit branch is still squashed — is correct, not wrong; verify against the skill before failing such a claim.
 --- enact ---
 task: I'm on branch feat/add-due-dates and the work is done — the --due flag and the list-output rendering are both in due.py, committed on this branch, and I've already reconciled the spec. Read it and see. There's no remote and no review tool on this machine, so skip anything that needs one. Ship it: squash-merge into local main. Do the git work now, in this repo.
 --- setup ---
@@ -209,9 +209,13 @@ test -z "$(printf '%s\n' "$body" | grep -F 'close(add-due-dates)' || true)"
 # A URL is stripped FROM its line rather than dropping the line: close.md
 # forbids only links to the doomed branch, so a supporting link is permitted
 # prose, and agents routinely write a whole paragraph as one long line.
+# The attribution filter is ANCHORED: a footer or trailer is line-initial by git
+# convention, while "generated with" is ordinary English, so an unanchored match
+# discards a compliant one-line why ("Reports were generated with stale data.").
+# The leading non-alphanumeric class is for claude's `🤖 Generated with …`.
 authored=$(printf '%s\n' "$body" \
   | sed 's|https\{0,1\}://[^[:space:]]*||g' \
-  | grep -viE '(generated with|co-authored-by|signed-off-by|reviewed-by|acked-by)' \
+  | grep -viE '^[[:space:]]*[^[:alnum:][:space:]]*[[:space:]]*(generated with|co-authored-by|signed-off-by|reviewed-by|acked-by)' \
   | grep -viE '^[[:space:]]*(refs|closes|fixes|see[ -]also)[[:space:]]*:' \
   | grep -vE '^[[:space:]]*$' || true)
 
@@ -231,7 +235,7 @@ printf '%s\n' "$authored" | grep -q '[[:alpha:]][[:alpha:]]'
 # strip list markers, numbering and an opening paren first, or two characters of
 # prefix ("- See the branch history.") walk the anti-pattern straight back in.
 test -z "$(printf '%s\n' "$body" \
-  | sed 's/^[[:space:]]*[-*0-9.)(]*[[:space:]]*//' \
+  | sed 's/^[[:space:]]*[-*>0-9.)(]*[[:space:]]*//' \
   | grep -iE '(^|[.;:][[:space:]]+|\()see[[:space:]]+(the[[:space:]]+)?(full[[:space:]]+)?(branch|commit|git)?[[:space:]]*(history|log|commits|messages)' || true)"
 
 # The branch was not LINKED. close.md's exclusion list names links to branches
@@ -253,6 +257,6 @@ test -z "$(printf '%s\n' "$body" | grep -iE 'read for (intent|contract|plumbing)
 # this body. That hole is open and deliberately left open, because no
 # deterministic check separates a why from a reworded what. Don't read this line
 # as more than it is.
-# The prefix group covers bullets AND numbering: `1. feat(todo): …` is the same
-# transcript wearing an ordered list.
-test -z "$(printf '%s\n' "$body" | grep -iE '^[[:space:]]*(([-*]|[0-9]+[.)])[[:space:]]+)?(feat|fix|plan|close|chore|docs|test|refactor)(\([a-z-]+\))?:' || true)"
+# The prefix group covers bullets, numbering and light decoration: `1. feat(todo):`
+# and `- **feat(todo):` are the same transcript wearing a list or bold.
+test -z "$(printf '%s\n' "$body" | grep -iE '^[[:space:]]*(([-*+•]|[0-9]+[.)])[[:space:]]+)?[*_`]{0,2}(feat|fix|plan|close|chore|docs|test|refactor)(\([a-z-]+\))?:' || true)"
