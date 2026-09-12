@@ -394,6 +394,13 @@ boundary should have left, and pair every negative check with a
 positive one — "the block no longer says planning" passes if the
 block was deleted, which is not the behaviour wanted.
 
+The record's **append-only** half needs its own trap check. A
+count-based assertion ("there are crossings") passes when the list
+was *replaced* rather than appended to, which destroys the history
+the list exists for. Seed a crossing and assert it survives — the
+positive check for an append-only structure is that the *earlier*
+entry is still there, not that some entry is.
+
 ### Writing a skill
 
 A skill has to survive two things. Design for both.
@@ -469,6 +476,26 @@ behavior: error or absence paths (a refused action, a
 stop-with-error) where a compliant agent writes nothing. A
 behavioral assert must fail a no-op agent (pair a presence check
 with the absence check) or it proves nothing.
+
+**A fixture proving itself is not the same as two fixtures being
+comparable.** The vacuity check above — a behavioral assert must fail a
+no-op agent — is per-fixture, and it cannot tell you that two fixtures
+demand the same work. A/Bing two designs against each other needs both
+arms audited for equal demand: one arm requiring a commit while the other
+was satisfiable by uncommitted edits produced a clean-looking result that
+measured the difference in demand, not the difference in design.
+
+**A skill's pre-install stage carries only `SKILL.md`.** Prose added to a
+module is invisible there no matter how well written, so a fixture testing
+module content must run post-install. A module-prose fix that "fails" at
+the pre-install stage is telling you about the stage, not the fix.
+
+**Adding a second mechanism to a skill means auditing every place the
+first one is *instructed*, not just where it is *described*.** Describing
+a new way to do something while other files still instruct the old way
+unconditionally produces two rules an agent cannot both obey — and a
+compliant agent then does both, which reads as drift. The description is
+the tempting place to look and the wrong one.
 
 kdevkit's Test Gate uses `just test` by default. SKILL.md
 prose revisions add `just resources::check-skills` (judge mode)
@@ -571,11 +598,6 @@ the experience is symmetric across resource kinds.
 
 <!-- One line per in-flight initiative. Archived by the last
      stream's close(<feature>): commit. -->
-
-- **kdevkit-decompose-and-harden** — decompose the kdevkit
-  workflow into per-phase modules and harden the review gate.
-  6 streams; 1–3 run autonomously, 4–5 blocked on the
-  code-vs-prose boundary, 6 verifies on codex + kiro.
 
 ## Agent Development
 
