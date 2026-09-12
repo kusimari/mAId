@@ -477,6 +477,26 @@ stop-with-error) where a compliant agent writes nothing. A
 behavioral assert must fail a no-op agent (pair a presence check
 with the absence check) or it proves nothing.
 
+**A fixture proving itself is not the same as two fixtures being
+comparable.** The vacuity check above — a behavioral assert must fail a
+no-op agent — is per-fixture, and it cannot tell you that two fixtures
+demand the same work. A/Bing two designs against each other needs both
+arms audited for equal demand: one arm requiring a commit while the other
+was satisfiable by uncommitted edits produced a clean-looking result that
+measured the difference in demand, not the difference in design.
+
+**A skill's pre-install stage carries only `SKILL.md`.** Prose added to a
+module is invisible there no matter how well written, so a fixture testing
+module content must run post-install. A module-prose fix that "fails" at
+the pre-install stage is telling you about the stage, not the fix.
+
+**Adding a second mechanism to a skill means auditing every place the
+first one is *instructed*, not just where it is *described*.** Describing
+a new way to do something while other files still instruct the old way
+unconditionally produces two rules an agent cannot both obey — and a
+compliant agent then does both, which reads as drift. The description is
+the tempting place to look and the wrong one.
+
 kdevkit's Test Gate uses `just test` by default. SKILL.md
 prose revisions add `just resources::check-skills` (judge mode)
 as their A/B evidence — the pre-install stage is the one that
