@@ -68,8 +68,21 @@ without one degrades to the PR body instead of a commit transcript.
 
 ## Test Strategy
 
-**Unit — none to add.** `just test` stays green as a no-regression
-check; nothing under `resources/build-tool/` or `kaimux/` is touched.
+**Unit — six added, in `harness.rs`.** The leak tripwire watched working
+-tree status and `HEAD`, and this is the first fixture to ask an agent to
+squash-merge and close out — verbs that delete and move refs. Deleting a
+branch you are not on leaves a clean tree and an unmoved `HEAD`, so the
+tripwire was blind to exactly the class this fixture introduces. It now
+snapshots local and remote-tracking refs too (remote-tracking because a
+push leaves no other trace here), and reports deletion, creation and
+movement as distinct incidents — a stray merge moves a ref that still
+exists, which a name-only check would call clean.
+
+Five tests cover those cases plus the must-not-fire pairing; the sixth
+drives real `git` in a tempdir and asserts `status` and `HEAD` are
+*unchanged* across a branch deletion, so it can only pass via the ref
+comparison. That assertion is the non-vacuity proof, and it also pins the
+`for-each-ref` output format the parsing assumes.
 
 **Functional — one new fixture,**
 `resources/tests/skills/kdevkit-squash-message.smoke`, behavioral,
@@ -192,6 +205,10 @@ rather than a remembered override. The settings are one
 - [x] `just test` + `just resources::verify-skills-dry` green.
 - [x] Flip the two repository settings via `gh api -X PATCH` — last,
       and record before/after in the Session Log.
+- [x] Extend the runner's leak tripwire to cover refs, so this fixture's
+      merge/branch-delete verbs cannot act on the real checkout
+      undetected. Added at the user's direction after review surfaced it
+      (see Decision Log).
 
 - *Risk note:* the settings flip is the one step whose effect is
   outside this branch and outside git. Reverting the merge does not
@@ -437,6 +454,17 @@ rather than a remembered override. The settings are one
   assert's comment claiming the hole was closed — a check whose comment
   overstates it is worse than the gap, because the next reader stops
   looking.
+- **The runner's tripwire gains refs, at the user's direction.** Review
+  found that this is the first fixture asking an agent to rewrite a
+  `main`, that containment is convention rather than enforcement (a
+  `notes` fixture twice committed into the real checkout while reporting
+  PASS), and that closure step 7 deletes branches with no permission
+  pause — a combination the tripwire could not see. Treated as a blocker
+  for the paid run rather than a note. Scope this feature didn't plan
+  for, taken deliberately: the fixture is what introduces the risk, so
+  shipping it without the detection would be handing the next person a
+  sharper edge than they had before. Rejected: filing it as backlog and
+  running the paid test anyway.
 - **The closure-only-branch carve-out is reverted, not fixed here.**
   Added mid-dev in response to a review note, then removed: it sat
   outside R1–R4, and it contradicted step 5 three lines above — which
