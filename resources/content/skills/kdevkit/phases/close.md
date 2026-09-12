@@ -152,11 +152,36 @@ commit on `main` reads as a feature ship, not a closure
 mechanic.
 
 **6 · Squash merge to `main`** — one logical commit per
-feature. Exceptions:
+feature, carrying a message you wrote.
 
-- Single-commit branch: squash and plain merge are equivalent.
+**The message is authored, not assembled.** Nothing on hand *is* a
+commit message. The branch's commit subjects are the branch's
+narrative — "fix the assert", "rename the trailer", "revert that" —
+and the review body is written for a review tool. So pass both parts
+explicitly at the merge:
+
+- **Subject** — the title step 5 just rewrote, verbatim. That step
+  exists so `main` reads as a feature ship; this is where it lands.
+- **Body** — why the feature exists, for a reader who has only
+  `main`. The same *Why*-first discipline §9 asks of a review body,
+  minus what only means something inside a review tool: the Reading
+  order, the verification dump, links to branches about to be
+  deleted.
+
+**Never leave the message to the host's default.** A forge that
+concatenates commit messages writes the transcript onto `main`
+permanently, and the merge still looks like it worked. Where that
+default is configurable, point it at the review body — a floor for
+the merge nobody authored, not a substitute for authoring one.
+
+Exceptions:
+
+- Single-commit branch: squash and plain merge are equivalent in
+  *content*, but a plain merge keeps that commit's own subject —
+  often a `plan()` or a `fix:`. Squash, so the authored subject is
+  what lands.
 - Branch with *several* logical features (rare): one squash
-  merge per logical feature.
+  merge per logical feature, each with its own authored message.
 - Non-linear `main` by convention: squash still works; surface
   before going non-default.
 - FF-only `main`: squash locally, then commit and push (review

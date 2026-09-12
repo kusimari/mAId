@@ -133,14 +133,14 @@ rather than a remembered override. The settings are one
 
 ## Implementation Plan
 
-- [ ] `phases/close.md` step 6 — the authored-message rule: subject
+- [x] `phases/close.md` step 6 — the authored-message rule: subject
       from the step-5 title, body as a written why, and what to leave
       out relative to the PR body.
-- [ ] Grep the skill for anything that now restates or contradicts the
+- [x] Grep the skill for anything that now restates or contradicts the
       rule (R4); reconcile rather than duplicate.
-- [ ] New fixture `resources/tests/skills/kdevkit-squash-message.smoke`
+- [x] New fixture `resources/tests/skills/kdevkit-squash-message.smoke`
       per the Test Strategy, with the vacuity pairing.
-- [ ] `just test` + `just resources::verify-skills-dry` green.
+- [x] `just test` + `just resources::verify-skills-dry` green.
 - [ ] Flip the two repository settings via `gh api -X PATCH` — last,
       and record before/after in the Session Log.
 
@@ -166,6 +166,21 @@ rather than a remembered override. The settings are one
   recorded for reversibility — `squash_merge_commit_message:
   COMMIT_MESSAGES`, `squash_merge_commit_title: COMMIT_OR_PR_TITLE`,
   `allow_squash_merge: true`, `delete_branch_on_merge: false`.
+- **2026-09-12 · dev.** R4 grep came back clean — nothing else in the
+  skill states a merge-message rule, and `SKILL.md:511` ("the type
+  encodes the on-branch narrative, not the on-`main` shape") reinforces
+  it rather than competing. Step 6's single-commit exception needed a
+  caveat it didn't have: a plain merge keeps that commit's own subject,
+  which defeats R2.
+- **2026-09-12 · dev · the assert block was probed before trusting
+  it.** Extracted setup + assert and ran six wrong behaviours plus the
+  right one against them, since a behavioral assert that can't fail is
+  worth nothing. FAIL for: no-op, plain merge, git's default squash
+  message, empty body, changelog body (the transcript reflowed as
+  bullets), and a `close(` subject. PASS only for an authored message.
+  The changelog case is why the assert greps for bare
+  Conventional-Commits subjects line by line and not just the two
+  seeded strings.
 
 ## Decision Log
 

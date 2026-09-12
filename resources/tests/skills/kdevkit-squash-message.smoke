@@ -1,0 +1,141 @@
+skill: kdevkit
+tools: claude,kiro,codex
+--- enact ---
+task: I'm on branch feat/add-due-dates and the work is done — the --due flag and the list-output rendering are both in due.py, committed on this branch. Read it and see. There's no remote and no review tool on this machine, so skip anything that needs one. Ship it: close it out and squash-merge into local main. Do the git and file work now, in this repo.
+--- setup ---
+git init -q
+git config user.email t@t.t && git config user.name t
+git checkout -q -b main
+echo "# todo" > README.md
+git add -A && git commit -q -m "chore: initial commit"
+git checkout -q -b feat/add-due-dates
+mkdir -p specs/feature
+cat > specs/feature/add-due-dates.md <<'MD'
+# Feature: add-due-dates
+
+## Feature Brief
+Let a to-do carry a due date.
+
+## Requirements
+User can set and see a due date on any to-do.
+
+## Design
+A nullable due field on the record; a --due flag parses it.
+
+## Handoff
+- **Stage:** review
+- **Ready for:** closure on the cue.
+- **Carry forward:** nothing outstanding from review.
+- **Deliberately left:** recurring due dates — separate feature.
+
+## Implementation Plan
+- [ ] add --due flag and parse the date
+- [ ] render the due date in the list output
+
+## Session Log
+
+## Decision Log
+MD
+git add -A && git commit -q -m "plan(add-due-dates): initial spec"
+# The seed code has to be GENUINELY done. This fixture asserts on the merge
+# message, which only exists if the agent agrees the feature is closable — a
+# stub here makes an honest skill refuse to close, and the fixture then fails
+# for the right reason at the wrong time (see kdevkit-closure.smoke, where
+# exactly that happened). Reusing that fixture's known-good due.py.
+cat > due.py <<'PY'
+import argparse
+from datetime import date
+
+
+def parse_due(value):
+    # plan item 1: parse the date, not just capture the string
+    return date.fromisoformat(value)
+
+
+def parse_args(argv):
+    p = argparse.ArgumentParser(prog="todo")
+    p.add_argument("--due", type=parse_due, default=None)
+    p.add_argument("name")
+    return p.parse_args(argv)
+
+
+def render_list(tasks):
+    # plan item 2: render the due date, tolerating a to-do without one
+    # (Design calls the field nullable)
+    out = []
+    for t in tasks:
+        d = t.get("due")
+        out.append(f"{t['name']} (due {d.isoformat()})" if d else t["name"])
+    return "\n".join(out)
+
+
+def add(store, argv):
+    # a due date set on the command line reaches the record
+    ns = parse_args(argv)
+    store.append({"name": ns.name, "due": ns.due})
+    return store
+PY
+mkdir -p tests
+cat > tests/test_due.py <<'PY'
+from datetime import date
+import due
+
+
+def test_parses_due_into_a_date():
+    assert due.parse_args(["--due", "2026-08-01", "taxes"]).due == date(2026, 8, 1)
+
+
+def test_renders_the_due_date():
+    assert "due 2026-08-01" in due.render_list([{"name": "t", "due": date(2026, 8, 1)}])
+
+
+def test_todo_without_a_due_date_still_renders():
+    assert due.render_list([{"name": "milk"}]) == "milk"
+PY
+git add -A && git commit -q -m "feat(todo): add a --due flag and render it in the list"
+# The third commit exists to be transcript-flavoured. Its subject is the kind
+# of thing that belongs to the branch and not to main's history, and it is one
+# of the two strings the assert greps for.
+cat >> tests/test_due.py <<'PY'
+
+
+def test_due_date_from_the_cli_reaches_the_record():
+    assert due.add([], ["--due", "2026-08-01", "taxes"])[0]["due"] == date(2026, 8, 1)
+PY
+git add -A && git commit -q -m "fix: the assert"
+--- assert ---
+set -e
+
+# main moved by exactly one commit: the seed plus one squashed feature commit.
+# Four means a plain merge or a rebase, which lands the transcript by keeping
+# each subject as its own commit.
+[ "$(git rev-list --count main)" = 2 ]
+
+subject=$(git log -1 --format=%s main)
+body=$(git log -1 --format=%b main)
+
+# The authored subject landed: the feature ship, not a phase mechanic. Step 5
+# rewrites the title to the dominant dev subject and step 6 is where it lands,
+# so a `plan(`/`close(`/`fix:` subject on main means step 6 took whatever was
+# nearest instead.
+printf '%s\n' "$subject" | grep -q '^feat('
+test -z "$(printf '%s\n' "$subject" | grep -E '^(plan|close|chore|docs)\(|^fix:' || true)"
+
+# The transcript did NOT land. git's own squash message concatenates every
+# branch commit message, so these are precisely the two strings a default
+# message carries and an authored one does not.
+test -z "$(printf '%s\n' "$body" | grep -F 'fix: the assert' || true)"
+test -z "$(printf '%s\n' "$body" | grep -F 'plan(add-due-dates)' || true)"
+
+# ...and prose DID. This pairing is the point: an empty body satisfies both
+# negatives above, and an empty body is not the behaviour wanted — it loses
+# the why at the one place that cannot be corrected cheaply. A written why
+# runs to a paragraph, so demand both several lines and real word count.
+[ "$(printf '%s\n' "$body" | grep -c .)" -ge 2 ]
+[ "$(printf '%s\n' "$body" | wc -w)" -ge 25 ]
+
+# The body is prose, not the subject list reflowed: no line may itself be a
+# bare Conventional-Commits subject, bulleted or not. Without this an agent
+# can pass by rewriting the transcript as a changelog, which is the same
+# failure wearing different words.
+test -z "$(printf '%s\n' "$body" | grep -E '^[[:space:]]*([-*][[:space:]]+)?(feat|fix|plan|close|chore|docs|test|refactor)(\([a-z-]+\))?:' || true)"
