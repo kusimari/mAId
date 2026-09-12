@@ -183,13 +183,13 @@ changes other people's merges, so **surface it and get agreement
 before changing it** — and never flip it in place of passing a
 message.
 
+**A single-commit branch is squashed too**, and is not an exception.
+The *content* is the same either way, but a fast-forward keeps that
+commit's own subject — often a `plan()` or a `fix:` — and `--no-ff`
+leaves two commits on `main` where the feature is one.
+
 Exceptions:
 
-- Single-commit branch: the *content* is the same either way, but a
-  fast-forward keeps that commit's own subject — often a `plan()` or a
-  `fix:` — and `--no-ff` leaves two commits on `main` where the
-  feature is one. Squash, so a single commit lands carrying the
-  authored subject.
 - Branch with *several* logical features (rare): one squash
   merge per logical feature, each with its own authored message.
 - Non-linear `main` by convention: squash still works; surface

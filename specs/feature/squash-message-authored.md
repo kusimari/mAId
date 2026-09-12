@@ -243,6 +243,51 @@ rather than a remembered override. The settings are one
   message, empty body, `close(` subject, `--allow-empty`, partial
   squash, prefixed changelog, review brief verbatim. PASS for the
   one-line why, a terse 2-line why, and a wrapped why.
+- **2026-09-12 · dev · Code Review Gate cycle 2: FAIL.** M2 and M3
+  verified closed. But the 15-word floor I put in place of M1's line
+  count **reproduced M1's own class** — an 8-word compliant why
+  ("Users could not tell which to-dos were urgent.") failed. `close.md`
+  sets no length, so any floor above "not empty" is a rule the skill
+  doesn't carry. Now 4 words, which is the job the comment claims and
+  nothing more.
+  - **And I made the wrong-comment mistake a second time.** M3's fix
+    said "the playback arm carries that judgement" — it does not.
+    Playback asks a different question in a different run and cannot
+    see the body the enact run wrote. The reworded-changelog hole has
+    no coverage at all, deterministic or judged. The comment now says
+    that plainly. Leaving a hole open is fine; claiming it's covered
+    is what keeps the next reader from looking.
+  - `%b` is empty when an agent writes the why with no blank separator
+    — git folds the paragraph into `%s` — so a body that *was* written
+    was diagnosed as missing. Now `%B` minus the first line.
+  - Setup seeded no `close()` commit, so the prose's sharpest
+    prohibition was only tested if the agent volunteered the
+    temptation. The branch tip is now
+    `close(add-due-dates): reconcile spec and clear handoff`, which is
+    also in git's default `SQUASH_MSG`, so it earns a third transcript
+    negative. The task changed with it: reconcile is seeded, the merge
+    is what's asked.
+  - Also: the branch-link exclusion had no assert (added); `^feat(`
+    rejected a scopeless `feat:` that Conventional Commits allows
+    (now `^feat[(:]`); the merge-count comment cited numbers that only
+    hold for an agent doing no closure work; the review-brief regex
+    can't fire in this seed and now says it's a tripwire; the playback
+    `expect:` had none of the negative calibration its four siblings
+    carry; and the single-commit bullet sat under `Exceptions:` while
+    prescribing the default, so a label-skimming agent read it as
+    "don't squash".
+  - Portability: the reseed avoids `sed -i` (differs GNU/BSD) and
+    `python3` (not a dependency of this suite).
+- **2026-09-12 · dev · probe re-run, 18 behaviours, all correct.** New
+  cases: authored subject with git's default body, `fix:` subject,
+  `close()` subject, partial squash, branch link in body, scopeless
+  `feat:`, missing blank separator, and two whys shorter than the old
+  floor.
+- **Open — the gate's `retry_budget` (2) is spent and these fixes are
+  unreviewed.** `authority` is unset in `project.md`, so `hard-stop`
+  applies: no push without an explicit override. Both fix rounds so
+  far introduced a new defect of the class they fixed, which is the
+  argument for spending a third cycle rather than accepting.
 
 ## Decision Log
 
