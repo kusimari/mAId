@@ -166,6 +166,18 @@ git add -A && git commit -q -m "close(add-due-dates): reconcile spec and clear h
 --- assert ---
 set -e
 
+# Two checks below both need "whatever an agent might put in front of a line" --
+# a bullet, an asterisk, a quote marker, numbering, bold, an arrow. They are
+# defined ONCE here, because the previous three passes at this file each added a
+# character to one enumeration and left the other behind: `>` went to the pointer
+# strip while `+` and `•` went to the changelog regex, in the same commit. Strip a
+# leading run of non-alphanumerics and numbering rather than naming markers, so
+# there is no list to keep in sync and no next marker to miss.
+# The outer group repeats "optional space, then a marker run", so markers
+# SEPARATED by whitespace (`- ** feat(todo):`) are stripped too -- a single run
+# stops at the first space and leaves the rest of the prefix in place.
+strip_markers() { sed -E 's/^([[:space:]]*([^[:alnum:][:space:]]+|[0-9]+[.)]))*[[:space:]]*//'; }
+
 # main moved by exactly one commit: the seed plus one squashed feature commit.
 # Don't enumerate the causes of a wrong count -- a --no-ff merge, a fast-forward
 # and a rebase all trip it, but so does a correct squash followed by one more
@@ -235,11 +247,10 @@ printf '%s\n' "$authored" | grep -q '[[:alpha:]][[:alpha:]]'
 # defers the why to precisely the thing being flattened. Run this on $body, not
 # $authored -- the URL strip above would otherwise hide the linked form, which is
 # the worst version of it. "see" must OPEN a sentence, so an ordinary clause
-# ("users could not see the history of what was due") is not a pointer -- but
-# strip list markers, numbering and an opening paren first, or two characters of
-# prefix ("- See the branch history.") walk the anti-pattern straight back in.
-test -z "$(printf '%s\n' "$body" \
-  | sed 's/^[[:space:]]*[-*>0-9.)(]*[[:space:]]*//' \
+# ("users could not see the history of what was due") is not a pointer -- hence
+# strip_markers first, or two characters of prefix ("- See the branch history.")
+# walk the anti-pattern straight back in.
+test -z "$(printf '%s\n' "$body" | strip_markers \
   | grep -iE '(^|[.;:][[:space:]]+|\()see[[:space:]]+(the[[:space:]]+)?(full[[:space:]]+)?(branch|commit|git)?[[:space:]]*(history|log|commits|messages)' || true)"
 
 # The branch was not LINKED. close.md's exclusion list names links to branches
@@ -261,6 +272,7 @@ test -z "$(printf '%s\n' "$body" | grep -iE 'read for (intent|contract|plumbing)
 # this body. That hole is open and deliberately left open, because no
 # deterministic check separates a why from a reworded what. Don't read this line
 # as more than it is.
-# The prefix group covers bullets, numbering and light decoration: `1. feat(todo):`
-# and `- **feat(todo):` are the same transcript wearing a list or bold.
-test -z "$(printf '%s\n' "$body" | grep -iE '^[[:space:]]*(([-*+•]|[0-9]+[.)])[[:space:]]+)?[*_`]{0,2}(feat|fix|plan|close|chore|docs|test|refactor)(\([a-z-]+\))?:' || true)"
+# Same strip as the pointer check, so the pair cannot drift apart again:
+# `1. feat(todo):` and `- **feat(todo):` are the transcript wearing a list or bold.
+test -z "$(printf '%s\n' "$body" | strip_markers \
+  | grep -iE '^(feat|fix|plan|close|chore|docs|test|refactor)(\([a-z-]+\))?:' || true)"

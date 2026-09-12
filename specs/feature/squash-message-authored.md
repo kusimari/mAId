@@ -425,10 +425,21 @@ rather than a remembered override. The settings are one
     closes that. And "only `integration` can pass" overstated it —
     `enact` is behavioural and can go green on an agent's own habits;
     it is *uninformative*, not incapable.
-  - **The pattern, for whoever touches this next.** Seven of the
-    defects across all rounds were one shape: a rule corrected in one
-    place with an uncorrected twin left elsewhere. Grep for the
-    sentence, not the file, and fix every hit in the same commit.
+  - **Round 4, one — and the twin was the line 26 rows below, edited in
+    the same commit.** Two checks both needed "the set of list markers
+    an agent might write" and enumerated it separately: the round-2 fix
+    added `>` to the pointer strip while adding `+` and `•` to the
+    changelog regex. So `• See the branch history.` was a full PASS —
+    the cycle-3 anti-pattern back again, behind a marker the *neighbouring*
+    check considered plausible enough to name. Fixed by removing the
+    class rather than the character: one shared `strip_markers`, defined
+    once, stripping any run of non-alphanumerics and numbering rather
+    than naming markers. There is no list left to keep in sync.
+  - **The pattern, for whoever touches this next.** Eight of the defects
+    across all rounds were one shape: a rule corrected in one place with
+    an uncorrected twin left elsewhere — twice in the *same commit* as
+    the correction. Grep for the sentence, not the file, and prefer a
+    single definition over two enumerations that must agree.
 - **2026-09-12 · dev · probe re-run, 27 behaviours, all correct.**
 
 ## Decision Log
