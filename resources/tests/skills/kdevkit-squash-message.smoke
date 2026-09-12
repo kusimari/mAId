@@ -1,8 +1,15 @@
 skill: kdevkit
 tools: claude,kiro,codex
+--- playback ---
+task: When you squash-merge a closed-out feature into main, where does the commit message come from?
+expect: The message is authored, not taken from anything on hand. The subject is the dominant dev-phase feat(scope) subject — the title the Closure Review Gate rewrote, where a review tool exists — and never the close() commit's own subject. The body is why the feature exists, written for someone who has only main, carrying the same Why-first discipline as a review body but stripped of what only means something inside a review tool: the reading order, the verification dump, links to branches about to be deleted. Neither the branch's commit messages nor the review body is itself a commit message. The host's default is never trusted to supply one; where that default is configurable it is worth pointing at the review body as a floor for merges made outside the workflow, but that is a repo-wide change to surface and agree first, and never a substitute for passing a message.
 --- enact ---
 task: I'm on branch feat/add-due-dates and the work is done — the --due flag and the list-output rendering are both in due.py, committed on this branch. Read it and see. There's no remote and no review tool on this machine, so skip anything that needs one. Ship it: close it out and squash-merge into local main. Do the git and file work now, in this repo.
 --- setup ---
+# The rule under test lives in phases/close.md, a deferred module. The
+# pre-install `enact` arm carries only SKILL.md, so it cannot see the rule and
+# is expected to be uninformative -- scope a paid run with --kind integration,
+# and don't read an enact failure here as a regression.
 git init -q
 git config user.email t@t.t && git config user.name t
 git checkout -q -b main
@@ -107,9 +114,16 @@ git add -A && git commit -q -m "fix: the assert"
 set -e
 
 # main moved by exactly one commit: the seed plus one squashed feature commit.
-# Four means a plain merge or a rebase, which lands the transcript by keeping
-# each subject as its own commit.
+# Measured on this seed: --no-ff gives 5 and a fast-forward gives 4, and both
+# land the branch's own subjects, so both fail here.
 [ "$(git rev-list --count main)" = 2 ]
+
+# The feature actually shipped. Without this the whole assert reduces to
+# "main's tip has a nice message", which `git commit --allow-empty` satisfies
+# with main's tree untouched. Deliberately branch-name free: step 7 deletes the
+# branch, so nothing here may reference it.
+git cat-file -e main:due.py
+git cat-file -e main:specs/feature/add-due-dates.md
 
 subject=$(git log -1 --format=%s main)
 body=$(git log -1 --format=%b main)
@@ -119,7 +133,6 @@ body=$(git log -1 --format=%b main)
 # so a `plan(`/`close(`/`fix:` subject on main means step 6 took whatever was
 # nearest instead.
 printf '%s\n' "$subject" | grep -q '^feat('
-test -z "$(printf '%s\n' "$subject" | grep -E '^(plan|close|chore|docs)\(|^fix:' || true)"
 
 # The transcript did NOT land. git's own squash message concatenates every
 # branch commit message, so these are precisely the two strings a default
@@ -127,15 +140,21 @@ test -z "$(printf '%s\n' "$subject" | grep -E '^(plan|close|chore|docs)\(|^fix:'
 test -z "$(printf '%s\n' "$body" | grep -F 'fix: the assert' || true)"
 test -z "$(printf '%s\n' "$body" | grep -F 'plan(add-due-dates)' || true)"
 
-# ...and prose DID. This pairing is the point: an empty body satisfies both
-# negatives above, and an empty body is not the behaviour wanted — it loses
-# the why at the one place that cannot be corrected cheaply. A written why
-# runs to a paragraph, so demand both several lines and real word count.
-[ "$(printf '%s\n' "$body" | grep -c .)" -ge 2 ]
-[ "$(printf '%s\n' "$body" | wc -w)" -ge 25 ]
+# ...and prose DID. The pairing is the point: an empty body satisfies both
+# negatives above and is not the behaviour wanted, since it loses the why at
+# the one place that cannot be corrected cheaply. Words, not lines: `git commit
+# -m <subject> -m <why>` writes the why as one unwrapped line, which close.md
+# permits, so demanding two lines would reject a compliant body.
+[ "$(printf '%s\n' "$body" | wc -w)" -ge 15 ]
 
-# The body is prose, not the subject list reflowed: no line may itself be a
-# bare Conventional-Commits subject, bulleted or not. Without this an agent
-# can pass by rewriting the transcript as a changelog, which is the same
-# failure wearing different words.
+# Not the review body pasted wholesale. close.md asks for the review body's
+# Why-discipline MINUS what only means something inside a review tool, so these
+# landing on main mean the artefact was copied rather than authored.
+test -z "$(printf '%s\n' "$body" | grep -iE 'read for (intent|contract|plumbing)|reading order|^#+[[:space:]]*verification' || true)"
+
+# Not the transcript reflowed as a changelog. This catches only the form that
+# KEEPS the Conventional-Commits prefixes; a body whose bullets have been
+# reworded into prose-ish lines still passes here, and no deterministic check
+# distinguishes that from a why. The playback arm carries that judgement --
+# this line is not the whole defense and shouldn't be read as one.
 test -z "$(printf '%s\n' "$body" | grep -E '^[[:space:]]*([-*][[:space:]]+)?(feat|fix|plan|close|chore|docs|test|refactor)(\([a-z-]+\))?:' || true)"

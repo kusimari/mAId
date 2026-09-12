@@ -160,8 +160,11 @@ narrative — "fix the assert", "rename the trailer", "revert that" —
 and the review body is written for a review tool. So pass both parts
 explicitly at the merge:
 
-- **Subject** — the title step 5 just rewrote, verbatim. That step
-  exists so `main` reads as a feature ship; this is where it lands.
+- **Subject** — the dominant dev-phase subject, `feat(<scope>): <what
+  shipped>`. Where a review tool is in play that is the title step 5
+  just rewrote, verbatim. Where there is none, derive it from the
+  branch's dev commits — never from the `close()` commit you just
+  made, which is the phase mechanic step 5 exists to keep off `main`.
 - **Body** — why the feature exists, for a reader who has only
   `main`. The same *Why*-first discipline §9 asks of a review body,
   minus what only means something inside a review tool: the Reading
@@ -170,16 +173,23 @@ explicitly at the merge:
 
 **Never leave the message to the host's default.** A forge that
 concatenates commit messages writes the transcript onto `main`
-permanently, and the merge still looks like it worked. Where that
-default is configurable, point it at the review body — a floor for
-the merge nobody authored, not a substitute for authoring one.
+permanently, and the merge still looks like it worked. Pass the
+message every time — there is no merge this step performs without one.
+
+A configurable host default is worth pointing at the review body, as a
+floor for the merges made *outside* this workflow: from the forge's own
+UI, or by someone not running kdevkit. That setting is repo-wide and
+changes other people's merges, so **surface it and get agreement
+before changing it** — and never flip it in place of passing a
+message.
 
 Exceptions:
 
-- Single-commit branch: squash and plain merge are equivalent in
-  *content*, but a plain merge keeps that commit's own subject —
-  often a `plan()` or a `fix:`. Squash, so the authored subject is
-  what lands.
+- Single-commit branch: the *content* is the same either way, but a
+  fast-forward keeps that commit's own subject — often a `plan()` or a
+  `fix:` — and `--no-ff` leaves two commits on `main` where the
+  feature is one. Squash, so a single commit lands carrying the
+  authored subject.
 - Branch with *several* logical features (rare): one squash
   merge per logical feature, each with its own authored message.
 - Non-linear `main` by convention: squash still works; surface

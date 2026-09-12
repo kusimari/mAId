@@ -74,7 +74,16 @@ pairing each negative with a positive so a no-op agent fails:
   subject — the transcript did not land;
 - the body **does** carry prose — more than one line, a why-sentence
   rather than a list of subjects;
-- the subject matches `feat(`, not `close(` or `plan(`.
+- the subject matches `feat(`, not `close(` or `plan(`;
+- `main`'s *tree* carries `due.py` — otherwise the assert reduces to
+  "the tip has a nice message", which an empty commit satisfies;
+- no `Reading order` / `Read for intent:` / `## Verification` — the
+  review brief was authored down, not pasted across.
+
+A **`playback` arm** carries what no assert can: whether a why is a
+why. The transcript reworded into prose bullets is indistinguishable
+from a written summary to `grep`, so the deterministic checks close the
+prefixed form and the judged arm covers the rest.
 
 **The fixture is post-install only.** `close.md` is a deferred module
 and the pre-install stage carries only `SKILL.md`, so a `check-skills`
@@ -86,6 +95,10 @@ runs stop at `just test` plus the free
 just resources::install-skills
 just resources::verify-skills-one kdevkit-squash-message
 ```
+
+The `enact` arm of that run is expected to be uninformative — it is
+pre-install, so it carries only `SKILL.md` and cannot see the rule.
+`--kind integration,playback` scopes to the arms that can.
 
 Sample 3–5 runs per agent and record the ratio — adherence behavior is
 probabilistic.
@@ -141,7 +154,7 @@ rather than a remembered override. The settings are one
 - [x] New fixture `resources/tests/skills/kdevkit-squash-message.smoke`
       per the Test Strategy, with the vacuity pairing.
 - [x] `just test` + `just resources::verify-skills-dry` green.
-- [ ] Flip the two repository settings via `gh api -X PATCH` — last,
+- [x] Flip the two repository settings via `gh api -X PATCH` — last,
       and record before/after in the Session Log.
 
 - *Risk note:* the settings flip is the one step whose effect is
@@ -181,6 +194,55 @@ rather than a remembered override. The settings are one
   The changelog case is why the assert greps for bare
   Conventional-Commits subjects line by line and not just the two
   seeded strings.
+- **2026-09-12 · dev · settings applied**, with the user's explicit
+  go-ahead since the effect is outside git and hits every
+  contributor's merges. `squash_merge_commit_message`
+  `COMMIT_MESSAGES` → `PR_BODY`, `squash_merge_commit_title`
+  `COMMIT_OR_PR_TITLE` → `PR_TITLE`. Confirmed by a fresh read, not
+  just the PATCH response. To revert:
+  `gh api -X PATCH /repos/kusimari/mAId -f
+  squash_merge_commit_message=COMMIT_MESSAGES -f
+  squash_merge_commit_title=COMMIT_OR_PR_TITLE`.
+- **2026-09-12 · dev · Code Review Gate cycle 1: FAIL**, three must-fix.
+  My own probe had found none of them, and the reason is instructive —
+  it tested the behaviours I had thought of. Reproduced all three
+  independently before fixing.
+  - **M1, a false failure.** The body had to occupy ≥2 non-blank
+    lines, but `git commit -m <subject> -m <why>` writes the why as one
+    unwrapped line and close.md never asked for a wrap. A fully
+    compliant 33-word why failed. The line count is gone; word count
+    alone carries non-vacuity, lowered to 15 so a terse why passes.
+  - **M2, the assert never checked the merge happened.** It read
+    main's tip *message* and a commit count, both of which
+    `git commit --allow-empty` satisfies with main's tree untouched —
+    and a squash of `feat/add-due-dates~2` passes too, shipping the
+    spec without `due.py`. Now `git cat-file -e main:due.py`. M2 was
+    masked in my probe by M1: my probe used the two-`-m` form, so it
+    died on the line count before reaching the real hole.
+  - **M3, the anti-changelog check was narrower than its comment
+    claimed.** It only fires on lines that keep a Conventional-Commits
+    prefix, so the transcript reworded into prose bullets passed while
+    the comment told the next reader the hole was closed. No
+    deterministic check separates a why from a reworded what, so the
+    comment now records the residual gap and a `playback` arm carries
+    the judgement.
+  - Also fixed: the subject was defined only by back-reference to step
+    5's PR title, which does not exist in a no-review-tool world (S1);
+    the host-default paragraph could be read as a substitute for
+    passing a message and instructed a repo-wide settings change with
+    no surfacing (S2); "a plain merge keeps that commit's own subject"
+    is true of fast-forward only — `--no-ff` lets you supply one and
+    leaves two commits (S3); a dead subject check after `^feat(` had
+    made it unreachable (S4); two comments were factually wrong (S6).
+  - **A body that is the review brief pasted verbatim also passed**,
+    which is the *new* half of the Body rule. Now asserted directly:
+    `Reading order`, `Read for intent:` and a `## Verification`
+    heading may not appear on `main`.
+- **2026-09-12 · dev · probe re-run, 13 behaviours, all correct.**
+  FAIL for no-op, `--no-ff`, fast-forward, git's default squash
+  message, empty body, `close(` subject, `--allow-empty`, partial
+  squash, prefixed changelog, review brief verbatim. PASS for the
+  one-line why, a terse 2-line why, and a wrapped why.
 
 ## Decision Log
 
@@ -198,6 +260,13 @@ rather than a remembered override. The settings are one
   *why* at the only point where correcting it means rewriting `main`.
   Rejected: `BLANK` — fails loud, but the loudness arrives after the
   commit is already permanent.
+- **The deterministic assert closes the prefixed changelog; a judged
+  `playback` arm carries the rest.** `grep` cannot tell a why from a
+  reworded what, and a heuristic that tried (reject bodies with
+  bullets) would reject compliant prose. Rejected: leaving the
+  assert's comment claiming the hole was closed — a check whose comment
+  overstates it is worse than the gap, because the next reader stops
+  looking.
 - **`PR_TITLE`, not `COMMIT_OR_PR_TITLE`.** Makes closure step 5's
   title rewrite authoritative on single-commit branches too. Rejected:
   leaving it — a one-commit branch would put `plan(...)` on `main`.
