@@ -10,8 +10,11 @@ task: I'm on branch feat/add-due-dates and the work is done — the --due flag a
 # pre-install arms carry only SKILL.md -- playback as well as enact. Neither can
 # see the rule, so both are expected to be uninformative and neither failure is a
 # regression. Only `integration` runs post-install; scope a paid run to it. There
-# is no post-install playback kind to move the recitation arm to, which the four
-# sibling kdevkit playbacks live with too.
+# is no post-install playback kind to move the recitation arm to, so this
+# fixture's playback is expected to stay red at the only stage it runs in --
+# kdevkit-code-review-panel is in the same position, but kdevkit-module-load and
+# kdevkit-handoff-resume are NOT: their answers are in SKILL.md, so don't read
+# them as precedent for this one.
 git init -q
 git config user.email t@t.t && git config user.name t
 git checkout -q -b main
@@ -203,21 +206,29 @@ test -z "$(printf '%s\n' "$body" | grep -F 'close(add-due-dates)' || true)"
 # an attribution footer is not a why, and claude -- which appends one by default
 # -- is the first of the three agents this fixture runs, so a raw word count
 # would let that footer alone satisfy the only positive check in this assert.
+# A URL is stripped FROM its line rather than dropping the line: close.md
+# forbids only links to the doomed branch, so a supporting link is permitted
+# prose, and agents routinely write a whole paragraph as one long line.
 authored=$(printf '%s\n' "$body" \
-  | grep -vE '^[[:space:]]*$' \
-  | grep -viE '^[[:space:]]*(co-authored-by|signed-off-by|reviewed-by|acked-by|generated with)' \
-  | grep -vE 'https?://' || true)
+  | sed 's|https\{0,1\}://[^[:space:]]*||g' \
+  | grep -viE '(generated with|co-authored-by|signed-off-by|reviewed-by|acked-by)' \
+  | grep -viE '^[[:space:]]*(refs|closes|fixes|see[ -]also)[[:space:]]*:' \
+  | grep -vE '^[[:space:]]*$' || true)
 
 # No word floor, deliberately. close.md sets no length, so every threshold tried
 # was wrong in one direction or the other: high enough to exclude boilerplate
-# also rejects a compliant "Deadlines were invisible." Discount the boilerplate,
-# then require that something survives.
-test -n "$authored"
+# also rejects a compliant "Deadlines were invisible." Require instead that a
+# surviving line carries actual words, which admits that sentence and rejects a
+# body that is only `---`, a lone emoji, or bare issue refs.
+printf '%s\n' "$authored" | grep -q '[[:alpha:]][[:alpha:]]'
 
-# ...and what survives is not a pointer to the history this squash is about to
+# ...and the body is not a pointer to the history this squash is about to
 # collapse. "See the branch history" is the anti-pattern in its purest form: it
-# defers the why to precisely the thing being flattened.
-test -z "$(printf '%s\n' "$authored" | grep -iE 'see (the )?(branch|commit|full)?[[:space:]]*(history|log|messages|commits)' || true)"
+# defers the why to precisely the thing being flattened. Run this on $body, not
+# $authored -- the URL strip above would otherwise hide the linked form, which is
+# the worst version of it. "see" must open a sentence, so an ordinary clause
+# ("users could not see the history of what was due") is not a pointer.
+test -z "$(printf '%s\n' "$body" | grep -iE '(^|[.;:][[:space:]]+)see[[:space:]]+(the[[:space:]]+)?(full[[:space:]]+)?(branch|commit|git)?[[:space:]]*(history|log|commits|messages)' || true)"
 
 # The branch was not LINKED. close.md's exclusion list names links to branches
 # about to be deleted; a bare mention is not forbidden, so match only the
@@ -231,10 +242,11 @@ test -z "$(printf '%s\n' "$body" | grep -E 'https?://[^[:space:]]*feat/add-due-d
 test -z "$(printf '%s\n' "$body" | grep -iE 'read for (intent|contract|plumbing)|reading order|^#+[[:space:]]*verification' || true)"
 
 # Not the transcript reflowed as a changelog -- but only the form that KEEPS the
-# Conventional-Commits prefixes. A body whose bullets have been reworded into
-# prose-ish lines passes, and nothing else in this fixture catches it either:
-# playback asks a different question in a different run and cannot see this
-# body. The hole is open and deliberately left open, because no deterministic
-# check separates a why from a reworded what. Don't read this line as more than
-# it is.
-test -z "$(printf '%s\n' "$body" | grep -E '^[[:space:]]*([-*][[:space:]]+)?(feat|fix|plan|close|chore|docs|test|refactor)(\([a-z-]+\))?:' || true)"
+# Conventional-Commits prefixes, case-insensitively, since capitalising a prefix
+# is not a rewording. A body whose bullets have been genuinely reworded into
+# prose-ish lines still passes, and nothing else in this fixture catches that
+# either: playback asks a different question in a different run and never sees
+# this body. That hole is open and deliberately left open, because no
+# deterministic check separates a why from a reworded what. Don't read this line
+# as more than it is.
+test -z "$(printf '%s\n' "$body" | grep -iE '^[[:space:]]*([-*][[:space:]]+)?(feat|fix|plan|close|chore|docs|test|refactor)(\([a-z-]+\))?:' || true)"

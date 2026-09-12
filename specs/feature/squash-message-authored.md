@@ -16,17 +16,25 @@ without one degrades to the PR body instead of a commit transcript.
 
 ## Handoff
 
-- **Stage:** dev
-- **Ready for:** review, once the gates pass
-- **Carry forward:** `0bc742a` next to PR #50 is the worked example of
-  what step 6 has to ask for — the body on `main` is reflowed prose,
-  the PR body is a review document. Read both before wording the rule.
-  Second: the new fixture is **post-install only**, because
-  `check-skills` cannot see a deferred module's prose.
-- **Deliberately left:** `delete_branch_on_merge` stays `false` —
-  close.md step 7 deletes branches explicitly, so the setting is
-  redundant rather than wrong. Raised at the Planning Review Gate and
-  not taken up.
+- **Stage:** review
+- **Ready for:** closure on the cue. Gates are green; the repository
+  settings are already live and are not reverted by reverting this
+  branch.
+- **Carry forward:** the fixture's positive half took four attempts and
+  the failure was the same each time — I kept tuning a threshold for a
+  property a threshold cannot express. If a future change touches it,
+  discount boilerplate, don't raise a floor. Also: cycle 4's seven notes
+  were fixed *after* the gate passed, so those fixes carry no gate
+  verdict; the 27-case probe is the only evidence for them.
+- **Deliberately left:** three things, all named in the fixture's own
+  comments rather than only here. (1) Whether a body is a *why* or a
+  reworded *what* is not deterministically checkable — the prefixed
+  form is caught, the reworded form is not, and nothing else covers it.
+  (2) The review-tool arm is unreachable in a scratch seed with no
+  forge, so "the subject is the step-5 title *verbatim*" has no
+  behavioural check. (3) `delete_branch_on_merge` stays `false`; step 7
+  deletes branches explicitly, so the setting is redundant. Raised at
+  the Planning Review Gate and not taken up.
 
 ### Crossings
 
@@ -36,6 +44,11 @@ without one degrades to the PR body instead of a commit transcript.
 
 - backlog → planning
 - planning → dev
+- dev → review · EXCEPTION · skipping: a gate verdict on the last fix
+  round · why: the Code Review Gate passed at cycle 4 (PASS WITH NOTES,
+  `fail_on: high`), and its seven notes were then fixed; those fixes are
+  covered by the 27-case probe but by no review cycle. Budget was
+  already overridden once to reach cycle 4.
 
 ## Requirements
 
@@ -308,6 +321,33 @@ rather than a remembered override. The settings are one
   cycle-3 cases now fail, and the false-failure directions pass: a
   3-word why, a bare branch name beside a real why, and a why followed
   by an attribution footer.
+- **2026-09-12 · dev · Code Review Gate cycle 4: PASS WITH NOTES** —
+  the gate passes at `fail_on: high`. Seven notes, all fixed:
+  - Two were my recurring false-failure class. Dropping any URL-bearing
+    *line* rejected a compliant one-line why that cited a URL, so the
+    URL is now stripped from the line instead. And the history-pointer
+    regex had every qualifier optional, so it reduced to `see
+    *(history|log)` and rejected "users could not see the history of
+    what was due" — it now requires `see` to open a sentence.
+  - **The linked history pointer escaped by construction.** The pointer
+    check ran on the URL-filtered text, so `See the full commit log:
+    https://…` — the worst form of the anti-pattern — was invisible.
+    It runs on the raw body now.
+  - The changelog check was case-sensitive, so `* Feat: add a --due
+    flag` passed while the comment called that "reworded". One `-i`.
+  - `test -n` passed on `---`, a lone emoji and bare `Refs:`/`Closes:`.
+    Now requires a surviving line to carry letters, which keeps the
+    no-threshold property.
+  - **My cycle-1 R4 grep was wrong.** `SKILL.md` still said the title
+    rewrite happens "so the squash-merge commit on `main` reads as a
+    feature ship" — which credits the rewrite with the outcome, exactly
+    the mechanism this change forbids relying on. An agent answering
+    from `SKILL.md` alone rewrites the title, runs the host merge with
+    no message, and lands the transcript. I read that line as
+    consistent in cycle 1 and it was load-bearing.
+  - The setup comment claimed all four sibling playbacks share this
+    one's unanswerable-pre-install position; two don't.
+- **2026-09-12 · dev · probe re-run, 27 behaviours, all correct.**
 
 ## Decision Log
 
