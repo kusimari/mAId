@@ -377,6 +377,7 @@ mod tests {
         assert!(reports.iter().all(|r| r.state == State::Missing));
         assert!(exists_at(&home.path().join(".claude/skills")));
         assert!(exists_at(&home.path().join(".codex/skills/kdevkit")));
+        assert!(exists_at(&home.path().join(".gemini/config/skills")));
     }
 
     #[test]
@@ -486,6 +487,7 @@ mod tests {
         assert!(exists_at(&home.path().join(".codex/skills/kdevkit")));
         assert!(!exists_at(&home.path().join(".claude/skills")));
         assert!(!exists_at(&home.path().join(".kiro/steering/skills")));
+        assert!(!exists_at(&home.path().join(".gemini/config/skills")));
     }
 
     #[test]
@@ -502,6 +504,7 @@ mod tests {
         );
         assert!(!exists_at(&home.path().join(".claude/skills")));
         assert!(exists_at(&home.path().join(".kiro/steering/skills")));
+        assert!(exists_at(&home.path().join(".gemini/config/skills")));
     }
 
     /// FanOut mirrors each source child rather than replacing the dir the
@@ -550,8 +553,10 @@ mod tests {
         let home = TempDir::new().unwrap();
         let target = sym(home.path(), checkout.path());
         assert!(!target.is_deployed(Agent::Claude));
+        assert!(!target.is_deployed(Agent::Agy));
         install(home.path(), checkout.path(), false, false, None);
         assert!(target.is_deployed(Agent::Claude));
+        assert!(target.is_deployed(Agent::Agy));
     }
 
     /// A dangling symlink is not deployed: an agent reading through it

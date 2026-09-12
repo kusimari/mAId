@@ -5,9 +5,10 @@
 # `[no-cd]`), so `cargo run -p build-tool` resolves against the
 # workspace, not this directory.
 
-# First arg is the coding-agent selector (claude|kiro|codex; omit for
-# all three); remaining flags pass through, e.g.
+# First arg is the coding-agent selector (claude|kiro|codex|agy; omit for
+# all); remaining flags pass through, e.g.
 #   just resources::install-skills                 (all agents)
+#   just resources::install-skills agy             (agy only)
 #   just resources::install-skills codex           (codex only)
 #   just resources::install-skills codex --force   (codex, repoint)
 #   just resources::install-skills --force         (all agents, repoint)

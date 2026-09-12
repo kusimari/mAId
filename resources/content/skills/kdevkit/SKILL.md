@@ -14,7 +14,7 @@ project loop             ← project.md invariants. Cross-feature.
   initiative (optional)  ← groups multiple feature loops.
     feature loop         ← one branch, three phases, one squash-merge.
       ├─ planning phase    plan(<feature>): commits + Review Gate
-      ├─ dev loop          feat/fix/...: Quality → Test → Code Review → Push
+      ├─ dev loop          feat/fix/...: Code → Quality → Test → Code Review → Push
       │                    then human review: [Briefing] → Agent-dev Review Gate
       └─ closure phase     close(<feature>): reconcile + squash-merge
 ```
@@ -376,50 +376,101 @@ ticked spec is part of the dev commit, not a closure-time
 sweep. §8.1 reconcile is the safety net for slices ticked
 late or missed; the live discipline lives here.
 
-### The spec is the handoff record (always-on)
+### The handoff record (always-on)
 
-**A phase writes its `## Handoff` block into the feature spec
-before the boundary it is crossing. A phase that ended without one
-did not finish.**
+**Every stage boundary is crossed with judgement, and the crossing is
+recorded in the feature spec. A stage that ended without a record did not
+finish.**
 
 That is the whole invariant, and it is what makes the phase modules
-independently runnable: the spec is checked in, so the next phase —
-a fresh agent, a new session tomorrow, or the same thread
-continuing — gets what it needs without the conversation that
-produced it. A session can die mid-feature and lose nothing that
-crossed the last boundary.
+independently runnable: the spec is checked in, so the next stage — a fresh
+agent, a new session tomorrow, or the same thread continuing — gets what it
+needs without the conversation that produced it. A session can die
+mid-feature and lose nothing that crossed the last boundary.
 
-Two rules that keep it honest:
+#### The five things you do at a boundary
 
-- **Rewrite the block, never append — and re-author every field,
-  not just `Phase:`.** Relabelling the phase while leaving
-  `Ready for:` and `Carry forward:` as the previous phase wrote
-  them produces exactly the stale record this exists to prevent,
-  and it reads as current. This cuts both ways: relabelling
-  `Phase:` while carrying an old field's *sentence* forward
-  unchanged is the same mistake in the other field — write what
-  is true now, in your own words, not the previous phase's phrasing
-  with a new label on top. It carries current state, not history.
-  History has homes already: the Session Log for observations, the
-  Decision Log for choices, the PR/CR thread for discussion. A
-  handoff that accumulates becomes a second Session Log — the exact
-  bloat the module split exists to remove.
-- **Only judgement goes in it.** What the next phase can *derive*
-  it must derive, at entry, from git and the spec: the branch,
-  which plan items are ticked, which gates ran, what findings are
-  open. Copying those into prose is how a spec starts lying. The
-  block carries what cannot be read off the repo — a constraint
-  found late, a trap, why something was left.
+| | When |
+|---|---|
+| **look** | at the start of any session — where does this feature stand, and what is outstanding? |
+| **verify** | before leaving dev — run the project's own gates and record that they passed |
+| **advance** | a stage's exit condition holds; move to the next stage |
+| **return** | a fault belongs to an earlier layer — name the layer, the problem, the fix, and how you will know it is fixed |
+| **except** | a gate cannot be passed honestly and you are proceeding anyway, on the record |
 
-**On entry to any phase, read the block first**, then derive the
-rest. If it names a different phase than the one you are about to
-run, trust the repo over the block and say so — a stale handoff
-means the previous phase was interrupted, which is itself the most
-useful thing to know.
+#### The record has two parts, and they behave differently
 
-The template and field semantics are in `interviews.md`; each phase
-module states where in its own flow the write happens.
+**Current state — replace it.** Four fields, re-authored at every crossing.
+Never leave a previous value in one field while updating another: a
+half-updated block reads as current and is exactly the stale record this
+exists to prevent. Write what is true now, in your own words, not the
+previous stage's phrasing with a new label on top.
 
+**`### Crossings` — append to it, never edit it.** One line per crossing.
+This is the only record of how many times a feature has gone back, so
+replacing it destroys the thing it exists for. The count of `RETURN` lines
+is that number, and nothing else carries it.
+
+```markdown
+## Handoff
+
+- **Stage:** dev
+- **Ready for:** review, once the gates pass
+- **Carry forward:** `tr` is available; no new dependency needed
+- **Deliberately left:** long-form `--upper` alias — `-u` only for now
+
+### Crossings
+<!-- Append one line per crossing. Never edit or delete a line. -->
+- planning → dev
+- dev → planning · RETURN · fault: requirements · issue: warning
+  suppression was never specified · fix: amend R2 and extend the tests ·
+  done when: warnings are suppressed with the flag
+- planning → dev
+- dev → review · EXCEPTION · skipping: the dev gates · why: deadline,
+  follow-up filed as #12
+```
+
+**A `return` line needs all four parts** — the layer at fault, the problem,
+the fix, and how you will know. A bare "went back to planning" is the silent
+plan amendment §9 forbids: it looks like progress and leaves nothing a later
+session can act on. The layer is your judgement, and the layers are finer
+than the stages: *requirements* (we built the wrong thing), *design* (right
+thing, wrong shape), *implementation* (right shape, wrong code), *test* (the
+code may be fine, the test was wrong).
+
+**An `except` line needs both parts** — what is being skipped and why.
+Nothing is forbidden; an exception is made expensive by being written down
+and counted, not by being refused.
+
+#### Only judgement goes in the record
+
+What the next stage can *derive* it must derive, at entry, from git and the
+spec: the branch, which plan items are ticked, which gates ran, what findings
+are open. Copying those into prose is how a spec starts lying. Current state
+carries what cannot be read off the repo — a constraint found late, a trap,
+why something was left.
+
+History has homes already: the Session Log for observations, the Decision Log
+for choices, the PR/CR thread for discussion. `Crossings` is not a second
+Session Log — one line per boundary, and nothing else.
+
+**On entry to any stage, read the record first**, then derive the rest. If it
+names a different stage than the one you are about to run, trust the repo over
+the record and say so — a stale handoff means the previous stage was
+interrupted, which is itself the most useful thing to know.
+
+#### Where the stages go
+
+The map is here, in the always-on file, so a phase module never names its
+successor and adding a stage does not mean editing the module before it:
+
+```
+[research] → planning → dev → review → closure → closed
+```
+
+Forward is one step at a time. **Going back may skip stages** — review can
+return work to planning without passing through dev — because the criterion
+is which layer the fault entered, not how far back that is.
 ### Initiative-stream auto-link
 
 When this feature is a stream of an active initiative, §6

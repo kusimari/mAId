@@ -160,16 +160,16 @@ grep -qiE 'positional' specs/feature/count-flag.md
 # HANDOFF GENESIS: the seeded spec has no ## Handoff block, so crossing
 # planning -> dev must create one, naming the phase that is now live.
 [ "$(grep -c '^## Handoff' specs/feature/count-flag.md)" = 1 ]
-# It has a Phase field (not just prose), and it names dev rather than planning.
+# It has a Stage field (not just prose), and it names dev rather than planning.
 # Portable pattern: \< is a GNU awk extension and silently matches nothing
 # under mawk/BusyBox, which would make this pass vacuously.
-awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /^- \*\*Phase:\*\*/' specs/feature/count-flag.md | grep -q .
+awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /^- \*\*Stage:\*\*/' specs/feature/count-flag.md | grep -q .
 # The value must be one of the legal phases — and dev OR review is correct
 # here, because a dev phase that reaches Push rewrites it again on the way out.
 # Asserting `dev` alone would fail an agent that correctly completed the loop.
-awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Phase[^a-zA-Z]*(dev|review)([^a-zA-Z]|$)/' specs/feature/count-flag.md | grep -q .
+awk '/^## Handoff/{f=1;next} /^## /{f=0} f && /Stage[^a-zA-Z]*(dev|review)([^a-zA-Z]|$)/' specs/feature/count-flag.md | grep -q .
 # The block was genuinely authored, not pasted from the template placeholder.
-test -z "$(grep -F 'planning | dev | review' specs/feature/count-flag.md || true)"
+test -z "$(grep -F 'research | planning | dev' specs/feature/count-flag.md || true)"
 # Test-Gate artefact and plan ticking, as the sibling fixtures require.
 grep -qF 'src/wc.sh -c' test.sh
 grep -qF -e '- [x]' specs/feature/count-flag.md

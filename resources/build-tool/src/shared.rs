@@ -71,6 +71,7 @@ pub enum Agent {
     Claude,
     Kiro,
     Codex,
+    Agy,
 }
 
 pub const REGISTRY: &[Entry] = &[
@@ -92,12 +93,18 @@ pub const REGISTRY: &[Entry] = &[
         Kind::FanOut,
         Agent::Codex,
     ),
+    (
+        ".gemini/config/skills",
+        "resources/content/skills",
+        Kind::Link,
+        Agent::Agy,
+    ),
 ];
 
 impl Agent {
     /// Every agent, in registry order. `registry_rows_cover_every_agent`
     /// holds this in step with REGISTRY.
-    pub const ALL: &'static [Agent] = &[Agent::Claude, Agent::Kiro, Agent::Codex];
+    pub const ALL: &'static [Agent] = &[Agent::Claude, Agent::Kiro, Agent::Codex, Agent::Agy];
 
     /// The token `--agent` accepts. The one place a name is spelled.
     pub fn name(self) -> &'static str {
@@ -105,12 +112,16 @@ impl Agent {
             Agent::Claude => "claude",
             Agent::Kiro => "kiro",
             Agent::Codex => "codex",
+            Agent::Agy => "agy",
         }
     }
 
     /// Parse an `--agent` token; an unknown one lists the valid names,
     /// so a typo never silently installs nothing.
     pub fn parse(token: &str) -> Result<Agent> {
+        if token == "antigravity" {
+            return Ok(Agent::Agy);
+        }
         Agent::ALL
             .iter()
             .copied()
@@ -277,6 +288,13 @@ mod tests {
         assert_eq!(Agent::Claude.name(), "claude");
         assert_eq!(Agent::Kiro.name(), "kiro");
         assert_eq!(Agent::Codex.name(), "codex");
+        assert_eq!(Agent::Agy.name(), "agy");
+    }
+
+    #[test]
+    fn agent_parse_accepts_aliases() {
+        assert_eq!(Agent::parse("antigravity").unwrap(), Agent::Agy);
+        assert_eq!(Agent::parse("agy").unwrap(), Agent::Agy);
     }
 
     /// `ALL` is hand-written while REGISTRY is the manifest, so this
@@ -316,7 +334,7 @@ mod tests {
         }
     }
 
-    /// The three deployed roots, spelled out literally: a REGISTRY row
+    /// The four deployed roots, spelled out literally: a REGISTRY row
     /// edited to the wrong home path is otherwise invisible here, since
     /// every other assertion derives from the same rows.
     #[test]
@@ -326,6 +344,7 @@ mod tests {
             (Agent::Claude, "/home/u/.claude/skills"),
             (Agent::Kiro, "/home/u/.kiro/steering/skills"),
             (Agent::Codex, "/home/u/.codex/skills"),
+            (Agent::Agy, "/home/u/.gemini/config/skills"),
         ] {
             assert_eq!(agent.skills_root(home).unwrap(), Path::new(want));
         }
