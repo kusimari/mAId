@@ -25,7 +25,7 @@ and is wrong. Measured on the wider problem: a ~300-line instruction file,
 asked to repeat its own rules back, was followed ~100% of the time by claude
 and kiro but **~33% by codex once ~4.6KB of unrelated conversation preceded
 it** — and rewriting the prose did not fix it. Full evidence in
-`specs/backlog/kdevkit-durable-cross-runtime-adherence.md`.
+tag `research/kdevkit-durable-adherence`.
 
 **Replacing destroys history.** If a feature goes back to planning three
 times, nothing records that. Each return overwrites the last, so the third

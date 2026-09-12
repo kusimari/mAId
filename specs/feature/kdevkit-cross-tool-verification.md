@@ -234,7 +234,8 @@ The test is the run itself: 18 fixtures × 2 agents × 2 stages, paid.
   skill-authoring guide, `stephanmiller.com/the-agent-skills-guide-i-
   wish-id-had`) both point toward moving durable state/enforcement
   out of prose, but neither has been synthesized into a decision.
-  Filed as `specs/backlog/kdevkit-durable-cross-runtime-adherence.md`
+  Investigated and answered; the research is tag
+  `research/kdevkit-durable-adherence` and the outcome shipped in #50
   for a dedicated follow-on session, per explicit user instruction —
   this feature closes with the finding recorded, not the problem
   solved.
