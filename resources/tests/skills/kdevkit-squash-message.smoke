@@ -1,0 +1,278 @@
+skill: kdevkit
+tools: claude,kiro,codex
+--- playback ---
+task: When you squash-merge a closed-out feature into main, where does the commit message come from?
+expect: The message is authored, not taken from anything on hand. The subject is the dominant dev-phase feat(scope) subject — the title the Closure Review Gate rewrote, where a review tool exists — and never the close() commit's own subject. The body is why the feature exists, written for someone who has only main, carrying the same Why-first discipline as a review body but stripped of what only means something inside a review tool: the reading order, the verification dump, links to branches about to be deleted. Neither the branch's commit messages nor the review body is itself a commit message. The host's default is never trusted to supply one; where that default is configurable it is worth pointing at the review body as a floor for merges made outside the workflow, but that is a repo-wide change to surface and agree first, and never a substitute for passing a message. Wrong answers: that the message comes from the PR/CR body, or from the branch's commit messages, or from whatever the host or forge produces by default; that the subject is the close() commit's subject; that flipping the forge's squash-message setting is an alternative to passing a message, or that it may be flipped without surfacing it. Judge whether the answer has the message authored, names where the subject comes from, and treats no available artefact as being a commit message. An answer MORE precise than this narrative — naming the review-body sections to strip, or that a single-commit branch is still squashed — is correct, not wrong; verify against the skill before failing such a claim.
+--- enact ---
+task: I'm on branch feat/add-due-dates and the work is done — the --due flag and the list-output rendering are both in due.py, committed on this branch, and I've already reconciled the spec. Read it and see. There's no remote and no review tool on this machine, so skip anything that needs one. Ship it: squash-merge into local main. Do the git work now, in this repo.
+--- setup ---
+# The rule under test lives in phases/close.md, a deferred module, and BOTH
+# pre-install arms carry only SKILL.md -- playback as well as enact. Neither can
+# see the rule, so both are expected to be uninformative and neither failure is a
+# regression. Only `integration` runs post-install; scope a paid run to it. There
+# is no post-install playback kind to move the recitation arm to, so this
+# fixture's playback is expected to stay red at the only stage it runs in --
+# kdevkit-code-review-panel is in the same position, but kdevkit-module-load and
+# kdevkit-handoff-resume are NOT: their answers are in SKILL.md, so don't read
+# them as precedent for this one.
+git init -q
+git config user.email t@t.t && git config user.name t
+git checkout -q -b main
+echo "# todo" > README.md
+git add -A && git commit -q -m "chore: initial commit"
+git checkout -q -b feat/add-due-dates
+mkdir -p specs/feature
+cat > specs/feature/add-due-dates.md <<'MD'
+# Feature: add-due-dates
+
+## Feature Brief
+Let a to-do carry a due date.
+
+## Requirements
+User can set and see a due date on any to-do.
+
+## Design
+A nullable due field on the record; a --due flag parses it.
+
+## Handoff
+- **Stage:** review
+- **Ready for:** closure on the cue.
+- **Carry forward:** nothing outstanding from review.
+- **Deliberately left:** recurring due dates — separate feature.
+
+## Implementation Plan
+- [ ] add --due flag and parse the date
+- [ ] render the due date in the list output
+
+## Session Log
+
+## Decision Log
+MD
+git add -A && git commit -q -m "plan(add-due-dates): initial spec"
+# The seed code has to be GENUINELY done. This fixture asserts on the merge
+# message, which only exists if the agent agrees the feature is closable — a
+# stub here makes an honest skill refuse to close, and the fixture then fails
+# for the right reason at the wrong time (see kdevkit-closure.smoke, where
+# exactly that happened). Reusing that fixture's known-good due.py.
+cat > due.py <<'PY'
+import argparse
+from datetime import date
+
+
+def parse_due(value):
+    # plan item 1: parse the date, not just capture the string
+    return date.fromisoformat(value)
+
+
+def parse_args(argv):
+    p = argparse.ArgumentParser(prog="todo")
+    p.add_argument("--due", type=parse_due, default=None)
+    p.add_argument("name")
+    return p.parse_args(argv)
+
+
+def render_list(tasks):
+    # plan item 2: render the due date, tolerating a to-do without one
+    # (Design calls the field nullable)
+    out = []
+    for t in tasks:
+        d = t.get("due")
+        out.append(f"{t['name']} (due {d.isoformat()})" if d else t["name"])
+    return "\n".join(out)
+
+
+def add(store, argv):
+    # a due date set on the command line reaches the record
+    ns = parse_args(argv)
+    store.append({"name": ns.name, "due": ns.due})
+    return store
+PY
+mkdir -p tests
+cat > tests/test_due.py <<'PY'
+from datetime import date
+import due
+
+
+def test_parses_due_into_a_date():
+    assert due.parse_args(["--due", "2026-08-01", "taxes"]).due == date(2026, 8, 1)
+
+
+def test_renders_the_due_date():
+    assert "due 2026-08-01" in due.render_list([{"name": "t", "due": date(2026, 8, 1)}])
+
+
+def test_todo_without_a_due_date_still_renders():
+    assert due.render_list([{"name": "milk"}]) == "milk"
+PY
+git add -A && git commit -q -m "feat(todo): add a --due flag and render it in the list"
+# The third commit exists to be transcript-flavoured. Its subject is the kind
+# of thing that belongs to the branch and not to main's history, and it is one
+# of the two strings the assert greps for.
+cat >> tests/test_due.py <<'PY'
+
+
+def test_due_date_from_the_cli_reaches_the_record():
+    assert due.add([], ["--due", "2026-08-01", "taxes"])[0]["due"] == date(2026, 8, 1)
+PY
+git add -A && git commit -q -m "fix: the assert"
+# The reconcile half of closure, seeded so the branch tip is a `close()` commit.
+# That makes the prose's sharpest prohibition -- never take the subject from the
+# close() commit you just made -- deterministic rather than dependent on the
+# agent volunteering the temptation. It is also in git's default SQUASH_MSG, so
+# it earns a third transcript negative in the assert.
+# Written wholesale rather than patched in place: `sed -i` needs an argument on
+# BSD and none on GNU, and python3 is not a dependency this suite has.
+mkdir -p specs/backlog
+cat > specs/backlog/recurring-due-dates.md <<'MD'
+# Backlog: recurring-due-dates
+
+## What
+A to-do that comes back on a schedule rather than once.
+
+## Why
+Deferred out of add-due-dates; still wanted.
+MD
+cat > specs/feature/add-due-dates.md <<'MD'
+# Feature: add-due-dates
+
+## Feature Brief
+Let a to-do carry a due date.
+
+## Requirements
+User can set and see a due date on any to-do.
+
+## Design
+A nullable due field on the record; a --due flag parses it.
+
+## Handoff
+- **Stage:** closed
+- **Ready for:** nothing; the feature is done.
+- **Carry forward:** nothing outstanding.
+- **Deliberately left:** recurring due dates, filed to
+  specs/backlog/recurring-due-dates.md.
+
+### Crossings
+- review → closure
+
+## Implementation Plan
+- [x] add --due flag and parse the date
+- [x] render the due date in the list output
+
+## Session Log
+
+## Decision Log
+MD
+git add -A && git commit -q -m "close(add-due-dates): reconcile spec and clear handoff"
+--- assert ---
+set -e
+
+# Two checks below both need "whatever an agent might put in front of a line" --
+# a bullet, an asterisk, a quote marker, numbering, bold, an arrow. They are
+# defined ONCE here, because the previous three passes at this file each added a
+# character to one enumeration and left the other behind: `>` went to the pointer
+# strip while `+` and `•` went to the changelog regex, in the same commit. Strip a
+# leading run of non-alphanumerics and numbering rather than naming markers, so
+# there is no list to keep in sync and no next marker to miss.
+# The outer group repeats "optional space, then a marker run", so markers
+# SEPARATED by whitespace (`- ** feat(todo):`) are stripped too -- a single run
+# stops at the first space and leaves the rest of the prefix in place.
+strip_markers() { sed -E 's/^([[:space:]]*([^[:alnum:][:space:]]+|[0-9]+[.)]))*[[:space:]]*//'; }
+
+# main moved by exactly one commit: the seed plus one squashed feature commit.
+# Don't enumerate the causes of a wrong count -- a --no-ff merge, a fast-forward
+# and a rebase all trip it, but so does a correct squash followed by one more
+# commit on main, and a reader pointed at a closed set of causes stops looking.
+[ "$(git rev-list --count main)" = 2 ]
+
+# The feature actually shipped. Without this the whole assert reduces to
+# "main's tip has a nice message", which `git commit --allow-empty` satisfies
+# with main's tree untouched. Deliberately branch-name free: step 7 deletes the
+# branch, so nothing here may reference it.
+git cat-file -e main:due.py
+git cat-file -e main:specs/feature/add-due-dates.md
+# The backlog item exists only in the closure commit, so this is what rejects a
+# squash of `feat/add-due-dates~1`: that lands both files above while leaving the
+# UNRECONCILED spec on main -- Stage: review, unticked boxes.
+git cat-file -e main:specs/backlog/recurring-due-dates.md
+
+subject=$(git log -1 --format=%s main)
+# %B minus the first line, not %b. When an agent writes the why with no blank
+# separator git folds the whole paragraph into %s, leaving %b empty -- and the
+# word floor below would then report a body that WAS written as missing.
+body=$(git log -1 --format=%B main | tail -n +2)
+
+# The authored subject landed: the feature ship, not a phase mechanic. Step 5
+# rewrites the title to the dominant dev subject and step 6 is where it lands,
+# so a `plan(`/`close(`/`fix:` subject on main means step 6 took whatever was
+# nearest instead. `[(:]` because Conventional Commits makes the scope optional
+# and close.md does not require one -- only this seed's dominant subject happens
+# to be scoped.
+printf '%s\n' "$subject" | grep -q '^feat[(:]'
+
+# The transcript did NOT land. git's own squash message concatenates every
+# branch commit message, so these three strings are precisely what a default
+# message carries and an authored one does not. `close(` is the sharpest of the
+# three: it is the branch tip, so it is the subject nearest to hand at merge
+# time and the one close.md explicitly forbids reaching for.
+test -z "$(printf '%s\n' "$body" | grep -F 'fix: the assert' || true)"
+test -z "$(printf '%s\n' "$body" | grep -F 'plan(add-due-dates)' || true)"
+test -z "$(printf '%s\n' "$body" | grep -F 'close(add-due-dates)' || true)"
+
+# ...and something the agent authored DID. Host boilerplate is discounted first:
+# an attribution footer is not a why, and claude -- which appends one by default
+# -- is the first of the three agents this fixture runs, so a raw word count
+# would let that footer alone satisfy the only positive check in this assert.
+# A URL is stripped FROM its line rather than dropping the line: close.md
+# forbids only links to the doomed branch, so a supporting link is permitted
+# prose, and agents routinely write a whole paragraph as one long line.
+# The attribution filter is ANCHORED: a footer or trailer is line-initial by git
+# convention, while "generated with" is ordinary English, so an unanchored match
+# discards a compliant one-line why ("Reports were generated with stale data.").
+# The leading non-alphanumeric class is for claude's `🤖 Generated with …`.
+authored=$(printf '%s\n' "$body" \
+  | sed 's|https\{0,1\}://[^[:space:]]*||g' \
+  | grep -viE '^[[:space:]]*[^[:alnum:][:space:]]*[[:space:]]*(generated with|co-authored-by|signed-off-by|reviewed-by|acked-by)' \
+  | grep -viE '^[[:space:]]*(refs|closes|fixes|see[ -]also)[[:space:]]*:' \
+  | grep -vE '^[[:space:]]*$' || true)
+
+# No word floor, deliberately. close.md sets no length, so every threshold tried
+# was wrong in one direction or the other: high enough to exclude boilerplate
+# also rejects a compliant "Deadlines were invisible." Require instead that a
+# surviving line carries actual words, which admits that sentence and rejects a
+# body that is only `---`, a lone emoji, or bare issue refs.
+printf '%s\n' "$authored" | grep -q '[[:alpha:]][[:alpha:]]'
+
+# ...and the body is not a pointer to the history this squash is about to
+# collapse. "See the branch history" is the anti-pattern in its purest form: it
+# defers the why to precisely the thing being flattened. Run this on $body, not
+# $authored -- the URL strip above would otherwise hide the linked form, which is
+# the worst version of it. "see" must OPEN a sentence, so an ordinary clause
+# ("users could not see the history of what was due") is not a pointer -- hence
+# strip_markers first, or two characters of prefix ("- See the branch history.")
+# walk the anti-pattern straight back in.
+test -z "$(printf '%s\n' "$body" | strip_markers \
+  | grep -iE '(^|[.;:][[:space:]]+|\()see[[:space:]]+(the[[:space:]]+)?(full[[:space:]]+)?(branch|commit|git)?[[:space:]]*(history|log|commits|messages)' || true)"
+
+# The branch was not LINKED. close.md's exclusion list names links to branches
+# about to be deleted; a bare mention is not forbidden, so match only the
+# link-shaped form -- otherwise the fixture is stricter than the prose it tests.
+test -z "$(printf '%s\n' "$body" | grep -E 'https?://[^[:space:]]*feat/add-due-dates|\]\([^)]*feat/add-due-dates' || true)"
+
+# Not the review body pasted wholesale -- close.md asks for its Why-discipline
+# MINUS what only means something inside a review tool. A tripwire, not a
+# covered case: this seed has no remote, no review tool and no project.md, so no
+# review body exists here to paste. It fires for a seed that creates one.
+test -z "$(printf '%s\n' "$body" | grep -iE 'read for (intent|contract|plumbing)|reading order|^#+[[:space:]]*verification' || true)"
+
+# Not the transcript reflowed as a changelog -- but only the form that KEEPS the
+# Conventional-Commits prefixes, case-insensitively, since capitalising a prefix
+# is not a rewording. A body whose bullets have been genuinely reworded into
+# prose-ish lines still passes, and nothing else in this fixture catches that
+# either: playback asks a different question in a different run and never sees
+# this body. That hole is open and deliberately left open, because no
+# deterministic check separates a why from a reworded what. Don't read this line
+# as more than it is.
+# Same strip as the pointer check, so the pair cannot drift apart again:
+# `1. feat(todo):` and `- **feat(todo):` are the transcript wearing a list or bold.
+test -z "$(printf '%s\n' "$body" | strip_markers \
+  | grep -iE '^(feat|fix|plan|close|chore|docs|test|refactor)(\([a-z-]+\))?:' || true)"

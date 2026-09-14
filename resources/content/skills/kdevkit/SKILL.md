@@ -331,8 +331,10 @@ closure    close(<feature>):   reconcile      → closure Review Gate (§8) → 
 
 One branch, one PR/CR, three phases. Body rewritten at each
 phase boundary; PR title rewritten to the dominant
-`feat(<scope>):` subject at the Closure Review Gate so the
-squash-merge commit on `main` reads as a feature ship.
+`feat(<scope>):` subject at the Closure Review Gate — which is
+where §8.6's authored squash message *sources* its subject. The
+rewrite alone doesn't make `main` read as a feature ship; the
+merge has to pass the message (§8.6).
 
 ### Phase-gating cues
 

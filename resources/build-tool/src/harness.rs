@@ -1056,23 +1056,44 @@ pub fn test_name(fixture: &str, kind: Kind, agent: Agent) -> String {
 // this only detects.
 // ─────────────────────────────────────────────────────────────────
 
-/// What the checkout looked like before a sweep: its working-tree state
-/// AND its current commit.
+/// What the checkout looked like before a sweep: its working-tree state,
+/// its current commit, AND every local and remote-tracking ref.
 ///
 /// The commit is load-bearing. A file the agent creates *and commits*
 /// inside one sweep appears in no working-tree status — clean before,
 /// clean after — so comparing status alone cannot see the exact incident
 /// this tripwire exists for. It has already happened twice.
+///
+/// The refs are load-bearing for a second class the other two are blind
+/// to: an agent that *deletes* a branch, merges into one it isn't on, or
+/// pushes leaves the working tree clean and `HEAD` where it was. A
+/// fixture asking an agent to close a feature out reaches exactly those
+/// verbs — closure deletes the feature branch with no permission pause —
+/// so a fixture that squash-merges is the first one where "clean status,
+/// same HEAD" stops meaning "nothing happened".
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Snapshot {
     pub status: String,
     pub head: String,
+    pub refs: String,
 }
 
 pub fn snapshot_checkout(checkout: &Path) -> Option<Snapshot> {
     Some(Snapshot {
         status: git(checkout, &["status", "--porcelain"])?,
         head: git(checkout, &["rev-parse", "HEAD"])?,
+        // Remote-tracking refs are included so a push is visible: it
+        // updates the tracking ref locally, which is the only trace a
+        // push leaves in this checkout.
+        refs: git(
+            checkout,
+            &[
+                "for-each-ref",
+                "--format=%(refname) %(objectname)",
+                "refs/heads",
+                "refs/remotes",
+            ],
+        )?,
     })
 }
 
@@ -1101,6 +1122,10 @@ fn git(checkout: &Path, args: &[&str]) -> Option<String> {
 ///   tripwire is blind to precisely the incident it was built for: a
 ///   fixture whose task ends "wrap up my session so the work is
 ///   committed" did exactly that, twice, while the suite reported clean.
+///
+/// Plus a fourth, on refs, which status and `HEAD` are both blind to: a
+/// DELETED, CREATED or MOVED ref. Deleting a branch you are not on, or
+/// merging into one, leaves a clean tree and an unmoved `HEAD`.
 pub fn detect_leak(before: &Snapshot, after: &Snapshot) -> Vec<String> {
     let prior: Vec<&str> = before.status.lines().collect();
     let now: Vec<&str> = after.status.lines().collect();
@@ -1121,6 +1146,47 @@ pub fn detect_leak(before: &Snapshot, after: &Snapshot) -> Vec<String> {
                 .map(|line| format!("gone (committed?): {line}")),
         )
         .chain(moved)
+        .chain(ref_leaks(&before.refs, &after.refs))
+        .collect()
+}
+
+/// Ref-level changes, reported by *name* so a deletion and a move read
+/// differently — "the branch is gone" and "the branch points somewhere
+/// else" are different incidents and the second is what a stray merge
+/// looks like.
+fn ref_leaks(before: &str, after: &str) -> Vec<String> {
+    let parse = |s: &str| -> Vec<(String, String)> {
+        s.lines()
+            .filter_map(|l| l.split_once(' '))
+            .map(|(name, oid)| (name.to_string(), oid.to_string()))
+            .collect()
+    };
+    let (prior, now) = (parse(before), parse(after));
+    let find = |set: &[(String, String)], name: &str| {
+        set.iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, oid)| oid.clone())
+    };
+    prior
+        .iter()
+        .filter_map(|(name, oid)| match find(&now, name) {
+            None => Some(format!(
+                "REF DELETED: {name} — a test deleted a ref in the checkout"
+            )),
+            Some(after_oid) if after_oid != *oid => Some(format!(
+                "REF MOVED: {name} {} -> {} — a test merged, reset or pushed",
+                short(oid),
+                short(&after_oid)
+            )),
+            Some(_) => None,
+        })
+        .chain(
+            now.iter()
+                .filter(|(name, _)| find(&prior, name).is_none())
+                .map(|(name, _)| {
+                    format!("REF CREATED: {name} — a test created a ref in the checkout")
+                }),
+        )
         .collect()
 }
 
@@ -2156,9 +2222,14 @@ FAIL — omits the guardrail entirely";
     // ── leak tripwire ────────────────────────────────────────────
 
     fn snap(status: &str, head: &str) -> Snapshot {
+        snap_refs(status, head, "refs/heads/main abc123")
+    }
+
+    fn snap_refs(status: &str, head: &str, refs: &str) -> Snapshot {
         Snapshot {
             status: status.to_string(),
             head: head.to_string(),
+            refs: refs.to_string(),
         }
     }
 
@@ -2215,6 +2286,121 @@ FAIL — omits the guardrail entirely";
         assert_eq!(leaked.len(), 2, "{leaked:?}");
         assert!(leaked.iter().any(|l| l.contains("gone")));
         assert!(leaked.iter().any(|l| l.contains("COMMITTED")));
+    }
+
+    /// The class status and HEAD are both blind to. Closure deletes the
+    /// feature branch with no permission pause, so a fixture that closes
+    /// a feature out reaches this verb against whatever repo it resolves
+    /// to — and deleting a branch you are not on leaves a clean tree and
+    /// an unmoved HEAD.
+    #[test]
+    fn a_deleted_branch_is_a_leak_though_status_and_head_are_unchanged() {
+        let leaked = detect_leak(
+            &snap_refs("", "abc", "refs/heads/main aaa\nrefs/heads/feat/x bbb"),
+            &snap_refs("", "abc", "refs/heads/main aaa"),
+        );
+        assert_eq!(leaked.len(), 1, "{leaked:?}");
+        assert!(leaked[0].contains("REF DELETED"), "{}", leaked[0]);
+        assert!(leaked[0].contains("feat/x"), "{}", leaked[0]);
+    }
+
+    /// A stray merge: the branch still exists, so a name-only comparison
+    /// would call this clean. Only the moved target betrays it.
+    #[test]
+    fn a_branch_moved_under_us_is_a_leak_distinct_from_deletion() {
+        let leaked = detect_leak(
+            &snap_refs("", "abc", "refs/heads/main aaaaaaaa1111"),
+            &snap_refs("", "abc", "refs/heads/main bbbbbbbb2222"),
+        );
+        assert_eq!(leaked.len(), 1, "{leaked:?}");
+        assert!(leaked[0].contains("REF MOVED"), "{}", leaked[0]);
+        assert!(
+            leaked[0].contains("aaaaaaaa") && leaked[0].contains("bbbbbbbb"),
+            "{}",
+            leaked[0]
+        );
+    }
+
+    /// Remote-tracking refs are in scope because a push leaves no other
+    /// trace in this checkout.
+    #[test]
+    fn a_push_shows_up_as_a_moved_tracking_ref() {
+        let leaked = detect_leak(
+            &snap_refs("", "abc", "refs/remotes/origin/main aaaa1111"),
+            &snap_refs("", "abc", "refs/remotes/origin/main bbbb2222"),
+        );
+        assert_eq!(leaked.len(), 1, "{leaked:?}");
+        assert!(leaked[0].contains("REF MOVED"), "{}", leaked[0]);
+        assert!(leaked[0].contains("origin/main"), "{}", leaked[0]);
+    }
+
+    #[test]
+    fn a_created_branch_is_a_leak() {
+        let leaked = detect_leak(
+            &snap_refs("", "abc", "refs/heads/main aaa"),
+            &snap_refs("", "abc", "refs/heads/main aaa\nrefs/heads/stray bbb"),
+        );
+        assert_eq!(leaked.len(), 1, "{leaked:?}");
+        assert!(leaked[0].contains("REF CREATED"), "{}", leaked[0]);
+        assert!(leaked[0].contains("stray"), "{}", leaked[0]);
+    }
+
+    /// Pairs with the four above: identical refs must NOT report, or the
+    /// tripwire cries leak on every clean sweep and gets ignored.
+    #[test]
+    fn unchanged_refs_report_nothing() {
+        let s = snap_refs(
+            "",
+            "abc",
+            "refs/heads/main aaa\nrefs/remotes/origin/main aaa",
+        );
+        assert!(detect_leak(&s, &s).is_empty());
+    }
+
+    /// The parsing is only worth anything if it matches what git really
+    /// prints, so drive the real command rather than a hand-built string:
+    /// a branch deletion in a real repo must be detected end to end.
+    #[test]
+    fn snapshot_reads_real_git_refs_and_detects_a_real_deletion() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let repo = dir.path();
+        let run = |args: &[&str]| {
+            let ok = std::process::Command::new("git")
+                .arg("-C")
+                .arg(repo)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success();
+            assert!(ok, "git {args:?} failed");
+        };
+        run(&["init", "-q", "-b", "main"]);
+        run(&["config", "user.email", "t@t.t"]);
+        run(&["config", "user.name", "t"]);
+        std::fs::write(repo.join("f"), "x").unwrap();
+        run(&["add", "-A"]);
+        run(&["commit", "-q", "-m", "seed"]);
+        run(&["branch", "feat/doomed"]);
+
+        let before = snapshot_checkout(repo).expect("snapshot a real repo");
+        assert!(
+            before.refs.contains("refs/heads/feat/doomed"),
+            "for-each-ref output not as parsed: {:?}",
+            before.refs
+        );
+
+        run(&["branch", "-D", "feat/doomed"]);
+        let after = snapshot_checkout(repo).unwrap();
+
+        // The point of the test: status and HEAD are both unchanged, so
+        // only the ref comparison can see this.
+        assert_eq!(before.status, after.status);
+        assert_eq!(before.head, after.head);
+        let leaked = detect_leak(&before, &after);
+        assert_eq!(leaked.len(), 1, "{leaked:?}");
+        assert!(leaked[0].contains("REF DELETED"), "{}", leaked[0]);
+        assert!(leaked[0].contains("feat/doomed"), "{}", leaked[0]);
     }
 
     #[test]
