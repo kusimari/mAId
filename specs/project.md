@@ -477,6 +477,25 @@ stop-with-error) where a compliant agent writes nothing. A
 behavioral assert must fail a no-op agent (pair a presence check
 with the absence check) or it proves nothing.
 
+**Discount what you know; don't threshold what you don't.** When an
+assert has to decide whether the agent produced *prose* — a why, a
+summary, an explanation — a length threshold is the wrong tool in both
+directions, and tuning it converges on nothing. Measured: two lines
+rejected a compliant one-line answer; fifteen words rejected an
+eight-word one; four words was satisfied by a coding agent's own
+attribution footer, which is five. Filter the boilerplate you can
+*name* — blank lines, git trailers, attribution and URL lines, all
+line-initial by convention — and then require that something survives.
+That check has no threshold to be wrong about.
+
+**Two checks needing the same set share one definition.** Two asserts
+both wanted "list markers an agent might write in front of a line" and
+each carried its own enumeration; one commit edited both lines and added
+different markers to each, reopening a hole the earlier fix had closed.
+Where two checks depend on the same notion, define it once in the
+fixture (a shell function is enough) — an enumeration duplicated is an
+enumeration that will drift, and it drifts in the commit that edits it.
+
 **A fixture proving itself is not the same as two fixtures being
 comparable.** The vacuity check above — a behavioral assert must fail a
 no-op agent — is per-fixture, and it cannot tell you that two fixtures

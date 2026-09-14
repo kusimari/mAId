@@ -84,6 +84,40 @@ The procedure, for each new or changed behavioral assert:
     assert that writes a scratch file — a collision risk the moment
     the runner parallelizes, silent until it does. Salt with `$$`
     and remove via `trap ... EXIT`.
+- **`squash-message-authored` is the strongest evidence yet, and it
+  shifts the argument from "reading misses these" to "fixing them
+  creates more."** Eight defects across four code-review cycles and
+  four review-briefing passes, all this class, none found by reading —
+  and **four were introduced by the fix to an earlier one**. The
+  implementer ran a hand replay after every round (54 probe cases by
+  the end) and each round still found something the probe had not
+  thought to try. So probe 2 has to be *re-derived from the new code*
+  each round, not re-run; a growing probe suite converges on the cases
+  its author already imagines.
+- **Five traps that branch added to the list above:**
+  - **A threshold standing in for a qualitative property.** "Was a why
+    written" was checked by length three times — two lines, fifteen
+    words, four words. The first two rejected compliant terse prose;
+    the third was satisfied by the coding agent's own attribution
+    footer. Tuning oscillates, because no threshold expresses the
+    property. Filter nameable boilerplate instead, then require a
+    survivor.
+  - **Host-added boilerplate satisfying a positive check.** The agent
+    under test appends its own footer, so "the body is non-empty" is
+    true without the agent authoring anything. Assume every host adds
+    something and discount it explicitly.
+  - **A check running on already-filtered text, so the worst form of
+    what it rejects is invisible by construction.** A history-pointer
+    check ran downstream of a URL strip, which made the *linked*
+    pointer — the worst version — the one form it could never see.
+    Check the order of a filter chain, not just each filter.
+  - **A comment that overstates its check.** Twice the finding was the
+    comment, not the code: it claimed a hole was closed that was open.
+    Worse than the gap, because the next reader stops looking. State
+    the residue in the comment.
+  - **A line-anchored pattern defeated by a list marker.** `^see` does
+    not match `- See …`. Strip prefixes before anchoring, and strip a
+    *class* rather than an enumeration.
 - **This is the repo's own test-first argument, arriving by a
   different road.** `kdevkit-dev-loop-vmodel-and-ceremony`'s Rule B
   says a test written after the source "often asserts the code's

@@ -16,25 +16,23 @@ without one degrades to the PR body instead of a commit transcript.
 
 ## Handoff
 
-- **Stage:** review
-- **Ready for:** closure on the cue. Gates are green; the repository
-  settings are already live and are not reverted by reverting this
-  branch.
-- **Carry forward:** the fixture's positive half took four attempts and
-  the failure was the same each time — I kept tuning a threshold for a
-  property a threshold cannot express. If a future change touches it,
-  discount boilerplate, don't raise a floor. Also: cycle 4's seven notes
-  were fixed *after* the gate passed, so those fixes carry no gate
-  verdict; the 27-case probe is the only evidence for them.
-- **Deliberately left:** three things, all named in the fixture's own
-  comments rather than only here. (1) Whether a body is a *why* or a
-  reworded *what* is not deterministically checkable — the prefixed
-  form is caught, the reworded form is not, and nothing else covers it.
-  (2) The review-tool arm is unreachable in a scratch seed with no
-  forge, so "the subject is the step-5 title *verbatim*" has no
-  behavioural check. (3) `delete_branch_on_merge` stays `false`; step 7
-  deletes branches explicitly, so the setting is redundant. Raised at
-  the Planning Review Gate and not taken up.
+- **Stage:** closed
+- **Ready for:** nothing; the feature is done and merged.
+- **Carry forward:** nothing outstanding. Both durable lessons were
+  promoted into `project.md` Testing at closure — discount nameable
+  boilerplate rather than setting a threshold for a qualitative
+  property, and define a shared notion once rather than enumerating it
+  in two checks that must agree.
+- **Deliberately left:** nothing unresolved. Of the three entries this
+  block carried at review: the *why*-vs-reworded-*what* hole is
+  permanent and deterministically uncheckable, recorded in the
+  fixture's own comments and as evidence appended to
+  `kdevkit-adversarial-assert-discipline.md`; the unreachable
+  review-tool arm is filed as
+  `fixture-cannot-reach-the-review-tool-arm.md`; and
+  `delete_branch_on_merge` stays `false` deliberately, since close.md
+  step 7 deletes branches explicitly, which makes the setting redundant
+  rather than wrong.
 
 ### Crossings
 
@@ -49,6 +47,7 @@ without one degrades to the PR body instead of a commit transcript.
   `fail_on: high`), and its seven notes were then fixed; those fixes are
   covered by the 27-case probe but by no review cycle. Budget was
   already overridden once to reach cycle 4.
+- review → closure
 
 ## Requirements
 
@@ -440,6 +439,26 @@ rather than a remembered override. The settings are one
     an uncorrected twin left elsewhere — twice in the *same commit* as
     the correction. Grep for the sentence, not the file, and prefer a
     single definition over two enumerations that must agree.
+- **2026-09-14 · closure.** Reconcile found nothing quietly done — all
+  six plan items were ticked in the commits that completed them. Both
+  durable lessons promoted into `project.md` Testing (asked and
+  accepted); Architecture left alone, since the tripwire already lived
+  in `harness.rs` and watching refs broadens an existing
+  responsibility rather than adding one. No backlog items removed: the
+  promoted one left `backlog/` at planning,
+  `test-runner-workdir-containment.md` still stands because this branch
+  added *detection* not containment, and
+  `kdevkit-adversarial-assert-discipline.md` is a Test Gate procedure
+  nothing here changed — this branch is evidence for it, appended to it
+  rather than closing it. Two items filed from the handoff:
+  `fixture-cannot-reach-the-review-tool-arm.md` and, earlier,
+  `closure-only-branch-has-no-subject.md`.
+- **2026-09-14 · closure · the merge dogfoods the rule.** This feature's
+  own squash message is authored per the step 6 it adds: subject from
+  the rewritten PR title, body a why written for a reader who has only
+  `main`, with the review briefing's reading order and verification
+  dump left out. If the rule were wrong, the first place it would show
+  is here.
 - **2026-09-12 · dev · probe re-run, 27 behaviours, all correct.**
 
 ## Decision Log
