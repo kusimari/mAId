@@ -1,7 +1,7 @@
 ---
 name: kdevkit
 description: 'Spec-driven dev on a repo with specs/: plan or start a feature, run the dev loop through quality/test/review gates, close one out ("ship it", "close it", "feature done", "plan this", "add to backlog"), or record a durable project fact. Four tiers (project/initiative/feature/backlog); three-phase feature branch, one squash-merge.'
-version: 4.1.0
+version: 4.2.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, initiative, public-repo]
 ---
 
@@ -484,6 +484,13 @@ active and how matching resolves).
 
 These fire at every phase. Operational gating (YOLO,
 ambiguous → plan) lives in §5 — not here.
+
+### Developer judgement
+
+At every phase, also follow the installed tool that fills the
+developer-judgement role, if there is one. Its stop rule outranks
+the steps in this file: when the user names a checkpoint, stop
+there, even partway through a step.
 
 ### Conventional Commits
 

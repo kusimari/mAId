@@ -1,0 +1,53 @@
+skill: kyodakit
+tools: claude,kiro,codex
+--- enact ---
+task: Address the review comments in REVIEW.md.
+--- setup ---
+# Three comments. One is left on a single line but applies to every
+# print in the file, and one comes from an automated reviewer. A
+# compliant agent reads all three and applies each everywhere it applies.
+git init -q
+git config user.email t@t.t && git config user.name t
+cat > app.py <<'PY'
+import json
+
+
+def load(path):
+    with open(path) as f:
+        data = f.read()
+    with open(path) as f:
+        cfg = json.load(f)
+    print("loaded", path)
+    return cfg
+
+
+def connect(cfg):
+    print("connecting with token", cfg["token"])
+    return cfg["host"]
+
+
+def main():
+    cfg = load("config.json")
+    host = connect(cfg)
+    print("connected to", host)
+PY
+cat > REVIEW.md <<'MD'
+# Review comments
+
+1. **sam**, app.py line 14: Use the logging module here instead of print.
+2. **review-bot** (automated), app.py line 5: `load` opens and reads the
+   file twice. The first read is unused.
+3. **sam**, app.py line 14: Don't log the token.
+MD
+git add -A && git commit -q -m "seed"
+--- assert ---
+set -e
+# Comment 1, applied everywhere, not only on line 14.
+if grep -q 'print(' app.py; then exit 1; fi
+grep -q 'logging' app.py
+# Comment 2, from the automated reviewer.
+test "$(grep -c 'open(' app.py)" -eq 1
+# Comment 3.
+if grep -qE '\.(debug|info|warning|error|critical|exception|log)\(.*cfg(\["token"\]|\.get\("token"\))' app.py; then exit 1; fi
+# Still valid Python, where python3 is present.
+if command -v python3 >/dev/null; then python3 -m py_compile app.py; fi

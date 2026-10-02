@@ -48,7 +48,8 @@ Two halves at the top level:
      needs, the fillers advertise that they fill it, and install (or
      a project's own context file) binds them. `kdevkit` reaching for
      an "independent review-briefing tool" — which `kreviewkit`
-     fills — is the first instance. Two rules keep that from becoming
+     fills — is the first instance; its "developer-judgement" role, which
+`kyodakit` fills, is the second. Two rules keep that from becoming
      coupling: **the caller never names a specific skill** (so a
      different filler can be swapped in without editing the caller),
      and **the filler owns its own invocation contract** (what it
@@ -234,7 +235,8 @@ mAId/
 │   │   └── tests/integration.rs  cross-stage tests against the real repo
 │   ├── content/            the deployable skills (symlinked in)
 │   │   ├── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
-│   │   └── skills/kdevkit/  SKILL.md core + phases/, tiers/, setup.md, interviews.md
+│   │   ├── skills/kdevkit/  SKILL.md core + phases/, tiers/, setup.md, interviews.md
+│   │   └── skills/kyodakit/ SKILL.md: developer judgement, any language
 │   ├── browser/            browser-control MCP (not symlinked — runnable)
 │   │   ├── launch          allowlist-enforcing launcher; enters flake, execs chrome-devtools-mcp
 │   │   └── manage          data-driven MCP registrar (MCP_AGENTS table: claude/codex global, kiro per-sub-agent)
@@ -339,7 +341,7 @@ task a user phrases implicitly, so the cell has no natural test.
 **`activation` and `discovery` depend on a self-announce contract.** A
 skill that declares `You begin every response … with the literal line
 [<skill>] applies` (today: `browser`, `notes`, `writing-style`,
-`kreviewkit`) can be
+`kreviewkit`, `kyodakit`) can be
 checked at the reply level, because the marker is text the agent can
 only know from the file. The announce line is there for the reader, not
 for ceremony — it attributes a reply to a written contract rather than
