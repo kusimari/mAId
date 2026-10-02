@@ -66,6 +66,7 @@ No hook in v1. Add one only if the fixtures show rules slipping.
 - **Carry forward:** trimming kdevkit's own prose is next, under
   `specs/backlog/kdevkit-refactor-shrink-always-on-context.md`
 - **Deliberately left:** a per-prompt hook
+- **Tuning:** kyodakit is tuned against its paid fixtures as an autoresearch loop (`phases/dev.md`, "Tuning what an agent uses"). Results in the PR.
 
 ### Crossings
 <!-- Append one line per crossing. Never edit or delete a line. -->
