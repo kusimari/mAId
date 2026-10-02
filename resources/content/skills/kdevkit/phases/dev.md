@@ -175,7 +175,9 @@ run real agents, run it as an autoresearch loop (Karpathy's
   runner are fixed for the loop. Changing a test to make it pass is
   not tuning.
 - **One number.** Passes out of runs, across every fixture and agent
-  in scope. Record a baseline before the first change.
+  in scope. Record a baseline before the first change. Agent runs are
+  noisy, so repeat each run 3 times; a one-run difference of one pass
+  is noise, not a result.
 - **One idea per run.** Commit it, run, and keep it only if the
   number goes up. Otherwise `git reset` back. At an equal number,
   keep the shorter file.
