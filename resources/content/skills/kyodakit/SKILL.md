@@ -75,9 +75,14 @@ something, say "not checked". Never write "verified" without the output.
 ## 4. Read all feedback before changing code.
 
 Read every open comment on the review, including automated reviewers', on
-every revision. A comment left on one line usually applies to more: for each
-one, search the code for every other place it applies, and change those too.
-Then reply to each.
+every revision. Then, for each comment:
+
+1. Fix it where it was left.
+2. Search the code for the same problem elsewhere, for example the call the
+   comment names, and fix every hit.
+3. Reply, saying where else you changed it.
+
+A comment that says "here" still applies everywhere the same problem appears.
 
 ## 5. Say less, plainly and clearly.
 
