@@ -415,7 +415,12 @@ fn run_reply(
     judge: Option<Agent>,
     label: &str,
 ) -> Outcome {
-    let reply = match drive(agent, prompt, Authority::ReadOnly, None) {
+    // An empty scratch cwd, so a relative path in the prompt cannot reach
+    // the checkout the runner was started from.
+    let Ok(scratch) = tempfile::TempDir::new() else {
+        return Outcome::Fail("could not create scratch dir".into());
+    };
+    let reply = match drive(agent, prompt, Authority::ReadOnly, Some(scratch.path())) {
         Ok(r) => r,
         Err(e) => return Outcome::Fail(format!("{} invocation failed: {e}", agent.name())),
     };
@@ -428,7 +433,7 @@ fn run_reply(
     let verdict = match (narrative, judge) {
         (Some(want), Some(judge)) => {
             let jp = judge_prompt(prompt, &reply, want);
-            match drive(judge, &jp, Authority::ReadOnly, None) {
+            match drive(judge, &jp, Authority::ReadOnly, Some(scratch.path())) {
                 Ok(raw) => {
                     let verdict = read_verdict(&raw);
                     if verdict == Verdict::Unparseable {

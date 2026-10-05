@@ -5,6 +5,15 @@ metadata:
   type: backlog
 ---
 
+> **Partly fixed, 2026-10-05.** Reply tests (activation, discovery,
+> playback) now run in an empty scratch cwd instead of the checkout. Seen
+> live before the fix: a discovery prompt reused an enact task, found no
+> such files, and claude edited the installed `notes` skill in the
+> checkout. Still open: behavioral tests, where an agent with full
+> permissions can reach the checkout through an absolute path such as
+> the `~/.claude/skills` symlink.
+
+
 # Test runner — confine behavioral tests to their scratch workdir
 
 ## What

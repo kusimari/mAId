@@ -1,5 +1,10 @@
 # Backlog: test-runner-sandbox-asymmetry
 
+> **Claude fixed, 2026-10-05.** Reply tests now run claude with
+> `--permission-mode dontAsk --allowedTools=Read,Glob,Grep,Skill`, checked
+> by hand to deny a write and allow a read. Still open: `agy`, which copies
+> claude's old flags, and whose CLI was not on PATH to check against.
+
 ## What
 
 Make `resources/tests/run` apply a consistent, least-privilege sandbox

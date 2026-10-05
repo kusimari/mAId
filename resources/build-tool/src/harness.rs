@@ -743,11 +743,22 @@ pub fn invocation(
     match agent {
         Agent::Claude => Invocation {
             program: owned("claude"),
-            args: vec![
-                owned("--print"),
-                owned("--dangerously-skip-permissions"),
-                prompt.to_string(),
-            ],
+            args: match authority {
+                Authority::Workdir => vec![
+                    owned("--print"),
+                    owned("--dangerously-skip-permissions"),
+                    prompt.to_string(),
+                ],
+                // Deny anything not listed, without prompting: reads and
+                // skill loads only, so a reply test cannot edit what it reads.
+                Authority::ReadOnly => vec![
+                    owned("--print"),
+                    owned("--permission-mode"),
+                    owned("dontAsk"),
+                    owned("--allowedTools=Read,Glob,Grep,Skill"),
+                    prompt.to_string(),
+                ],
+            },
             reply_file: None,
             cwd: workdir.map(Path::to_path_buf),
         },
@@ -1972,18 +1983,11 @@ FAIL — omits the guardrail entirely";
 
     // ── invocation ───────────────────────────────────────────────
 
-    /// Read-only means read-only for EVERY agent. The bash runner gave
-    /// codex `--sandbox read-only` and kiro an empty trust list but ran
-    /// claude with --dangerously-skip-permissions, so a fixture meant to
-    /// be read-only could still let claude edit the installed, symlinked
-    /// SKILL.md. Pinning the asymmetry here rather than leaving it to a
-    /// reading of three call sites.
-    ///
-    /// This test documents CURRENT behavior including that gap, so the
-    /// fix (specs/backlog/test-runner-sandbox-asymmetry.md) has something
-    /// to flip deliberately rather than drifting into place unnoticed.
+    /// Read-only means read-only for EVERY agent. Claude once ran reply
+    /// tests with --dangerously-skip-permissions and, on a discovery
+    /// prompt, edited an installed, symlinked SKILL.md in the checkout.
     #[test]
-    fn read_only_authority_is_asymmetric_across_agents_today() {
+    fn read_only_authority_denies_writes_on_every_agent() {
         let reply = Path::new("/tmp/r");
         let flags = |a: Agent| {
             invocation(a, "p", Authority::ReadOnly, None, reply)
@@ -1992,8 +1996,24 @@ FAIL — omits the guardrail entirely";
         };
         assert!(flags(Agent::Codex).contains("--sandbox read-only"));
         assert!(flags(Agent::Kiro).contains("--trust-tools="));
-        // The outlier — see the backlog item.
-        assert!(flags(Agent::Claude).contains("--dangerously-skip-permissions"));
+        let claude = flags(Agent::Claude);
+        assert!(claude.contains("--permission-mode dontAsk"));
+        assert!(claude.contains("--allowedTools=Read,Glob,Grep,Skill"));
+        assert!(!claude.contains("--dangerously-skip-permissions"));
+    }
+
+    #[test]
+    fn claude_skips_permissions_only_in_a_seeded_workdir() {
+        let inv = invocation(
+            Agent::Claude,
+            "p",
+            Authority::Workdir,
+            Some(Path::new("/tmp/w")),
+            Path::new("/tmp/r"),
+        );
+        assert!(inv
+            .args
+            .contains(&"--dangerously-skip-permissions".to_string()));
     }
 
     #[test]

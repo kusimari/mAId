@@ -43,7 +43,7 @@ skills, not inside them.
 | R4 | `kyodakit-all-feedback.smoke` | Three comments, one applying file-wide, one automated: all three applied. |
 | R5 | `kyodakit.smoke` playback | Recites rules 0 and 5. |
 | R6 | Fixtures span shell and Python; review of `SKILL.md`. |
-| R7 | `kdevkit-judgement-load.smoke` playback: names the read at session start and every phase, and that its stop rule outranks kdevkit's steps. Plus review of the kdevkit diff: it names the role only. |
+| R7 | `kdevkit-judgement-live.smoke` enact: a kdevkit repo with review comments, kyodakit never named; passes only if every place a comment applies is fixed, which kdevkit alone missed. `kdevkit-judgement-load.smoke` playback: names the read at session start and every phase, and that its stop rule outranks kdevkit's steps. Plus review of the kdevkit diff: it names the role only. |
 
 Each behavioural assert was probed by hand: the untouched setup fails, a
 near-miss agent fails, a compliant agent passes.
