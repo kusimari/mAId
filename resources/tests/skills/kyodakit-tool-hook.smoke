@@ -8,13 +8,14 @@ task: Every time a note is saved with the notes tool, also append the note's nam
 # leaves the tool itself alone.
 git init -q
 git config user.email t@t.t && git config user.name t
-mkdir -p hooks/post-save.d store
+mkdir -p hooks/post-save.d
 cat > notes <<'SH'
 #!/bin/sh
 # notes save NAME TEXT: write a note, then run the post-save hooks.
 set -e
 dir=$(dirname "$0")
 [ "$1" = save ] || { echo "usage: notes save NAME TEXT" >&2; exit 2; }
+mkdir -p "$dir/store"
 printf '%s\n' "$3" > "$dir/store/$2"
 for hook in "$dir"/hooks/post-save.d/*; do
   [ -x "$hook" ] && "$hook" "$dir/store/$2"

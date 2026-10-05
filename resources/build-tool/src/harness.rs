@@ -799,6 +799,12 @@ pub fn invocation(
                 Authority::Workdir => "workspace-write",
                 Authority::ReadOnly => "read-only",
             }));
+            // `exec` grants on-request escalations, so a read-only sandbox
+            // alone still lets its patch tool write. Never approving closes it.
+            if authority == Authority::ReadOnly {
+                args.push(owned("-c"));
+                args.push(owned("approval_policy=never"));
+            }
             // A seeded scratch dir may not be a git tree.
             args.push(owned("--skip-git-repo-check"));
             args.push(owned("-o"));
@@ -2014,6 +2020,7 @@ FAIL — omits the guardrail entirely";
                 .join(" ")
         };
         assert!(flags(Agent::Codex).contains("--sandbox read-only"));
+        assert!(flags(Agent::Codex).contains("-c approval_policy=never"));
         assert!(flags(Agent::Kiro).contains("--trust-tools="));
         assert!(flags(Agent::Kiro).contains("--agent maid-readonly"));
         let claude = flags(Agent::Claude);

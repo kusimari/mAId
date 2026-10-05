@@ -6,7 +6,11 @@
 > with `--no-interactive`, `--trust-tools=` still let it append to a file
 > (kiro-cli 2.27.1). It now also runs under a profile that offers only
 > `fs_read`, written into the reply test's scratch dir; checked by hand to
-> deny the write, allow the read, and still load skills. Still open: `agy`,
+> deny the write, allow the read, and still load skills. Codex was not
+> either: `exec` grants on-request escalations, so `--sandbox read-only`
+> still let its patch tool write, inside and outside its cwd (codex
+> 0.160.0). Reply tests now add `-c approval_policy=never`; checked by hand
+> to reject the patch and allow the read. Still open: `agy`,
 > which copies claude's old flags, and whose CLI was not on PATH to check
 > against.
 
