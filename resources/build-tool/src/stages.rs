@@ -396,11 +396,16 @@ fn execute(plan: &Plan, judge: Option<Agent>) -> Outcome {
         Assertion::Behavioral { setup, assert } => {
             run_behavioral(plan.agent, &plan.prompt, setup, assert, &plan.name)
         }
-        Assertion::Reply { substr, narrative } => run_reply(
+        Assertion::Reply {
+            substr,
+            narrative,
+            seed,
+        } => run_reply(
             plan.agent,
             &plan.prompt,
             substr.as_deref(),
             narrative.as_deref(),
+            seed.as_deref(),
             judge,
             &plan.name,
         ),
@@ -413,14 +418,20 @@ fn run_reply(
     prompt: &str,
     substr: Option<&str>,
     narrative: Option<&str>,
+    seed: Option<&str>,
     judge: Option<Agent>,
     label: &str,
 ) -> Outcome {
-    // An empty scratch cwd, so a relative path in the prompt cannot reach
-    // the checkout the runner was started from.
+    // A scratch cwd, so a relative path in the prompt cannot reach the
+    // checkout the runner was started from.
     let Ok(scratch) = tempfile::TempDir::new() else {
         return Outcome::Fail("could not create scratch dir".into());
     };
+    if let Some(seed) = seed {
+        if let Err(e) = shell(seed, scratch.path()) {
+            return Outcome::Fail(format!("setup failed: {e}"));
+        }
+    }
     let reply = match drive(agent, prompt, Authority::ReadOnly, Some(scratch.path())) {
         Ok(r) => r,
         Err(e) => return Outcome::Fail(format!("{} invocation failed: {e}", agent.name())),

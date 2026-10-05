@@ -324,6 +324,8 @@ question. Kinds are two axes composed:
   is wrong, not that it failed to load, and nothing needs deploying.
   *Implicit* — the prompt states only the task, so the agent must
   recognise it and load the right skill unaided from what is installed.
+  Discovery borrows a fixture's enact task, so it runs in that fixture's
+  seeded dir, read-only, where the files the task names exist.
 - **What is verified.** The skill *plays back* the contract it was
   designed for (recites its rules), or *enacts* it (does the thing).
 

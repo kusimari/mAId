@@ -852,9 +852,13 @@ pub enum Assertion {
     /// Run the fixture's assert shell in the seeded workdir.
     Behavioral { setup: String, assert: String },
     /// Score the reply: a literal substring, a judged narrative, or both.
+    /// `seed` is the fixture's setup, run in the scratch dir first, so a
+    /// discovery prompt borrowed from an enact task meets the files it
+    /// names.
     Reply {
         substr: Option<String>,
         narrative: Option<String>,
+        seed: Option<String>,
     },
 }
 
@@ -949,6 +953,10 @@ pub fn assertion_for(fixture: &Fixture, kind: Kind, announces: bool) -> Assertio
         return Assertion::Reply {
             substr: Some(marker_for(&fixture.skill)),
             narrative: None,
+            seed: match kind {
+                Kind::Discovery => fixture.setup.clone(),
+                _ => None,
+            },
         };
     }
     let section = fixture.section_for(kind);
@@ -962,6 +970,7 @@ pub fn assertion_for(fixture: &Fixture, kind: Kind, announces: bool) -> Assertio
     Assertion::Reply {
         substr,
         narrative: section.and_then(|s| s.narrative.clone()),
+        seed: None,
     }
 }
 
@@ -2136,13 +2145,29 @@ FAIL — omits the guardrail entirely";
         let f = fx("skill: notes\n--- enact ---\ntask: t\nexpect: n\n").unwrap();
         for kind in [Kind::Activation, Kind::Discovery] {
             match assertion_for(&f, kind, true) {
-                Assertion::Reply { substr, narrative } => {
+                Assertion::Reply {
+                    substr, narrative, ..
+                } => {
                     assert_eq!(substr.as_deref(), Some("[notes] applies"));
                     assert!(narrative.is_none(), "{}", kind.name());
                 }
                 other => panic!("expected reply, got {other:?}"),
             }
         }
+    }
+
+    /// Discovery borrows an enact task, so it runs in that fixture's seeded
+    /// dir; activation's generated task needs no files.
+    #[test]
+    fn only_discovery_is_seeded_with_the_fixture_setup() {
+        let f = fx("skill: notes\n--- enact ---\ntask: t\n--- setup ---\ntouch x\n--- assert ---\ntest -f x\n")
+            .unwrap();
+        let seed = |k| match assertion_for(&f, k, true) {
+            Assertion::Reply { seed, .. } => seed,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(seed(Kind::Discovery).as_deref(), Some("touch x\n"));
+        assert!(seed(Kind::Activation).is_none());
     }
 
     /// An implicit reply test needs the marker as its "did it fire" half —
