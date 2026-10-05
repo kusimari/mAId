@@ -730,6 +730,12 @@ pub struct Invocation {
     pub cwd: Option<PathBuf>,
 }
 
+/// Kiro's read-only profile: offers file reads only. Kiro finds it under
+/// `.kiro/agents/` in the cwd, so a reply test writes it into its scratch
+/// dir before driving kiro.
+pub const KIRO_READONLY_NAME: &str = "maid-readonly";
+pub const KIRO_READONLY_AGENT: &str = r#"{"name":"maid-readonly","description":"Read-only test agent","tools":["fs_read"],"allowedTools":["fs_read"]}"#;
+
 /// Build the invocation for an agent. `reply_to` is where an agent that
 /// cannot emit a bare reply on stdout should write it.
 pub fn invocation(
@@ -764,17 +770,21 @@ pub fn invocation(
         },
         Agent::Kiro => Invocation {
             program: owned("kiro-cli"),
-            args: vec![
-                owned("chat"),
-                owned("--no-interactive"),
-                // Trust everything only where the test seeded a workdir to
-                // act in; a reply-only test gets an empty trust list.
-                match authority {
-                    Authority::Workdir => owned("--trust-all-tools"),
-                    Authority::ReadOnly => owned("--trust-tools="),
-                },
-                prompt.to_string(),
-            ],
+            args: vec![owned("chat"), owned("--no-interactive")]
+                .into_iter()
+                .chain(match authority {
+                    Authority::Workdir => vec![owned("--trust-all-tools")],
+                    // An empty trust list alone does not stop a non-interactive
+                    // write, so a reply test also runs under a profile that only
+                    // offers reads (see KIRO_READONLY_AGENT).
+                    Authority::ReadOnly => vec![
+                        owned("--agent"),
+                        owned(KIRO_READONLY_NAME),
+                        owned("--trust-tools="),
+                    ],
+                })
+                .chain([prompt.to_string()])
+                .collect(),
             reply_file: None,
             cwd: workdir.map(Path::to_path_buf),
         },
@@ -1996,6 +2006,7 @@ FAIL — omits the guardrail entirely";
         };
         assert!(flags(Agent::Codex).contains("--sandbox read-only"));
         assert!(flags(Agent::Kiro).contains("--trust-tools="));
+        assert!(flags(Agent::Kiro).contains("--agent maid-readonly"));
         let claude = flags(Agent::Claude);
         assert!(claude.contains("--permission-mode dontAsk"));
         assert!(claude.contains("--allowedTools=Read,Glob,Grep,Skill"));

@@ -2,8 +2,13 @@
 
 > **Claude fixed, 2026-10-05.** Reply tests now run claude with
 > `--permission-mode dontAsk --allowedTools=Read,Glob,Grep,Skill`, checked
-> by hand to deny a write and allow a read. Still open: `agy`, which copies
-> claude's old flags, and whose CLI was not on PATH to check against.
+> by hand to deny a write and allow a read. Kiro was not read-only either:
+> with `--no-interactive`, `--trust-tools=` still let it append to a file
+> (kiro-cli 2.27.1). It now also runs under a profile that offers only
+> `fs_read`, written into the reply test's scratch dir; checked by hand to
+> deny the write, allow the read, and still load skills. Still open: `agy`,
+> which copies claude's old flags, and whose CLI was not on PATH to check
+> against.
 
 ## What
 

@@ -15,6 +15,7 @@ use crate::harness::{
     agent_available, check_prompt, detect_leak, dump_path, invocation, judge_agent, judge_prompt,
     plan_one, plan_tests, read_verdict, score_reply, snapshot_checkout, test_name, Assertion,
     Authority, Fixture, Kind as TestKind, Outcome, Plan, Reach, Selection, Skipped, Stage, Verdict,
+    KIRO_READONLY_AGENT, KIRO_READONLY_NAME,
 };
 use crate::shared::{checkout_skill, usage, Agent};
 use anyhow::{anyhow, Context, Result};
@@ -535,6 +536,15 @@ fn drive(
 ) -> Result<String> {
     let last = tempfile::NamedTempFile::new().context("creating reply file")?;
     let inv = invocation(agent, prompt, authority, workdir, last.path());
+    if let (Agent::Kiro, Authority::ReadOnly, Some(dir)) = (agent, authority, workdir) {
+        let agents = dir.join(".kiro/agents");
+        fs::create_dir_all(&agents).context("creating kiro agent dir")?;
+        fs::write(
+            agents.join(format!("{KIRO_READONLY_NAME}.json")),
+            KIRO_READONLY_AGENT,
+        )
+        .context("writing kiro read-only profile")?;
+    }
 
     let mut cmd = std::process::Command::new(&inv.program);
     cmd.args(&inv.args).stdin(std::process::Stdio::null());
