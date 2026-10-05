@@ -1,7 +1,7 @@
 ---
 name: kdevkit
 description: 'Spec-driven dev on a repo with specs/: plan or start a feature, run the dev loop through quality/test/review gates, close one out ("ship it", "close it", "feature done", "plan this", "add to backlog"), or record a durable project fact. Four tiers (project/initiative/feature/backlog); three-phase feature branch, one squash-merge.'
-version: 4.3.0
+version: 4.4.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, initiative, public-repo]
 ---
 
@@ -71,6 +71,16 @@ don't.
 | `tiers/initiative.md` | An initiative is in play: `$SPEC_ROOT/initiative/` exists and the work references one, an initiative verb fires, or the feature spec carries `Part of initiative:`. Applies during any phase. |
 | `setup.md` | Project genesis, or `project.md` drifted from the schema (§2). |
 | `interviews.md` | Feature / backlog / initiative genesis — interview prompts and file templates. |
+
+**Read the developer-judgement skill with every phase module.** At
+session start and each time you read a phase module, also inline-Read
+the `SKILL.md` of the installed skill that fills the
+**developer-judgement** role, before the next step. Resolve it from
+`project.md`'s `judgement:` setting if set (see `setup.md`), else the
+single installed skill advertising the role. If none is installed, say
+so once and carry on. Its stop rule outranks the steps in this file and
+in every module: when the user names a checkpoint, stop there, even
+partway through a step.
 
 **Crossing a phase boundary mid-session pulls the next module.**
 Finishing planning and starting dev means reading `phases/dev.md`
@@ -484,13 +494,6 @@ active and how matching resolves).
 
 These fire at every phase. Operational gating (YOLO,
 ambiguous → plan) lives in §5 — not here.
-
-### Developer judgement
-
-At every phase, also follow the installed tool that fills the
-developer-judgement role, if there is one. Its stop rule outranks
-the steps in this file: when the user names a checkpoint, stop
-there, even partway through a step.
 
 ### Conventional Commits
 

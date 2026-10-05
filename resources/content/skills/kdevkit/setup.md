@@ -170,6 +170,19 @@ organised by skill. Keys under `kdevkit`:
   A step that costs an extra agent call should be opted into, not
   prompted for.
 
+- `judgement:` — which skill fills the developer-judgement role,
+  read with every phase module (SKILL.md, "Read the
+  developer-judgement skill"). Optional; absent means auto-resolve.
+
+  ```yaml
+  judgement: <ref>              # or `off`; omit to auto-resolve the
+                                # installed developer-judgement role
+  ```
+
+  Same `<ref>` grammar as `review_brief.generator`. When more than
+  one installed skill advertises the role, ask once and persist the
+  answer here.
+
 ## Code-review setup prompt
 
 When `kdevkit.code_review:` is missing from `project.md`,

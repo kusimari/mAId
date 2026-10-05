@@ -29,7 +29,9 @@ skills, not inside them.
   everywhere it applies.
 - R5. States its stop and writing rules when asked.
 - R6. Works in any language, and no rule only makes sense in one language.
-- R7. kdevkit reaches it by role, never by name.
+- R7. kdevkit reads it explicitly, by role and never by name: at session start
+  and with every phase module. A project can name another skill or turn it
+  off with `judgement:` in `project.md`.
 
 ## Test Strategy
 
@@ -41,7 +43,7 @@ skills, not inside them.
 | R4 | `kyodakit-all-feedback.smoke` | Three comments, one applying file-wide, one automated: all three applied. |
 | R5 | `kyodakit.smoke` playback | Recites rules 0 and 5. |
 | R6 | Fixtures span shell and Python; review of `SKILL.md`. |
-| R7 | Review of the kdevkit diff: it names the role only. |
+| R7 | `kdevkit-judgement-load.smoke` playback: names the read at session start and every phase, and that its stop rule outranks kdevkit's steps. Plus review of the kdevkit diff: it names the role only. |
 
 Each behavioural assert was probed by hand: the untouched setup fails, a
 near-miss agent fails, a compliant agent passes.
@@ -49,8 +51,13 @@ near-miss agent fails, a compliant agent passes.
 ## Design
 
 One `SKILL.md`, six ranked rules, rule 0 first because order rules are the
-ones that slip. kdevkit gets one always-on line in §9 that reaches the role.
-No hook in v1. Add one only if the fixtures show rules slipping.
+ones that slip. kdevkit reads it explicitly with every phase module, the way
+it resolves the review-briefing role, and does not wait for the agent to
+discover it. Post-install tests showed discovery alone is unreliable
+(claude 2/4, kiro 0/4, codex 4/4), while the loaded skill passed 26/27.
+Merging it into kdevkit was weighed and rejected: kdevkit's own judgement
+rules were lost among its process steps, which is the failure this fixes.
+No hook in v1.
 
 ## Implementation Plan
 
