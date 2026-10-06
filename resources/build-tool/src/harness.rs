@@ -884,6 +884,28 @@ pub struct Plan {
     /// The prompt as it will be sent, stress prefix already applied.
     pub prompt: String,
     pub assertion: Assertion,
+    /// A control run: the same task and check, without the skill.
+    pub control: bool,
+}
+
+/// What a control run says in place of the skill's text.
+pub const CONTROL_PREAMBLE: &str = "Do not load or follow any skill for this task.";
+
+/// The control run for an enact plan: the same task and the same check,
+/// with no skill text and an instruction to load none, so its result is
+/// the agent's own. Comparing the two shows what the skill adds. Other
+/// kinds have no artefact to compare, so they have no control.
+pub fn control_plan(plan: &Plan, fixture: &Fixture) -> Option<Plan> {
+    let task = match plan.kind {
+        Kind::Enact => fixture.enact.as_ref()?.task.clone(),
+        _ => return None,
+    };
+    Some(Plan {
+        name: format!("{} (control)", plan.name),
+        prompt: format!("{CONTROL_PREAMBLE}\n\n{task}\n"),
+        control: true,
+        ..plan.clone()
+    })
 }
 
 /// Why a (fixture, kind, agent) triple yields no plan. A skip is a
@@ -958,6 +980,7 @@ pub fn plan_one(
         prompt,
         // 4. How the reply or the workdir will be judged.
         assertion: assertion_for(fixture, kind, announces(body, &fixture.skill)),
+        control: false,
     })
 }
 
@@ -2864,6 +2887,24 @@ FAIL — omits the guardrail entirely";
         assert!(!plain.prompt.starts_with("PREFIX"));
         assert!(stressed.prompt.starts_with("PREFIX"));
         assert!(stressed.prompt.len() > plain.prompt.len());
+    }
+
+    /// A control run keeps the task and the check and drops the skill, so
+    /// the two results are comparable. Only enact has one.
+    #[test]
+    fn control_drops_the_skill_and_keeps_the_check() {
+        let f = fx("skill: notes\n--- enact ---\ntask: TASK\n--- setup ---\ntouch x\n--- assert ---\ntest -f x\n")
+            .unwrap();
+        let body = "[notes] applies SKILLTEXT";
+        let plan = plan_one(&f, Kind::Enact, Agent::Claude, body, None).unwrap();
+        let c = control_plan(&plan, &f).unwrap();
+        assert!(c.control && c.name.ends_with("(control)"));
+        assert!(c.prompt.contains("TASK") && c.prompt.contains(CONTROL_PREAMBLE));
+        assert!(!c.prompt.contains("SKILLTEXT"));
+        assert_eq!(c.assertion, plan.assertion);
+        let pb = fx("skill: notes\n--- playback ---\ntask: q\nexpect: n\n").unwrap();
+        let p = plan_one(&pb, Kind::Playback, Agent::Claude, body, None).unwrap();
+        assert!(control_plan(&p, &pb).is_none());
     }
 
     /// Drift puts the conversation between the rules and the task, which

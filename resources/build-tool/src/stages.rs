@@ -12,10 +12,10 @@
 
 use crate::deploy::Deploy;
 use crate::harness::{
-    agent_available, check_prompt, detect_leak, dump_path, invocation, judge_agent, judge_prompt,
-    plan_one, plan_tests, read_verdict, score_reply, snapshot_checkout, test_name, Assertion,
-    Authority, Fixture, Kind as TestKind, Outcome, Plan, Reach, Selection, Skipped, Stage, Stress,
-    Verdict, KIRO_READONLY_AGENT, KIRO_READONLY_NAME,
+    agent_available, check_prompt, control_plan, detect_leak, dump_path, invocation, judge_agent,
+    judge_prompt, plan_one, plan_tests, read_verdict, score_reply, snapshot_checkout, test_name,
+    Assertion, Authority, Fixture, Kind as TestKind, Outcome, Plan, Reach, Selection, Skipped,
+    Stage, Stress, Verdict, KIRO_READONLY_AGENT, KIRO_READONLY_NAME,
 };
 use crate::shared::{checkout_skill, usage, Agent};
 use anyhow::{anyhow, Context, Result};
@@ -170,13 +170,30 @@ fn outcome(reports: Vec<crate::deploy::Report>, dry_run: bool) -> Result<u8> {
 
 /// Run one verification stage. `dry_run` constructs and structurally
 /// checks every prompt without calling an agent, which costs nothing.
+/// How a sweep runs, beyond what it selects.
+#[derive(Clone, Copy, Debug)]
+pub struct RunOptions<'a> {
+    pub dry_run: bool,
+    pub stress: Option<Stress<'a>>,
+    /// Runs per test. Above 1, each test also prints a `TALLY` line.
+    pub repeat: usize,
+    /// Add a control run, without the skill, beside each enact test.
+    pub control: bool,
+}
+
 pub fn cmd_verify(
     target: &impl Deploy,
     checkout: &Path,
     selection: &Selection,
-    dry_run: bool,
-    stressed: Option<Stress>,
+    opts: RunOptions,
 ) -> Result<u8> {
+    let RunOptions {
+        dry_run,
+        stress: stressed,
+        repeat,
+        control,
+    } = opts;
+    let repeat = repeat.max(1);
     // Under `verify`, a --kind naming only the other stage's kinds leaves
     // this stage with nothing to do. That is a scoped-away no-op, not a
     // failure — the other stage runs the tests.
@@ -251,13 +268,29 @@ pub fn cmd_verify(
                     continue;
                 }
             };
-            let outcome = match dry_run {
-                true => check_plan(&plan),
-                false => execute(&plan, judge),
-            };
-            report(&plan.name, &outcome);
-            if matches!(outcome, Outcome::Fail(_)) {
-                failures += 1;
+            let plans = std::iter::once(plan.clone())
+                .chain(control.then(|| control_plan(&plan, fixture)).flatten());
+            for plan in plans {
+                let mut passed = 0;
+                for run in 1..=repeat {
+                    let outcome = match dry_run {
+                        true => check_plan(&plan),
+                        false => execute(&plan, judge),
+                    };
+                    let name = match repeat {
+                        1 => plan.name.clone(),
+                        _ => format!("{} [run {run}/{repeat}]", plan.name),
+                    };
+                    report(&name, &outcome);
+                    match outcome {
+                        Outcome::Fail(_) => failures += 1,
+                        Outcome::Pass(_) => passed += 1,
+                        Outcome::Skip(_) => {}
+                    }
+                }
+                if repeat > 1 {
+                    println!("TALLY {}: {passed}/{repeat}", plan.name);
+                }
             }
         }
     }
@@ -378,7 +411,19 @@ fn test_name_for(fixture: &Fixture, kind: TestKind, agent: Agent) -> String {
 
 /// Check a plan structurally, without calling an agent. Free.
 fn check_plan(plan: &Plan) -> Outcome {
-    match check_prompt(plan.kind, &plan.skill, &plan.prompt) {
+    // A control run carries no skill, so it is checked as an implicit
+    // prompt is: it must not leak the skill's name, path or marker.
+    let kind = match plan.control {
+        true => TestKind::Integration,
+        false => plan.kind,
+    };
+    if plan.control {
+        return match check_prompt(kind, &plan.skill, &plan.prompt) {
+            Ok(()) => Outcome::Pass("dry: control carries no skill".into()),
+            Err(e) => Outcome::Fail(format!("dry: {e}")),
+        };
+    }
+    match check_prompt(kind, &plan.skill, &plan.prompt) {
         Ok(()) => Outcome::Pass(match plan.kind.reach() {
             Reach::Explicit => "dry: carries the skill".into(),
             Reach::Implicit => "dry: names no skill".into(),
@@ -780,8 +825,18 @@ mod tests {
             "skill: notes\n--- enact ---\ntask: t\nexpect: n\n",
         );
         let selection = Selection::resolve(Stage::Check, Some("typo-of-real"), None, None).unwrap();
-        let err =
-            cmd_verify(&crate::deploy::NoDeploy, dir.path(), &selection, true, None).unwrap_err();
+        let err = cmd_verify(
+            &crate::deploy::NoDeploy,
+            dir.path(),
+            &selection,
+            RunOptions {
+                dry_run: true,
+                stress: None,
+                repeat: 1,
+                control: false,
+            },
+        )
+        .unwrap_err();
         assert!(
             err.downcast_ref::<crate::shared::UsageError>().is_some(),
             "{err}"

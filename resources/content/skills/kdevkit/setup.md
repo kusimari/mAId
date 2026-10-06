@@ -175,13 +175,16 @@ organised by skill. Keys under `kdevkit`:
   developer-judgement skill"). Optional; absent means auto-resolve.
 
   ```yaml
-  judgement: <ref>              # or `off`; omit to auto-resolve the
-                                # installed developer-judgement role
+  judgement: <ref>              # or `path:<file>`, or `off`; omit to
+                                # auto-resolve the installed
+                                # developer-judgement role
   ```
 
-  Same `<ref>` grammar as `review_brief.generator`. When more than
-  one installed skill advertises the role, ask once and persist the
-  answer here.
+  Same `<ref>` grammar as `review_brief.generator`, plus
+  `path:<file>`: a judge `SKILL.md` kept in the repo, relative to the
+  repo root, read the same way as an installed one. When more than one
+  installed skill advertises the role, ask once and persist the answer
+  here.
 
 ## Code-review setup prompt
 

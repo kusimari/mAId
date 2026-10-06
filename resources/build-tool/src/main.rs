@@ -56,6 +56,12 @@ struct VerifyArgs {
     /// to test rules read early and acted on later.
     #[arg(long)]
     drift: bool,
+    /// Run each test this many times and print a pass tally per test.
+    #[arg(long, default_value_t = 1)]
+    repeat: usize,
+    /// Add a control run, without the skill, beside each enact test.
+    #[arg(long)]
+    control: bool,
 }
 
 /// The flags the three deployment verbs share.
@@ -166,6 +172,8 @@ fn clone_args(a: &VerifyArgs) -> VerifyArgs {
         dry_run: a.dry_run,
         stressed: a.stressed,
         drift: a.drift,
+        repeat: a.repeat,
+        control: a.control,
     }
 }
 
@@ -206,5 +214,15 @@ fn verify(
         true => build_tool::harness::Stress::AfterSkill(s),
         false => build_tool::harness::Stress::Before(s),
     });
-    stages::cmd_verify(target, root, &selection, args.dry_run, stress)
+    stages::cmd_verify(
+        target,
+        root,
+        &selection,
+        stages::RunOptions {
+            dry_run: args.dry_run,
+            stress,
+            repeat: args.repeat,
+            control: args.control,
+        },
+    )
 }

@@ -60,3 +60,63 @@ fn shipped_fixtures_parse() {
     }
     assert!(seen > 0, "no fixtures found under {}", dir.display());
 }
+
+/// The developer-judgement slot, as shipped. kdevkit must reach the judge
+/// by role and never by name, so another skill can fill it; exactly one
+/// shipped skill fills it, so role resolution has one answer; and the
+/// `judgement:` setting that overrides it is documented where kdevkit's
+/// other settings are.
+#[test]
+fn shipped_judgement_role_contract() {
+    let skills = repo_root()
+        .expect("repo root resolves under cargo test")
+        .join("resources/content/skills");
+    let read = |p: &std::path::Path| std::fs::read_to_string(p).expect("readable");
+
+    let mut kdevkit = Vec::new();
+    let mut stack = vec![skills.join("kdevkit")];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).expect("kdevkit dir") {
+            let path = entry.expect("entry").path();
+            match path.is_dir() {
+                true => stack.push(path),
+                false if path.extension().and_then(|e| e.to_str()) == Some("md") => {
+                    kdevkit.push((path.clone(), read(&path)))
+                }
+                false => {}
+            }
+        }
+    }
+    for (path, text) in &kdevkit {
+        assert!(
+            !text.to_lowercase().contains("kyodakit"),
+            "{} names a specific judge; kdevkit must name the role only",
+            path.display()
+        );
+    }
+    let core = read(&skills.join("kdevkit/SKILL.md"));
+    assert!(
+        core.contains("developer-judgement"),
+        "kdevkit SKILL.md no longer reaches the developer-judgement role"
+    );
+    assert!(
+        read(&skills.join("kdevkit/setup.md")).contains("judgement:"),
+        "the judgement: setting is not documented in kdevkit setup.md"
+    );
+
+    let fillers: Vec<String> = std::fs::read_dir(&skills)
+        .expect("skills dir")
+        .filter_map(|e| {
+            let dir = e.ok()?.path();
+            let text = std::fs::read_to_string(dir.join("SKILL.md")).ok()?;
+            let fills = text.contains("Fills the developer-judgement role")
+                || text.contains("fills the **developer-judgement** role");
+            fills.then(|| dir.file_name().unwrap().to_string_lossy().to_string())
+        })
+        .collect();
+    assert_eq!(
+        fillers.len(),
+        1,
+        "expected exactly one shipped skill filling the role, found {fillers:?}"
+    );
+}

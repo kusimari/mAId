@@ -68,6 +68,15 @@ verify-skills agent="":
 verify-skills-one name agent="":
     cargo run -p build-tool --release --quiet -- verify "{{ name }}" {{ if agent != "" { "--agent " + agent } else { "" } }}
 
+# Paid tests from a throwaway clone, so a test that escapes its scratch dir
+# cannot touch this checkout. Links are restored afterwards. e.g.
+#   just resources::verify-skills-isolated verify kyodakit --repeat 3
+#   just resources::verify-skills-isolated check kdevkit-planning --drift
+[confirm("This costs API credits, takes minutes, and repoints your skill links until it finishes. Continue? (y/N)")]
+[no-cd]
+verify-skills-isolated stage *FLAGS:
+    resources/tests/isolated-verify {{ stage }} {{ FLAGS }}
+
 # Run one kind of skill test across every skill. The five kinds are two
 # axes composed — explicit/implicit reach x announce/recite/perform — and
 # the reach axis IS the install boundary, so each kind belongs to one

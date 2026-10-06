@@ -76,7 +76,8 @@ don't.
 session start and each time you read a phase module, also inline-Read
 the `SKILL.md` of the installed skill that fills the
 **developer-judgement** role, before the next step. Resolve it from
-`project.md`'s `judgement:` setting if set (see `setup.md`), else the
+`project.md`'s `judgement:` setting if set (a skill name, `path:<file>`
+for a judge `SKILL.md` in the repo, or `off`; see `setup.md`), else the
 single installed skill advertising the role. If none is installed, say
 so once and carry on. Its stop rule outranks the steps in this file and
 in every module: when the user names a checkpoint, stop there, even

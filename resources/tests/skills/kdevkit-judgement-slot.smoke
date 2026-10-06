@@ -1,0 +1,72 @@
+skill: kdevkit
+tools: claude,kiro,codex
+--- enact ---
+task: I want to add a feature to this repo: let a user snooze a to-do so it disappears until a chosen date. There's a note about it under specs/backlog/. Get it ready to work on. Do the file work now, in this repo. Don't write the implementation yet.
+--- setup ---
+# The judge slot, tested apart from any real judge. project.md points
+# `judgement:` at a stub in the repo whose only rule leaves a mark. If
+# kdevkit loads the judge at the start of planning, JUDGED.md appears;
+# the spec proves kdevkit's own planning still ran.
+git init -q
+git config user.email t@t.t && git config user.name t
+mkdir -p specs/backlog specs/feature judge
+cat > specs/project.md <<'MD'
+# Project: todo-cli
+
+## Mission
+A small command-line to-do manager for a single user.
+
+## Architecture
+One Rust binary; commands parse argv and mutate a JSON store.
+
+## Tech Stack
+Rust, serde_json. Tests via `cargo test`.
+
+## Layout
+src/main.rs, tests/.
+
+## Testing
+Unit tests in-crate; `cargo test` is load-bearing.
+
+## Deployment
+`cargo install` from the repo.
+
+## Agent Development
+
+### kdevkit
+
+- `judgement: path:judge/SKILL.md`
+MD
+cat > judge/SKILL.md <<'MD'
+---
+name: stub-judge
+description: Test judge. Fills the developer-judgement role.
+---
+
+# stub-judge
+
+This skill fills the **developer-judgement** role, for a test.
+
+Its one rule: each time you load it at the start of a phase, append one
+line to `JUDGED.md` in the repo root naming that phase (for example
+`planning`). Do this before the phase's next step. It has no other rules.
+MD
+cat > specs/backlog/task-snooze.md <<'MD'
+# Backlog: task-snooze
+
+## What
+Let a user snooze a to-do so it disappears until a chosen date.
+
+## Why
+Long lists bury things that aren't actionable yet.
+MD
+git add -A && git commit -q -m "seed"
+--- assert ---
+set -e
+# The slot fired: the judge was loaded for planning.
+test -s JUDGED.md
+grep -qi 'plan' JUDGED.md
+# kdevkit still did its own work.
+test -f specs/feature/task-snooze.md
+grep -qiE 'requirement' specs/feature/task-snooze.md
+test ! -e src/main.rs
