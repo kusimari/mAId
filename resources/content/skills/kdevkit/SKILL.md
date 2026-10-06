@@ -1,7 +1,7 @@
 ---
 name: kdevkit
 description: 'Spec-driven dev on a repo with specs/: plan or start a feature, run the dev loop through quality/test/review gates, close one out ("ship it", "close it", "feature done", "plan this", "add to backlog"), or record a durable project fact. Four tiers (project/initiative/feature/backlog); three-phase feature branch, one squash-merge.'
-version: 4.4.0
+version: 4.5.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, initiative, public-repo]
 ---
 
@@ -671,6 +671,13 @@ Each dispatch point states its own `Receives`/`Excluded`/`Returns`
 at the point it fires — `phases/dev.md`'s Code Review Gate,
 `phases/review.md`'s Review Briefing, and §2's structural verify —
 rather than repeating this shape's rationale each time.
+
+**Every packet tells the agent to load its own skills.** A fresh agent
+starts with only its packet. So every `Receives` includes this line:
+"Read kdevkit's role resolution and `project.md`, and load the roles and
+skills your task needs, including the developer-judgement skill." The
+dispatched agent is trusted to load them; the safety floor above still
+limits what it may do.
 
 ### Spec-discipline anti-patterns
 

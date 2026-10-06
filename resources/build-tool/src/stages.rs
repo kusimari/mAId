@@ -14,8 +14,8 @@ use crate::deploy::Deploy;
 use crate::harness::{
     agent_available, check_prompt, detect_leak, dump_path, invocation, judge_agent, judge_prompt,
     plan_one, plan_tests, read_verdict, score_reply, snapshot_checkout, test_name, Assertion,
-    Authority, Fixture, Kind as TestKind, Outcome, Plan, Reach, Selection, Skipped, Stage, Verdict,
-    KIRO_READONLY_AGENT, KIRO_READONLY_NAME,
+    Authority, Fixture, Kind as TestKind, Outcome, Plan, Reach, Selection, Skipped, Stage, Stress,
+    Verdict, KIRO_READONLY_AGENT, KIRO_READONLY_NAME,
 };
 use crate::shared::{checkout_skill, usage, Agent};
 use anyhow::{anyhow, Context, Result};
@@ -175,7 +175,7 @@ pub fn cmd_verify(
     checkout: &Path,
     selection: &Selection,
     dry_run: bool,
-    stressed: Option<&str>,
+    stressed: Option<Stress>,
 ) -> Result<u8> {
     // Under `verify`, a --kind naming only the other stage's kinds leaves
     // this stage with nothing to do. That is a scoped-away no-op, not a

@@ -897,12 +897,24 @@ pub struct Skipped(pub String);
 ///
 /// The one place those four decisions live. Reading it top to bottom is
 /// the whole contract for a test run.
+/// Where a long unrelated conversation goes in the prompt.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Stress<'a> {
+    /// Before everything: the skill is still the most recent thing read.
+    Before(&'a str),
+    /// Between the skill and the task, so the rules are read first and
+    /// acted on after the conversation, as when a skill is loaded at the
+    /// start of a phase. An implicit prompt carries no skill, so there it
+    /// falls back to before.
+    AfterSkill(&'a str),
+}
+
 pub fn plan_one(
     fixture: &Fixture,
     kind: Kind,
     agent: Agent,
     body: &str,
-    stress: Option<&str>,
+    stress: Option<Stress>,
 ) -> std::result::Result<Plan, Skipped> {
     // 1. A marker-only kind proves nothing for a skill that promises no
     //    marker; its artefacts prove it instead.
@@ -917,9 +929,17 @@ pub fn plan_one(
     .ok_or_else(|| Skipped(format!("no task source for {}", kind.name())))?;
 
     // 3. The prompt, and the stress prefix if one was asked for.
-    let prompt = match stress {
-        Some(prefix) => format!("{prefix}\n{}", prompt(kind, &fixture.skill, body, &task)),
-        None => prompt(kind, &fixture.skill, body, &task),
+    let plain = prompt(kind, &fixture.skill, body, &task);
+    let prompt = match (stress, kind.reach()) {
+        (None, _) => plain,
+        (Some(Stress::AfterSkill(stream)), Reach::Explicit) => plain.replacen(
+            "=== END SKILL ===\n",
+            &format!("=== END SKILL ===\n\n{stream}\n"),
+            1,
+        ),
+        (Some(Stress::Before(stream) | Stress::AfterSkill(stream)), _) => {
+            format!("{stream}\n{plain}")
+        }
     };
 
     Ok(Plan {
@@ -2837,12 +2857,42 @@ FAIL — omits the guardrail entirely";
             Kind::Enact,
             Agent::Claude,
             "[notes] applies",
-            Some("PREFIX"),
+            Some(Stress::Before("PREFIX")),
         )
         .unwrap();
         assert!(!plain.prompt.starts_with("PREFIX"));
         assert!(stressed.prompt.starts_with("PREFIX"));
         assert!(stressed.prompt.len() > plain.prompt.len());
+    }
+
+    /// Drift puts the conversation between the rules and the task, which
+    /// is what tests a skill read at phase start and acted on later.
+    #[test]
+    fn drift_puts_the_conversation_between_skill_and_task() {
+        let f = fx("skill: notes\n--- enact ---\ntask: TASK\nexpect: n\n").unwrap();
+        let body = "[notes] applies";
+        let p = plan_one(
+            &f,
+            Kind::Enact,
+            Agent::Claude,
+            body,
+            Some(Stress::AfterSkill("NOISE")),
+        )
+        .unwrap()
+        .prompt;
+        let (skill, noise, task) = (p.find(body), p.find("NOISE"), p.find("TASK"));
+        assert!(skill < noise && noise < task, "{p}");
+        // No skill text in an implicit prompt, so the noise leads.
+        let i = plan_one(
+            &f,
+            Kind::Integration,
+            Agent::Claude,
+            body,
+            Some(Stress::AfterSkill("NOISE")),
+        )
+        .unwrap()
+        .prompt;
+        assert!(i.starts_with("NOISE"));
     }
 
     /// Generated kinds are named per skill, authored kinds per fixture —
