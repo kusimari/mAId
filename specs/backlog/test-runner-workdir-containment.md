@@ -9,9 +9,14 @@ metadata:
 > playback) now run in an empty scratch cwd instead of the checkout. Seen
 > live before the fix: a discovery prompt reused an enact task, found no
 > such files, and claude edited the installed `notes` skill in the
-> checkout. Still open: behavioral tests, where an agent with full
-> permissions can reach the checkout through an absolute path such as
-> the `~/.claude/skills` symlink.
+> checkout. Codex behavioral tests are now held to their workdir: seen
+> live, a drift run of `kyodakit-tool-hook` had codex write a spec into the
+> main checkout and switch it to a new branch, because `exec` approved the
+> escalation. `-c approval_policy=never` on every codex run blocks writes
+> outside the workdir and `/tmp`; checked by hand under `$HOME`. Still open:
+> claude (`--dangerously-skip-permissions`) and kiro (`--trust-all-tools`)
+> on behavioral tests, which can reach any path, including the checkout
+> through the `~/.claude/skills` symlink.
 
 
 # Test runner — confine behavioral tests to their scratch workdir
