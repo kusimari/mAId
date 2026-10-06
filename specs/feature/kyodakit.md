@@ -29,6 +29,8 @@ skills, not inside them.
   everywhere it applies.
 - R5. States its stop and writing rules when asked.
 - R6. Works in any language, and no rule only makes sense in one language.
+- R8. The slot works for any judge, not only kyodakit: `judgement:` also takes
+  `path:<file>`, and a stub judge proves the slot fires.
 - R7. kdevkit reads it explicitly, by role and never by name: at session start
   and with every phase module. A project can name another skill or turn it
   off with `judgement:` in `project.md`.
@@ -43,9 +45,11 @@ skills, not inside them.
 | R4 | `kyodakit-all-feedback.smoke` | Three comments, one applying file-wide, one automated: all three applied. |
 | R5 | `kyodakit.smoke` playback | Recites rules 0 and 5. |
 | R6 | Fixtures span shell and Python; review of `SKILL.md`. |
+| R8 | `kdevkit-judgement-slot.smoke`: a stub judge via `judgement: path:` leaves `JUDGED.md` while kdevkit plans. Unit: `shipped_judgement_role_contract`. |
 | R7 | `kdevkit-judgement-live.smoke` enact: a kdevkit repo with review comments, kyodakit never named; passes only if every place a comment applies is fixed, which kdevkit alone missed. `kdevkit-judgement-load.smoke` playback: names the read at session start and every phase, and that its stop rule outranks kdevkit's steps. Plus review of the kdevkit diff: it names the role only. |
 
-Each behavioural assert was probed by hand: the untouched setup fails, a
+How to rerun all of it, at each level: `specs/project.md`, "Testing the
+developer-judgement slot". Each behavioural assert was probed by hand: the untouched setup fails, a
 near-miss agent fails, a compliant agent passes.
 
 ## Design

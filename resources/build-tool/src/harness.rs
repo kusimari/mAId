@@ -1387,8 +1387,15 @@ impl Selection {
     }
 
     /// True when this fixture is in scope for the run.
+    /// A selector ending in `*` matches by prefix (`kdevkit-*`); any other
+    /// selector names one fixture exactly.
     pub fn covers(&self, fixture: &str) -> bool {
-        self.fixture.as_deref().is_none_or(|want| want == fixture)
+        self.fixture
+            .as_deref()
+            .is_none_or(|want| match want.strip_suffix('*') {
+                Some(prefix) => fixture.starts_with(prefix),
+                None => want == fixture,
+            })
     }
 }
 
@@ -2887,6 +2894,15 @@ FAIL — omits the guardrail entirely";
         assert!(!plain.prompt.starts_with("PREFIX"));
         assert!(stressed.prompt.starts_with("PREFIX"));
         assert!(stressed.prompt.len() > plain.prompt.len());
+    }
+
+    #[test]
+    fn a_trailing_star_selects_by_prefix() {
+        let sel = |f: &str| Selection::resolve(Stage::Check, Some(f), None, None).unwrap();
+        assert!(sel("kdevkit-*").covers("kdevkit-planning"));
+        assert!(!sel("kdevkit-*").covers("kyodakit"));
+        assert!(sel("kyodakit").covers("kyodakit"));
+        assert!(!sel("kyodakit").covers("kyodakit-tool-hook"));
     }
 
     /// A control run keeps the task and the check and drops the skill, so

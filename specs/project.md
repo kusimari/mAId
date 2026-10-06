@@ -550,6 +550,59 @@ Commands the user runs by hand:
 The fixture file's basename (without `.smoke`) is the
 `<name>`.
 
+**Prefer the isolated verb for any paid run.** `just
+resources::verify-skills-isolated <check|smoke|verify> [name] [flags]`
+runs the same tests from a throwaway clone of the committed branch: it
+points every agent's skill links at the clone, runs, puts the links
+back on whichever checkout owned them, and exits 3 if a test changed
+the clone or this checkout. Tests have escaped their scratch dir into
+the real checkout before (see
+`specs/backlog/test-runner-workdir-containment.md`); in the clone,
+that damage is contained and reported. Commit first: uncommitted edits
+are not in the clone.
+
+Flags any check/smoke/verify run takes:
+
+- `--repeat N` — each test N times, with a `TALLY <test>: k/N` line.
+  Agent runs are noisy; use 3 before trusting a difference.
+- `--control` — beside each enact test, the same task and check
+  without the skill ("do not load or follow any skill"). The gap is
+  what the skill adds. Meaningful at the check stage.
+- `--drift` — the skill, then ~4,000 words of unrelated conversation,
+  then the task: rules read early and acted on later.
+- `--stressed` — the same conversation before the skill (retention
+  when the skill is still the latest thing read).
+
+### Testing the developer-judgement slot
+
+kdevkit reads the skill filling the **developer-judgement** role at
+session start and with every phase module, and tells every dispatched
+agent to load it (`kyodakit` fills it here). Three things are tested,
+each at three levels:
+
+| | A. kdevkit still works | B. the slot works, for any judge | C. kyodakit is a good judge |
+|---|---|---|---|
+| Unit — `just test` | existing build-tool tests | `shipped_judgement_role_contract`: kdevkit names the role, never a judge; exactly one shipped skill fills it; `judgement:` is documented | — |
+| Integration — `check` | every `kdevkit-*` fixture | `kdevkit-judgement-slot` (a stub judge via `judgement: path:`, leaving `JUDGED.md`), `kdevkit-judgement-load`, `kdevkit-judgement-live` | `kyodakit*` fixtures, with `--control` for the gap |
+| Production smoke — `smoke` | the same, skills found unaided | the same | the same |
+
+The full replay, cheapest first:
+
+```
+just test                                   # unit, free
+just resources::verify-skills-dry           # every prompt, free
+just resources::verify-skills-isolated verify 'kdevkit-*'           # A
+just resources::verify-skills-isolated verify 'kdevkit-judgement-*' --repeat 3   # B
+just resources::verify-skills-isolated check 'kyodakit*' --repeat 3 --control   # C
+just resources::verify-skills-isolated check 'kdevkit-judgement-*' --drift      # B under drift
+just resources::verify-skills-isolated check 'kyodakit*' --drift                # C under drift
+```
+
+A fixture selector ending in `*` matches by prefix (`'kdevkit-*'`
+is every kdevkit fixture); without it, it names one fixture. Tuning kyodakit against these results follows
+kdevkit's "Tuning what an agent uses" (`phases/dev.md`): one change per
+run, fixtures fixed, keep only what raises the tally.
+
 Quality gate: `just fmt-check` + `just lint` + `just check`
 (or the bundled `just ci`). Run after any implementation
 slice.
