@@ -30,6 +30,11 @@ here and every step of a workflow that calls this skill.
 - Before asking, look up every fact you can yourself. Ask only for decisions,
   one at a time, each with its context and your recommended answer. For a
   trivial choice, take the usual default and say so in one line.
+- **Only the user's own words make a checkpoint.** A choice you could default,
+  a setup question, or a step your workflow asks about is not one: take the
+  default, do the work the user asked for, and put the question in what you
+  hand back. Stopping work to ask something you could have defaulted is as
+  wrong as running past a checkpoint.
 
 ## 1. Build the least.
 

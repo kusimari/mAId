@@ -799,12 +799,18 @@ pub fn invocation(
                 Authority::Workdir => "workspace-write",
                 Authority::ReadOnly => "read-only",
             }));
-            // `exec` grants on-request escalations, so either sandbox alone
-            // still lets its patch tool write anywhere. Never approving holds
-            // it to the sandbox: nothing for read-only, the workdir (and
-            // /tmp) for workspace-write.
-            args.push(owned("-c"));
-            args.push(owned("approval_policy=never"));
+            // `exec` grants on-request escalations, so a read-only sandbox
+            // alone still lets its patch tool write anywhere: never approving
+            // closes that. The write path cannot use it — `workspace-write`
+            // treats `.git` as read-only (checked: no config lifts it in
+            // codex 0.160), and approval is what let a fixture commit, so
+            // `never` there fails every fixture needing a commit. Writes are
+            // contained by running paid sweeps from a throwaway clone
+            // (`resources/tests/isolated-verify`), not by this flag.
+            if authority == Authority::ReadOnly {
+                args.push(owned("-c"));
+                args.push(owned("approval_policy=never"));
+            }
             // A seeded scratch dir may not be a git tree.
             args.push(owned("--skip-git-repo-check"));
             args.push(owned("-o"));
@@ -2099,7 +2105,8 @@ FAIL — omits the guardrail entirely";
         let dir = Path::new("/tmp/work");
         let codex = invocation(Agent::Codex, "p", Authority::Workdir, Some(dir), reply);
         assert!(codex.args.join(" ").contains("--sandbox workspace-write"));
-        assert!(codex.args.join(" ").contains("-c approval_policy=never"));
+        // Not on the write path: it blocks the commits fixtures need.
+        assert!(!codex.args.join(" ").contains("approval_policy=never"));
         assert!(codex.args.join(" ").contains("--cd /tmp/work"));
 
         let kiro = invocation(Agent::Kiro, "p", Authority::Workdir, Some(dir), reply);
