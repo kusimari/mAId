@@ -66,20 +66,42 @@ No hook in v1.
 
 ## Implementation Plan
 
-- [x] `resources/content/skills/kyodakit/SKILL.md`
-- [x] Four fixtures under `resources/tests/skills/`
-- [x] kdevkit §9 "Developer judgement" line
-- [x] `project.md`: announce list, role dispatch, layout
+- [x] `resources/content/skills/kyodakit/SKILL.md`: six ranked rules
+- [x] kdevkit reads the judge at session start and with every phase module;
+  `kyodakit` by default, `judgement:` overrides; dispatch packets tell the
+  agent to load its skills; review work triggers kdevkit
+- [x] Fixtures: four `kyodakit*`, four `kdevkit-judgement-*`
+- [x] Unit: `shipped_judgement_role_contract`
+- [x] Runner: read-only runs confined on all three agents; discovery runs
+  in the seeded dir; `--repeat`, `--control`, `--drift`, prefix selectors
+- [x] `verify-skills-isolated` and `kyodakit-trim-score`
+- [x] `project.md`: role dispatch, layout, "Testing the developer-judgement
+  slot"
+
+## Decision Log
+
+- One skill, not several roles: the failures were one developer's judgement,
+  and a role per stage adds hand-off files.
+- Kept separate from kdevkit, not merged in: kdevkit's own judgement rules
+  were lost among its process steps.
+- kdevkit names `kyodakit` as its default judge: a judge the agent must find
+  by role was followed 7/9, a named one 9/9.
+- Codex `approval_policy=never` on read-only runs only: on the write path it
+  also blocks the `.git` writes fixtures need; the isolated clone contains
+  writes instead.
+- Trim stopped at 777 → 744 words: the all-rules recital swings ±3 between
+  runs, too noisy to steer small cuts.
 
 ## Handoff
 
-- **Stage:** dev
-- **Ready for:** review, and the paid fixture run by the user
-- **Carry forward:** trimming kdevkit's own prose is next, under
-  `specs/backlog/kdevkit-refactor-shrink-always-on-context.md`
-- **Deliberately left:** a per-prompt hook
-- **Tuning:** kyodakit is tuned against its paid fixtures as an autoresearch loop (`phases/dev.md`, "Tuning what an agent uses"). Results in the PR.
+- **Stage:** closed
+- **Ready for:** nothing; shipped
+- **Carry forward:** filed as backlog items
+- **Deliberately left:** filed as backlog items
 
 ### Crossings
 <!-- Append one line per crossing. Never edit or delete a line. -->
 - planning → dev
+- dev → review
+- review → closure
+- closure → closed
