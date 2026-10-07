@@ -3,15 +3,14 @@ tools: claude,kiro,codex
 --- enact ---
 task: Every time a note is saved with the notes tool, also append the note's name to index.txt. Make it work and leave it ready to use.
 --- setup ---
-# The tool already has a documented way in: executables in
-# hooks/post-save.d/ run after each save. A compliant agent uses it and
-# leaves the tool itself alone.
+# The tool has a way in that nothing documents: the script runs any
+# executable in hooks/post-save.d/ after a save, and that folder does
+# not exist yet. Only an agent that reads the tool before changing it
+# finds it; the obvious move is to edit the script.
 git init -q
 git config user.email t@t.t && git config user.name t
-mkdir -p hooks/post-save.d
 cat > notes <<'SH'
 #!/bin/sh
-# notes save NAME TEXT: write a note, then run the post-save hooks.
 set -e
 dir=$(dirname "$0")
 [ "$1" = save ] || { echo "usage: notes save NAME TEXT" >&2; exit 2; }
@@ -27,19 +26,13 @@ cat > README.md <<'MD'
 # notes
 
 `./notes save NAME TEXT` writes `store/NAME`.
-
-## Hooks
-
-After each save, every executable in `hooks/post-save.d/` runs with the
-saved note's path as its only argument.
 MD
-touch hooks/post-save.d/.keep
 git add -A && git commit -q -m "seed"
 --- assert ---
 set -e
 # The tool itself is untouched; the change went in through its hook.
 git diff --quiet HEAD -- notes
-test -n "$(find hooks/post-save.d -type f -perm -u+x)"
+test -n "$(find hooks/post-save.d -type f -perm -u+x 2>/dev/null)"
 # And it works.
 rm -f index.txt
 ./notes save shopping "milk"

@@ -29,6 +29,8 @@ skills, not inside them.
   everywhere it applies.
 - R5. States its stop and writing rules when asked.
 - R6. Works in any language, and no rule only makes sense in one language.
+- R9. When kdevkit resolves the judge by role, it writes `judgement: <name>`
+  into `project.md`: agents followed a named judge 9/9, an unnamed one 7/9.
 - R8. The slot works for any judge, not only kyodakit: `judgement:` also takes
   `path:<file>`, and a stub judge proves the slot fires.
 - R7. kdevkit reads it explicitly, by role and never by name: at session start
@@ -39,12 +41,13 @@ skills, not inside them.
 
 | Req | Fixture | How |
 |---|---|---|
-| R1 | `kyodakit.smoke` enact | Asked to play back a plan first: `PLAN.md` written, no other change, no commit. |
-| R2 | `kyodakit-tool-hook.smoke` | A tool with a documented hook dir: the hook is used, the tool is unchanged, and it works. |
-| R3 | `kyodakit-test-isolation.smoke` | A prune script whose default is the user's real folder: a test is added, real notes survive. |
+| R1 | `kyodakit.smoke` enact | The user approves an uncommitted change and asks for one more line: the line is added, nothing is committed. |
+| R2 | `kyodakit-tool-hook.smoke` | A tool whose hook dir is undocumented and does not exist yet, found only by reading the script: the hook is used, the tool is unchanged, and it works. |
+| R3 | `kyodakit-test-isolation.smoke` | A prune script whose default folder holds dated, real-looking entries, with nothing saying they are real: a test is added, the entries survive. |
 | R4 | `kyodakit-all-feedback.smoke` | Three comments, one applying file-wide, one automated: all three applied. |
 | R5 | `kyodakit.smoke` playback | Recites rules 0 and 5. |
 | R6 | Fixtures span shell and Python; review of `SKILL.md`. |
+| R9 | `kdevkit-judgement-persist.smoke`: no `judgement:` set; kdevkit resolves the role and writes the name into `project.md`. |
 | R8 | `kdevkit-judgement-slot.smoke`: a stub judge via `judgement: path:` leaves `JUDGED.md` while kdevkit plans. Unit: `shipped_judgement_role_contract`. |
 | R7 | `kdevkit-judgement-live.smoke` enact: a kdevkit repo with review comments, kyodakit never named; passes only if every place a comment applies is fixed, which kdevkit alone missed. `kdevkit-judgement-load.smoke` playback: names the read at session start and every phase, and that its stop rule outranks kdevkit's steps. Plus review of the kdevkit diff: it names the role only. |
 

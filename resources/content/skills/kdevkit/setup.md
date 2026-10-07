@@ -182,9 +182,10 @@ organised by skill. Keys under `kdevkit`:
 
   Same `<ref>` grammar as `review_brief.generator`, plus
   `path:<file>`: a judge `SKILL.md` kept in the repo, relative to the
-  repo root, read the same way as an installed one. When more than one
-  installed skill advertises the role, ask once and persist the answer
-  here.
+  repo root, read the same way as an installed one. Absent, kdevkit
+  resolves the single installed skill advertising the role and writes
+  its name here. When more than one does, ask once and persist the
+  answer here.
 
 ## Code-review setup prompt
 

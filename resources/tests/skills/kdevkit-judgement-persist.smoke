@@ -1,0 +1,88 @@
+skill: kdevkit
+tools: claude,kiro,codex
+--- enact ---
+task: The reviewer left comments on this feature in REVIEW.md. Address them.
+--- setup ---
+# Auto-resolved judge gets written down: project.md sets no
+# `judgement:`, so kdevkit must resolve the role and record the name.
+# The review task is only the vehicle; the assert is about project.md.
+# A kdevkit repo with a feature in the dev stage and three review
+# comments. One is left on a single line but applies to every print, one
+# is automated. kdevkit alone tends to fix only the commented line; with
+# the developer-judgement skill loaded, every place is fixed.
+git init -q
+git config user.email t@t.t && git config user.name t
+mkdir -p specs/feature
+cat > specs/project.md <<'MD'
+# Project: cfgtool
+
+## Mission
+Load a JSON config and connect to a host.
+
+## Architecture
+One module, `app.py`.
+
+## Tech Stack
+Python 3, standard library only.
+
+## Layout
+app.py
+
+## Testing
+`python3 -m py_compile app.py`
+
+## Deployment
+Run in place.
+MD
+cat > specs/feature/connect-logging.md <<'MD'
+# Feature: connect-logging
+
+## Feature Brief
+Load the config and connect, with useful output.
+
+## Handoff
+
+- **Stage:** review
+- **Ready for:** acting on review comments
+
+### Crossings
+- planning → dev
+- dev → review
+MD
+cat > app.py <<'PY'
+import json
+
+
+def load(path):
+    with open(path) as f:
+        data = f.read()
+    with open(path) as f:
+        cfg = json.load(f)
+    print("loaded", path)
+    return cfg
+
+
+def connect(cfg):
+    print("connecting with token", cfg["token"])
+    return cfg["host"]
+
+
+def main():
+    cfg = load("config.json")
+    host = connect(cfg)
+    print("connected to", host)
+PY
+cat > REVIEW.md <<'MD'
+# Review comments
+
+1. **sam**, app.py line 14: Use the logging module here instead of print.
+2. **review-bot** (automated), app.py line 5: `load` opens and reads the
+   file twice. The first read is unused.
+3. **sam**, app.py line 14: Don't log the token.
+MD
+git add -A && git commit -q -m "feat(connect-logging): load and connect"
+--- assert ---
+set -e
+# The resolved judge was written into project.md, by name.
+grep -qE '^[-*] *`?judgement: *(skill:)?[a-z][a-z0-9-]*`?' specs/project.md
+grep -q '^## Agent Development' specs/project.md

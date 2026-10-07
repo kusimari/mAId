@@ -1,7 +1,7 @@
 ---
 name: kdevkit
 description: 'Spec-driven dev on a repo with specs/: plan or start a feature, run the dev loop through quality/test/review gates, close one out ("ship it", "close it", "feature done", "plan this", "add to backlog"), or record a durable project fact. Four tiers (project/initiative/feature/backlog); three-phase feature branch, one squash-merge.'
-version: 4.5.0
+version: 4.6.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, initiative, public-repo]
 ---
 
@@ -78,8 +78,12 @@ the `SKILL.md` of the installed skill that fills the
 **developer-judgement** role, before the next step. Resolve it from
 `project.md`'s `judgement:` setting if set (a skill name, `path:<file>`
 for a judge `SKILL.md` in the repo, or `off`; see `setup.md`), else the
-single installed skill advertising the role. If none is installed, say
-so once and carry on. Its stop rule outranks the steps in this file and
+single installed skill advertising the role. **When you resolve it by
+role, write it down:** add `- \`judgement: <name>\`` under `### kdevkit`
+in `project.md`'s `## Agent Development` (create both headings if
+missing), say so in one line, and use the setting from then on. Agents
+follow a named judge more reliably than one they must find. If none is
+installed, say so once and carry on. Its stop rule outranks the steps in this file and
 in every module: when the user names a checkpoint, stop there, even
 partway through a step.
 

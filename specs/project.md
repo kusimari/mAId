@@ -583,7 +583,7 @@ each at three levels:
 | | A. kdevkit still works | B. the slot works, for any judge | C. kyodakit is a good judge |
 |---|---|---|---|
 | Unit — `just test` | existing build-tool tests | `shipped_judgement_role_contract`: kdevkit names the role, never a judge; exactly one shipped skill fills it; `judgement:` is documented | — |
-| Integration — `check` | every `kdevkit-*` fixture | `kdevkit-judgement-slot` (a stub judge via `judgement: path:`, leaving `JUDGED.md`), `kdevkit-judgement-load`, `kdevkit-judgement-live` | `kyodakit*` fixtures, with `--control` for the gap |
+| Integration — `check` | every `kdevkit-*` fixture | `kdevkit-judgement-slot` (a stub judge via `judgement: path:`, leaving `JUDGED.md`), `kdevkit-judgement-load`, `kdevkit-judgement-live` (judge found by role), `kdevkit-judgement-named` (judge named), `kdevkit-judgement-persist` (a found judge is written into `project.md`) | `kyodakit*` fixtures, with `--control` for the gap |
 | Production smoke — `smoke` | the same, skills found unaided | the same | the same |
 
 The full replay, cheapest first:
