@@ -164,6 +164,28 @@ Gate verifies them.
    and report.
 3. If fixes were substantial, re-run the Quality Gate.
 
+### Tuning what an agent uses
+
+When the work is tuning something a coding or other agent reads (a
+skill, prompt, agent config or instruction file) against tests that
+run real agents, run it as an autoresearch loop (Karpathy's
+`autoresearch`), not as ad-hoc retries:
+
+- **One file changes.** The thing being tuned. The tests and the
+  runner are fixed for the loop. Changing a test to make it pass is
+  not tuning.
+- **One number.** Passes out of runs, across every fixture and agent
+  in scope. Record a baseline before the first change. Agent runs are
+  noisy, so repeat each run 3 times; a one-run difference of one pass
+  is noise, not a result.
+- **One idea per run.** Commit it, run, and keep it only if the
+  number goes up. Otherwise `git reset` back. At an equal number,
+  keep the shorter file.
+- **Log every run** in an untracked `results.tsv`: commit, passes,
+  runs, keep or discard, what was tried.
+- **Paid runs stop at the budget the user set.** If none is set,
+  ask for one before the first run.
+
 ### Code Review Gate
 
 A real code review, run by a panel of named lenses on a green

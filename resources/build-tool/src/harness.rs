@@ -730,6 +730,12 @@ pub struct Invocation {
     pub cwd: Option<PathBuf>,
 }
 
+/// Kiro's read-only profile: offers file reads only. Kiro finds it under
+/// `.kiro/agents/` in the cwd, so a reply test writes it into its scratch
+/// dir before driving kiro.
+pub const KIRO_READONLY_NAME: &str = "maid-readonly";
+pub const KIRO_READONLY_AGENT: &str = r#"{"name":"maid-readonly","description":"Read-only test agent","tools":["fs_read"],"allowedTools":["fs_read"]}"#;
+
 /// Build the invocation for an agent. `reply_to` is where an agent that
 /// cannot emit a bare reply on stdout should write it.
 pub fn invocation(
@@ -743,27 +749,42 @@ pub fn invocation(
     match agent {
         Agent::Claude => Invocation {
             program: owned("claude"),
-            args: vec![
-                owned("--print"),
-                owned("--dangerously-skip-permissions"),
-                prompt.to_string(),
-            ],
+            args: match authority {
+                Authority::Workdir => vec![
+                    owned("--print"),
+                    owned("--dangerously-skip-permissions"),
+                    prompt.to_string(),
+                ],
+                // Deny anything not listed, without prompting: reads and
+                // skill loads only, so a reply test cannot edit what it reads.
+                Authority::ReadOnly => vec![
+                    owned("--print"),
+                    owned("--permission-mode"),
+                    owned("dontAsk"),
+                    owned("--allowedTools=Read,Glob,Grep,Skill"),
+                    prompt.to_string(),
+                ],
+            },
             reply_file: None,
             cwd: workdir.map(Path::to_path_buf),
         },
         Agent::Kiro => Invocation {
             program: owned("kiro-cli"),
-            args: vec![
-                owned("chat"),
-                owned("--no-interactive"),
-                // Trust everything only where the test seeded a workdir to
-                // act in; a reply-only test gets an empty trust list.
-                match authority {
-                    Authority::Workdir => owned("--trust-all-tools"),
-                    Authority::ReadOnly => owned("--trust-tools="),
-                },
-                prompt.to_string(),
-            ],
+            args: vec![owned("chat"), owned("--no-interactive")]
+                .into_iter()
+                .chain(match authority {
+                    Authority::Workdir => vec![owned("--trust-all-tools")],
+                    // An empty trust list alone does not stop a non-interactive
+                    // write, so a reply test also runs under a profile that only
+                    // offers reads (see KIRO_READONLY_AGENT).
+                    Authority::ReadOnly => vec![
+                        owned("--agent"),
+                        owned(KIRO_READONLY_NAME),
+                        owned("--trust-tools="),
+                    ],
+                })
+                .chain([prompt.to_string()])
+                .collect(),
             reply_file: None,
             cwd: workdir.map(Path::to_path_buf),
         },
@@ -778,6 +799,18 @@ pub fn invocation(
                 Authority::Workdir => "workspace-write",
                 Authority::ReadOnly => "read-only",
             }));
+            // `exec` grants on-request escalations, so a read-only sandbox
+            // alone still lets its patch tool write anywhere: never approving
+            // closes that. The write path cannot use it — `workspace-write`
+            // treats `.git` as read-only (checked: no config lifts it in
+            // codex 0.160), and approval is what let a fixture commit, so
+            // `never` there fails every fixture needing a commit. Writes are
+            // contained by running paid sweeps from a throwaway clone
+            // (`resources/tests/isolated-verify`), not by this flag.
+            if authority == Authority::ReadOnly {
+                args.push(owned("-c"));
+                args.push(owned("approval_policy=never"));
+            }
             // A seeded scratch dir may not be a git tree.
             args.push(owned("--skip-git-repo-check"));
             args.push(owned("-o"));
@@ -831,9 +864,13 @@ pub enum Assertion {
     /// Run the fixture's assert shell in the seeded workdir.
     Behavioral { setup: String, assert: String },
     /// Score the reply: a literal substring, a judged narrative, or both.
+    /// `seed` is the fixture's setup, run in the scratch dir first, so a
+    /// discovery prompt borrowed from an enact task meets the files it
+    /// names.
     Reply {
         substr: Option<String>,
         narrative: Option<String>,
+        seed: Option<String>,
     },
 }
 
@@ -853,6 +890,28 @@ pub struct Plan {
     /// The prompt as it will be sent, stress prefix already applied.
     pub prompt: String,
     pub assertion: Assertion,
+    /// A control run: the same task and check, without the skill.
+    pub control: bool,
+}
+
+/// What a control run says in place of the skill's text.
+pub const CONTROL_PREAMBLE: &str = "Do not load or follow any skill for this task.";
+
+/// The control run for an enact plan: the same task and the same check,
+/// with no skill text and an instruction to load none, so its result is
+/// the agent's own. Comparing the two shows what the skill adds. Other
+/// kinds have no artefact to compare, so they have no control.
+pub fn control_plan(plan: &Plan, fixture: &Fixture) -> Option<Plan> {
+    let task = match plan.kind {
+        Kind::Enact => fixture.enact.as_ref()?.task.clone(),
+        _ => return None,
+    };
+    Some(Plan {
+        name: format!("{} (control)", plan.name),
+        prompt: format!("{CONTROL_PREAMBLE}\n\n{task}\n"),
+        control: true,
+        ..plan.clone()
+    })
 }
 
 /// Why a (fixture, kind, agent) triple yields no plan. A skip is a
@@ -866,12 +925,24 @@ pub struct Skipped(pub String);
 ///
 /// The one place those four decisions live. Reading it top to bottom is
 /// the whole contract for a test run.
+/// Where a long unrelated conversation goes in the prompt.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Stress<'a> {
+    /// Before everything: the skill is still the most recent thing read.
+    Before(&'a str),
+    /// Between the skill and the task, so the rules are read first and
+    /// acted on after the conversation, as when a skill is loaded at the
+    /// start of a phase. An implicit prompt carries no skill, so there it
+    /// falls back to before.
+    AfterSkill(&'a str),
+}
+
 pub fn plan_one(
     fixture: &Fixture,
     kind: Kind,
     agent: Agent,
     body: &str,
-    stress: Option<&str>,
+    stress: Option<Stress>,
 ) -> std::result::Result<Plan, Skipped> {
     // 1. A marker-only kind proves nothing for a skill that promises no
     //    marker; its artefacts prove it instead.
@@ -886,9 +957,17 @@ pub fn plan_one(
     .ok_or_else(|| Skipped(format!("no task source for {}", kind.name())))?;
 
     // 3. The prompt, and the stress prefix if one was asked for.
-    let prompt = match stress {
-        Some(prefix) => format!("{prefix}\n{}", prompt(kind, &fixture.skill, body, &task)),
-        None => prompt(kind, &fixture.skill, body, &task),
+    let plain = prompt(kind, &fixture.skill, body, &task);
+    let prompt = match (stress, kind.reach()) {
+        (None, _) => plain,
+        (Some(Stress::AfterSkill(stream)), Reach::Explicit) => plain.replacen(
+            "=== END SKILL ===\n",
+            &format!("=== END SKILL ===\n\n{stream}\n"),
+            1,
+        ),
+        (Some(Stress::Before(stream) | Stress::AfterSkill(stream)), _) => {
+            format!("{stream}\n{plain}")
+        }
     };
 
     Ok(Plan {
@@ -907,6 +986,7 @@ pub fn plan_one(
         prompt,
         // 4. How the reply or the workdir will be judged.
         assertion: assertion_for(fixture, kind, announces(body, &fixture.skill)),
+        control: false,
     })
 }
 
@@ -928,6 +1008,10 @@ pub fn assertion_for(fixture: &Fixture, kind: Kind, announces: bool) -> Assertio
         return Assertion::Reply {
             substr: Some(marker_for(&fixture.skill)),
             narrative: None,
+            seed: match kind {
+                Kind::Discovery => fixture.setup.clone(),
+                _ => None,
+            },
         };
     }
     let section = fixture.section_for(kind);
@@ -941,6 +1025,7 @@ pub fn assertion_for(fixture: &Fixture, kind: Kind, announces: bool) -> Assertio
     Assertion::Reply {
         substr,
         narrative: section.and_then(|s| s.narrative.clone()),
+        seed: None,
     }
 }
 
@@ -1308,8 +1393,15 @@ impl Selection {
     }
 
     /// True when this fixture is in scope for the run.
+    /// A selector ending in `*` matches by prefix (`kdevkit-*`); any other
+    /// selector names one fixture exactly.
     pub fn covers(&self, fixture: &str) -> bool {
-        self.fixture.as_deref().is_none_or(|want| want == fixture)
+        self.fixture
+            .as_deref()
+            .is_none_or(|want| match want.strip_suffix('*') {
+                Some(prefix) => fixture.starts_with(prefix),
+                None => want == fixture,
+            })
     }
 }
 
@@ -1972,18 +2064,11 @@ FAIL — omits the guardrail entirely";
 
     // ── invocation ───────────────────────────────────────────────
 
-    /// Read-only means read-only for EVERY agent. The bash runner gave
-    /// codex `--sandbox read-only` and kiro an empty trust list but ran
-    /// claude with --dangerously-skip-permissions, so a fixture meant to
-    /// be read-only could still let claude edit the installed, symlinked
-    /// SKILL.md. Pinning the asymmetry here rather than leaving it to a
-    /// reading of three call sites.
-    ///
-    /// This test documents CURRENT behavior including that gap, so the
-    /// fix (specs/backlog/test-runner-sandbox-asymmetry.md) has something
-    /// to flip deliberately rather than drifting into place unnoticed.
+    /// Read-only means read-only for EVERY agent. Claude once ran reply
+    /// tests with --dangerously-skip-permissions and, on a discovery
+    /// prompt, edited an installed, symlinked SKILL.md in the checkout.
     #[test]
-    fn read_only_authority_is_asymmetric_across_agents_today() {
+    fn read_only_authority_denies_writes_on_every_agent() {
         let reply = Path::new("/tmp/r");
         let flags = |a: Agent| {
             invocation(a, "p", Authority::ReadOnly, None, reply)
@@ -1991,9 +2076,27 @@ FAIL — omits the guardrail entirely";
                 .join(" ")
         };
         assert!(flags(Agent::Codex).contains("--sandbox read-only"));
+        assert!(flags(Agent::Codex).contains("-c approval_policy=never"));
         assert!(flags(Agent::Kiro).contains("--trust-tools="));
-        // The outlier — see the backlog item.
-        assert!(flags(Agent::Claude).contains("--dangerously-skip-permissions"));
+        assert!(flags(Agent::Kiro).contains("--agent maid-readonly"));
+        let claude = flags(Agent::Claude);
+        assert!(claude.contains("--permission-mode dontAsk"));
+        assert!(claude.contains("--allowedTools=Read,Glob,Grep,Skill"));
+        assert!(!claude.contains("--dangerously-skip-permissions"));
+    }
+
+    #[test]
+    fn claude_skips_permissions_only_in_a_seeded_workdir() {
+        let inv = invocation(
+            Agent::Claude,
+            "p",
+            Authority::Workdir,
+            Some(Path::new("/tmp/w")),
+            Path::new("/tmp/r"),
+        );
+        assert!(inv
+            .args
+            .contains(&"--dangerously-skip-permissions".to_string()));
     }
 
     #[test]
@@ -2002,6 +2105,8 @@ FAIL — omits the guardrail entirely";
         let dir = Path::new("/tmp/work");
         let codex = invocation(Agent::Codex, "p", Authority::Workdir, Some(dir), reply);
         assert!(codex.args.join(" ").contains("--sandbox workspace-write"));
+        // Not on the write path: it blocks the commits fixtures need.
+        assert!(!codex.args.join(" ").contains("approval_policy=never"));
         assert!(codex.args.join(" ").contains("--cd /tmp/work"));
 
         let kiro = invocation(Agent::Kiro, "p", Authority::Workdir, Some(dir), reply);
@@ -2105,13 +2210,29 @@ FAIL — omits the guardrail entirely";
         let f = fx("skill: notes\n--- enact ---\ntask: t\nexpect: n\n").unwrap();
         for kind in [Kind::Activation, Kind::Discovery] {
             match assertion_for(&f, kind, true) {
-                Assertion::Reply { substr, narrative } => {
+                Assertion::Reply {
+                    substr, narrative, ..
+                } => {
                     assert_eq!(substr.as_deref(), Some("[notes] applies"));
                     assert!(narrative.is_none(), "{}", kind.name());
                 }
                 other => panic!("expected reply, got {other:?}"),
             }
         }
+    }
+
+    /// Discovery borrows an enact task, so it runs in that fixture's seeded
+    /// dir; activation's generated task needs no files.
+    #[test]
+    fn only_discovery_is_seeded_with_the_fixture_setup() {
+        let f = fx("skill: notes\n--- enact ---\ntask: t\n--- setup ---\ntouch x\n--- assert ---\ntest -f x\n")
+            .unwrap();
+        let seed = |k| match assertion_for(&f, k, true) {
+            Assertion::Reply { seed, .. } => seed,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(seed(Kind::Discovery).as_deref(), Some("touch x\n"));
+        assert!(seed(Kind::Activation).is_none());
     }
 
     /// An implicit reply test needs the marker as its "did it fire" half —
@@ -2774,12 +2895,69 @@ FAIL — omits the guardrail entirely";
             Kind::Enact,
             Agent::Claude,
             "[notes] applies",
-            Some("PREFIX"),
+            Some(Stress::Before("PREFIX")),
         )
         .unwrap();
         assert!(!plain.prompt.starts_with("PREFIX"));
         assert!(stressed.prompt.starts_with("PREFIX"));
         assert!(stressed.prompt.len() > plain.prompt.len());
+    }
+
+    #[test]
+    fn a_trailing_star_selects_by_prefix() {
+        let sel = |f: &str| Selection::resolve(Stage::Check, Some(f), None, None).unwrap();
+        assert!(sel("kdevkit-*").covers("kdevkit-planning"));
+        assert!(!sel("kdevkit-*").covers("kyodakit"));
+        assert!(sel("kyodakit").covers("kyodakit"));
+        assert!(!sel("kyodakit").covers("kyodakit-tool-hook"));
+    }
+
+    /// A control run keeps the task and the check and drops the skill, so
+    /// the two results are comparable. Only enact has one.
+    #[test]
+    fn control_drops_the_skill_and_keeps_the_check() {
+        let f = fx("skill: notes\n--- enact ---\ntask: TASK\n--- setup ---\ntouch x\n--- assert ---\ntest -f x\n")
+            .unwrap();
+        let body = "[notes] applies SKILLTEXT";
+        let plan = plan_one(&f, Kind::Enact, Agent::Claude, body, None).unwrap();
+        let c = control_plan(&plan, &f).unwrap();
+        assert!(c.control && c.name.ends_with("(control)"));
+        assert!(c.prompt.contains("TASK") && c.prompt.contains(CONTROL_PREAMBLE));
+        assert!(!c.prompt.contains("SKILLTEXT"));
+        assert_eq!(c.assertion, plan.assertion);
+        let pb = fx("skill: notes\n--- playback ---\ntask: q\nexpect: n\n").unwrap();
+        let p = plan_one(&pb, Kind::Playback, Agent::Claude, body, None).unwrap();
+        assert!(control_plan(&p, &pb).is_none());
+    }
+
+    /// Drift puts the conversation between the rules and the task, which
+    /// is what tests a skill read at phase start and acted on later.
+    #[test]
+    fn drift_puts_the_conversation_between_skill_and_task() {
+        let f = fx("skill: notes\n--- enact ---\ntask: TASK\nexpect: n\n").unwrap();
+        let body = "[notes] applies";
+        let p = plan_one(
+            &f,
+            Kind::Enact,
+            Agent::Claude,
+            body,
+            Some(Stress::AfterSkill("NOISE")),
+        )
+        .unwrap()
+        .prompt;
+        let (skill, noise, task) = (p.find(body), p.find("NOISE"), p.find("TASK"));
+        assert!(skill < noise && noise < task, "{p}");
+        // No skill text in an implicit prompt, so the noise leads.
+        let i = plan_one(
+            &f,
+            Kind::Integration,
+            Agent::Claude,
+            body,
+            Some(Stress::AfterSkill("NOISE")),
+        )
+        .unwrap()
+        .prompt;
+        assert!(i.starts_with("NOISE"));
     }
 
     /// Generated kinds are named per skill, authored kinds per fixture —

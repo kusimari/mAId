@@ -26,6 +26,17 @@ metadata:
 > Stream 1 shipped without that paid run; a compression pass should
 > not.
 
+> **Scope widened, 2026-10-02.** Every kdevkit file goes through the trim,
+> not only the always-on core: `SKILL.md`, the four phase files,
+> `interviews.md` and `setup.md`. New reason: in four long sessions the
+> agent followed kdevkit's process steps and lost its judgement rules,
+> which were in context the whole time. Some steps also caused failures:
+> "write the spec before you ask the user anything" ran past a requested
+> playback, and the required logs and "lead with rationale" made replies
+> long. Judgement rules move to the developer-judgement role
+> (`kyodakit`). kdevkit keeps the workflow, held to the same short,
+> plain standard.
+
 ## What
 
 `resources/content/skills/kdevkit/SKILL.md` is **~1250 lines, loaded

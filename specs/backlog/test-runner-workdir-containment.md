@@ -5,6 +5,25 @@ metadata:
   type: backlog
 ---
 
+> **Partly fixed, 2026-10-05.** Reply tests (activation, discovery,
+> playback) now run in an empty scratch cwd instead of the checkout. Seen
+> live before the fix: a discovery prompt reused an enact task, found no
+> such files, and claude edited the installed `notes` skill in the
+> checkout. Codex behavioral tests are now held to their workdir: seen
+> live, a drift run of `kyodakit-tool-hook` had codex write a spec into the
+> main checkout and switch it to a new branch, because `exec` approved the
+> escalation. `-c approval_policy=never` fixes the read-only path, but NOT
+> the write path: `workspace-write` treats `.git` as read-only and no config
+> lifts it (checked `exclude_git_dir`, `writable_roots`, codex 0.160), so
+> `never` there broke six kdevkit fixtures that commit. Approval IS how
+> codex writes `.git`, and the same escalation is how it escaped. Containment
+> for the write path is therefore `resources/tests/isolated-verify`: paid
+> sweeps run from a throwaway clone, so an escape hits the clone. Still open:
+> claude (`--dangerously-skip-permissions`) and kiro (`--trust-all-tools`)
+> on behavioral tests, which can reach any path, including the checkout
+> through the `~/.claude/skills` symlink.
+
+
 # Test runner — confine behavioral tests to their scratch workdir
 
 ## What

@@ -50,8 +50,18 @@ struct VerifyArgs {
     #[arg(long)]
     dry_run: bool,
     /// Prepend a long conversational prefix to stress retention.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "drift")]
     stressed: bool,
+    /// Put a long unrelated conversation between the skill and the task,
+    /// to test rules read early and acted on later.
+    #[arg(long)]
+    drift: bool,
+    /// Run each test this many times and print a pass tally per test.
+    #[arg(long, default_value_t = 1)]
+    repeat: usize,
+    /// Add a control run, without the skill, beside each enact test.
+    #[arg(long)]
+    control: bool,
 }
 
 /// The flags the three deployment verbs share.
@@ -149,6 +159,10 @@ fn run(cli: Cli) -> Result<u8> {
     }
 }
 
+/// How many copies of the stress stream --drift puts after the skill:
+/// about 4,000 words.
+const DRIFT_REPEATS: usize = 5;
+
 /// `Verify` runs both stages, so its arguments are consumed twice.
 fn clone_args(a: &VerifyArgs) -> VerifyArgs {
     VerifyArgs {
@@ -157,6 +171,9 @@ fn clone_args(a: &VerifyArgs) -> VerifyArgs {
         agent: a.agent.clone(),
         dry_run: a.dry_run,
         stressed: a.stressed,
+        drift: a.drift,
+        repeat: a.repeat,
+        control: a.control,
     }
 }
 
@@ -180,14 +197,32 @@ fn verify(
         args.kind.as_deref(),
         validate_agents(args.agent.as_deref())?,
     )?;
-    let stress = args
-        .stressed
+    let stream = (args.stressed || args.drift)
         .then(|| std::fs::read_to_string(root.join("resources/tests/conversational-stream.txt")))
         .transpose()
         .map_err(|e| {
             usage(format!(
-                "--stressed needs resources/tests/conversational-stream.txt: {e}"
+                "--stressed and --drift need resources/tests/conversational-stream.txt: {e}"
             ))
-        })?;
-    stages::cmd_verify(target, root, &selection, args.dry_run, stress.as_deref())
+        })?
+        // Drift repeats the stream so the rules sit thousands of words back.
+        .map(|s| match args.drift {
+            true => s.repeat(DRIFT_REPEATS),
+            false => s,
+        });
+    let stress = stream.as_deref().map(|s| match args.drift {
+        true => build_tool::harness::Stress::AfterSkill(s),
+        false => build_tool::harness::Stress::Before(s),
+    });
+    stages::cmd_verify(
+        target,
+        root,
+        &selection,
+        stages::RunOptions {
+            dry_run: args.dry_run,
+            stress,
+            repeat: args.repeat,
+            control: args.control,
+        },
+    )
 }

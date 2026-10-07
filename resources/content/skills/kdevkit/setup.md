@@ -170,6 +170,15 @@ organised by skill. Keys under `kdevkit`:
   A step that costs an extra agent call should be opted into, not
   prompted for.
 
+- `judgement:` — the senior-developer judge kdevkit reads with every
+  phase module (SKILL.md, "Read the senior-developer judgement").
+  Optional; absent means the default, `kyodakit`.
+
+  ```yaml
+  judgement: <name>             # another skill; or `path:<file>` for a
+                                # judge SKILL.md in the repo; or `off`
+  ```
+
 ## Code-review setup prompt
 
 When `kdevkit.code_review:` is missing from `project.md`,

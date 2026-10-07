@@ -48,10 +48,12 @@ Two halves at the top level:
      needs, the fillers advertise that they fill it, and install (or
      a project's own context file) binds them. `kdevkit` reaching for
      an "independent review-briefing tool" — which `kreviewkit`
-     fills — is the first instance. Two rules keep that from becoming
-     coupling: **the caller never names a specific skill** (so a
-     different filler can be swapped in without editing the caller),
-     and **the filler owns its own invocation contract** (what it
+     fills — is the first instance; its "developer-judgement" role, which
+`kyodakit` fills, is the second. Two rules keep that from becoming
+     coupling: **the caller names a role, or at most a default filler
+     that project config overrides** (kdevkit's judge is `kyodakit`
+     unless `project.md` sets `judgement:`), so a different filler can
+     be swapped in without editing the caller; and **the filler owns its own invocation contract** (what it
      needs, how it must be run), which the caller consults rather
      than defines. A caller that dispatches another skill also owes
      it a **safety floor** — limits the dispatched skill cannot widen
@@ -234,7 +236,8 @@ mAId/
 │   │   └── tests/integration.rs  cross-stage tests against the real repo
 │   ├── content/            the deployable skills (symlinked in)
 │   │   ├── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
-│   │   └── skills/kdevkit/  SKILL.md core + phases/, tiers/, setup.md, interviews.md
+│   │   ├── skills/kdevkit/  SKILL.md core + phases/, tiers/, setup.md, interviews.md
+│   │   └── skills/kyodakit/ SKILL.md: developer judgement, any language
 │   ├── browser/            browser-control MCP (not symlinked — runnable)
 │   │   ├── launch          allowlist-enforcing launcher; enters flake, execs chrome-devtools-mcp
 │   │   └── manage          data-driven MCP registrar (MCP_AGENTS table: claude/codex global, kiro per-sub-agent)
@@ -322,6 +325,8 @@ question. Kinds are two axes composed:
   is wrong, not that it failed to load, and nothing needs deploying.
   *Implicit* — the prompt states only the task, so the agent must
   recognise it and load the right skill unaided from what is installed.
+  Discovery borrows a fixture's enact task, so it runs in that fixture's
+  seeded dir, read-only, where the files the task names exist.
 - **What is verified.** The skill *plays back* the contract it was
   designed for (recites its rules), or *enacts* it (does the thing).
 
@@ -339,7 +344,7 @@ task a user phrases implicitly, so the cell has no natural test.
 **`activation` and `discovery` depend on a self-announce contract.** A
 skill that declares `You begin every response … with the literal line
 [<skill>] applies` (today: `browser`, `notes`, `writing-style`,
-`kreviewkit`) can be
+`kreviewkit`, `kyodakit`) can be
 checked at the reply level, because the marker is text the agent can
 only know from the file. The announce line is there for the reader, not
 for ceremony — it attributes a reply to a written contract rather than
@@ -383,7 +388,7 @@ per stage, and a behavioral `enact` that drives a stage transition and
 asserts the next stage's discipline shows up in the artefacts
 (`kdevkit-module-load`, `kdevkit-phase-boundary`,
 `kdevkit-handoff-resume`, `kdevkit-consolidate`, `kdevkit-closure`,
-`kdevkit-code-review-panel`). A wrong trigger is
+`kdevkit-code-review-panel`, `kdevkit-judgement-load`). A wrong trigger is
 invisible to the deterministic gates, so this layer is the only one
 that can catch it.
 
@@ -545,6 +550,69 @@ Commands the user runs by hand:
 
 The fixture file's basename (without `.smoke`) is the
 `<name>`.
+
+**Prefer the isolated verb for any paid run.** `just
+resources::verify-skills-isolated <check|smoke|verify> [name] [flags]`
+runs the same tests from a throwaway clone of the committed branch: it
+points every agent's skill links at the clone, runs, puts the links
+back on whichever checkout owned them, and exits 3 if a test changed
+the clone or this checkout. Tests have escaped their scratch dir into
+the real checkout before (see
+`specs/backlog/test-runner-workdir-containment.md`); in the clone,
+that damage is contained and reported. Commit first: uncommitted edits
+are not in the clone.
+
+Flags any check/smoke/verify run takes:
+
+- `--repeat N` — each test N times, with a `TALLY <test>: k/N` line.
+  Agent runs are noisy; use 3 before trusting a difference.
+- `--control` — beside each enact test, the same task and check
+  without the skill ("do not load or follow any skill"). The gap is
+  what the skill adds. Meaningful at the check stage.
+- `--drift` — the skill, then ~4,000 words of unrelated conversation,
+  then the task: rules read early and acted on later.
+- `--stressed` — the same conversation before the skill (retention
+  when the skill is still the latest thing read).
+
+### Testing the developer-judgement slot
+
+kdevkit reads a senior-developer judge at session start and with every
+phase module, and tells every dispatched agent to load it. The judge is
+`kyodakit` unless `project.md` sets `judgement:`. Three things are tested,
+each at three levels:
+
+| | A. kdevkit still works | B. the slot works, for any judge | C. kyodakit is a good judge |
+|---|---|---|---|
+| Unit — `just test` | existing build-tool tests | `shipped_judgement_role_contract`: kdevkit names `kyodakit` as the default and `judgement:` as the override; the default ships; `judgement:` is documented | — |
+| Integration — `check` | every `kdevkit-*` fixture | `kdevkit-judgement-slot` (a stub judge via `judgement: path:`, leaving `JUDGED.md`), `kdevkit-judgement-load`, `kdevkit-judgement-live` (the default judge), `kdevkit-judgement-named` (judge set in `project.md`) | `kyodakit*` fixtures, with `--control` for the gap |
+| Production smoke — `smoke` | the same, skills found unaided | the same | the same |
+
+The full replay, cheapest first:
+
+```
+just test                                   # unit, free
+just resources::verify-skills-dry           # every prompt, free
+just resources::verify-skills-isolated verify 'kdevkit-*'           # A
+just resources::verify-skills-isolated verify 'kdevkit-judgement-*' --repeat 3   # B
+just resources::verify-skills-isolated check 'kyodakit*' --repeat 3 --control   # C
+just resources::verify-skills-isolated check 'kdevkit-judgement-*' --drift      # B under drift
+just resources::verify-skills-isolated check 'kyodakit*' --drift                # C under drift
+```
+
+**Trimming kyodakit.** Keep the judge minimal so it holds in long
+sessions. Trim with kdevkit's "Tuning what an agent uses" loop, scored by
+`resources/tests/kyodakit-trim-score` (~20 paid runs): the feedback test on
+claude and codex (the one test kyodakit clearly changes) and the all-rules
+recital on every agent, 3 repeats each and once under `--drift`. Cuts
+change wording only and never remove a rule, since a rule no test can
+fail would otherwise be "trimmed" away at no cost to the score. A shorter
+file at an equal score is kept. Run the full judgement replay above once on
+the final version.
+
+A fixture selector ending in `*` matches by prefix (`'kdevkit-*'`
+is every kdevkit fixture); without it, it names one fixture. Tuning kyodakit against these results follows
+kdevkit's "Tuning what an agent uses" (`phases/dev.md`): one change per
+run, fixtures fixed, keep only what raises the tally.
 
 Quality gate: `just fmt-check` + `just lint` + `just check`
 (or the bundled `just ci`). Run after any implementation

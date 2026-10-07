@@ -60,3 +60,33 @@ fn shipped_fixtures_parse() {
     }
     assert!(seen > 0, "no fixtures found under {}", dir.display());
 }
+
+/// The senior-developer judge slot, as shipped. kdevkit names
+/// `kyodakit` as its default judge and `judgement:` as the override, the
+/// default ships beside it, and the setting is documented where kdevkit's
+/// other settings are.
+#[test]
+fn shipped_judgement_role_contract() {
+    let skills = repo_root()
+        .expect("repo root resolves under cargo test")
+        .join("resources/content/skills");
+    let read = |p: &std::path::Path| std::fs::read_to_string(p).expect("readable");
+
+    let core = read(&skills.join("kdevkit/SKILL.md"));
+    assert!(
+        core.contains("The judge is `kyodakit` by\ndefault"),
+        "kdevkit SKILL.md no longer names kyodakit as its default judge"
+    );
+    assert!(
+        core.contains("overrides it with `judgement:`"),
+        "kdevkit SKILL.md no longer offers the judgement: override"
+    );
+    assert!(
+        skills.join("kyodakit/SKILL.md").is_file(),
+        "the default judge, kyodakit, does not ship"
+    );
+    assert!(
+        read(&skills.join("kdevkit/setup.md")).contains("judgement:"),
+        "the judgement: setting is not documented in kdevkit setup.md"
+    );
+}
