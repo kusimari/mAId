@@ -599,6 +599,16 @@ just resources::verify-skills-isolated check 'kdevkit-judgement-*' --drift      
 just resources::verify-skills-isolated check 'kyodakit*' --drift                # C under drift
 ```
 
+**Trimming kyodakit.** Keep the judge minimal so it holds in long
+sessions. Trim with kdevkit's "Tuning what an agent uses" loop, scored by
+`resources/tests/kyodakit-trim-score` (~20 paid runs): the feedback test on
+claude and codex (the one test kyodakit clearly changes) and the all-rules
+recital on every agent, 3 repeats each and once under `--drift`. Cuts
+change wording only and never remove a rule, since a rule no test can
+fail would otherwise be "trimmed" away at no cost to the score. A shorter
+file at an equal score is kept. Run the full judgement replay above once on
+the final version.
+
 A fixture selector ending in `*` matches by prefix (`'kdevkit-*'`
 is every kdevkit fixture); without it, it names one fixture. Tuning kyodakit against these results follows
 kdevkit's "Tuning what an agent uses" (`phases/dev.md`): one change per
