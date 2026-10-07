@@ -1,7 +1,7 @@
 ---
 name: kdevkit
-description: 'Spec-driven dev on a repo with specs/: plan or start a feature, run the dev loop through quality/test/review gates, close one out ("ship it", "close it", "feature done", "plan this", "add to backlog"), or record a durable project fact. Four tiers (project/initiative/feature/backlog); three-phase feature branch, one squash-merge.'
-version: 4.6.0
+description: 'Spec-driven dev on a repo with specs/: plan or start a feature, run the dev loop through quality/test/review gates, act on review comments, close one out ("ship it", "close it", "feature done", "plan this", "add to backlog"), or record a durable project fact. Four tiers (project/initiative/feature/backlog); three-phase feature branch, one squash-merge.'
+version: 4.7.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, initiative, public-repo]
 ---
 
@@ -72,20 +72,15 @@ don't.
 | `setup.md` | Project genesis, or `project.md` drifted from the schema (§2). |
 | `interviews.md` | Feature / backlog / initiative genesis — interview prompts and file templates. |
 
-**Read the developer-judgement skill with every phase module.** At
+**Read the senior-developer judgement with every phase module.** At
 session start and each time you read a phase module, also inline-Read
-the `SKILL.md` of the installed skill that fills the
-**developer-judgement** role, before the next step. Resolve it from
-`project.md`'s `judgement:` setting if set (a skill name, `path:<file>`
-for a judge `SKILL.md` in the repo, or `off`; see `setup.md`), else the
-single installed skill advertising the role. **When you resolve it by
-role, write it down:** add `- \`judgement: <name>\`` under `### kdevkit`
-in `project.md`'s `## Agent Development` (create both headings if
-missing), say so in one line, and use the setting from then on. Agents
-follow a named judge more reliably than one they must find. If none is
-installed, say so once and carry on. Its stop rule outranks the steps in this file and
-in every module: when the user names a checkpoint, stop there, even
-partway through a step.
+the judge's `SKILL.md`, before the next step. The judge is `kyodakit` by
+default. A project overrides it with `judgement:` in `project.md`: another
+skill's name, `path:<file>` for a judge `SKILL.md` in the repo, or `off`
+(see `setup.md`). If the judge is not installed, say so once and carry
+on. Its stop rule outranks the steps in this file and in every module:
+when the user names a checkpoint, stop there, even partway through a
+step.
 
 **Crossing a phase boundary mid-session pulls the next module.**
 Finishing planning and starting dev means reading `phases/dev.md`
@@ -680,7 +675,8 @@ rather than repeating this shape's rationale each time.
 **Every packet tells the agent to load its own skills.** A fresh agent
 starts with only its packet. So every `Receives` includes this line:
 "Read kdevkit's role resolution and `project.md`, and load the roles and
-skills your task needs, including the developer-judgement skill." The
+skills your task needs, including the judge (`kyodakit` unless
+`judgement:` names another)." The
 dispatched agent is trusted to load them; the safety floor above still
 limits what it may do.
 

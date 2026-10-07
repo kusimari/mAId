@@ -50,9 +50,10 @@ Two halves at the top level:
      an "independent review-briefing tool" — which `kreviewkit`
      fills — is the first instance; its "developer-judgement" role, which
 `kyodakit` fills, is the second. Two rules keep that from becoming
-     coupling: **the caller never names a specific skill** (so a
-     different filler can be swapped in without editing the caller),
-     and **the filler owns its own invocation contract** (what it
+     coupling: **the caller names a role, or at most a default filler
+     that project config overrides** (kdevkit's judge is `kyodakit`
+     unless `project.md` sets `judgement:`), so a different filler can
+     be swapped in without editing the caller; and **the filler owns its own invocation contract** (what it
      needs, how it must be run), which the caller consults rather
      than defines. A caller that dispatches another skill also owes
      it a **safety floor** — limits the dispatched skill cannot widen
@@ -575,15 +576,15 @@ Flags any check/smoke/verify run takes:
 
 ### Testing the developer-judgement slot
 
-kdevkit reads the skill filling the **developer-judgement** role at
-session start and with every phase module, and tells every dispatched
-agent to load it (`kyodakit` fills it here). Three things are tested,
+kdevkit reads a senior-developer judge at session start and with every
+phase module, and tells every dispatched agent to load it. The judge is
+`kyodakit` unless `project.md` sets `judgement:`. Three things are tested,
 each at three levels:
 
 | | A. kdevkit still works | B. the slot works, for any judge | C. kyodakit is a good judge |
 |---|---|---|---|
-| Unit — `just test` | existing build-tool tests | `shipped_judgement_role_contract`: kdevkit names the role, never a judge; exactly one shipped skill fills it; `judgement:` is documented | — |
-| Integration — `check` | every `kdevkit-*` fixture | `kdevkit-judgement-slot` (a stub judge via `judgement: path:`, leaving `JUDGED.md`), `kdevkit-judgement-load`, `kdevkit-judgement-live` (judge found by role), `kdevkit-judgement-named` (judge named), `kdevkit-judgement-persist` (a found judge is written into `project.md`) | `kyodakit*` fixtures, with `--control` for the gap |
+| Unit — `just test` | existing build-tool tests | `shipped_judgement_role_contract`: kdevkit names `kyodakit` as the default and `judgement:` as the override; the default ships; `judgement:` is documented | — |
+| Integration — `check` | every `kdevkit-*` fixture | `kdevkit-judgement-slot` (a stub judge via `judgement: path:`, leaving `JUDGED.md`), `kdevkit-judgement-load`, `kdevkit-judgement-live` (the default judge), `kdevkit-judgement-named` (judge set in `project.md`) | `kyodakit*` fixtures, with `--control` for the gap |
 | Production smoke — `smoke` | the same, skills found unaided | the same | the same |
 
 The full replay, cheapest first:

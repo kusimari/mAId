@@ -170,22 +170,14 @@ organised by skill. Keys under `kdevkit`:
   A step that costs an extra agent call should be opted into, not
   prompted for.
 
-- `judgement:` — which skill fills the developer-judgement role,
-  read with every phase module (SKILL.md, "Read the
-  developer-judgement skill"). Optional; absent means auto-resolve.
+- `judgement:` — the senior-developer judge kdevkit reads with every
+  phase module (SKILL.md, "Read the senior-developer judgement").
+  Optional; absent means the default, `kyodakit`.
 
   ```yaml
-  judgement: <ref>              # or `path:<file>`, or `off`; omit to
-                                # auto-resolve the installed
-                                # developer-judgement role
+  judgement: <name>             # another skill; or `path:<file>` for a
+                                # judge SKILL.md in the repo; or `off`
   ```
-
-  Same `<ref>` grammar as `review_brief.generator`, plus
-  `path:<file>`: a judge `SKILL.md` kept in the repo, relative to the
-  repo root, read the same way as an installed one. Absent, kdevkit
-  resolves the single installed skill advertising the role and writes
-  its name here. When more than one does, ask once and persist the
-  answer here.
 
 ## Code-review setup prompt
 

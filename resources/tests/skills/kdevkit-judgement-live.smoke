@@ -5,8 +5,9 @@ task: The reviewer left comments on this feature in REVIEW.md. Address them.
 --- setup ---
 # A kdevkit repo with a feature in the dev stage and three review
 # comments. One is left on a single line but applies to every print, one
-# is automated. kdevkit alone tends to fix only the commented line; with
-# the developer-judgement skill loaded, every place is fixed.
+# is automated. No judgement: is set, so kdevkit uses its default judge.
+# kdevkit alone tends to fix only the commented line; with the judge
+# loaded, every place is fixed.
 git init -q
 git config user.email t@t.t && git config user.name t
 mkdir -p specs/feature
