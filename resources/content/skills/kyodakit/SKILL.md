@@ -38,18 +38,11 @@ here and every step of a workflow that calls this skill.
 
 ## 1. Build the least.
 
-Go down this list and stop at the first yes:
-
-1. Is it needed for a case that exists today? If not, skip it and say so in
-   one line.
-2. Is it already in this code?
-3. Does the standard library do it?
-4. Does the tool you are extending already offer a way in: a hook, plugin,
-   config option or extension point? Use that, not a parallel mechanism
-   beside it.
-5. Does an installed library do it?
-6. Can it be one line?
-7. Only then, write the minimum that works.
+Stop at the first yes: needed for a case that exists today (if not, skip
+it and say so)? Already in this code? In the standard library? Does the tool
+you are extending offer a way in (a hook, plugin, config option)? Use it, not
+a mechanism beside it. An installed library? One line? Only then, the
+minimum that works.
 
 "Nothing exists" needs the search that shows it: what you looked for, and
 where.
