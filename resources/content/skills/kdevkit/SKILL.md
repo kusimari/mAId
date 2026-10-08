@@ -1,6 +1,6 @@
 ---
 name: kdevkit
-description: 'Spec-driven dev on a repo with specs/: plan or start a feature, run an initiative of several features as its ringmaster, run the dev loop through quality/test/review gates, act on review comments, close one out ("ship it", "close it", "feature done", "plan this", "add to backlog"), or record a durable project fact. Four tiers (project/initiative/feature/backlog); three-phase feature branch, one squash-merge.'
+description: 'Spec-driven dev on a repo with specs/: plan or start a feature, run an initiative of several features (guided, or as its ringmaster), run the dev loop through quality/test/review gates, act on review comments, close one out ("ship it", "close it", "feature done", "plan this", "add to backlog"), or record a durable project fact. Four tiers (project/initiative/feature/backlog); three-phase feature branch, one squash-merge.'
 version: 4.8.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, initiative, public-repo]
 ---
@@ -150,7 +150,7 @@ first-time detection prose to write `$SPEC_ROOT/project.md`.
 
 A small structural check runs at session start to confirm
 `project.md` matches the kdevkit schema without pulling the
-schema narrative into main's context. **Main runs four
+schema narrative into main's context. **Main runs three
 lightweight checks inline**; on any drift signal it dispatches
 the subagent for full canonical-schema validation against
 `setup.md`.
@@ -170,10 +170,7 @@ Main's inline checks:
    present (with at least `reviewer:` **or** `lenses:` set) or
    entirely absent (in which case the §4 Code-review setup
    prompt fires).
-3. If a `## Active initiatives` index exists, every line
-   matches an `$SPEC_ROOT/initiative/*.md` on disk. An initiative
-   file with no index line is a closed one, kept as the record.
-4. The `code_review:` and `review_brief:` blocks (if present)
+3. The `code_review:` and `review_brief:` blocks (if present)
    parse as YAML with no unknown keys.
 
 Clean → no further action. Any drift → dispatch a **fresh-
@@ -181,8 +178,7 @@ context agent call** (the same primitive the Code Review Gate
 uses), per §9's dispatch packet contract:
 
 ```
-Receives:  the path to project.md, the path to setup.md, and
-           the on-disk listing of $SPEC_ROOT/initiative/.
+Receives:  the path to project.md and the path to setup.md.
 Excluded:  everything else — the subagent's whole job is the
            schema, not the project's content.
 Returns:   { "status": "clean" | "drift",
@@ -201,12 +197,11 @@ Codex's CLI). Where unavailable, fall back to inline-Read of
 ### Session-start read order
 
 When the spec tree carries initiatives, the agent reads at
-session start in this order: `project.md` → the **Active
-initiatives** index → the current initiative (if the entry cue
-references one or the current feature is auto-linked to one,
-per §6) → feature(s) for the current branch. Read only the
-referenced initiative(s); do not load the whole `initiative/`
-tree unconditionally.
+session start in this order: `project.md` → the current
+initiative (if the entry cue names one, or the feature spec's
+`Part of initiative:` line does) → feature(s) for the current
+branch. Read only that initiative; do not load the whole
+`initiative/` tree.
 
 ### Context layers & the AGENTS.md convention
 
@@ -237,9 +232,8 @@ do not duplicate the same commands across both files.
 **Never corrupt the AGENTS.md convention.** Anything written to a
 repo-root `AGENTS.md` must still read as a normal, lean AGENTS.md
 to any tool or human. Never write kdevkit-internal scaffold into
-it — the fixed six-section headers, HTML-comment prompts,
-Session/Decision logs, or the `## Active initiatives` index. That
-scaffold stays in `project.md` and the spec tree. AGENTS.md holds
+it — the fixed six-section headers, HTML-comment prompts, or
+Session/Decision logs. That scaffold stays in `project.md` and the spec tree. AGENTS.md holds
 operational instruction, not methodology structure.
 
 **Lean beats detailed.** Both persistent layers stay concise:
@@ -253,8 +247,9 @@ to what the agent writes into `project.md` and `AGENTS.md`.
 
 Entry cues: `"let's start / continue / pick up <feature>"`, or a
 branch like `feat/user-auth`. Initiative-tier cues:
-`"start initiative <name>"`, `"run initiative <name>"`,
-`"show initiatives"` — see §10 for what each does.
+`"start initiative <name>"`, `"start <feature> for initiative
+<name>"`, `"run initiative <name>"`, `"show initiatives"` — see §10
+for what each does.
 
 Resolve the entry mode for feature work:
 
@@ -265,10 +260,10 @@ Resolve the entry mode for feature work:
    What/Why.
 2. **Start `<feature>`** — if neither file exists, run the four
    interviews (§6) and write the spec.
-3. **A ringmaster's brief** — a feature session started by an
-   initiative's ringmaster (§10). The brief names the worktree,
-   the initiative and the stream; otherwise a normal **start**,
-   with the ringmaster as the user.
+3. **A stream of an initiative** — "start `<feature>` for
+   initiative `<name>`" (the user guides it), or a ringmaster's
+   brief (§10). Cut from `initiative/<name>`; otherwise a normal
+   **start**. Under a ringmaster, the ringmaster is the user.
 
 **A spec on disk is not a reviewed spec** — when entering with a
 populated `feature/<feature>.md`, start in §6 Planning (not §7
@@ -518,9 +513,8 @@ Existing types: `feat` · `fix` · `chore` · `docs` · `refactor`
   `git rm`s resolved backlog items. No code edits — drift
   goes back to the dev loop.
 - **`plan(<initiative>):`** / **`close(<initiative>):`** — the
-  initiative spec and its `## Active initiatives` index line,
-  written by the user's interview and by the ringmaster (§10).
-  No code edits.
+  initiative spec and its close-out, on the initiative branch
+  (§10). No code edits.
 
 The §8.6 squash-merge collapses every phase into one commit on
 `main`; the type encodes the on-branch narrative, not the

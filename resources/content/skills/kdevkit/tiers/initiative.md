@@ -1,13 +1,12 @@
 # kdevkit - initiative tier (tier module)
 
 Carries the **initiative tier**: a goal too big for one branch,
-delivered as several features by a **ringmaster** session that runs
-them for the user.
+delivered as several features, either guided by the user feature by
+feature or run for them by a **ringmaster** session.
 
-**Read this when** an initiative is in play: an initiative verb fires
-("start initiative", "run initiative", "show initiatives"), the work
-names a file in `$SPEC_ROOT/initiative/`, or you are a feature session
-whose brief names an initiative. It applies during any phase.
+**Read this when** an initiative is in play: an initiative verb fires,
+the work names a file in `$SPEC_ROOT/initiative/`, or a feature spec
+carries `Part of initiative:`. It applies during any phase.
 
 The initiative template and interview live in `interviews.md`.
 
@@ -16,36 +15,56 @@ The initiative template and interview live in `interviews.md`.
 An initiative is a goal that lands as several features, one branch
 each. A large change that ships as one branch stays a feature.
 
+### Three ways to work; the user picks
+
+- **A feature**: the normal flow (§3-§8), no initiative.
+- **A guided initiative**: the user plans the streams (or asks for a
+  proposal) and starts and steers each feature session themselves.
+  Each feature opens a PR into `initiative/<name>`, so every feature
+  gets a human review.
+- **A ringmaster initiative**: the user approves the spec and says
+  "run initiative"; one session does the rest (below). No PR until the
+  end.
+
+Both initiative modes share the spec, the Streams table, the branch
+shape and the final PR, so the user can switch mid-way: "run
+initiative" picks up from the Streams table.
+
 ### The split of work
 
 - **The user** writes what they want: the **Goal**, the
   **Experience** (what they can do and observe when it is done), the
-  **Macro test** that proves it, and the **Constraints**. Approving
-  that spec is the user's one gate.
-- **The ringmaster** (the session the user runs the initiative from)
-  decides the features, runs each one in its own session and
-  worktree, and plays the user at every feature gate. It judges like
-  the senior developer beside the user would (the judge: `kyodakit`
-  unless `judgement:` names another), against the Experience and
-  Macro test. It never edits
-  code.
-- **A feature session** runs the normal feature flow (§3-§8) on its
-  own branch. The ringmaster's messages are its user's words.
+  **Macro test** that proves it, and the **Constraints**.
+- **The ringmaster** (ringmaster mode: the session the user runs the
+  initiative from) decides the features, runs each one in its own
+  session and worktree, and plays the user at every feature gate. It
+  judges like the senior developer beside the user would (the judge:
+  `kyodakit` unless `judgement:` names another), against the
+  Experience and Macro test. It never edits code.
+- **A feature session** runs the normal feature flow on its own
+  branch. Under a ringmaster, the ringmaster's messages are its
+  user's words.
 
 ### Verbs
+
+Things the user says in an ordinary agent session; the session does
+the work with the agent's own tools, not a wrapper.
 
 - **"start initiative `<name>`"**: make the initiative's worktree
   (`git worktree add <worktrees>/initiative-<name> -b
   initiative/<name> main`, in the project's worktree convention),
-  interview the user (`interviews.md`), and there write
-  `$SPEC_ROOT/initiative/<name>.md`, add the `## Active initiatives`
-  index line, and commit `plan(<name>): initial spec`. Stop for
-  approval.
+  interview the user (`interviews.md`), write
+  `$SPEC_ROOT/initiative/<name>.md` there, and commit
+  `plan(<name>): initial spec`. Stop for approval.
+- **"start `<feature>` for initiative `<name>`"** (guided): add a
+  Streams row if there is none, make the feature's worktree cut from
+  `initiative/<name>`, and run the normal feature flow there with the
+  user as the user. Its PR targets `initiative/<name>`, and closure
+  squash-merges into it with the message §8.6 asks for.
 - **"run initiative `<name>`"**: become its ringmaster (below). Also
   the way to resume one: everything needed is on disk.
 - **"show initiatives"**: list the `initiative/*` branches, local and
-  remote, with each one's Goal line. An in-flight initiative lives
-  on its own branch, so `main`'s index does not show it. Read-only.
+  remote, with each one's Goal line. Read-only.
 
 ### Git shape
 
@@ -56,8 +75,8 @@ main ─────────────────────────
 ```
 
 - Each feature squash-merges into `initiative/<name>`, with the
-  message §8.6 asks for. Feature branches are never pushed and open
-  no PR.
+  message §8.6 asks for. Under a ringmaster, feature branches are
+  never pushed and open no PR; guided, each has its PR.
 - The initiative reaches `main` as one merge commit, so
   `git log --first-parent main` shows the initiative and
   `git log <merge>^1..<merge>^2` its features. Its message is
@@ -98,14 +117,23 @@ main ─────────────────────────
    the test prove it.
 5. **Merge.** On closure, the feature session makes its `close()`
    commit and stops. The ringmaster squash-merges the branch into
-   `initiative/<name>`, updates the Streams row, removes the worktree
-   and branch, and spawns whatever that unblocked.
-6. **Finish.** When every stream has merged, run the Macro test on
-   the initiative branch and record the result in the spec. Commit
-   `close(<name>):` (Streams all merged, index line removed; the spec
-   stays as the record). Then stop for the user with the merge
-   message drafted: pushing the branch, the PR, and the merge commit
-   to `main` are theirs.
+   `initiative/<name>`, updates the Streams row, and spawns whatever
+   that unblocked. The feature's worktree and branch stay, for the
+   user to inspect, until the initiative closes.
+6. **Finish** (both modes). When every stream has merged:
+   - Run the Macro test on the initiative branch and record the
+     result in the spec.
+   - Dispatch the review briefing (§7, `phases/review.md`) at
+     initiative level. It receives the initiative spec as the spec,
+     each feature spec, the diff `main...initiative/<name>`, and the
+     Macro test result. Route its defects back as streams' fixes,
+     as for any feature. Its briefing is the initiative PR's body.
+   - Commit `close(<name>):` (Streams all merged; the spec stays as
+     the record), and remove the initiative's feature worktrees and
+     branches.
+   - Stop for the user with the briefing and the merge message
+     drafted: pushing the branch, the PR, and the merge commit to
+     `main` are theirs.
 
 ### The record
 

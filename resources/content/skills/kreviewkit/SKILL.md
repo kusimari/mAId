@@ -1,7 +1,7 @@
 ---
 name: kreviewkit
 description: 'Brief a human before they review a change — "review what was done", "prep this for review", "brief the review", "summarise this change for a reviewer". Independent review-briefing tool: read-only reviewer turns a spec + diff into the briefing a reviewer reads first. Becomes the PR/CR body; not a scoring gate. Opens with `[kreviewkit] applies`.'
-version: 1.1.0
+version: 1.2.0
 tags: [review, pr, cr, briefing, reviewer, spec, diff, independent]
 ---
 
@@ -350,6 +350,25 @@ body. The workflow owns *when* to ask and *what to do with the result* —
 this skill owns what a briefing is and how it must be produced. Under
 kdevkit that hand-off is dev-loop completion, where the four sections
 also satisfy the usual body shape (section 3 *is* the reading order).
+
+## At initiative level
+
+When the spec is an initiative (a goal delivered as several features,
+each with its own spec and its own commit), the reviewer is judging
+the whole, and each feature's detail was briefed when it shipped. So
+lift every section a level:
+
+- **§1** plays back how the Goal and the user-facing experience were
+  understood, the design that came out of it, and how it changed the
+  existing design. Per feature, only its highlights: what it decided
+  and what it changed, never its minutiae.
+- **§2** reconciles the stated experience against the whole diff, with
+  the initiative's end-to-end test result as the evidence, and names
+  what that test does not cover.
+- **§3** orders the feature commits, ranked by risk, each with what to
+  look for; the same three buckets apply inside each.
+- **§4** keeps only the trade-offs that span features or that the
+  user has not yet ratified.
 
 ## Before you return — self-check
 

@@ -272,7 +272,8 @@ using the feature file template above.
 
 When the user runs `start initiative <name>` (`tiers/initiative.md`
 §10), write `$SPEC_ROOT/initiative/<name>.md` from this template. The
-user owns the first four sections; the ringmaster owns the last two.
+user owns the first four sections; the last two belong to whoever
+runs the streams (the user when guided, else the ringmaster).
 
 ```markdown
 # Initiative: <name>
@@ -326,16 +327,17 @@ already said and the code, then ask only what you cannot infer:
 4. **Constraints.** What every stream must respect, and the spend
    allowed (paid tests and their budget, or none).
 
-Do not plan the streams with the user; that is the ringmaster's job.
+Do not plan the streams here: the user does when guiding, and the
+ringmaster does when it runs.
 Then commit and stop for approval, per `tiers/initiative.md`.
 
 ## Feature spec for an initiative stream
 
-A feature session started by a ringmaster writes its spec from the
-feature template above, with:
+A feature session for an initiative stream (guided, or started by a
+ringmaster) writes its spec from the feature template above, with:
 
-- `## Git Setup > Base:` `initiative/<name>`, and the worktree the
-  ringmaster made.
+- `## Git Setup > Base:` `initiative/<name>`, and the stream's
+  worktree.
 - `Part of initiative: [[<name>]]` (`phases/plan.md` §6 auto-link).
 - The four interviews scoped to its Streams row; the initiative's
   Experience and Constraints bind it.

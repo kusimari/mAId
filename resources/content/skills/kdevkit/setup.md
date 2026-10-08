@@ -46,8 +46,8 @@ keep them in place so future sessions re-read the intent.
 project-knowledge layer — the persistent *why* and *shape*. It is
 not a repo-root `AGENTS.md`: operational command strings belong in
 `AGENTS.md` where the repo keeps one, and kdevkit never writes its
-own scaffold (these headers, HTML prompts, logs, the initiatives
-index) into `AGENTS.md`. Keep both persistent files lean — exact
+own scaffold (these headers, HTML prompts, logs) into
+`AGENTS.md`. Keep both persistent files lean — exact
 commands and explicit boundaries over prose; over-stuffed context
 files degrade agent performance.
 
@@ -218,23 +218,6 @@ by editing the block.
 The same prompt fires from the first-time `project.md` flow
 above as the appended one-liner.
 
-## Optional `## Active initiatives` index
-
-When in-flight initiatives exist (see `tiers/initiative.md` §10),
-`project.md` MAY carry an `## Active initiatives` index near
-the bottom — one line per initiative, written on the initiative
-branch and removed by its `close(<initiative>)` commit:
-
-```markdown
-## Active initiatives
-
-- **<name>** (`initiative/<name>.md`) — <one-line intent>
-```
-
-The index lets the agent skip loading every initiative file
-unconditionally; only the initiative(s) referenced by the
-current entry cue or the current feature load.
-
 ## Verify schema (for the verify-as-subagent primitive)
 
 The verify subagent (dispatched by SKILL.md §2 when drift is
@@ -268,11 +251,6 @@ Validation rules the subagent applies, in order:
    keys** — only `enabled` and `generator` are recognized. The
    block is optional and its absence is **not** drift (absent
    means the gate is off; no setup prompt fires for it).
-4. **`## Active initiatives` index, if present, matches
-   `$SPEC_ROOT/initiative/`** — every line in the index has a
-   matching `initiative/<name>.md` on disk. An on-disk initiative
-   with no index line is closed and kept as the record, not
-   drift. A line with no file → `drift`.
 
 `findings` are free-form (one issue + one suggestion per row).
 Main applies accepted findings via Edit against the live

@@ -124,12 +124,15 @@ for every touched section and closure proceeds.
 feature close out? Pick any, or 'none'."_ `git rm` the chosen
 ones; asking is mandatory even when the answer is "none".
 
-**3.5 · A ringmaster's stream.** If the feature spec carries
-`Part of initiative: [[<name>]]`, leave the initiative spec alone
-(the ringmaster updates it), stop after step 4's commit without
-pushing, and reply that the branch is ready. The ringmaster does
-step 6, into `initiative/<name>` (`tiers/initiative.md` §10), and
-steps 7-8.
+**3.5 · An initiative's stream.** If the feature spec carries
+`Part of initiative: [[<name>]]`, step 6 merges into
+`initiative/<name>`, not `main`, and the branch and worktree stay
+until the initiative closes (`tiers/initiative.md` §10).
+- *Guided:* close as normal, mark the stream's Streams row merged in
+  the same squash, and skip steps 7-8.
+- *Under a ringmaster:* leave the initiative spec alone, stop after
+  step 4's commit without pushing, and reply that the branch is
+  ready; the ringmaster does the rest.
 
 **4 · Commit + push.** Staged closure edits land in one or
 more `close(<feature>):` commits per §9. Push.

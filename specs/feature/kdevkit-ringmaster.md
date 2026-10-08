@@ -39,6 +39,11 @@ commit per feature under it.
 
 ## Requirements
 
+- The user picks how to work: a feature, a guided initiative (they
+  start and steer each feature; each opens a PR into the initiative
+  branch), or a ringmaster initiative. They can switch from guided to
+  ringmaster mid-way.
+- The verbs are said in an ordinary agent session; no wrapper.
 - "start initiative `<name>`" interviews the user for Goal,
   Experience, Macro test and Constraints only, then stops for
   approval.
@@ -53,6 +58,12 @@ commit per feature under it.
   A new session resumes an initiative from them alone.
 - `main` gets the initiative as a merge commit; `--first-parent`
   shows the initiative, its second parent the features.
+- The initiative's PR body is a review briefing at initiative level:
+  how the requirements were understood, the design decisions and how
+  they changed the existing design, the major changes in review
+  order, and what the tests say.
+- Merged features keep their worktree and branch until the initiative
+  closes; closing removes them all.
 
 ## Test Strategy
 
@@ -74,14 +85,21 @@ commit per feature under it.
   feature session commit in its own worktree only; `close(<initiative>)`.
 - `phases/close.md` 3.5: a stream stops after its close commit; the
   ringmaster merges into the initiative branch.
-- `setup.md` and `SKILL.md` §2: the index line lives on the initiative
-  branch; a file with no index line is a closed record, not drift.
-- `specs/project.md`: the index comment and Layout line match.
+- `setup.md` and `SKILL.md` §2: the `## Active initiatives` index and
+  its verify rule are gone; a session finds its initiative from the
+  entry cue or the feature spec's `Part of initiative:` line.
+- `specs/project.md`: the index section is gone; the Layout line
+  matches.
+- `kreviewkit`: an "At initiative level" section lifts each of its
+  four sections from feature detail to the initiative's decisions.
 
 ## Implementation Plan
 
 - [x] Module, template, resident rules, closure step.
 - [x] Fixture, dry-run, `just ci`.
+- [x] Review on #55: three modes with a guided verb, the index
+      dropped, worktrees kept until close, an initiative-level
+      briefing (kreviewkit).
 - [x] Briefing defects fixed: closed-initiative lifecycle in every
       verify rule, `show initiatives`, the safety-floor exception, the
       resident merge destination, the initiative worktree, the merge
@@ -130,3 +148,16 @@ commit per feature under it.
   explicitly: `feat(<name>): <Goal in one line>`, body the Goal and
   one line per feature · §8.6's rule, applied to the one merge it did
   not cover.
+- Three modes, chosen by the user · the user's review: kdevkit serves a
+  plain feature, a guided initiative, and a ringmaster one. Guided
+  features each get a PR into the initiative branch.
+- The `## Active initiatives` index is dropped in every mode · the
+  user's review; it served the agent's journaling, and the branch list
+  plus the feature spec's link cover that. Replaces the earlier
+  "index on the initiative branch" ruling.
+- Feature worktrees and branches stay until the initiative closes ·
+  the user's review; how well an agent runs as ringmaster is not yet
+  known, so the evidence stays inspectable.
+- The initiative PR body comes from the existing review-briefing role
+  at initiative level · the user's review; considered a separate
+  initiative summary, rejected as a second mechanism for the same job.

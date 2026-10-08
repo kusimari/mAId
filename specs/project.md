@@ -681,11 +681,6 @@ the experience is symmetric across resource kinds.
   skill encodes this rule for every project; this bullet
   declares mAId as a public repo so the rule fires.
 
-## Active initiatives
-
-<!-- One line per in-flight initiative, on its initiative
-     branch. Removed by its close(<initiative>): commit. -->
-
 ## Agent Development
 
 <!-- Skill-scoped preferences. Each subsection is a skill name. -->
