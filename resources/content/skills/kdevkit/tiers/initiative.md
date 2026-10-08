@@ -119,8 +119,11 @@ main ─────────────────────────
      checked, each marked "verify what you build on"; "run kdevkit's feature flow for `<feature>`; I am
      your user; stop at each gate and reply with what the gate's
      PR body would carry"; any paid-test allowance from Constraints.
-   - Excluded: this session's history and the other streams' work.
-   - Returns: at each stop, the gate it reached and the spec path.
+   - Excluded: this session's history, and other streams' work in
+     flight (what merged streams settled is passed above).
+   - Returns: at each stop, the gate it reached and the spec path;
+     at closure, its `close()` commit, its backlog answer, and the
+     squash message it proposes.
 4. **Play the user at each stop.** Read the artefact on disk (the
    spec, the briefing, the diff against `initiative/<name>`), never
    only the summary. Then resume the session with either the cue

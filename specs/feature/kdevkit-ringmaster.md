@@ -23,13 +23,15 @@ review briefing written for the whole.
 ## Handoff
 
 - **Stage:** review
-- **Ready for:** the user's review on the PR, and the first ringmaster
-  run (`installable`) as its proof
-- **Carry forward:** the pre-install skill stage carries only
-  `SKILL.md`, so the module's behaviour is proven by running an
-  initiative, not by the playback fixture
-- **Deliberately left:** a guided run; the multi-repo guidance and the
-  detailed cross-stream rebase steps from the old module; hosts
+- **Ready for:** the user's review on the PR; the acceptance run
+  (`installable`, ringmaster mode) is done and recorded in the Session
+  Log
+- **Carry forward:** merge this PR before `initiative/installable`,
+  which is stacked on it; if this PR is squash-merged, rebase that
+  branch with `git rebase --onto main feat/kdevkit-ringmaster`
+- **Deliberately left:** a guided run, the guided-to-ringmaster switch
+  and a resumed ringmaster (not yet exercised); the multi-repo guidance
+  and the detailed cross-stream rebase steps from the old module; hosts
   without worktrees
 
 ### Crossings
