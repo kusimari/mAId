@@ -16,11 +16,11 @@ worktree can install it, and the latest install wins.
 
 - From any checkout or worktree, `just install` installs everything
   mAId ships (today: skills and the browser MCP server) into claude,
-  kiro, codex and agy. A new session in each finds mAId's skills, and
+  kiro and codex. A new session in each finds mAId's skills, and
   where Chrome is present, the browser tools.
 - claude and codex receive mAId through their own plugin commands:
   mAId shows up in their plugin list and can be disabled there. kiro
-  and agy, which have no such command, get the same content from
+  which has no such command, get the same content from
   mAId's own user-space install.
 - Skills that hand work to each other by name (kdevkit to kyodakit and
   kreviewkit) still find each other.
@@ -44,8 +44,8 @@ branch, before it goes to `main`:
 
 1. Clone the branch to a temp dir, `just install` from the clone, then
    delete the clone.
-2. claude and codex list mAId in their plugin lists; kiro and agy
-   point at mAId's install. A non-interactive session in each of
+2. claude and codex list mAId in their plugin lists; kiro points at
+   mAId's install. A non-interactive session in each of
    claude, kiro and codex names mAId's skills when asked what skills
    it has.
 3. The browser server, started exactly as the agents' config starts
@@ -61,8 +61,10 @@ branch, before it goes to `main`:
 
 ## Constraints
 
-- The user space is a nix profile. No abstraction for mise or a plain
-  OS yet.
+- The user space is a nix profile, and so is the dev environment (the
+  flake's dev shell). No abstraction for mise or a plain OS yet.
+- agy is not on this machine: leave its existing install as it is and
+  do no new work for it.
 - Use an agent's own install tooling wherever it has some; mAId's own
   layout knowledge only where it has none.
 - Touch only what mAId owns: never the user's default nix profile
