@@ -83,8 +83,23 @@ branch, before it goes to `main`:
 
 | # | Feature | Ships | Needs | Status |
 |---|---|---|---|---|
+| 1 | setup-as-installable | the nix profile with the skills and the browser server as closures; `just install` / `status` / `uninstall`; every agent linked at the profile; nothing installed names a checkout | none | running |
+| 2 | native-plugins | claude and codex get mAId as a plugin from a marketplace inside the profile: listed, disableable, updated per install; skills that call each other still resolve; their old links removed; `status` / `uninstall` cover plugins | 1 | planned |
+| 3 | install-rollback | one command returns every agent to the previous install; the Macro test as a script anyone can re-run | 2 | planned |
 
 ## Decision Log
 
 <!-- Ringmaster rulings, newest last:
      - Ruling: <what> · why: <why> · cost if wrong: <cost> -->
+
+- Ruling: three sequential streams, not more · why: each ships
+  something the Macro test can see, and 2 and 3 build on the install
+  shape 1 settles · cost if wrong: a stream grows large; split it then.
+- Ruling: stream 1 is the existing `feat/setup-as-installable`,
+  rebased onto this branch · why: the constraint says reuse it · cost
+  if wrong: none, its gates still run.
+- Ruling: agy stays in stream 1's registry, linked at the profile,
+  untested · why: "leave its existing install as it is" is best kept by
+  moving it with the others rather than leaving a link into a checkout
+  that may vanish · cost if wrong: agy breaks unnoticed; one registry
+  row to revert.
