@@ -108,8 +108,10 @@ main ─────────────────────────
    other hosts: their headless CLI started in the worktree). Its
    brief, per §9's packet contract:
    - Receives: "load kdevkit and its judge the way this agent loads
-     skills" (by name, never an install path, which changes as the
-     project installs); the worktree path (and that the session's
+     skills" (by name, since an install path changes as the project
+     installs), plus the path of each one's `SKILL.md` as installed
+     right now, for a session whose agent cannot find them by name
+     (an agent may hold the skill list it started with); the worktree path (and that the session's
      shell may not keep a `cd` between commands, so every command
      names it);
      the initiative spec path and its stream row; what merged
