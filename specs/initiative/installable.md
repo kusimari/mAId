@@ -2,6 +2,26 @@
 
 - Branch: `initiative/installable` (stacked on `feat/kdevkit-ringmaster`;
   rebase onto `main` once that lands)
+- Status: closed 2026-10-08; five streams merged; Macro test passed.
+  Reaches `main` as one merge commit (`git merge --no-ff`, or the
+  forge's "Create a merge commit"), with this message:
+
+  ```
+  feat(installable): a true install the checkout can disappear from
+
+  Installing mAId used to mean symlinks into a checkout, and a browser
+  server that re-entered the repo and downloaded its runtime on start.
+  Now `just install` builds the checkout into a nix profile in user
+  space and each coding agent takes it through its own tooling where
+  it has some; any checkout or worktree can install, the latest wins,
+  and `just rollback` returns to the one before.
+
+  - install into a nix profile the checkout can disappear from
+  - claude and codex get mAId as a plugin from the profile
+  - one command returns every agent to the previous install
+  - kiro lists mAId's skills from ~/.kiro/skills
+  - uninstall keeps going past a location it leaves alone
+  ```
 
 ## Goal
 
