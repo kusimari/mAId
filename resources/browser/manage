@@ -4,8 +4,9 @@
 # (claude, kiro, codex). Invoked by the *-browser-mcp verbs in
 # resources/Justfile; not meant to be called directly.
 #
-# The server is registered to launch via resources/browser/launch
-# (passed as $LAUNCHER), which enforces the user's allowlist. We
+# The server is registered to launch via the profile's
+# maid-browser-mcp (passed as $LAUNCHER), the flake's wrap of
+# resources/browser/launch, which enforces the user's allowlist. We
 # register a runnable command, not a symlink, so this lives in
 # shell over each harness's own MCP CLI rather than in the
 # pure-symlink build-tool.
@@ -18,10 +19,10 @@
 #   - Idempotent. Claude's `mcp add` errors if the name exists, so
 #     it removes-then-adds (the `readd` style); kiro's and codex's
 #     `mcp add` already replace.
-#   - Graceful per-prereq skip: no GUI Chrome, no `nix` (the MCP
-#     runtime comes from mAId's flake, entered by the launcher), or
-#     a missing harness CLI prints a one-line pointer and is
-#     skipped, never a hard error — a machine may have one harness
+#   - Graceful per-prereq skip: no GUI Chrome or a missing harness
+#     CLI prints a one-line pointer and is skipped, never a hard
+#     error (the runtime is in the launcher's closure, so nothing
+#     else is needed) — a machine may have one harness
 #     and not the other, or no browser at all.
 #   - Allowlist is user data: uninstall never touches it.
 #   - Agent scope: claude and codex are GLOBAL (a server is visible
@@ -83,6 +84,9 @@ KNOWN_AGENTS="claude kiro codex"
 validate_agent_filter() {
     local f="$1" a
     [[ -z "$f" ]] && return 0
+    # agy gets skills but has no MCP registration here; `just install agy`
+    # passes it through, so it is a skip, not a usage error.
+    [[ "$f" == agy ]] && { skip "agy (no browser MCP registration for agy)"; exit 0; }
     for a in $KNOWN_AGENTS; do [[ "$f" == "$a" ]] && return 0; done
     printf 'manage: unknown coding agent %q (known: %s)\n' "$f" "$KNOWN_AGENTS" >&2
     exit 2
@@ -209,38 +213,15 @@ cmd_install() {
     AGENT_FILTER="${2:-}"
     KIRO_AGENT="${3:-}"
     validate_agent_filter "$AGENT_FILTER"
-    # A non-executable launcher is a packaging bug, not an
-    # environment gap — hard-fail to stderr, unlike the graceful
-    # prereq skips below.
-    [[ -x "$LAUNCHER" ]] || { printf 'manage: launcher not executable: %s\n' "$LAUNCHER" >&2; exit 1; }
+    # A missing launcher means the profile was never built — hard-fail
+    # to stderr, unlike the graceful prereq skips below.
+    [[ -x "$LAUNCHER" ]] || { printf 'manage: launcher not executable: %s (run: just install)\n' "$LAUNCHER" >&2; exit 1; }
 
     if ! chrome_present; then
         skip "install-browser-mcp (no graphical Chrome found — desktop only)"
         return 0
     fi
-    # The MCP runtime (Node.js) comes from mAId's own flake — the
-    # launcher enters it via `nix develop`, so node need not be on
-    # the user's PATH. `nix` itself is the prerequisite (the repo's
-    # standing requirement). Check it for a clear up-front skip.
-    if ! have nix; then
-        skip "install-browser-mcp (nix not on PATH — mAId provides the MCP runtime via its flake; nix is the repo prerequisite)"
-        return 0
-    fi
-
     mcp_foreach install
-
-    # Warm the flake now so the FIRST real browser-MCP connection
-    # isn't stalled (and the MCP handshake doesn't time out) while
-    # nix builds the devShell on a cold cache. Derived from the
-    # launcher path: <repo>/resources/browser/launch → <repo>.
-    local repo_root
-    repo_root="$(cd -P "$(dirname "$LAUNCHER")/../.." && pwd)"
-    printf '\nWarming the mAId flake (first build may take a while)...\n'
-    if nix develop "path:$repo_root" --command true >/dev/null 2>&1; then
-        ok "flake ready (npx available to the launcher)"
-    else
-        info "flake warm-up failed — first connection will build it on demand"
-    fi
 
     printf '\nOne-time browser setup (do this once, by hand):\n'
     info "open chrome://inspect/#remote-debugging in Chrome, enable remote"

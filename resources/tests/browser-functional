@@ -11,8 +11,8 @@
 #   just resources::verify-browser-mcp
 #
 # Preconditions (the test checks and tells you what's missing):
-#   - The capability is installed: `just resources::install-browser-mcp`
-#     (for kiro, with the same sub-agent you test: `… kiro my-agent`).
+#   - The capability is installed: `just install`
+#     (for kiro, with the same sub-agent you test: `just install kiro my-agent`).
 #   - Chrome is running with remote debugging enabled once via
 #     chrome://inspect/#remote-debugging (and you accept the
 #     attach prompt the first time).

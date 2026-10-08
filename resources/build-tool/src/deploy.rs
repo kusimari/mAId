@@ -92,7 +92,10 @@ pub trait Deploy {
 /// see the module comment.
 pub struct Symlinks {
     pub home: PathBuf,
-    pub checkout: PathBuf,
+    /// What the registry's source paths are relative to: the mAId profile.
+    /// Links name this path, never the store path behind it, so a new
+    /// generation reaches every agent without relinking.
+    pub source: PathBuf,
 }
 
 impl Deploy for Symlinks {
@@ -170,7 +173,7 @@ impl Symlinks {
     fn expand(&self, entry: Entry) -> io::Result<Vec<Link>> {
         let (home_sub, source_sub, kind, _agent) = entry;
         let home = self.home.join(home_sub);
-        let source = self.checkout.join(source_sub);
+        let source = self.source.join(source_sub);
         match kind {
             Kind::Link => Ok(vec![(home, source)]),
             Kind::FanOut => {
@@ -220,13 +223,14 @@ impl Symlinks {
     fn create(&self, link: &Link, dry_run: bool, force: bool) -> io::Result<(State, bool)> {
         let (home, source) = link;
         let state = self.inspect(link);
-        // Only Missing or a foreign symlink (with --force) are ever
-        // actionable. Occupied is never actionable here, force or not —
-        // mAId does not overwrite a real file or directory to install.
-        let act = matches!(
-            (&state, force),
-            (State::Missing, _) | (State::Wrong { .. }, true)
-        );
+        // Missing, or a symlink another mAId install left, is ours to set.
+        // Any other symlink needs --force. Occupied is never actionable,
+        // force or not: mAId does not overwrite a real file or directory.
+        let act = match &state {
+            State::Missing => true,
+            State::Wrong { found, .. } => force || is_maids(found),
+            _ => false,
+        };
         if act && !dry_run {
             if let State::Wrong { .. } = &state {
                 fs::remove_file(home)?;
@@ -289,6 +293,15 @@ fn exists(p: &Path) -> bool {
     fs::symlink_metadata(p).is_ok()
 }
 
+/// Whether a link target is a mAId skills tree, or a skill in one: a
+/// profile's, or a checkout's from before the profile. Matched by path
+/// shape, not provenance.
+fn is_maids(target: &Path) -> bool {
+    let roots = ["share/maid/skills", "resources/content/skills"];
+    let tree = |p: &Path| roots.iter().any(|r| p.ends_with(r));
+    tree(target) || target.parent().is_some_and(tree)
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Tests — the shim's own. Every case here is about $HOME layout, which
 // is exactly the knowledge this module quarantines.
@@ -300,38 +313,36 @@ mod tests {
     use crate::shared::REGISTRY;
     use tempfile::TempDir;
 
-    fn sym(home: &Path, checkout: &Path) -> Symlinks {
+    fn sym(home: &Path, profile: &Path) -> Symlinks {
         Symlinks {
             home: home.to_path_buf(),
-            checkout: checkout.to_path_buf(),
+            source: profile.to_path_buf(),
         }
     }
 
     /// Deploy and report, the way the install verb does.
     fn install(
         home: &Path,
-        checkout: &Path,
+        profile: &Path,
         dry_run: bool,
         force: bool,
         agent: Option<Agent>,
     ) -> Vec<Report> {
-        sym(home, checkout).install(agent, dry_run, force).unwrap()
+        sym(home, profile).install(agent, dry_run, force).unwrap()
     }
 
     fn uninstall(
         home: &Path,
-        checkout: &Path,
+        profile: &Path,
         dry_run: bool,
         force: bool,
         agent: Option<Agent>,
     ) -> Vec<Report> {
-        sym(home, checkout)
-            .uninstall(agent, dry_run, force)
-            .unwrap()
+        sym(home, profile).uninstall(agent, dry_run, force).unwrap()
     }
 
-    fn status(home: &Path, checkout: &Path, agent: Option<Agent>) -> Vec<Report> {
-        sym(home, checkout).status(agent).unwrap()
+    fn status(home: &Path, profile: &Path, agent: Option<Agent>) -> Vec<Report> {
+        sym(home, profile).status(agent).unwrap()
     }
 
     fn write(p: &Path, s: &str) {
@@ -341,20 +352,20 @@ mod tests {
         fs::write(p, s).unwrap();
     }
 
-    /// A checkout with a skills source but no skills in it.
-    fn make_checkout() -> TempDir {
+    /// A profile with a skills dir but no skills in it.
+    fn make_profile() -> TempDir {
         let dir = TempDir::new().unwrap();
-        fs::create_dir_all(dir.path().join("resources/content/skills")).unwrap();
+        fs::create_dir_all(dir.path().join("share/maid/skills")).unwrap();
         dir
     }
 
-    /// A checkout with two child skills, for the FanOut entry.
-    fn make_checkout_with_skills() -> TempDir {
-        let dir = make_checkout();
+    /// A profile with two child skills, for the FanOut entry.
+    fn make_profile_with_skills() -> TempDir {
+        let dir = make_profile();
         for name in ["kdevkit", "notes"] {
             write(
                 &dir.path()
-                    .join("resources/content/skills")
+                    .join("share/maid/skills")
                     .join(name)
                     .join("SKILL.md"),
                 "---\nname: x\ndescription: y\n---\nbody.\n",
@@ -369,9 +380,9 @@ mod tests {
 
     #[test]
     fn install_creates_every_registry_location() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        let reports = install(home.path(), checkout.path(), false, false, None);
+        let reports = install(home.path(), profile.path(), false, false, None);
         assert!(!reports.is_empty());
         // Every location was Missing beforehand, and exists now.
         assert!(reports.iter().all(|r| r.state == State::Missing));
@@ -382,66 +393,111 @@ mod tests {
 
     #[test]
     fn install_is_idempotent() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        install(home.path(), checkout.path(), false, false, None);
-        let again = install(home.path(), checkout.path(), false, false, None);
+        install(home.path(), profile.path(), false, false, None);
+        let again = install(home.path(), profile.path(), false, false, None);
         assert!(again.iter().all(|r| matches!(r.state, State::Ok(_))));
     }
 
     #[test]
     fn dry_run_changes_nothing() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        install(home.path(), checkout.path(), true, false, None);
+        install(home.path(), profile.path(), true, false, None);
         assert!(!exists_at(&home.path().join(".claude/skills")));
     }
 
     /// A real file at a managed path is never clobbered without --force.
     #[test]
     fn a_users_own_file_survives_install() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
         let claimed = home.path().join(".claude/skills");
         write(&claimed, "mine");
-        install(home.path(), checkout.path(), false, false, None);
+        install(home.path(), profile.path(), false, false, None);
         assert_eq!(fs::read_to_string(&claimed).unwrap(), "mine");
     }
 
     #[test]
     fn a_foreign_symlink_is_replaced_only_with_force() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
         let managed = home.path().join(".claude/skills");
         fs::create_dir_all(managed.parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink(checkout.path(), &managed).unwrap();
+        std::os::unix::fs::symlink(profile.path(), &managed).unwrap();
 
-        install(home.path(), checkout.path(), false, false, None);
-        assert_eq!(fs::read_link(&managed).unwrap(), checkout.path());
+        install(home.path(), profile.path(), false, false, None);
+        assert_eq!(fs::read_link(&managed).unwrap(), profile.path());
 
-        install(home.path(), checkout.path(), false, true, None);
-        assert_ne!(fs::read_link(&managed).unwrap(), checkout.path());
+        install(home.path(), profile.path(), false, true, None);
+        assert_ne!(fs::read_link(&managed).unwrap(), profile.path());
+    }
+
+    /// The latest install takes over what an earlier one left, from a
+    /// checkout or another profile, without --force.
+    #[test]
+    fn a_link_another_maid_install_left_is_replaced_without_force() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        let old = TempDir::new().unwrap();
+        let claude = home.path().join(".claude/skills");
+        let codex = home.path().join(".codex/skills/notes");
+        for link in [&claude, &codex] {
+            fs::create_dir_all(link.parent().unwrap()).unwrap();
+        }
+        std::os::unix::fs::symlink(old.path().join("resources/content/skills"), &claude).unwrap();
+        std::os::unix::fs::symlink(old.path().join("share/maid/skills/notes"), &codex).unwrap();
+
+        install(home.path(), profile.path(), false, false, None);
+        assert_eq!(
+            fs::read_link(&claude).unwrap(),
+            profile.path().join("share/maid/skills")
+        );
+        assert_eq!(
+            fs::read_link(&codex).unwrap(),
+            profile.path().join("share/maid/skills/notes")
+        );
+    }
+
+    #[test]
+    fn only_a_maid_skills_tree_or_one_skill_in_it_is_maids() {
+        for yes in [
+            "../p/share/maid/skills",
+            "/p/share/maid/skills/",
+            "/c/resources/content/skills/notes",
+        ] {
+            assert!(is_maids(Path::new(yes)), "{yes}");
+        }
+        for no in [
+            "/p/share/maid/skills/notes/sub",
+            "/p/share/maid/skills-old",
+            "/p/my-share/maid/skills",
+            "/p",
+        ] {
+            assert!(!is_maids(Path::new(no)), "{no}");
+        }
     }
 
     #[test]
     fn uninstall_removes_only_what_we_deployed() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        install(home.path(), checkout.path(), false, false, None);
+        install(home.path(), profile.path(), false, false, None);
         // Something the agent owns, beside our fan-out children.
         let theirs = home.path().join(".codex/skills/their-own");
         write(&theirs, "theirs");
 
-        uninstall(home.path(), checkout.path(), false, false, None);
+        uninstall(home.path(), profile.path(), false, false, None);
         assert!(!exists_at(&home.path().join(".claude/skills")));
         assert!(exists_at(&theirs), "the agent's own entry must survive");
     }
 
     #[test]
     fn uninstall_is_idempotent_on_a_clean_home() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        let reports = uninstall(home.path(), checkout.path(), false, false, None);
+        let reports = uninstall(home.path(), profile.path(), false, false, None);
         assert!(reports
             .iter()
             .all(|r| matches!(r.state, State::Missing | State::SourceMissing)));
@@ -451,35 +507,35 @@ mod tests {
     /// mAId only ever creates symlinks, so a real dir belongs to the tool.
     #[test]
     fn force_uninstall_refuses_to_delete_a_real_directory() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
         let theirs = home.path().join(".codex/skills");
         fs::create_dir_all(theirs.join("their-skill")).unwrap();
 
-        uninstall(home.path(), checkout.path(), false, true, None);
+        uninstall(home.path(), profile.path(), false, true, None);
         assert!(theirs.join("their-skill").exists());
     }
 
     #[test]
     fn status_reports_every_location_without_changing_it() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        let before = status(home.path(), checkout.path(), None);
+        let before = status(home.path(), profile.path(), None);
         assert!(before.iter().all(|r| r.state == State::Missing));
         assert!(!exists_at(&home.path().join(".claude/skills")));
 
-        install(home.path(), checkout.path(), false, false, None);
-        let after = status(home.path(), checkout.path(), None);
+        install(home.path(), profile.path(), false, false, None);
+        let after = status(home.path(), profile.path(), None);
         assert!(after.iter().all(|r| matches!(r.state, State::Ok(_))));
     }
 
     #[test]
     fn a_scoped_install_touches_only_that_agent() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
         install(
             home.path(),
-            checkout.path(),
+            profile.path(),
             false,
             false,
             Some(Agent::Codex),
@@ -492,12 +548,12 @@ mod tests {
 
     #[test]
     fn a_scoped_uninstall_leaves_other_agents_deployed() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        install(home.path(), checkout.path(), false, false, None);
+        install(home.path(), profile.path(), false, false, None);
         uninstall(
             home.path(),
-            checkout.path(),
+            profile.path(),
             false,
             false,
             Some(Agent::Claude),
@@ -511,13 +567,13 @@ mod tests {
     /// agent owns.
     #[test]
     fn fanout_yields_one_link_per_source_child() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
         let fanout = *REGISTRY
             .iter()
             .find(|(.., k, _)| *k == Kind::FanOut)
             .unwrap();
-        let links = sym(home.path(), checkout.path()).expand(fanout).unwrap();
+        let links = sym(home.path(), profile.path()).expand(fanout).unwrap();
         assert_eq!(links.len(), 2, "one per child skill");
     }
 
@@ -525,20 +581,20 @@ mod tests {
     /// dangling in a directory we don't own.
     #[test]
     fn fanout_reaps_an_orphaned_child() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
         install(
             home.path(),
-            checkout.path(),
+            profile.path(),
             false,
             false,
             Some(Agent::Codex),
         );
-        fs::remove_dir_all(checkout.path().join("resources/content/skills/notes")).unwrap();
+        fs::remove_dir_all(profile.path().join("share/maid/skills/notes")).unwrap();
 
         let reports = uninstall(
             home.path(),
-            checkout.path(),
+            profile.path(),
             false,
             false,
             Some(Agent::Codex),
@@ -549,12 +605,12 @@ mod tests {
 
     #[test]
     fn is_deployed_answers_the_smoke_precondition() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        let target = sym(home.path(), checkout.path());
+        let target = sym(home.path(), profile.path());
         assert!(!target.is_deployed(Agent::Claude));
         assert!(!target.is_deployed(Agent::Agy));
-        install(home.path(), checkout.path(), false, false, None);
+        install(home.path(), profile.path(), false, false, None);
         assert!(target.is_deployed(Agent::Claude));
         assert!(target.is_deployed(Agent::Agy));
     }
@@ -563,11 +619,11 @@ mod tests {
     /// finds no skill.
     #[test]
     fn a_dangling_link_does_not_count_as_deployed() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        install(home.path(), checkout.path(), false, false, None);
-        fs::remove_dir_all(checkout.path().join("resources/content/skills")).unwrap();
-        assert!(!sym(home.path(), checkout.path()).is_deployed(Agent::Claude));
+        install(home.path(), profile.path(), false, false, None);
+        fs::remove_dir_all(profile.path().join("share/maid/skills")).unwrap();
+        assert!(!sym(home.path(), profile.path()).is_deployed(Agent::Claude));
     }
 
     /// The bug an audit caught: for a FanOut agent, an existing-but-empty
@@ -576,26 +632,26 @@ mod tests {
     /// whether WE put anything there.
     #[test]
     fn an_empty_fanout_root_does_not_count_as_deployed() {
-        let checkout = make_checkout();
+        let profile = make_profile();
         let home = TempDir::new().unwrap();
         // codex's root exists, pre-created, but nothing of ours is in it.
         fs::create_dir_all(home.path().join(".codex/skills")).unwrap();
-        assert!(!sym(home.path(), checkout.path()).is_deployed(Agent::Codex));
+        assert!(!sym(home.path(), profile.path()).is_deployed(Agent::Codex));
     }
 
     #[test]
     fn a_fanout_deployment_is_detected_once_a_child_resolves() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        assert!(!sym(home.path(), checkout.path()).is_deployed(Agent::Codex));
+        assert!(!sym(home.path(), profile.path()).is_deployed(Agent::Codex));
         install(
             home.path(),
-            checkout.path(),
+            profile.path(),
             false,
             false,
             Some(Agent::Codex),
         );
-        assert!(sym(home.path(), checkout.path()).is_deployed(Agent::Codex));
+        assert!(sym(home.path(), profile.path()).is_deployed(Agent::Codex));
     }
 
     #[test]
@@ -616,12 +672,12 @@ mod tests {
     /// file it never touched and exited 0 for a blocked install.
     #[test]
     fn force_install_never_reports_acting_on_a_real_file() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
         let claimed = home.path().join(".claude/skills");
         write(&claimed, "mine");
 
-        let reports = install(home.path(), checkout.path(), false, true, None);
+        let reports = install(home.path(), profile.path(), false, true, None);
         let this = reports
             .iter()
             .find(|r| r.label == ".claude/skills")

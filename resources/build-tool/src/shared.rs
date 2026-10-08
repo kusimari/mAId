@@ -33,14 +33,14 @@ pub fn usage(msg: impl Into<String>) -> anyhow::Error {
 // ─────────────────────────────────────────────────────────────────
 // Registry — the deployment manifest.
 //
-// The job: mAId keeps skills in the checkout; each coding agent expects
-// them under its own home dir and discovers them there natively (claude
-// ~/.claude/skills, kiro ~/.kiro/steering, codex ~/.codex/skills — all
-// verified to load skills with no extra preamble). The registry maps
-// checkout source → agent home, one row per target, in one of two
-// shapes (`Kind`):
+// The job: `just install` builds the skills into the mAId profile (see
+// `profile_dir`); each coding agent expects them under its own home dir
+// and discovers them there natively (claude ~/.claude/skills, kiro
+// ~/.kiro/steering, codex ~/.codex/skills — all verified to load skills
+// with no extra preamble). The registry maps profile source → agent
+// home, one row per target, in one of two shapes (`Kind`):
 //
-//   Link   — the agent's home layout matches the checkout, so symlink
+//   Link   — the agent's home layout matches the profile, so symlink
 //            the home path straight at the source dir. mAId owns it.
 //   FanOut — the agent owns the home dir and puts its own entries
 //            there, so we can't replace it; mirror each source child in
@@ -52,7 +52,7 @@ pub fn usage(msg: impl Into<String>) -> anyhow::Error {
 // global per-tool file.
 // ─────────────────────────────────────────────────────────────────
 
-pub type Entry = (&'static str, &'static str, Kind, Agent); // (home_subpath, source_subpath, kind, agent)
+pub type Entry = (&'static str, &'static str, Kind, Agent); // (home_subpath, profile_subpath, kind, agent)
 
 /// A concrete symlink to manage, resolved from an entry: (home, source).
 pub type Link = (PathBuf, PathBuf);
@@ -77,25 +77,25 @@ pub enum Agent {
 pub const REGISTRY: &[Entry] = &[
     (
         ".claude/skills",
-        "resources/content/skills",
+        "share/maid/skills",
         Kind::Link,
         Agent::Claude,
     ),
     (
         ".kiro/steering/skills",
-        "resources/content/skills",
+        "share/maid/skills",
         Kind::Link,
         Agent::Kiro,
     ),
     (
         ".codex/skills",
-        "resources/content/skills",
+        "share/maid/skills",
         Kind::FanOut,
         Agent::Codex,
     ),
     (
         ".gemini/config/skills",
-        "resources/content/skills",
+        "share/maid/skills",
         Kind::Link,
         Agent::Agy,
     ),
@@ -194,18 +194,22 @@ pub fn validate_agents(agents: Option<&str>) -> Result<Option<Vec<Agent>>> {
     }
 }
 
-/// The one source tree skills are authored in, per REGISTRY. Every row
-/// shares it — `registry_rows_share_one_content_source` pins that — so
-/// the first row answers. REGISTRY is a non-empty const.
-fn content_source() -> &'static str {
-    REGISTRY[0].1
-}
+/// Where skills are authored in the checkout.
+pub const CONTENT_DIR: &str = "resources/content";
+
+/// Where flake.nix puts that tree in the profile. Every REGISTRY row
+/// names its `skills/` child.
+pub const PROFILE_CONTENT_DIR: &str = "share/maid";
 
 /// Where `<skill>`'s SKILL.md lives in the checkout — the pre-install
 /// source. Agent-independent by design: before install there is only
 /// one copy, which is why the explicit test kinds need no deploy.
 pub fn checkout_skill(checkout: &Path, skill: &str) -> PathBuf {
-    checkout.join(content_source()).join(skill).join("SKILL.md")
+    checkout
+        .join(CONTENT_DIR)
+        .join("skills")
+        .join(skill)
+        .join("SKILL.md")
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -231,6 +235,18 @@ pub fn repo_root() -> Result<PathBuf> {
         ));
     }
     Ok(root)
+}
+
+/// The mAId profile: the nix profile `just install` builds into and every
+/// agent's links point at. The Justfile owns where it is and passes it in.
+pub fn profile_dir() -> Result<PathBuf> {
+    let raw = std::env::var("MAID_PROFILE")
+        .context("MAID_PROFILE not set — invoke via `just` (resources/Justfile sets it)")?;
+    let profile = PathBuf::from(&raw);
+    profile
+        .is_absolute()
+        .then_some(profile)
+        .ok_or_else(|| anyhow!("MAID_PROFILE must be an absolute path (got {raw:?})"))
 }
 
 pub fn home_dir() -> Result<PathBuf> {
@@ -358,13 +374,13 @@ mod tests {
         );
     }
 
-    /// `checkout_skill` reads the source path off a single row, so a row
-    /// pointing somewhere else would make the pre-install source depend
-    /// on which row answered.
+    /// flake.nix copies the skills to this one profile path; a row naming
+    /// another would link an agent at nothing.
     #[test]
-    fn registry_rows_share_one_content_source() {
-        let sources: Vec<&str> = REGISTRY.iter().map(|(_, s, ..)| *s).collect();
-        assert!(sources.windows(2).all(|w| w[0] == w[1]), "{sources:?}");
+    fn every_row_links_at_the_profiles_skills() {
+        for (_, source, ..) in REGISTRY {
+            assert_eq!(*source, format!("{PROFILE_CONTENT_DIR}/skills"));
+        }
     }
 
     #[test]

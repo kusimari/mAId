@@ -84,7 +84,15 @@ fn check_one_skill(path: &Path) -> Result<(), String> {
 // replaces the `Deploy` impl and leaves this section untouched.
 // ─────────────────────────────────────────────────────────────────
 
-/// Validate content, then deploy it.
+/// Validate content, failing with every error found.
+pub fn cmd_validate(content_dir: &Path) -> Result<u8> {
+    let count = check_content(content_dir)
+        .map_err(|errs| anyhow!("Content validation failed:\n{}", errs.join("\n")))?;
+    eprintln!("validated {count} content file(s)");
+    Ok(0)
+}
+
+/// Validate the content about to be deployed, then deploy it.
 pub fn cmd_install(
     target: &impl Deploy,
     content_dir: &Path,
@@ -92,9 +100,13 @@ pub fn cmd_install(
     force: bool,
     agent: Option<Agent>,
 ) -> Result<u8> {
-    let count = check_content(content_dir)
-        .map_err(|errs| anyhow!("Content validation failed:\n{}", errs.join("\n")))?;
-    eprintln!("validated {count} content file(s)");
+    if !content_dir.join("skills").is_dir() {
+        return Err(anyhow!(
+            "no skills at {} — build the profile first (just install)",
+            content_dir.display()
+        ));
+    }
+    cmd_validate(content_dir)?;
     outcome(target.install(agent, dry_run, force)?, dry_run)
 }
 
@@ -391,7 +403,7 @@ fn require_installed(target: &impl Deploy, selection: &Selection) -> Result<()> 
     }
     Err(anyhow!(
         "smoke needs the skills deployed, but {} has no skills tree.\n\
-         Run `just resources::install-skills` first, or use `check` for the \
+         Run `just install` first, or use `check` for the \
          pre-install kinds (activation, playback, enact) which need no install.",
         missing.join(", ")
     ))
@@ -677,6 +689,17 @@ mod tests {
             "---\nname: foo\ndescription: bar\n---\nbody.\n",
         );
         assert_eq!(check_content(dir.path()).unwrap(), 1);
+    }
+
+    /// A missing tree validates as zero files, so without the guard an
+    /// install with no profile would link every agent at nothing.
+    #[test]
+    fn install_without_a_profile_names_the_fix() {
+        let dir = TempDir::new().unwrap();
+        let err = cmd_install(&crate::deploy::NoDeploy, dir.path(), false, false, None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("just install"), "{err}");
     }
 
     #[test]

@@ -4,7 +4,8 @@
 //!
 //! Invoked via the project's Justfile, in pipeline order:
 //!   just resources::check-skills [agent]      verify each skill from the checkout (no install needed)
-//!   just resources::install-skills [agent]    create the $HOME-facing symlinks (after content checks)
+//!   just resources::install-profile           validate the checkout, build it into the profile
+//!   just resources::install-skills [agent]    link the agents at the profile
 //!   just resources::uninstall-skills [agent]  remove the managed symlinks
 //!   just resources::status-skills [agent]     report each managed symlink's current state
 //!   just resources::smoke-skills [agent]      verify against the deployed tree
@@ -16,7 +17,10 @@
 use anyhow::Result;
 use build_tool::deploy::{NoDeploy, Symlinks};
 use build_tool::harness::{Selection, Stage};
-use build_tool::shared::{home_dir, repo_root, usage, validate_agent, validate_agents, UsageError};
+use build_tool::shared::{
+    home_dir, profile_dir, repo_root, usage, validate_agent, validate_agents, UsageError,
+    CONTENT_DIR, PROFILE_CONTENT_DIR,
+};
 use build_tool::stages;
 use clap::{Parser, Subcommand};
 use std::path::Path;
@@ -86,7 +90,9 @@ enum Cmd {
     /// Verify skills BEFORE install: the kinds whose prompt carries the
     /// skill's text, so no deployment is needed.
     Check(VerifyArgs),
-    /// Validate content and deploy it so the agents can find it.
+    /// Validate the checkout's content, before it is built into the profile.
+    Validate,
+    /// Validate the profile's content and link the agents at it.
     Install(DeployArgs),
     /// Remove what install deployed, leaving anything not ours.
     Uninstall(DeployArgs),
@@ -130,15 +136,16 @@ fn run(cli: Cli) -> Result<u8> {
     let deployment = || -> Result<Symlinks> {
         Ok(Symlinks {
             home: home_dir()?,
-            checkout: root.clone(),
+            source: profile_dir()?,
         })
     };
     match cli.cmd {
         // No deployment target at all: the guarantee is structural.
         Cmd::Check(args) => verify(Stage::Check, args, &NoDeploy, &root, false),
+        Cmd::Validate => stages::cmd_validate(&root.join(CONTENT_DIR)),
         Cmd::Install(a) => stages::cmd_install(
             &deployment()?,
-            &root.join("resources/content"),
+            &profile_dir()?.join(PROFILE_CONTENT_DIR),
             a.dry_run,
             a.force,
             validate_agent(a.agent.as_deref())?,
