@@ -122,8 +122,9 @@ main ─────────────────────────
    does this serve the Experience, is it the least that does, does
    the test prove it.
 5. **Merge.** On closure, the feature session makes its `close()`
-   commit and stops. The ringmaster squash-merges the branch into
-   `initiative/<name>`, updates the Streams row, and spawns whatever
+   commit, stops, and replies with the squash message it proposes
+   (§8.6). The ringmaster checks the message against the diff,
+   squash-merges the branch into `initiative/<name>` with it, updates the Streams row, and spawns whatever
    that unblocked. The feature's worktree and branch stay, for the
    user to inspect, until the initiative closes.
 6. **Finish** (both modes). When every stream has merged:

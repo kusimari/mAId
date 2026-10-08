@@ -130,9 +130,10 @@ ones; asking is mandatory even when the answer is "none".
 until the initiative closes (`tiers/initiative.md` §10).
 - *Guided:* close as normal, mark the stream's Streams row merged in
   the same squash, and skip steps 7-8.
-- *Under a ringmaster:* leave the initiative spec alone, stop after
-  step 4's commit without pushing, and reply that the branch is
-  ready; the ringmaster does the rest.
+- *Under a ringmaster:* answer step 3's backlog question with your
+  own judgement and report it, leave the initiative spec alone, stop
+  after step 4's commit without pushing, and reply with step 6's
+  squash message; the ringmaster does the rest.
 
 **4 · Commit + push.** Staged closure edits land in one or
 more `close(<feature>):` commits per §9. Push.
