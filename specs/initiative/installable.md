@@ -1,7 +1,7 @@
 # Initiative: installable
 
-- Branch: `initiative/installable` (cut from `feat/kdevkit-ringmaster`
-  at c9edd30; rebase onto `main` once that lands)
+- Branch: `initiative/installable` (stacked on `feat/kdevkit-ringmaster`;
+  rebase onto `main` once that lands)
 
 ## Goal
 
