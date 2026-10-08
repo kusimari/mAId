@@ -146,8 +146,8 @@ because …"). Recommended, not mandatory for every helper.
 ### Initiative-stream auto-link
 
 When the feature being started is a stream of an active
-initiative (the initiative's Streams list names this feature's
-branch or feature-spec basename — see §10), §6 Planning
+initiative (a ringmaster's brief names it, or the initiative's
+Streams table names this feature — see §10), §6 Planning
 auto-populates the `Part of initiative: [[<name>]]` line in
 the feature spec, immediately after `## Feature Brief`. No
 prompt; the link populates silently when the match is

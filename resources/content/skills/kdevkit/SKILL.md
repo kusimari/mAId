@@ -1,7 +1,7 @@
 ---
 name: kdevkit
-description: 'Spec-driven dev on a repo with specs/: plan or start a feature, run the dev loop through quality/test/review gates, act on review comments, close one out ("ship it", "close it", "feature done", "plan this", "add to backlog"), or record a durable project fact. Four tiers (project/initiative/feature/backlog); three-phase feature branch, one squash-merge.'
-version: 4.7.0
+description: 'Spec-driven dev on a repo with specs/: plan or start a feature, run an initiative of several features as its ringmaster, run the dev loop through quality/test/review gates, act on review comments, close one out ("ship it", "close it", "feature done", "plan this", "add to backlog"), or record a durable project fact. Four tiers (project/initiative/feature/backlog); three-phase feature branch, one squash-merge.'
+version: 4.8.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, initiative, public-repo]
 ---
 
@@ -35,9 +35,9 @@ Four surfaces:
 1. **Project invariants** — `project.md`. Mission, architecture,
    tech stack, layout, testing, deployment. Timeless;
    cross-feature.
-2. **Initiative specs** — one file per multi-stream initiative
-   under `initiative/<name>.md`. Why + ordered streams + status
-   table. Time-bound (last-stream closure archives them).
+2. **Initiative specs** — one file per multi-feature initiative
+   under `initiative/<name>.md`. Goal, Experience and Macro test
+   (the user's), Streams and rulings (the ringmaster's).
 3. **Feature specs** — one file per feature. Requirements,
    design, test strategy, implementation plan, session +
    decision logs.
@@ -253,8 +253,8 @@ to what the agent writes into `project.md` and `AGENTS.md`.
 
 Entry cues: `"let's start / continue / pick up <feature>"`, or a
 branch like `feat/user-auth`. Initiative-tier cues:
-`"start initiative <name>"`, `"show initiatives"`,
-`"stream <n> for <initiative>"` — see §10 for what each does.
+`"start initiative <name>"`, `"run initiative <name>"`,
+`"show initiatives"` — see §10 for what each does.
 
 Resolve the entry mode for feature work:
 
@@ -265,10 +265,10 @@ Resolve the entry mode for feature work:
    What/Why.
 2. **Start `<feature>`** — if neither file exists, run the four
    interviews (§6) and write the spec.
-3. **Stream `<n>` for `<initiative>`** — start a feature whose
-   Git Setup names the initiative as its parent. Auto-populates
-   the feature spec's `Part of initiative: [[<name>]]` link
-   (§6). Otherwise behaves as a normal **start** entry.
+3. **A ringmaster's brief** — a feature session started by an
+   initiative's ringmaster (§10). The brief names the worktree,
+   the initiative and the stream; otherwise a normal **start**,
+   with the ringmaster as the user.
 
 **A spec on disk is not a reviewed spec** — when entering with a
 populated `feature/<feature>.md`, start in §6 Planning (not §7
@@ -367,6 +367,10 @@ Do not chain phases automatically. Two gating layers stack:
 
 Both Review Gate greens close the inner loop; closure (§8)
 requires the explicit cue.
+
+**Under a ringmaster** (§10), the ringmaster's messages are the
+user's cues, and each Review Gate is a stop: reply with what the
+PR/CR body would carry, and open, push and merge nothing.
 
 ### Operational gating
 
@@ -509,16 +513,12 @@ Existing types: `feat` · `fix` · `chore` · `docs` · `refactor`
   promotion). No code edits.
 - **`close(<feature>):`** — feature-closure-phase. Reconciles
   in-flight markers, applies any `project.md` verify edit,
-  `git rm`s resolved backlog items, updates the parent
-  initiative's Status table (§8.3.5) and archives it on
-  last-stream close. No code edits — drift goes back to the
-  dev loop.
-- **`plan(<initiative>):`** — initiative-planning. Authors
-  `$SPEC_ROOT/initiative/<name>.md` and adds the
-  `## Active initiatives` index entry to `project.md`. No
-  code edits. There is no `close(<initiative>):` type — the
-  last stream's `close(<feature>):` archives the initiative
-  spec (§8.3.5).
+  `git rm`s resolved backlog items. No code edits — drift
+  goes back to the dev loop.
+- **`plan(<initiative>):`** / **`close(<initiative>):`** — the
+  initiative spec and its `## Active initiatives` index line,
+  written by the user's interview and by the ringmaster (§10).
+  No code edits.
 
 The §8.6 squash-merge collapses every phase into one commit on
 `main`; the type encodes the on-branch narrative, not the
@@ -629,7 +629,10 @@ optionality, and the forward-only rule.
 Binding whenever this skill hands work to another agent, tool, or
 skill — a reviewer, a briefing generator, a verify subagent. The
 dispatched thing's own contract governs *what it reads*, never
-*what it may do*:
+*what it may do*. One exception: a ringmaster's feature session
+(§10) may edit, stage and commit inside its own worktree, and
+nowhere else; everything below still binds it, and it never pushes
+or merges.
 
 - **No write authority.** No edits, commits, pushes, staging, or
   PR/branch mutation beyond the artefact it was asked for.

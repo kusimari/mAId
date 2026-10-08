@@ -124,20 +124,12 @@ for every touched section and closure proceeds.
 feature close out? Pick any, or 'none'."_ `git rm` the chosen
 ones; asking is mandatory even when the answer is "none".
 
-**3.5 · Initiative Status update (auto).** If the closing
-feature is a stream of an active initiative (the feature spec
-carries `Part of initiative: [[<name>]]` near the top), update
-the initiative's Status table row: branch, CR, status =
-`shipped`, ship date, one-line learning. Stage the edit. If
-this is the **last** stream (every other row in the Status
-table is already `shipped`), the same staged edit also
-archives the initiative spec — `git rm
-$SPEC_ROOT/initiative/<name>.md` and remove the line from
-`project.md`'s `## Active initiatives` index (the index is a
-bullet list; the Status table is the per-initiative file). No
-separate `close(<initiative>):` commit; the last stream's
-`close(<feature>):` does the work. See `interviews.md` for the table
-format.
+**3.5 · A ringmaster's stream.** If the feature spec carries
+`Part of initiative: [[<name>]]`, leave the initiative spec alone
+(the ringmaster updates it), stop after step 4's commit without
+pushing, and reply that the branch is ready. The ringmaster does
+step 6, into `initiative/<name>` (`tiers/initiative.md` §10), and
+steps 7-8.
 
 **4 · Commit + push.** Staged closure edits land in one or
 more `close(<feature>):` commits per §9. Push.

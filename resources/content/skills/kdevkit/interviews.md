@@ -270,79 +270,74 @@ using the feature file template above.
 
 ## Initiative file template
 
-When the user runs the `start initiative <name>` verb (see
-`tiers/initiative.md` §10), write `$SPEC_ROOT/initiative/<name>.md` from
-this template:
+When the user runs `start initiative <name>` (`tiers/initiative.md`
+§10), write `$SPEC_ROOT/initiative/<name>.md` from this template. The
+user owns the first four sections; the ringmaster owns the last two.
 
 ```markdown
 # Initiative: <name>
 
-## Why
+- Branch: `initiative/<name>` (cut from `main` at <sha>)
 
-<!-- The realization or external trigger. One paragraph. -->
+## Goal
+
+<!-- One paragraph: what changes for the user, and why now. -->
+
+## Experience
+
+<!-- What the user can do and observe when this is done, in their
+     terms. Each bullet is something the Macro test checks. -->
+
+## Macro test
+
+<!-- The end-to-end check, run on the initiative branch before it
+     goes to main: the commands or steps, and what passing looks
+     like. -->
+
+## Constraints
+
+<!-- What binds every stream: compatibility, things not to touch,
+     and what the ringmaster may spend (e.g. "paid skill tests: yes,
+     up to N runs"; or "none - plain code"). -->
 
 ## Streams
 
-<!-- Ordered list. Each stream = one branch / one CR.
-     Format: 1. **<name>** (`<branch>`) — <one-line intent>.
-              Prereq: <previous stream id, or "none"> -->
+<!-- Ringmaster-owned. One row per feature. -->
 
-## Decisions taken at the initiative level
+| # | Feature | Ships | Needs | Status |
+|---|---|---|---|---|
 
-<!-- Anything that binds *all* streams. Per-stream decisions
-     belong in that stream's feature spec. -->
+## Decision Log
 
-## Status
-
-| Stream | Branch | CR | Status | Shipped | Learnings |
-|---|---|---|---|---|---|
-| 1 | ... | ... | planning | — | — |
+<!-- Ringmaster rulings, newest last:
+     - Ruling: <what> · why: <why> · cost if wrong: <cost> -->
 ```
 
 ## Initiative interview shape
 
-When writing a fresh initiative, walk three short interviews
-(parallel to the feature four-interview shape, but cut for the
-initiative tier):
+Four short interviews, in order. Draft each answer from what the user
+already said and the code, then ask only what you cannot infer:
 
-1. **Why.** What's the realization or external trigger? One
-   paragraph captures the motivation; future sessions read
-   this as the persistent root.
-2. **Streams.** Order them. Each stream = one branch / one
-   CR. Capture each as `<name> (<branch>) — <one-line
-   intent>`, plus a prereq pointer (`Prereq: <previous
-   stream id, or "none">`). Sequential ordering is the
-   contract; if streams aren't sequential, this isn't an
-   initiative — it's a backlog of independent features.
-3. **Initiative-level decisions.** Anything that binds *all*
-   streams: shared interfaces, data shapes, naming
-   conventions, rollout strategy. Per-stream decisions
-   belong in each stream's feature spec, not here.
+1. **Goal.** What changes for the user, and why now.
+2. **Experience.** What they will do and see. Apply the feature
+   Requirements smell test (`phases/plan.md`): no internals.
+3. **Macro test.** How to prove the Experience end to end, and where
+   it runs.
+4. **Constraints.** What every stream must respect, and the spend
+   allowed (paid tests and their budget, or none).
 
-After the three interviews, write the file from the template
-above, append a one-line entry to `project.md`'s
-`## Active initiatives` index, and commit as
-`plan(<initiative>): initial spec`. Open the Planning Review
-Gate per `phases/plan.md` §6 / SKILL.md §9; the gate's phase-specific body
-content is **Why** + **Streams** + **Decisions taken at the
-initiative level**.
+Do not plan the streams with the user; that is the ringmaster's job.
+Then commit and stop for approval, per `tiers/initiative.md`.
 
-## "stream `<n>` for `<initiative>`" template-fill steps
+## Feature spec for an initiative stream
 
-When the user runs the `stream <n> for <initiative>` verb
-(see `tiers/initiative.md` §10), write the new feature spec using the
-feature file template above with these populated:
+A feature session started by a ringmaster writes its spec from the
+feature template above, with:
 
-- `## Git Setup > Branch:` — the stream's named branch from
-  the parent initiative's Streams list.
-- `## Git Setup > Base:` — `main` (current commit-ish) unless
-  the parent initiative declares a different base.
-- The optional `Part of initiative: [[<initiative>]]` line —
-  populated automatically (per `phases/plan.md` §6 auto-link rule).
-- The four-interview content (Requirements / Test Strategy /
-  Design / Implementation Plan) — fill via the four interviews
-  above, scoped to this stream's intent (the parent
-  initiative's stream entry is the seed).
+- `## Git Setup > Base:` `initiative/<name>`, and the worktree the
+  ringmaster made.
+- `Part of initiative: [[<name>]]` (`phases/plan.md` §6 auto-link).
+- The four interviews scoped to its Streams row; the initiative's
+  Experience and Constraints bind it.
 
-After the spec is written, return to `phases/plan.md` §6's
-Plan-commit rule.
+Then return to `phases/plan.md` §6's Plan-commit rule.
