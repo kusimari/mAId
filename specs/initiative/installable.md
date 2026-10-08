@@ -121,3 +121,13 @@ branch, before it goes to `main`:
 - Ruling: the stale pre-initiative `origin/feat/setup-as-installable`
   is left alone until close · why: under a ringmaster, feature
   branches are not pushed; close removes it · cost if wrong: none.
+- Ruling: the browser MCP server stays registered by `just install`,
+  not bundled in the `maid` plugin · why: it is registered only where
+  Chrome is present and kiro needs that route anyway; a bundled server
+  would start, and fail, in every session without Chrome · cost if
+  wrong: disabling the plugin leaves the browser server registered.
+- Ruling: in claude and codex, mAId's skills become `maid:<name>` (a
+  typed `/kdevkit` becomes `/maid:kdevkit`; bare names still resolve) ·
+  why: it is how both agents name plugin skills, and the user chose
+  their plugin tooling · cost if wrong: retyping; raised with the user
+  at the end.
