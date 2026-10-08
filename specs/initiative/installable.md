@@ -131,3 +131,11 @@ branch, before it goes to `main`:
   why: it is how both agents name plugin skills, and the user chose
   their plugin tooling · cost if wrong: retyping; raised with the user
   at the end.
+- Ruling: at stream 2's review, accept its five recommendations: the
+  name handoff stands on the planning spike plus the paid run, with
+  Macro test step 2 as the end check; a disabled codex plugin falls
+  behind with a skip line, not a failure; install stays fail-fast on an
+  agent CLI error; the codex repair keys on codex's error text (a
+  reword fails loud); `maid` / `maid@maid` are mAId's by name · why:
+  each is the least that serves the Experience, and each failure mode
+  is loud · cost if wrong: small, local fixes.
