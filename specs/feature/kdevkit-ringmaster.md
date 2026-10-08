@@ -213,3 +213,9 @@ review briefing written for the whole.
   check · the user's review: mechanize what should not be an
   instruction; the earlier tooling attempt lost on phase adherence,
   which does not carry over to a safety boundary.
+- kdevkit and kreviewkit state each rule generically, then how per
+  agent, labelled and checked against the installed CLIs ("not known
+  yet" where it is not): "inline-Read" becomes "read into this
+  session", defined once; "subagent" becomes a dispatched agent;
+  bare "host" becomes agent or forge · the user's review, applying
+  project.md's "It has to outlast its agents".

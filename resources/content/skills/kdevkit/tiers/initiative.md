@@ -87,7 +87,7 @@ main ─────────────────────────
   `git log <merge>^1..<merge>^2` its features. Its message is
   authored like §8.6's squash message and passed explicitly
   (`git merge --no-ff -m`, or the forge's merge-commit message
-  field), never the host default: subject `feat(<name>): <the
+  field), never the forge default: subject `feat(<name>): <the
   Goal in one line>`, body the Goal and one line per feature.
 - When a feature lands while another is in flight, the other rebases
   onto `initiative/<name>` and re-runs its gates before its next stop.
@@ -103,10 +103,15 @@ main ─────────────────────────
    needs before it can start. Commit `plan(<name>): streams`.
 3. **Spawn** every stream whose needs have merged:
    `git worktree add <worktrees>/<feature> -b feat/<feature>
-   initiative/<name>`, then a feature session in that worktree that
-   this session can resume with a message. Each host has one:
+   initiative/<name>`, then a feature session in that worktree: one
+   that runs while this session goes on, works only in that
+   worktree, commits but never pushes or moves `initiative/*` or
+   `main` (§9 Dispatch safety floor), and can be resumed with a
+   message. The spawn enforces what the agent can; the rest is the
+   brief's instruction. Per agent:
    - Claude Code: the Agent tool, in the background, not isolated
-     (the worktree exists); resume with `SendMessage`.
+     (the worktree exists); resume with `SendMessage`. Nothing is
+     enforced.
    - codex: confined by its sandbox, so the boundary is enforced, not
      asked for. With `G` the absolute `git -C <worktree> rev-parse
      --git-common-dir`, start it as below. Resume from inside the
@@ -128,10 +133,14 @@ main ─────────────────────────
      config. It can still write `/tmp` and other `feat/*` branches
      (git's ref locks stop a narrower grant), so those stay an
      instruction.
-     With no network it also cannot run paid tests: the ringmaster
-     runs those, or spawns that stream on another host.
-   - kiro: `kiro-cli chat --no-interactive` started in the worktree;
-     resume with `--resume-id <session-id>`.
+   - kiro: `kiro-cli chat --no-interactive "<brief>"` started in the
+     worktree; resume with `--resume-id <session-id>`. Nothing is
+     enforced. With no prompt to ask, approve tools up front:
+     `--trust-all-tools`, or `--trust-tools=<names>`.
+
+   A stream with paid tests needs network. Where its agent's
+   confinement denies network (codex above), the ringmaster runs
+   those tests, or spawns that stream on an agent that allows them.
 
    Its brief, per §9's packet contract:
    - Receives:

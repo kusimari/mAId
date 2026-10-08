@@ -170,12 +170,12 @@ explicitly at the merge:
   order, the verification dump, links to branches about to be
   deleted.
 
-**Never leave the message to the host's default.** A forge that
+**Never leave the message to the forge's default.** A forge that
 concatenates commit messages writes the transcript onto `main`
 permanently, and the merge still looks like it worked. Pass the
 message every time — there is no merge this step performs without one.
 
-A configurable host default is worth pointing at the review body, as a
+A configurable forge default is worth pointing at the review body, as a
 floor for the merges made *outside* this workflow: from the forge's own
 UI, or by someone not running kdevkit. That setting is repo-wide and
 changes other people's merges, so **surface it and get agreement

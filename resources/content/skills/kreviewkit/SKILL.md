@@ -132,8 +132,10 @@ information; a missing input that looks like an oversight is not.
   shows. Whole files, callers, callees, sibling modules, existing
   tests, git history and blame are all in scope.
   `src: google.github.io/eng-practices/review/reviewer/looking-for.html`
-- **Prefer a read-only toolset** where the host can restrict tools.
-  Where it can't, this contract still binds — it is a contract, not a
+- **Prefer a read-only toolset** where the agent running you can
+  restrict tools (Claude Code: `--tools Read`; codex: `--sandbox
+  read-only`; kiro: not known yet). Where it can't, this contract
+  still binds — it is a contract, not a
   sandbox artefact.
 - **No write authority beyond the briefing.** No edits to files that
   exist on the branch, no commits, pushes, staging, or PR mutation, no

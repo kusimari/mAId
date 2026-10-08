@@ -2,8 +2,8 @@
 
 This file carries the interview scripts and file templates that
 fire only at **feature genesis** (start a fresh feature),
-**backlog capture**, or **initiative genesis**. Loaded by main
-on demand via inline-Read at the moment of need; not always-on.
+**backlog capture**, or **initiative genesis**. Main reads it into
+this session at the moment of need; not always-on.
 
 ## Four short interviews
 

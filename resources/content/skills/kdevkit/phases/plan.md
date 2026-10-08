@@ -40,10 +40,10 @@ design converges; the dev loop (§7) then has a verifiable
 target, not a sketch to validate after the fact. Skip topics
 existing project context already answers.
 
-**Inline-Read `interviews.md`** for the interview-by-interview
-prompt shape and the feature file template body. After the
-four interviews, write the feature spec, then return here for
-the Plan-commit rule.
+**Read `interviews.md` into this session** for the
+interview-by-interview prompt shape and the feature file
+template body. After the four interviews, write the feature spec,
+then return here for the Plan-commit rule.
 
 **Answer the interviews yourself from the grounding, and write
 the file.** The interviews are *your* checklist for what the spec
@@ -199,10 +199,10 @@ skipped, which is why they are steps rather than advice.
 
 **1 · Consolidate the spec.** Planning converged, so the spec must
 stop being the record of *how* and become the contract for *what*.
-**Inline-Read `interviews.md`** for the checklist — what to strip,
-what to keep as a decision, what to relocate rather than delete.
-Skip only if the spec carries no alternatives, Q&A, or revision
-narration; there is then nothing to strip.
+**Read `interviews.md` into this session** for the checklist —
+what to strip, what to keep as a decision, what to relocate
+rather than delete. Skip only if the spec carries no alternatives,
+Q&A, or revision narration; there is then nothing to strip.
 
 **2 · Cross the boundary** (§ The handoff record). Planning is
 finished when the spec is consolidated and committed and its handoff

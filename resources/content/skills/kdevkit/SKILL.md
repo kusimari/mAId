@@ -57,10 +57,12 @@ and closure's eight steps — over-stuffed context measurably
 degrades performance, and the rule that slips first on a long
 session is the one about order.
 
-Read a module by inline-Read, at the moment its trigger fires — the
-same way `setup.md` and `interviews.md` already load. Not reading
-the module for your stage means running that stage from memory:
-don't.
+**Read a module into this session** at the moment its trigger
+fires: load the file into your own context, not a dispatched
+agent's. Every "read `<file>` into this session" in this skill
+means this. Claude Code: the Read tool. codex: a shell read
+(`sed -n`). kiro: `fs_read`. Not reading the module for your stage
+means running that stage from memory: don't.
 
 | Read this module | When |
 |---|---|
@@ -73,8 +75,9 @@ don't.
 | `interviews.md` | Feature / backlog / initiative genesis — interview prompts and file templates. |
 
 **Read the senior-developer judgement with every phase module.** At
-session start and each time you read a phase module, also inline-Read
-the judge's `SKILL.md`, before the next step. The judge is `kyodakit` by
+session start and each time you read a phase module, also read
+the judge's `SKILL.md` into this session, before the next step.
+The judge is `kyodakit` by
 default. A project overrides it with `judgement:` in `project.md`: another
 skill's name, `path:<file>` for a judge `SKILL.md` in the repo, or `off`
 (see `setup.md`). If the judge is not installed, say so once and carry
@@ -143,16 +146,17 @@ If missing/empty and feature work begins, ask one question:
 > _"Briefly describe this project — purpose, tech stack, and any
 > hard constraints."_
 
-Then **inline-Read `setup.md`** and follow its template +
-first-time detection prose to write `$SPEC_ROOT/project.md`.
+Then **read `setup.md` into this session** and follow its
+template + first-time detection prose to write
+`$SPEC_ROOT/project.md`.
 
-### Structural verify (verify-as-subagent)
+### Structural verify (dispatched)
 
 A small structural check runs at session start to confirm
 `project.md` matches the kdevkit schema without pulling the
 schema narrative into main's context. **Main runs three
 lightweight checks inline**; on any drift signal it dispatches
-the subagent for full canonical-schema validation against
+the verify agent for full canonical-schema validation against
 `setup.md`.
 
 **These two schema checks are two copies of the same rule** — a
@@ -173,26 +177,31 @@ Main's inline checks:
 3. The `code_review:` and `review_brief:` blocks (if present)
    parse as YAML with no unknown keys.
 
-Clean → no further action. Any drift → dispatch a **fresh-
-context agent call** (the same primitive the Code Review Gate
-uses), per §9's dispatch packet contract:
+Clean → no further action. Any drift → dispatch a **fresh-context
+agent**: a separate agent that starts with only its packet, none
+of this session's history. The Code Review Gate and the Review
+Briefing dispatch the same way. Per §9's dispatch packet contract:
 
 ```
 Receives:  the path to project.md and the path to setup.md.
-Excluded:  everything else — the subagent's whole job is the
+Excluded:  everything else — the verify agent's whole job is the
            schema, not the project's content.
 Returns:   { "status": "clean" | "drift",
              "findings": [ { "section", "issue", "suggestion" }, ... ] }
 ```
 
-Main applies any accepted findings via Edit. The setup
-narrative never enters main's context — only the structured
+Main applies any accepted findings to `project.md` itself. The
+setup narrative never enters main's context — only the structured
 verdict.
 
-How the host translates "fresh-context agent call" is
-host-specific (Claude Code's Agent tool, Kiro's equivalent,
-Codex's CLI). Where unavailable, fall back to inline-Read of
-`setup.md` and run the validation in main.
+How, per agent:
+- Claude Code: the Agent tool.
+- codex: a separate `codex exec "<packet>"` run.
+- kiro: a separate `kiro-cli chat --no-interactive "<packet>"` run;
+  an in-session dispatch is not known yet.
+
+Where none is available, read `setup.md` into this session and run
+the validation here.
 
 ### Session-start read order
 
@@ -284,8 +293,8 @@ interviews in §6 only run when no spec is found.
 When the user describes wanted-but-not-now work — an idea, a
 frustration, a "we should eventually" — write it to
 `$SPEC_ROOT/backlog/<item-name>.md` using the **backlog item
-template** (inline-Read `interviews.md` for the template body
-if not already in context). One file per item; never
+template** (read `interviews.md` into this session for the
+template body if not already in context). One file per item; never
 consolidate into a single `FIXES.md` or `TODO.md`. Closure-time
 cleanup of resolved items lives in §8 step 3.
 
@@ -312,7 +321,7 @@ One-time setup decisions on entry:
   — firing on entry (regardless of fresh / continue / pick-up
   mode) keeps the prompt out of the dev loop, even though the
   §7 Code Review Gate is the only gate that reads the config.
-  **Inline-Read `setup.md`** for the prompt's exact wording,
+  **Read `setup.md` into this session** for the prompt's wording,
   the `[agent]:` heads-up note, and the sticky-write rules.
   After the user replies, sticky-write the answer to
   `project.md`'s `## Agent Development > kdevkit` block.
@@ -549,7 +558,7 @@ phase-specific content section + any per-gate exception.
 - **Title.** `<type>(scope): subject` — Conventional Commits
   shape (above). The phase prefix (`plan(...)` / dev type /
   rewritten `feat(...)` at close) carries the phase signal
-  across hosts.
+  across forges.
 - **Body.** **Why** (motivation, not file changes — the diff
   is authoritative for *what*) + *phase-specific content* +
   **Reading order** (grouped by phase: *Read for intent:* … ;
@@ -576,7 +585,7 @@ submission; commit hygiene (below) on every commit.
 
 Public projects must not leak internal names. Public-mode
 signal: a `project.md` Hard-constraints bullet declaring the
-repo public, or `git remote` on an obviously public host while
+repo public, or `git remote` on an obviously public forge while
 `project.md` is silent (treat as public until told otherwise).
 
 When public, NEVER write internal names into skills / agents /
@@ -623,17 +632,18 @@ optionality, and the forward-only rule.
 ### Dispatch safety floor
 
 Binding whenever this skill hands work to another agent, tool, or
-skill — a reviewer, a briefing generator, a verify subagent. The
+skill — a reviewer, a briefing generator, a verify agent. The
 dispatched thing's own contract governs *what it reads*, never
 *what it may do*. One exception: a ringmaster's feature session
 (§10) is lifted from the first and last bullets below, inside its
-own worktree only. It may edit, stage, commit and run the project's
-own commands (builds, gates, tests, and paid tests if its brief
-allows them) there. It still never pushes or merges, and the middle
-two bullets bind it fully. Where the host can enforce part of this
-(codex's sandbox: no push, no merge into the initiative or `main`,
-§10), the spawn enforces it; the rest is this instruction (backlog
-`mechanize-session-confinement`).
+own worktree only. It may edit, stage, commit and run the
+project's own commands (builds, gates, tests, and paid tests if its
+brief allows them) there. It still never pushes or merges, and the
+middle two bullets bind it fully. Where the agent can enforce part
+of this, the spawn enforces it; the rest is this instruction
+(backlog `mechanize-session-confinement`). codex: its sandbox
+(§10) blocks push and moving `initiative/*` or `main`. Claude Code,
+kiro: nothing is enforced.
 
 - **No write authority.** No edits, commits, pushes, staging, or
   PR/branch mutation beyond the artefact it was asked for.
@@ -655,7 +665,7 @@ dispatched tool's authority by being read at the wrong moment.
 The safety floor above governs what a dispatched agent may **do**;
 this governs what it **receives** and **returns**. Every dispatch
 to a fresh-context agent — the Code Review Gate's lenses, the
-Review Briefing generator, the §2 structural verify subagent —
+Review Briefing generator, the §2 structural verify agent —
 states its packet in this shape, so the contract is learned once:
 
 ```
@@ -664,10 +674,10 @@ Excluded:  <enumerated exclusions, with why>
 Returns:   <shape>
 ```
 
-**`Returns` is a file, not the dispatched agent's reply.** A host's
-agent-dispatch primitive returns free-form text, and the parent
-"may summarize it in its own response" — a prose contract is
-therefore unenforceable. Findings, verdicts, and structured output
+**`Returns` is a file, not the dispatched agent's reply.** A
+dispatched agent's reply is free-form text that the parent may
+paraphrase before acting on it, so a prose contract can't be
+enforced. Findings, verdicts, and structured output
 go to a file the dispatching phase reads; only a defect narrative
 too irreducibly prose to structure (a briefing) rides the reply.
 

@@ -3,8 +3,9 @@
 This file carries the schemas, templates, and one-time setup
 prompts that fire only on **project genesis** or when an
 on-disk `project.md` is found to have drifted from the kdevkit
-schema. Loaded by main on demand (inline-Read for create flows,
-fresh-context subagent for verify) — never always-on.
+schema. Loaded by main on demand (read into this session for
+create flows, a dispatched verify agent for verify) — never
+always-on.
 
 ## `project.md` template
 
@@ -93,13 +94,18 @@ organised by skill. Keys under `kdevkit`:
 
   - **`reviewer`** — the legacy single-lens shape. Prefix-tagged
     `<ref>` grammar so the orchestrator knows what to dispatch:
-    `host-native` (default) — the host coding agent's built-in
-    review; `skill:<name>` — a skill in the registry (bare strings
-    without a prefix default to `skill:`); `mcp:<server>.<tool>` —
-    an MCP server's tool; `agent:<name>` — a named project-
-    configured agent. Present with no `lenses:` → the gate runs
-    this one reviewer as a single lens, exactly as before the
-    panel existed.
+    `host-native` (default) — the running agent's own built-in code
+    review (per agent, below); `skill:<name>` — a skill in the
+    registry (bare strings without a prefix default to `skill:`);
+    `mcp:<server>.<tool>` — an MCP server's tool; `agent:<name>` — a
+    named project-configured agent. Present with no `lenses:` → the
+    gate runs this one reviewer as a single lens, exactly as before
+    the panel existed.
+
+    `host-native`, per agent. Claude Code: the `/code-review`
+    skill. codex: `codex exec review --base <base>`. kiro: not
+    known yet. Where the agent has none, run the shipped
+    `correctness` lens as a fresh-context dispatch (SKILL.md §2).
   - **`lenses`** — the panel shape. A list of `{ id, focus?,
     enabled? }`. `id` is required. Shipped ids (`correctness`,
     `security`, `comment-hygiene`) need no `focus` — the reviewer
@@ -188,7 +194,7 @@ entry (regardless of fresh / continue / pick-up mode) keeps
 the prompt out of the dev loop:
 
 > _"This project doesn't declare a code reviewer. Use the
-> host's native review (default), or point to a project-specific
+> agent's built-in review (default), or point to a project-specific
 > one (`skill:<name>` / `mcp:<server>.<tool>` / `agent:<name>`)?
 > Reply 'default', paste a reference, or 'skip'."_
 
@@ -218,9 +224,9 @@ by editing the block.
 The same prompt fires from the first-time `project.md` flow
 above as the appended one-liner.
 
-## Verify schema (for the verify-as-subagent primitive)
+## Verify schema (for the dispatched verify agent)
 
-The verify subagent (dispatched by SKILL.md §2 when drift is
+The verify agent (dispatched by SKILL.md §2 when drift is
 detected) validates `project.md` against the canonical schema
 above. Returns:
 
@@ -237,7 +243,7 @@ above. Returns:
 }
 ```
 
-Validation rules the subagent applies, in order:
+Validation rules the verify agent applies, in order:
 
 1. **Six required headings present**, in fixed order: Mission,
    Architecture, Tech Stack, Layout, Testing, Deployment. Out
@@ -253,12 +259,13 @@ Validation rules the subagent applies, in order:
    means the gate is off; no setup prompt fires for it).
 
 `findings` are free-form (one issue + one suggestion per row).
-Main applies accepted findings via Edit against the live
-`project.md`. The subagent does not return diff hunks — it
+Main applies accepted findings to the live `project.md` itself.
+The verify agent does not return diff hunks — it
 doesn't see the live file post-context, so the safest contract
 is "describe the issue and the remedy"; main applies the edit
 against the actual file.
 
-If the host doesn't support fresh-context subagent dispatch,
-main inline-Reads this file and runs the validation itself.
+If the agent can't dispatch a fresh-context agent (SKILL.md §2),
+main reads this file into this session and runs the validation
+itself.
 Behavior degrades to today's footprint; no breakage.
