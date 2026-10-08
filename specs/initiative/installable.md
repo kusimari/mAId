@@ -49,7 +49,8 @@ branch, before it goes to `main`:
    claude, kiro and codex names mAId's skills when asked what skills
    it has.
 3. The browser server, started exactly as the agents' config starts
-   it, with an empty environment, answers an MCP `initialize`.
+   it, with no environment but `HOME` (where the user's allowlist
+   lives), answers an MCP `initialize`.
 4. A search of every agent config mAId wrote, and of mAId's install,
    finds no checkout path.
 5. Install from a second clone with one visible skill change: the
@@ -103,3 +104,20 @@ branch, before it goes to `main`:
   moving it with the others rather than leaving a link into a checkout
   that may vanish · cost if wrong: agy breaks unnoticed; one registry
   row to revert.
+- Ruling: Macro test step 3 runs the browser server with only `HOME`
+  set, not an empty environment · why: the allowlist is user data under
+  `HOME`; the intent (nothing from PATH, nothing fetched) is unchanged
+  · cost if wrong: one wording; the user can tighten it.
+- Ruling: stream 1 returns once to narrow `just install --force` to
+  links mAId wrote (into a checkout's `resources/content/skills` or the
+  profile's `share/maid/skills`) · why: the Constraints forbid touching
+  agent config mAId did not write · cost if wrong: a little code.
+- Ruling: stream 1 spends one paid single-fixture isolated smoke run ·
+  why: smoke is the only stage that reads skills through the new
+  store-backed link; within budget · cost if wrong: one run.
+- Ruling: stream 3 decides whether rollback keeps at least one previous
+  generation past the 30-day wipe · why: rollback is its job · cost if
+  wrong: none now.
+- Ruling: the stale pre-initiative `origin/feat/setup-as-installable`
+  is left alone until close · why: under a ringmaster, feature
+  branches are not pushed; close removes it · cost if wrong: none.
