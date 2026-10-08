@@ -59,10 +59,15 @@ the work with the agent's own tools, not a wrapper.
 - **"start `<feature>` for initiative `<name>`"** (guided): add a
   Streams row if there is none, make the feature's worktree cut from
   `initiative/<name>`, and run the normal feature flow there with the
-  user as the user. Its PR targets `initiative/<name>`, and closure
-  squash-merges into it with the message §8.6 asks for.
+  user as the user. Its PR targets `initiative/<name>` (push that
+  branch first if the remote lacks it; the user chose guided mode, so
+  this push is theirs), and closure squash-merges into it with the
+  message §8.6 asks for.
 - **"run initiative `<name>`"**: become its ringmaster (below). Also
   the way to resume one: everything needed is on disk.
+- **"close initiative `<name>`"** (either mode): run Finish (step 6
+  below) once every Streams row is merged. A ringmaster reaches it
+  on its own.
 - **"show initiatives"**: list the `initiative/*` branches, local and
   remote, with each one's Goal line. Read-only.
 
@@ -102,8 +107,9 @@ main ─────────────────────────
    Code: the Agent tool, not isolated, since the worktree exists;
    other hosts: their headless CLI started in the worktree). Its
    brief, per §9's packet contract:
-   - Receives: the worktree path; the initiative spec path and its
-     stream row; "run kdevkit's feature flow for `<feature>`; I am
+   - Receives: the worktree path (and that the session's shell may
+     not keep a `cd` between commands, so every command names it);
+     the initiative spec path and its stream row; "run kdevkit's feature flow for `<feature>`; I am
      your user; stop at each gate and reply with what the gate's
      PR body would carry"; any paid-test allowance from Constraints.
    - Excluded: this session's history and the other streams' work.
@@ -123,11 +129,15 @@ main ─────────────────────────
 6. **Finish** (both modes). When every stream has merged:
    - Run the Macro test on the initiative branch and record the
      result in the spec.
-   - Dispatch the review briefing (§7, `phases/review.md`) at
-     initiative level. It receives the initiative spec as the spec,
-     each feature spec, the diff `main...initiative/<name>`, and the
-     Macro test result. Route its defects back as streams' fixes,
-     as for any feature. Its briefing is the initiative PR's body.
+   - Write the initiative PR's body. With `review_brief` enabled,
+     dispatch the review briefing (§7, `phases/review.md`) at
+     initiative level; otherwise write the §9 body covering the same
+     ground (requirements as understood, design decisions and their
+     effect on the existing design, the changes in review order, what
+     the tests say). The briefing receives the initiative spec as
+     the spec, each feature spec, the diff `main...initiative/<name>`,
+     and the Macro test result. Route its defects back as streams' fixes,
+     as for any feature.
    - Commit `close(<name>):` (Streams all merged; the spec stays as
      the record), and remove the initiative's feature worktrees and
      branches.
@@ -138,7 +148,8 @@ main ─────────────────────────
 ### The record
 
 Nothing new: git log, the initiative spec, and each feature spec's
-Handoff (§5). The ringmaster writes only:
+Handoff (§5). Whoever runs the streams (the ringmaster, or the user
+when guiding) writes only:
 
 - **Streams**: one row per feature, `planned → running → merged`
   (or `blocked: <why>`).

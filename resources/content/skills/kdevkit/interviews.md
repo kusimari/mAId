@@ -303,14 +303,14 @@ runs the streams (the user when guided, else the ringmaster).
 
 ## Streams
 
-<!-- Ringmaster-owned. One row per feature. -->
+<!-- Owned by whoever runs the streams. One row per feature. -->
 
 | # | Feature | Ships | Needs | Status |
 |---|---|---|---|---|
 
 ## Decision Log
 
-<!-- Ringmaster rulings, newest last:
+<!-- Calls made for the initiative, newest last:
      - Ruling: <what> · why: <why> · cost if wrong: <cost> -->
 ```
 

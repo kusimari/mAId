@@ -8,26 +8,29 @@
 
 ## Feature Brief
 
-An initiative runs without the user holding its hand. The user writes
-what they want once (Goal, Experience, Macro test, Constraints) and
-approves it. The session they run it from becomes the ringmaster: it
-splits the work into features, runs each in its own worktree session,
-plays the user at every feature gate, merges finished features into
-an initiative branch, and stops only for outward actions and real
-questions. The initiative reaches `main` as one merge commit with one
-commit per feature under it.
+The user picks how to work: a single feature, an initiative they guide
+feature by feature, or an initiative a ringmaster runs for them. For
+an initiative the user writes what they want once (Goal, Experience,
+Macro test, Constraints). Guided, they start and review each feature
+(each with a PR into the initiative branch). Run by a ringmaster, the
+session they start it from splits the work into features, runs each in
+its own worktree session, plays the user at every feature gate, merges
+finished features into the initiative branch, and stops only for
+outward actions and real questions. Either way the initiative reaches
+`main` as one merge commit with one commit per feature under it, and a
+review briefing written for the whole.
 
 ## Handoff
 
-- **Stage:** dev
-- **Ready for:** review, and proof by a first real run
-  (`installable`)
+- **Stage:** review
+- **Ready for:** the user's review on the PR, and the first ringmaster
+  run (`installable`) as its proof
 - **Carry forward:** the pre-install skill stage carries only
   `SKILL.md`, so the module's behaviour is proven by running an
   initiative, not by the playback fixture
-- **Deliberately left:** the multi-repo guidance and the detailed
-  cross-stream rebase steps from the old module (folded into one line);
-  hosts without worktrees
+- **Deliberately left:** a guided run; the multi-repo guidance and the
+  detailed cross-stream rebase steps from the old module; hosts
+  without worktrees
 
 ### Crossings
 
@@ -36,6 +39,7 @@ commit per feature under it.
 - planning → dev · EXCEPTION · skipping: the Planning Review Gate ·
   why: the user set the design in conversation and asked for it built
   in this session
+- dev → review
 
 ## Requirements
 
@@ -71,12 +75,22 @@ commit per feature under it.
   states the resident rules (whose cues, gates as stops, git limits,
   who merges where). Dry-run checked; paid run is the user's.
 - Acceptance: the `installable` initiative run end to end from this
-  session.
+  session, in ringmaster mode. It proves the ringmaster loop, the
+  initiative briefing, and worktrees kept until close.
+- Not proven: guided mode and the guided-to-ringmaster switch (no
+  guided run yet); "no wrapper" holds by construction (the verbs are
+  prose the session acts on, with no script added).
 
 ## Design
 
-- `tiers/initiative.md` rewritten around the ringmaster: split of
-  work, verbs, git shape, the loop, the record, the stop list.
+- `tiers/initiative.md` rewritten: the three modes and the switch
+  from guided to ringmaster, the verbs (including the guided
+  "start `<feature>` for initiative" and "close initiative"), the git
+  shape, the ringmaster loop, Finish for both modes (Macro test,
+  initiative-level briefing or the §9 body when `review_brief` is off,
+  `close(<name>)`, worktree teardown), the record, the stop list.
+- `phases/close.md` 3.5: a guided stream closes into the initiative
+  branch itself; a ringmaster stream stops after its close commit.
 - `interviews.md`: the initiative template (Goal / Experience / Macro
   test / Constraints / Streams / Decision Log) and its four
   interviews; a stream's spec takes `initiative/<name>` as base.
@@ -142,8 +156,8 @@ commit per feature under it.
   before the merge, so `main` never carries it; considered putting it
   on `main`, which means a commit to `main` per initiative start.
 - A closed initiative's file with no index line is not drift · it
-  follows from keeping the spec as the record; the verify rule in
-  `SKILL.md` §2 and `setup.md` both say so.
+  follows from keeping the spec as the record. Replaced: the index and
+  both verify rules are gone (see the index ruling below).
 - The initiative's merge commit message is authored and passed
   explicitly: `feat(<name>): <Goal in one line>`, body the Goal and
   one line per feature · §8.6's rule, applied to the one merge it did

@@ -37,7 +37,7 @@ Four surfaces:
    cross-feature.
 2. **Initiative specs** — one file per multi-feature initiative
    under `initiative/<name>.md`. Goal, Experience and Macro test
-   (the user's), Streams and rulings (the ringmaster's).
+   (the user's), Streams and rulings (whoever runs the streams).
 3. **Feature specs** — one file per feature. Requirements,
    design, test strategy, implementation plan, session +
    decision logs.
@@ -248,8 +248,8 @@ to what the agent writes into `project.md` and `AGENTS.md`.
 Entry cues: `"let's start / continue / pick up <feature>"`, or a
 branch like `feat/user-auth`. Initiative-tier cues:
 `"start initiative <name>"`, `"start <feature> for initiative
-<name>"`, `"run initiative <name>"`, `"show initiatives"` — see §10
-for what each does.
+<name>"`, `"run initiative <name>"`, `"close initiative <name>"`,
+`"show initiatives"` — see §10 for what each does.
 
 Resolve the entry mode for feature work:
 
@@ -486,10 +486,10 @@ return work to planning without passing through dev — because the criterion
 is which layer the fault entered, not how far back that is.
 ### Initiative-stream auto-link
 
-When this feature is a stream of an active initiative, §6
-Planning auto-populates the `Part of initiative: [[<name>]]`
-line in the feature spec — see §6 (and §10 for what counts as
-active and how matching resolves).
+When this feature is a stream of an initiative (the entry cue, a
+ringmaster's brief, or the initiative's Streams table names it), §6
+Planning auto-populates the `Part of initiative: [[<name>]]` line in
+the feature spec — see §6 and §10.
 
 ## 9 · Cross-cutting rules (always-on)
 
