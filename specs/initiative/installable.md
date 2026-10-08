@@ -19,8 +19,8 @@ worktree can install it, and the latest install wins.
   kiro and codex. A new session in each finds mAId's skills, and
   where Chrome is present, the browser tools.
 - claude and codex receive mAId through their own plugin commands:
-  mAId shows up in their plugin list and can be disabled there. kiro
-  which has no such command, get the same content from
+  mAId shows up in their plugin list and can be disabled there. kiro,
+  which has no such command, gets the same content from
   mAId's own user-space install.
 - Skills that hand work to each other by name (kdevkit to kyodakit and
   kreviewkit) still find each other.
