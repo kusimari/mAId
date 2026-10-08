@@ -107,7 +107,7 @@ pub fn cmd_install(
         ));
     }
     cmd_validate(content_dir)?;
-    outcome(target.install(agent, dry_run, force)?, dry_run)
+    outcome(target.install(agent, dry_run, force)?, dry_run, false)
 }
 
 pub fn cmd_uninstall(
@@ -116,7 +116,7 @@ pub fn cmd_uninstall(
     force: bool,
     agent: Option<Agent>,
 ) -> Result<u8> {
-    outcome(target.uninstall(agent, dry_run, force)?, dry_run)
+    outcome(target.uninstall(agent, dry_run, force)?, dry_run, true)
 }
 
 pub fn cmd_status(target: &impl Deploy, agent: Option<Agent>) -> Result<u8> {
@@ -128,43 +128,72 @@ pub fn cmd_status(target: &impl Deploy, agent: Option<Agent>) -> Result<u8> {
 
 /// Print what happened at each location, and exit non-zero when any was
 /// left alone because acting would have destroyed something.
-fn outcome(reports: Vec<crate::deploy::Report>, dry_run: bool) -> Result<u8> {
-    use crate::deploy::State;
-    let tag = if dry_run { "(dry-run) " } else { "" };
+fn outcome(reports: Vec<crate::deploy::Report>, dry_run: bool, removing: bool) -> Result<u8> {
     let mut skipped = 0usize;
     for report in &reports {
-        let at = &report.label;
-        // Whether force applied is now decided by the shim (Report::acted),
-        // not re-derived here — that re-derivation is exactly how "install
-        // --force over a real file" once reported a deletion that never
-        // happened: create() correctly refuses Occupied even with force,
-        // but a (state, force) guess here assumed force always acted.
-        let line = match (&report.state, report.acted) {
-            (State::Ok(_) | State::Missing, _) => format!("{tag}done          {at}"),
-            (State::SourceMissing, _) => format!("{tag}skip          {at} (source missing)"),
-            (State::Wrong { found, .. }, true) => {
-                format!("{tag}replaced      {at} (was {})", found.display())
-            }
-            (State::Wrong { found, .. }, false) => {
-                skipped += 1;
-                format!(
-                    "{tag}skip          {at} (points at {}; --force to replace)",
-                    found.display()
-                )
-            }
-            (State::Occupied("dir"), _) => {
-                skipped += 1;
-                format!("{tag}skip          {at} (real dir; not ours — refusing)")
-            }
-            (State::Occupied(what), true) => format!("{tag}removed       {at} (was {what})"),
-            (State::Occupied(what), false) => {
-                skipped += 1;
-                format!("{tag}skip          {at} (existing {what}; --force to replace)")
-            }
-        };
+        let (line, skip) = outcome_line(report, dry_run, removing);
+        skipped += usize::from(skip);
         println!("{line}");
     }
     Ok(if skipped > 0 { 1 } else { 0 })
+}
+
+/// One location's line, and whether it was left alone in a way that fails
+/// the run.
+fn outcome_line(report: &crate::deploy::Report, dry_run: bool, removing: bool) -> (String, bool) {
+    use crate::deploy::State;
+    let tag = if dry_run { "(dry-run) " } else { "" };
+    let mut skipped = 0usize;
+    let at = &report.label;
+    // Whether force applied is now decided by the shim (Report::acted),
+    // not re-derived here — that re-derivation is exactly how "install
+    // --force over a real file" once reported a deletion that never
+    // happened: create() correctly refuses Occupied even with force,
+    // but a (state, force) guess here assumed force always acted.
+    let line = match (&report.state, report.acted) {
+        (State::Ok(_) | State::Missing, _) => format!("{tag}done          {at}"),
+        (State::SourceMissing, _) => format!("{tag}skip          {at} (source missing)"),
+        (State::Wrong { found, .. }, true) => {
+            format!("{tag}replaced      {at} (was {})", found.display())
+        }
+        (State::Wrong { found, .. }, false) => {
+            skipped += 1;
+            format!(
+                "{tag}skip          {at} (points at {}; --force to replace)",
+                found.display()
+            )
+        }
+        (State::Occupied("dir"), _) => {
+            skipped += 1;
+            format!("{tag}skip          {at} (real dir; not ours — refusing)")
+        }
+        (State::Occupied(what), true) => format!("{tag}removed       {at} (was {what})"),
+        (State::Occupied(what), false) => {
+            skipped += 1;
+            format!("{tag}skip          {at} (existing {what}; --force to replace)")
+        }
+        (State::Legacy(found), _) => {
+            format!("{tag}removed       {at} (old link to {})", found.display())
+        }
+        (State::NoCli(cli), _) => format!("{tag}skip          {at} ({cli} not on PATH)"),
+        (State::Unreadable(why), _) => {
+            skipped += 1;
+            format!("{tag}skip          {at} (unreadable: {why})")
+        }
+        (State::Current(_) | State::Stale { .. } | State::Disabled { .. }, true) if removing => {
+            format!("{tag}removed       {at}")
+        }
+        (State::Stale { found, .. }, true) => format!("{tag}updated       {at} (was {found})"),
+        (State::Disabled { found, .. }, true) => {
+            format!("{tag}updated       {at} (was {found}; still disabled)")
+        }
+        (State::Disabled { found, want }, false) if found != want => {
+            format!("{tag}skip          {at} (disabled, not updated; enable it, then just install)")
+        }
+        (State::Disabled { .. }, false) => format!("{tag}done          {at} (disabled)"),
+        (State::Current(_) | State::Stale { .. }, _) => format!("{tag}done          {at}"),
+    };
+    (line, skipped > 0)
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -672,6 +701,39 @@ mod tests {
             fs::create_dir_all(parent).unwrap();
         }
         fs::write(p, s).unwrap();
+    }
+
+    // ── install / uninstall lines ───────────────────────────────
+
+    /// The plugin lines a user reads, and which ones fail the run.
+    #[test]
+    fn plugin_outcome_lines_say_what_happened() {
+        use crate::deploy::{Report, State};
+        let line = |state: State, acted: bool, removing: bool| {
+            let r = Report {
+                label: "codex plugin maid@maid".into(),
+                state,
+                acted,
+            };
+            outcome_line(&r, false, removing)
+        };
+        let dis = |found: &str| State::Disabled {
+            found: found.into(),
+            want: "b".into(),
+        };
+        for (got, want, fails) in [
+            (line(dis("a"), true, false), "updated       codex plugin maid@maid (was a; still disabled)", false),
+            (line(dis("a"), false, false), "skip          codex plugin maid@maid (disabled, not updated; enable it, then just install)", false),
+            (line(dis("b"), false, false), "done          codex plugin maid@maid (disabled)", false),
+            (line(dis("a"), true, true), "removed       codex plugin maid@maid", false),
+            (line(State::Stale { found: "a".into(), want: "b".into() }, true, false), "updated       codex plugin maid@maid (was a)", false),
+            (line(State::Stale { found: "a".into(), want: "b".into() }, true, true), "removed       codex plugin maid@maid", false),
+            (line(State::NoCli("codex"), false, false), "skip          codex plugin maid@maid (codex not on PATH)", false),
+            (line(State::Unreadable("refused".into()), false, false), "skip          codex plugin maid@maid (unreadable: refused)", true),
+            (line(State::Legacy("/p/share/maid/skills".into()), true, false), "removed       codex plugin maid@maid (old link to /p/share/maid/skills)", false),
+        ] {
+            assert_eq!(got, (want.to_string(), fails));
+        }
     }
 
     // ── content checks ──────────────────────────────────────────

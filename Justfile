@@ -13,9 +13,10 @@ mod kaimux
 # profile later. Kiro's browser MCP goes into a named sub-agent only.
 
 # The latest install takes over links an older mAId install left
-# (including checkout links from before the profile). Any other symlink,
-# file or dir at a managed path is left alone and reported, the rest
-# still installs, and the run exits non-zero.
+# (including checkout links from before the profile) and updates the
+# claude/codex plugin. Any other symlink, file or dir at a managed path
+# is left alone and reported, the rest still installs, and the run exits
+# non-zero.
 # Build this checkout into the mAId profile and point the agents at it.
 install agent="" kiro_sub="":
     #!/usr/bin/env bash
@@ -26,13 +27,13 @@ install agent="" kiro_sub="":
     just resources::install-browser-mcp "{{ agent }}" "{{ kiro_sub }}" || rc=1
     exit $rc
 
-# Remove the links, the MCP registration, and (for all agents) the profile.
+# Remove the plugin, the links, the MCP registration, and (for all agents) the profile.
 uninstall agent="" kiro_sub="":
     just resources::uninstall-skills "{{ agent }}"
     just resources::uninstall-browser-mcp "{{ agent }}" "{{ kiro_sub }}"
     {{ if agent == "" { "just resources::uninstall-profile" } else { "true" } }}
 
-# Report the profile generation, the links, and the MCP registration.
+# Report the profile generation, the plugins, the links, and the MCP registration.
 status agent="" kiro_sub="":
     @just resources::status-profile
     @just resources::status-skills "{{ agent }}"

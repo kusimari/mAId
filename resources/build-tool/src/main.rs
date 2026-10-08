@@ -15,7 +15,7 @@
 //! is all of them.
 
 use anyhow::Result;
-use build_tool::deploy::{NoDeploy, Symlinks};
+use build_tool::deploy::{Deployment, NoDeploy, Plugins, Symlinks};
 use build_tool::harness::{Selection, Stage};
 use build_tool::shared::{
     home_dir, profile_dir, repo_root, usage, validate_agent, validate_agents, UsageError,
@@ -126,17 +126,22 @@ fn main() -> ExitCode {
 /// how a `--agent` token resolves; everything else belongs to a stage.
 fn run(cli: Cli) -> Result<u8> {
     let root = repo_root()?;
-    // The one place the deployment mechanism is chosen. When an agent
-    // grows its own install command, a different `Deploy` impl goes here
-    // and no stage changes.
+    // The one place the deployment mechanisms are chosen: plugins where
+    // the agent has a plugin CLI, links elsewhere. No stage knows which.
     //
     // Lazy, because `check` must work with no $HOME at all — it carries
     // each skill inline, so resolving a home would reintroduce the
     // coupling that stage exists to avoid.
-    let deployment = || -> Result<Symlinks> {
-        Ok(Symlinks {
-            home: home_dir()?,
-            source: profile_dir()?,
+    let deployment = || -> Result<Deployment> {
+        Ok(Deployment {
+            links: Symlinks {
+                home: home_dir()?,
+                source: profile_dir()?,
+            },
+            plugins: Plugins {
+                home: home_dir()?,
+                profile: profile_dir()?,
+            },
         })
     };
     match cli.cmd {

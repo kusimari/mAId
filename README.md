@@ -2,8 +2,9 @@
 
 Tool-agnostic source of truth for agentic skills — compiled
 into whatever AI tool happens to be in use (Claude Code, Kiro,
-Codex, future tools). Skills are the only deployed artefact; each
-tool discovers them natively at its own skills path.
+Codex, future tools). claude and codex install them as a plugin
+with their own plugin commands; kiro discovers them at its own
+skills path.
 
 The repo has two halves:
 
@@ -61,9 +62,9 @@ coding-agent selector (`claude|kiro|codex`; omit for all three):
 
 ```
 just resources::install-profile            # validate content + build the checkout into the profile
-just resources::install-skills [agent]     # link the agents' skill dirs at the profile
-just resources::uninstall-skills [agent]   # remove install-managed symlinks
-just resources::status-skills [agent]      # report current symlink state
+just resources::install-skills [agent]     # install or update the claude/codex plugin; link kiro (and agy) at the profile
+just resources::uninstall-skills [agent]   # remove the plugin and the links
+just resources::status-skills [agent]      # report each plugin's version and each link
 just resources::check-skills [agent]      # pre-install: verify each skill from the checkout (costs API credits, gated)
 just resources::smoke-skills [agent]      # post-install: verify against the deployed tree (gated)
 just resources::verify-skills [agent]     # both stages
@@ -113,22 +114,33 @@ What it does:
    generation: the skills, plus the runtimes they need (the browser
    MCP server and its node) as nix closures. Nix reads tracked files
    only, so `git add` a new file before installing.
-3. Points each agent at the profile per the registry at the top of
-   [`resources/build-tool/src/shared.rs`](./resources/build-tool/src/shared.rs):
-   `~/.claude/skills`, `~/.kiro/steering/skills` and
-   `~/.gemini/config/skills` link at the profile's skills dir;
-   `~/.codex/skills` gets one link per skill, since codex owns that
-   directory. The browser MCP is registered with the profile's
-   launcher.
+3. Installs the skills into each agent
+   ([`resources/build-tool/src/shared.rs`](./resources/build-tool/src/shared.rs)
+   lists which way):
+   - claude and codex get a plugin, `maid@maid`, from a marketplace
+     the profile carries, through `~/.local/state/maid/marketplace`
+     (a directory of links into the profile). It shows in `claude
+     plugin list` / `codex plugin list` and can be disabled there; a
+     disabled plugin stays disabled. Its version is a hash of its
+     content, so an install with changed skills updates it. Skills
+     are named `maid:<name>`; the bare name still finds them.
+   - `~/.kiro/steering/skills` and `~/.gemini/config/skills` link at
+     the profile's skills dir.
+   - Links an older mAId install left in `~/.claude/skills` or
+     `~/.codex/skills` are removed.
 
-Agents name the profile path, never a checkout or a store path, so
-any later install - from this checkout, another clone, or any
-worktree - takes over by adding a generation. The previous one stays
+   The browser MCP is registered with the profile's launcher, outside
+   the plugin.
+
+Agents name the profile path or the marketplace dir beside it, never a
+checkout or a store path, so any later install - from this checkout,
+another clone, or any worktree - takes over by adding a generation. The previous one stays
 until it is 30 days old (`nix profile rollback --profile
 ~/.local/state/maid/profile` returns to it). Set `MAID_PROFILE` to use
 another location.
 
-Skill edits in a checkout reach sessions at the next `just install`.
+Skill edits in a checkout reach sessions at the next `just install`
+(codex reads its own copy of the plugin, so only an install updates it).
 
 **Dependencies.** mAId does not care how these got onto PATH:
 
@@ -144,9 +156,9 @@ mAId install left (the latest install wins); any other symlink there is
 reported and kept, unless you pass `--force` to
 `just resources::install-skills`.
 
-mAId installs no global instruction file. Each supported tool
-discovers skills natively at its own skills path (verified: claude,
-kiro, codex all load skills with no extra preamble). `AGENTS.md` is a
+mAId installs no global instruction file. Each supported tool loads
+the skills natively, as a plugin or from its skills path, with no
+extra preamble. `AGENTS.md` is a
 repo-root convention (per-project), not a global per-tool preamble;
 loading a project's `AGENTS.md` / `project.md` is the `kdevkit`
 skill's work-time job.

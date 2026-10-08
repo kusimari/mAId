@@ -45,16 +45,60 @@
           runtimeInputs = [ chrome-devtools-mcp ];
           text = builtins.readFile ./resources/browser/launch;
         };
+
+        # The plugin's manifests. `@version@` is filled in by the build.
+        description = "mAId's skills";
+        manifest = name: value: pkgs.writeText name (builtins.toJSON value);
+        claudeMarketplace = manifest "claude-marketplace.json" {
+          name = "maid";
+          owner.name = "mAId";
+          inherit description;
+          plugins = [ { name = "maid"; source = "./plugins/maid"; inherit description; } ];
+        };
+        codexMarketplace = manifest "codex-marketplace.json" {
+          name = "maid";
+          plugins = [ {
+            name = "maid";
+            source = { source = "local"; path = "./plugins/maid"; };
+            policy.installation = "AVAILABLE";
+          } ];
+        };
+        claudePlugin = manifest "claude-plugin.json" {
+          name = "maid";
+          version = "@version@";
+          inherit description;
+          author.name = "mAId";
+        };
+        codexPlugin = manifest "codex-plugin.json" {
+          name = "maid";
+          version = "@version@";
+          inherit description;
+          skills = "./skills/";
+        };
       in
       {
         packages = {
           inherit chrome-devtools-mcp maid-browser-mcp;
 
-          # What `just install` puts in the mAId profile. The skills path
-          # is the one build-tool's REGISTRY links agents at.
+          # What `just install` puts in the mAId profile: the plugin
+          # marketplace claude and codex install from, and the skills
+          # path build-tool's REGISTRY links kiro and agy at (the
+          # plugin's own skills, so there is one copy).
           default = pkgs.runCommand "maid" { } ''
-            mkdir -p $out/share/maid $out/bin
-            cp -r ${./resources/content/skills} $out/share/maid/skills
+            m=$out/share/maid/marketplace
+            p=$m/plugins/maid
+            mkdir -p $m/.claude-plugin $m/.agents/plugins $p/.claude-plugin $p/.codex-plugin $out/bin
+            cp -r ${./resources/content/skills} $p/skills
+            cp ${claudeMarketplace} $m/.claude-plugin/marketplace.json
+            cp ${codexMarketplace} $m/.agents/plugins/marketplace.json
+            cp ${claudePlugin} $p/.claude-plugin/plugin.json
+            cp ${codexPlugin} $p/.codex-plugin/plugin.json
+            # Both agents cache a plugin by version, so it must change
+            # exactly when the plugin's content does.
+            hash=$(cd $p && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12)
+            chmod u+w $p/.claude-plugin/plugin.json $p/.codex-plugin/plugin.json
+            sed -i "s/@version@/1.0.0-$hash/" $p/.claude-plugin/plugin.json $p/.codex-plugin/plugin.json
+            ln -s marketplace/plugins/maid/skills $out/share/maid/skills
             ln -s ${maid-browser-mcp}/bin/maid-browser-mcp $out/bin/maid-browser-mcp
           '';
         };
