@@ -103,22 +103,31 @@ main ─────────────────────────
    needs before it can start. Commit `plan(<name>): streams`.
 3. **Spawn** every stream whose needs have merged:
    `git worktree add <worktrees>/<feature> -b feat/<feature>
-   initiative/<name>`, then a background feature session (Claude
-   Code: the Agent tool, not isolated, since the worktree exists;
-   other hosts: their headless CLI started in the worktree). Its
-   brief, per §9's packet contract:
-   - Receives: "load kdevkit and its judge the way this agent loads
-     skills" (by name, since an install path changes as the project
-     installs), plus the path of each one's `SKILL.md` as installed
-     right now, for a session whose agent cannot find them by name
-     (an agent may hold the skill list it started with); the worktree path (and that the session's
-     shell may not keep a `cd` between commands, so every command
-     names it);
-     the initiative spec path and its stream row; what merged
-     streams settled that this one builds on, and facts already
-     checked, each marked "verify what you build on"; "run kdevkit's feature flow for `<feature>`; I am
-     your user; stop at each gate and reply with what the gate's
-     PR body would carry"; any paid-test allowance from Constraints.
+   initiative/<name>`, then a feature session in that worktree that
+   this session can resume with a message. Each host has one:
+   - Claude Code: the Agent tool, in the background, not isolated
+     (the worktree exists); resume with `SendMessage`.
+   - codex: `codex exec -C <worktree> "<brief>"`; resume with
+     `codex exec resume <session-id> "<message>"`.
+   - kiro: `kiro-cli chat --no-interactive` started in the worktree;
+     resume with `--resume-id <session-id>`.
+
+   Its brief, per §9's packet contract:
+   - Receives:
+     - "load kdevkit and its judge the way this agent loads skills",
+       by name (an install path changes as the project installs),
+       plus each one's `SKILL.md` path as installed right now, for an
+       agent that cannot find them by name (it may hold the skill
+       list it started with);
+     - the worktree path, and that the shell may not keep a `cd`
+       between commands, so every command names it;
+     - the initiative spec path and the stream's row;
+     - what merged streams settled that this one builds on, and facts
+       already checked, each marked "verify what you build on";
+     - "run kdevkit's feature flow for `<feature>`; I am your user;
+       stop at each gate and reply with what the gate's PR body would
+       carry";
+     - any paid-test allowance from Constraints.
    - Excluded: this session's history, and other streams' work in
      flight (what merged streams settled is passed above).
    - Returns: at each stop, the gate it reached and the spec path;
@@ -129,8 +138,8 @@ main ─────────────────────────
    only the summary. Then resume the session with either the cue
    (`spec looks good`, `ship it`) or a return naming fault layer,
    issue, fix and done-when (§5). Ask what a senior reviewer would:
-   does this serve the Experience, is it the least that does, does
-   the test prove it.
+   does this serve the Experience, is it the least and the right
+   design, does the test prove it.
 5. **Merge.** On closure, the feature session makes its `close()`
    commit, stops, and replies with the squash message it proposes
    (§8.6). The ringmaster checks the message against the diff,
@@ -147,9 +156,12 @@ main ─────────────────────────
      effect on the existing design, the changes in review order, what
      the tests say). The briefing receives the initiative spec as
      the spec, each feature spec, the diff `main...initiative/<name>`,
-     and the Macro test result. Route its defects back as a fix
-     stream, as for any feature; a stream whose whole scope is a
-     list of defects gets the planning cue in its brief.
+     and the Macro test result. The briefing replays the calls the
+     ringmaster made for the user (the Decision Log's rulings, each
+     stream's closure answers) as items for them to ratify. Route its
+     defects back as a fix stream, as for any feature; a stream whose
+     whole scope is a list of defects gets the planning cue in its
+     brief.
    - Commit `close(<name>):` (Streams all merged; the spec stays as
      the record), and remove the initiative's feature worktrees and
      branches.
