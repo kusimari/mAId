@@ -28,7 +28,8 @@ review briefing written for the whole.
   Log
 - **Carry forward:** merge this PR before `initiative/installable`,
   which is stacked on it; if this PR is squash-merged, rebase that
-  branch with `git rebase --onto main feat/kdevkit-ringmaster`
+  branch with `git rebase --onto main <this branch's last commit>`
+  (the branch name is deleted at closure, so use the sha)
 - **Deliberately left:** a guided run, the guided-to-ringmaster switch
   and a resumed ringmaster (not yet exercised); the multi-repo guidance
   and the detailed cross-stream rebase steps from the old module; hosts
