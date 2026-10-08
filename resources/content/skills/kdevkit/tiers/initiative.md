@@ -144,8 +144,9 @@ main ─────────────────────────
      effect on the existing design, the changes in review order, what
      the tests say). The briefing receives the initiative spec as
      the spec, each feature spec, the diff `main...initiative/<name>`,
-     and the Macro test result. Route its defects back as streams' fixes,
-     as for any feature.
+     and the Macro test result. Route its defects back as a fix stream, as for any
+     feature; a stream whose whole scope is a list of defects gets
+     the planning cue in its brief.
    - Commit `close(<name>):` (Streams all merged; the spec stays as
      the record), and remove the initiative's feature worktrees and
      branches.
