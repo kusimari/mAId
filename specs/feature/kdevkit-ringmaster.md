@@ -74,6 +74,9 @@ commit per feature under it.
   feature session commit in its own worktree only; `close(<initiative>)`.
 - `phases/close.md` 3.5: a stream stops after its close commit; the
   ringmaster merges into the initiative branch.
+- `setup.md` and `SKILL.md` §2: the index line lives on the initiative
+  branch; a file with no index line is a closed record, not drift.
+- `specs/project.md`: the index comment and Layout line match.
 
 ## Implementation Plan
 
