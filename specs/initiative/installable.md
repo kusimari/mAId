@@ -84,8 +84,8 @@ branch, before it goes to `main`:
 
 | # | Feature | Ships | Needs | Status |
 |---|---|---|---|---|
-| 1 | setup-as-installable | the nix profile with the skills and the browser server as closures; `just install` / `status` / `uninstall`; every agent linked at the profile; nothing installed names a checkout | none | running |
-| 2 | native-plugins | claude and codex get mAId as a plugin from a marketplace inside the profile: listed, disableable, updated per install; skills that call each other still resolve; their old links removed; `status` / `uninstall` cover plugins | 1 | planned |
+| 1 | setup-as-installable | the nix profile with the skills and the browser server as closures; `just install` / `status` / `uninstall`; every agent linked at the profile; nothing installed names a checkout | none | merged |
+| 2 | native-plugins | claude and codex get mAId as a plugin from a marketplace inside the profile: listed, disableable, updated per install; skills that call each other still resolve; their old links removed; `status` / `uninstall` cover plugins | 1 | running |
 | 3 | install-rollback | one command returns every agent to the previous install; the Macro test as a script anyone can re-run | 2 | planned |
 
 ## Decision Log
