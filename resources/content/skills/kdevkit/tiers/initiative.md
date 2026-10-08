@@ -107,8 +107,23 @@ main ─────────────────────────
    this session can resume with a message. Each host has one:
    - Claude Code: the Agent tool, in the background, not isolated
      (the worktree exists); resume with `SendMessage`.
-   - codex: `codex exec -C <worktree> "<brief>"`; resume with
-     `codex exec resume <session-id> "<message>"`.
+   - codex: confined by its sandbox, so the boundary is enforced, not
+     asked for. With `G` the absolute `git -C <worktree> rev-parse
+     --git-common-dir`, pass the same flags to start and to resume
+     (`codex exec resume <session-id> "<message>"`), and never
+     `--sandbox`, which overrides them:
+
+     ```
+     codex exec -C <worktree> -c approval_policy="never" \
+       -c default_permissions="stream" \
+       -c 'permissions.stream={extends=":workspace", filesystem={
+         "<G>/objects"="write", "<G>/refs/heads/feat"="write",
+         "<G>/logs/refs/heads/feat"="write",
+         "<G>/worktrees/<feature>"="write"}}' "<brief>"
+     ```
+
+     It can commit on `feat/*` and write in the worktree; it cannot
+     push (no network), move other refs, or write git hooks or config.
    - kiro: `kiro-cli chat --no-interactive` started in the worktree;
      resume with `--resume-id <session-id>`.
 
@@ -144,8 +159,9 @@ main ─────────────────────────
    commit, stops, and replies with the squash message it proposes
    (§8.6). The ringmaster checks the message against the diff,
    squash-merges the branch into `initiative/<name>` with it,
-   updates the Streams row, and spawns whatever that unblocked. The feature's worktree and branch stay, for the
-   user to inspect, until the initiative closes.
+   updates the Streams row, and spawns whatever that unblocked. The
+   feature's worktree and branch stay, for the user to inspect,
+   until the initiative closes.
 6. **Finish** (both modes). When every stream has merged:
    - Run the Macro test on the initiative branch and record the
      result in the spec.

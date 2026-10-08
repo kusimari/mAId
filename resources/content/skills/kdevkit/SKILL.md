@@ -630,7 +630,9 @@ dispatched thing's own contract governs *what it reads*, never
 own worktree only. It may edit, stage, commit and run the project's
 own commands (builds, gates, tests, and paid tests if its brief
 allows them) there. It still never pushes or merges, and the middle
-two bullets bind it fully.
+two bullets bind it fully. Where the host can enforce the worktree
+boundary (codex's sandbox, §10), the spawn enforces it; elsewhere it
+is this instruction (backlog `mechanize-session-confinement`).
 
 - **No write authority.** No edits, commits, pushes, staging, or
   PR/branch mutation beyond the artefact it was asked for.
