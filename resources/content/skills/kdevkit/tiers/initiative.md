@@ -109,7 +109,9 @@ main ─────────────────────────
    brief, per §9's packet contract:
    - Receives: the worktree path (and that the session's shell may
      not keep a `cd` between commands, so every command names it);
-     the initiative spec path and its stream row; "run kdevkit's feature flow for `<feature>`; I am
+     the initiative spec path and its stream row; what merged
+     streams settled that this one builds on, and facts already
+     checked, each marked "verify what you build on"; "run kdevkit's feature flow for `<feature>`; I am
      your user; stop at each gate and reply with what the gate's
      PR body would carry"; any paid-test allowance from Constraints.
    - Excluded: this session's history and the other streams' work.
