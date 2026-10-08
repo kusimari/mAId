@@ -176,6 +176,8 @@ fn outcome_line(report: &crate::deploy::Report, dry_run: bool, removing: bool) -
             format!("{tag}removed       {at} (old link to {})", found.display())
         }
         (State::NoCli(cli), _) => format!("{tag}skip          {at} ({cli} not on PATH)"),
+        // The user's own skill in the agent's dir: expected, not a failure.
+        (State::Theirs, _) => format!("{tag}skip          {at} (not mAId's; kept)"),
         (State::Unreadable(why), _) => {
             skipped += 1;
             format!("{tag}skip          {at} (unreadable: {why})")
@@ -731,6 +733,7 @@ mod tests {
             (line(State::NoCli("codex"), false, false), "skip          codex plugin maid@maid (codex not on PATH)", false),
             (line(State::Unreadable("refused".into()), false, false), "skip          codex plugin maid@maid (unreadable: refused)", true),
             (line(State::Legacy("/p/share/maid/skills".into()), true, false), "removed       codex plugin maid@maid (old link to /p/share/maid/skills)", false),
+            (line(State::Theirs, false, true), "skip          codex plugin maid@maid (not mAId's; kept)", false),
         ] {
             assert_eq!(got, (want.to_string(), fails));
         }

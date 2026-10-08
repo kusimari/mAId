@@ -20,7 +20,7 @@ shift
 
 # Who owns the install now, so it can be restored to exactly that.
 # MAID_PROFILE is the default profile, exported by resources/Justfile.
-owner=$(readlink "$HOME/.kiro/steering/skills" 2>/dev/null | sed -n 's|/share/maid/skills$||p')
+owner=$(readlink "$HOME/.kiro/skills/kdevkit" 2>/dev/null | sed -n 's|/share/maid/skills/kdevkit$||p')
 # A crashed earlier run can leave links on a profile that no longer exists.
 [ -n "$owner" ] && [ -d "$owner" ] || owner=${MAID_PROFILE:?run through just}
 [ -d "$owner/share/maid/skills" ] ||

@@ -167,8 +167,16 @@ after its build succeeds; otherwise a rollback after rollback-then-install would
 them rather than on the install before.
 
 Skills reach kiro (and agy) through the registry as symlinks at their
-own skills path (`~/.kiro/steering/skills`), verified to load with no
-extra preamble. mAId installs no global instruction file:
+own skills path, verified to load with no extra preamble. kiro reads
+`~/.kiro/skills/*/SKILL.md`, a dir that also holds the user's own
+skills, so it gets one link per skill (`FanOut`); kiro's steering dir
+is context, not skills, and the link an older install left there is
+reaped (`LEGACY_LINKS`). In a FanOut dir mAId owns only links into a
+profile's skills, since it never put a checkout link there: those it
+repoints, and removes when the profile no longer ships the skill.
+Anything else there is the user's, kept even with `--force`, and
+reported as kept without failing the run, so a user's skill named
+like a mAId one wins in kiro. mAId installs no global instruction file:
 `AGENTS.md` is a repo-root convention (per-project, alongside
 README.md), not a global per-tool preamble, and "load the project's
 AGENTS.md / project.md" is kdevkit's work-time instruction rather
@@ -758,7 +766,7 @@ the experience is symmetric across resource kinds.
 
 ### Hard constraints
 
-- **Never write into `~/.kiro/steering/skills/`, any registry
+- **Never write into mAId's links under `~/.kiro/skills/`, any registry
   destination, or the plugin's copies under claude's and codex's
   plugin dirs directly.** They are symlinks into the mAId profile (a
   read-only nix store path) or the agent's own cache. Edit the source

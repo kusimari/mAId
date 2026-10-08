@@ -32,7 +32,7 @@ marketplace=$(dirname "$profile")/marketplace
 config=${XDG_CONFIG_HOME:-$HOME/.config}/maid
 allowlist=$config/browser-allowlist
 learned=$config/writing-style/learned.md
-kiro_link=$HOME/.kiro/steering/skills
+kiro_dir=$HOME/.kiro/skills
 work=$(mktemp -d)
 # Share the build cache, so each clone's install rebuilds rather than
 # compiling from scratch.
@@ -84,7 +84,15 @@ listed_at() { # <version>: both list maid@maid, enabled, at it
 }
 none_listed() { [ -z "$(claude_plugin)" ] && [ -z "$(codex_plugin)" ]; }
 built_version() { jq -r .version "$profile/share/maid/marketplace/plugins/maid/.codex-plugin/plugin.json"; }
-kiro_ok() { [ "$(readlink "$kiro_link")" = "$profile/share/maid/skills" ] && [ -f "$kiro_link/kdevkit/SKILL.md" ]; }
+# One link per shipped skill, and no steering link an older install left.
+kiro_ok() {
+  local s
+  for s in $(ls "$profile/share/maid/skills"); do
+    [ "$(readlink "$kiro_dir/$s")" = "$profile/share/maid/skills/$s" ] || return 1
+  done
+  [ -f "$kiro_dir/kdevkit/SKILL.md" ] && ! readlink "$HOME/.kiro/steering/skills" | grep -qE '/(share/maid|resources/content)/skills/?$'
+}
+kiro_none() { [ -z "$(find "$kiro_dir" -maxdepth 1 -type l -lname "$profile/share/maid/skills/*" 2>/dev/null)" ]; }
 
 # Read-only, non-interactive, in a scratch dir: the skill-test harness's
 # flags, except kiro runs its default agent (the one that reads its
@@ -136,7 +144,7 @@ check "the clone is deleted" test ! -e "$clone_a"
 # ── 2 ────────────────────────────────────────────────────────────
 step "2. the agents list mAId"
 check "claude and codex list maid@maid, enabled, at $version_a" listed_at "$version_a"
-check "kiro's skills link is mAId's install" kiro_ok
+check "kiro links each mAId skill from mAId's install" kiro_ok
 shipped=$(ls "$profile/share/maid/skills")
 if [ "$ask" = 1 ]; then
   for a in "${agents[@]}"; do
@@ -175,7 +183,8 @@ step "4. nothing mAId installed names a checkout"
   codex_plugin
   claude mcp get chrome-devtools 2>/dev/null
   codex mcp get chrome-devtools 2>/dev/null
-  for link in "$kiro_link" "$HOME/.gemini/config/skills" "$marketplace"/* "$marketplace"/.[!.]*; do
+  # Only mAId's names: the rest of kiro's dir is the user's.
+  for link in $(printf "$kiro_dir/%s " $shipped) "$HOME/.gemini/config/skills" "$marketplace"/* "$marketplace"/.[!.]*; do
     [ -L "$link" ] && echo "$link -> $(readlink "$link")"
   done
 } >"$work/config.txt"
@@ -201,7 +210,7 @@ install_from "$clone_b" "$work/install-b.log" || abort "just install from the se
 version_b=$(built_version)
 rm -rf "$clone_b"
 check "claude and codex moved to the second clone's $version_b" eval '[ "$version_b" != "$version_a" ] && listed_at "$version_b"'
-check "kiro reads the changed skill" grep -qF "$marker" "$kiro_link/notes/SKILL.md"
+check "kiro reads the changed skill" grep -qF "$marker" "$kiro_dir/notes/SKILL.md"
 marker_prompt="Open the SKILL.md of your skill named notes and look for a line that starts with 'Macro test marker'. If there is one, reply with that whole line. If there is none, reply: NO MARKER."
 asked() { # <expect: has|lacks>
   [ "$ask" = 1 ] || { echo "skip  asking each agent for the marker (paid: --ask-agents)"; return; }
@@ -221,7 +230,7 @@ rc=$?
 check "just rollback, from this checkout" test "$rc" = 0
 [ "$rc" = 0 ] || tail -n 20 "$work/rollback.log"
 check "claude and codex are back on $version_a" listed_at "$version_a"
-check "kiro reads the old text" eval '[ -f "$kiro_link/notes/SKILL.md" ] && ! grep -qF "$marker" "$kiro_link/notes/SKILL.md"'
+check "kiro reads the old text" eval '[ -f "$kiro_dir/notes/SKILL.md" ] && ! grep -qF "$marker" "$kiro_dir/notes/SKILL.md"'
 asked lacks
 
 # ── 6 ────────────────────────────────────────────────────────────
@@ -242,9 +251,9 @@ done
 before=$(sha256sum "$allowlist" "$learned")
 just uninstall >"$work/uninstall.log" 2>&1 || { tail -n 20 "$work/uninstall.log"; fail "just uninstall"; }
 check "neither claude nor codex lists maid@maid" none_listed
-check "kiro's skills link is gone" test ! -L "$kiro_link"
+check "kiro's mAId skill links are gone" kiro_none
 check "the allowlist and learned-rules files are untouched" eval '[ "$(sha256sum "$allowlist" "$learned" 2>/dev/null)" = "$before" ]'
 install_from "$here" "$work/install-here.log" && reinstall=0
 check "just install from this checkout" test "$reinstall" = 0
 check "claude and codex list this checkout's $(built_version)" listed_at "$(built_version)"
-check "kiro's skills link is mAId's install" kiro_ok
+check "kiro links each mAId skill from mAId's install" kiro_ok

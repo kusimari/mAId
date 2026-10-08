@@ -128,10 +128,11 @@ What it does:
      disabled plugin stays disabled. Its version is a hash of its
      content, so an install with changed skills updates it. Skills
      are named `maid:<name>`; the bare name still finds them.
-   - `~/.kiro/steering/skills` and `~/.gemini/config/skills` link at
-     the profile's skills dir.
-   - Links an older mAId install left in `~/.claude/skills` or
-     `~/.codex/skills` are removed.
+   - kiro gets one link per skill in `~/.kiro/skills`, beside your
+     own kiro skills, which it leaves alone; `~/.gemini/config/skills`
+     links at the profile's skills dir.
+   - Links an older mAId install left in `~/.claude/skills`,
+     `~/.codex/skills` or `~/.kiro/steering/skills` are removed.
 
    The browser MCP is registered with the profile's launcher, outside
    the plugin.

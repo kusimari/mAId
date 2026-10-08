@@ -40,7 +40,7 @@ listed() {
 }
 both_at() { [ "$(listed claude)" = "$1" ] && [ "$(listed codex)" = "$1" ]; }
 codex_has_marker() { grep -rqs "$marker" "$th/.codex/plugins/cache"; }
-kiro_has_marker() { grep -qs "$marker" "$th/.kiro/steering/skills/notes/SKILL.md"; }
+kiro_has_marker() { grep -qs "$marker" "$th/.kiro/skills/notes/SKILL.md"; }
 skills() { inhome just resources::install-skills >"$work/log" 2>&1 || { cat "$work/log"; return 1; }; }
 rollback() { inhome just rollback >"$work/out" 2>&1; }
 

@@ -12,8 +12,8 @@
 //! one of the two, and nothing in `stages` knows which.
 
 use crate::shared::{
-    marketplace_root, on_path, selected_entries, Agent, Entry, Kind, Link, MARKETPLACE,
-    PLUGIN_AGENTS, PLUGIN_ID, PROFILE_MARKETPLACE_DIR,
+    marketplace_root, on_path, selected_entries, Agent, Entry, Kind, Link, LEGACY_LINKS,
+    MARKETPLACE, PLUGIN_AGENTS, PLUGIN_ID, PROFILE_MARKETPLACE_DIR,
 };
 use anyhow::{anyhow, Context, Result};
 use std::fs;
@@ -42,8 +42,11 @@ pub enum State {
     Disabled { found: String, want: String },
     /// The agent's CLI is not on PATH, so there is nothing to install into.
     NoCli(&'static str),
-    /// A link an older mAId install left where an agent now gets a plugin.
+    /// A mAId link install removes: an old location, or a skill this
+    /// install does not ship.
     Legacy(PathBuf),
+    /// An entry mAId did not write in a dir the agent owns; kept.
+    Theirs,
     /// The agent's CLI would not report its plugins.
     Unreadable(String),
 }
@@ -69,6 +72,7 @@ impl State {
             }
             State::NoCli(cli) => format!("{cli} not on PATH"),
             State::Legacy(target) => format!("old link -> {}", target.display()),
+            State::Theirs => "not mAId's (kept)".into(),
             State::Unreadable(why) => format!("unreadable ({why}); run: just install"),
         }
     }
@@ -121,15 +125,25 @@ pub struct Symlinks {
 
 impl Deploy for Symlinks {
     fn install(&self, agent: Option<Agent>, dry_run: bool, force: bool) -> Result<Vec<Report>> {
-        self.act(agent, |link| self.create(link, dry_run, force))
+        // New links first: an install that fails keeps the old ones.
+        let mut out = self.act(agent, |link, kind| self.create(link, kind, dry_run, force))?;
+        out.extend(self.reap_unshipped(agent, dry_run)?);
+        out.extend(self.reap_legacy(agent, dry_run)?);
+        Ok(out)
     }
 
     fn uninstall(&self, agent: Option<Agent>, dry_run: bool, force: bool) -> Result<Vec<Report>> {
-        self.act(agent, |link| self.remove(link, dry_run, force))
+        let mut out = self.act(agent, |link, kind| self.remove(link, kind, dry_run, force))?;
+        out.extend(self.reap_unshipped(agent, dry_run)?);
+        out.extend(self.reap_legacy(agent, dry_run)?);
+        Ok(out)
     }
 
     fn status(&self, agent: Option<Agent>) -> Result<Vec<Report>> {
-        self.act(agent, |link| Ok((self.inspect(link), false)))
+        let mut out = self.act(agent, |link, _| Ok((self.inspect(link), false)))?;
+        out.extend(self.reap_unshipped(agent, true)?);
+        out.extend(self.reap_legacy(agent, true)?);
+        Ok(out)
     }
 
     fn is_deployed(&self, agent: Agent) -> bool {
@@ -151,17 +165,62 @@ impl Deploy for Symlinks {
 }
 
 impl Symlinks {
+    /// Remove mAId links in a FanOut dir to skills this profile does not
+    /// ship (dropped, or only in another profile); a dry run lists them.
+    fn reap_unshipped(&self, agent: Option<Agent>, dry_run: bool) -> Result<Vec<Report>> {
+        let mut out = Vec::new();
+        for (home_sub, source_sub, kind, _) in selected_entries(agent) {
+            if kind != Kind::FanOut {
+                continue;
+            }
+            let source = self.source.join(source_sub);
+            for found in reap(&self.home, home_sub, kind, true)? {
+                let at = self.home.join(&found.label);
+                if !matches!(&found.state, State::Legacy(t) if ours(kind, t)) {
+                    continue;
+                }
+                if at.file_name().is_some_and(|n| exists(&source.join(n))) {
+                    continue;
+                }
+                if !dry_run {
+                    fs::remove_file(&at)?;
+                }
+                out.push(found);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Remove the links an older mAId install left where the selected
+    /// agents no longer read skills; a dry run lists them.
+    fn reap_legacy(&self, agent: Option<Agent>, dry_run: bool) -> Result<Vec<Report>> {
+        let mut out = Vec::new();
+        for (a, home_sub, kind) in LEGACY_LINKS {
+            if agent.is_none_or(|sel| sel == *a) {
+                out.extend(reap(&self.home, home_sub, *kind, dry_run)?);
+            }
+        }
+        Ok(out)
+    }
+
     /// Resolve the selection to concrete locations and apply `f` to each,
     /// in a deterministic order so two runs are diffable.
     fn act(
         &self,
         agent: Option<Agent>,
-        f: impl Fn(&Link) -> io::Result<(State, bool)>,
+        f: impl Fn(&Link, Kind) -> io::Result<(State, bool)>,
     ) -> Result<Vec<Report>> {
         let mut out = Vec::new();
         for entry in selected_entries(agent) {
             for link in self.expand(entry)? {
-                let (state, acted) = f(&link)?;
+                let (state, acted) = f(&link, entry.2)?;
+                let state = match (entry.2, state) {
+                    (Kind::FanOut, State::Wrong { found, .. }) if !ours(Kind::FanOut, &found) => {
+                        State::Theirs
+                    }
+                    (Kind::FanOut, State::Occupied(_)) => State::Theirs,
+                    (_, state) => state,
+                };
                 out.push(Report {
                     label: self.label(&link.0),
                     state,
@@ -183,45 +242,32 @@ impl Symlinks {
     }
 
     /// Resolve a registry entry to the concrete symlinks it manages —
-    /// `Link` yields one; `FanOut` yields one per child. FanOut unions the
-    /// source's current children (what should exist) with home symlinks
-    /// already pointing into this source (so a child renamed or removed in
-    /// source is still reaped, not orphaned as a dangling link in a dir we
-    /// don't own). Keyed by home path for dedupe + deterministic order.
+    /// `Link` yields one; `FanOut` yields one per source child, sorted so
+    /// two runs are diffable. Links to children no longer shipped are
+    /// `reap_unshipped`'s.
     fn expand(&self, entry: Entry) -> io::Result<Vec<Link>> {
         let (home_sub, source_sub, kind, _agent) = entry;
         let home = self.home.join(home_sub);
         let source = self.source.join(source_sub);
         match kind {
             Kind::Link => Ok(vec![(home, source)]),
-            Kind::FanOut => {
-                use std::collections::BTreeMap;
-                let mut links: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
-                if source.is_dir() {
-                    for e in fs::read_dir(&source)?.filter_map(Result::ok) {
-                        links.insert(home.join(e.file_name()), e.path());
-                    }
-                }
-                if home.is_dir() {
-                    for e in fs::read_dir(&home)?.filter_map(Result::ok) {
-                        let h = e.path();
-                        if let Ok(target) = fs::read_link(&h) {
-                            if target.starts_with(&source) {
-                                links.entry(h).or_insert(target);
-                            }
-                        }
-                    }
-                }
-                Ok(links.into_iter().collect())
+            Kind::FanOut if source.is_dir() => {
+                let mut links: Vec<Link> = fs::read_dir(&source)?
+                    .filter_map(Result::ok)
+                    .map(|e| (home.join(e.file_name()), e.path()))
+                    .collect();
+                links.sort();
+                Ok(links)
             }
+            Kind::FanOut => Ok(vec![]),
         }
     }
 
     /// What is at a location now.
     fn inspect(&self, (home, source): &Link) -> State {
         // Inspect home first: a symlink already pointing at `source` is
-        // ours to reap even if `source` is now gone (an orphaned fan-out
-        // child). SourceMissing only when there's nothing at home to act on.
+        // ours to reap even if `source` is now gone. SourceMissing only when
+        // there's nothing at home to act on.
         match fs::symlink_metadata(home) {
             Err(_) if exists(source) => State::Missing,
             Err(_) => State::SourceMissing,
@@ -238,7 +284,13 @@ impl Symlinks {
         }
     }
 
-    fn create(&self, link: &Link, dry_run: bool, force: bool) -> io::Result<(State, bool)> {
+    fn create(
+        &self,
+        link: &Link,
+        kind: Kind,
+        dry_run: bool,
+        force: bool,
+    ) -> io::Result<(State, bool)> {
         let (home, source) = link;
         let state = self.inspect(link);
         // Missing, or a symlink another mAId install left, is ours to set.
@@ -246,7 +298,7 @@ impl Symlinks {
         // force or not: mAId does not overwrite a real file or directory.
         let act = match &state {
             State::Missing => true,
-            State::Wrong { found, .. } => force || is_maids(found),
+            State::Wrong { found, .. } => force_reaches(kind, force) || ours(kind, found),
             _ => false,
         };
         if act && !dry_run {
@@ -261,17 +313,23 @@ impl Symlinks {
         Ok((state, act))
     }
 
-    fn remove(&self, link: &Link, dry_run: bool, force: bool) -> io::Result<(State, bool)> {
+    fn remove(
+        &self,
+        link: &Link,
+        kind: Kind,
+        dry_run: bool,
+        force: bool,
+    ) -> io::Result<(State, bool)> {
         let (home, _) = link;
         let state = self.inspect(link);
         let act = match &state {
             State::Ok(_) => true,
             // A link another mAId install left is ours, as on install.
-            State::Wrong { found, .. } if is_maids(found) => true,
+            State::Wrong { found, .. } if ours(kind, found) => true,
             // --force reaps foreign symlinks and files, never a real
             // directory: mAId only ever creates symlinks, so a real dir at
             // a managed path belongs to the owning tool.
-            State::Wrong { .. } | State::Occupied("file") if force => true,
+            State::Wrong { .. } | State::Occupied("file") if force_reaches(kind, force) => true,
             _ => false,
         };
         if act && !dry_run {
@@ -358,7 +416,7 @@ impl Deploy for Plugins {
                 self.check_installed(a, &want, acted)?;
             }
             out.push(self.report(a, state, acted));
-            out.extend(self.reap(legacy, kind, dry_run)?);
+            out.extend(reap(&self.home, legacy, kind, dry_run)?);
         }
         Ok(out)
     }
@@ -366,7 +424,7 @@ impl Deploy for Plugins {
     fn uninstall(&self, agent: Option<Agent>, dry_run: bool, _force: bool) -> Result<Vec<Report>> {
         let mut out = Vec::new();
         for (a, legacy, kind) in plugin_agents(agent) {
-            out.extend(self.reap(legacy, kind, dry_run)?);
+            out.extend(reap(&self.home, legacy, kind, dry_run)?);
             self.repair(a, dry_run)?;
             let state = self.state(a, None)?;
             if matches!(state, State::NoCli(_)) {
@@ -405,7 +463,7 @@ impl Deploy for Plugins {
         let mut out = Vec::new();
         for (a, legacy, kind) in plugin_agents(agent) {
             // Old links still there: a dry-run reap lists them.
-            out.extend(self.reap(legacy, kind, true)?);
+            out.extend(reap(&self.home, legacy, kind, true)?);
             let state = self.state(a, want.as_deref()).unwrap_or_else(unreadable);
             let has_cli = !matches!(state, State::NoCli(_));
             out.push(self.report(a, state, false));
@@ -611,48 +669,66 @@ impl Plugins {
         }])
     }
 
-    /// Remove the links an older mAId install left at an agent's skills
-    /// path: the path itself (Link) or each entry under it (FanOut).
-    /// Matched by `is_maids`, so a skill no longer shipped goes too.
-    fn reap(&self, home_sub: &str, kind: Kind, dry_run: bool) -> Result<Vec<Report>> {
-        let at = self.home.join(home_sub);
-        let candidates = match kind {
-            Kind::Link => vec![at],
-            Kind::FanOut => match fs::read_dir(&at) {
-                Ok(entries) => {
-                    let mut v: Vec<PathBuf> =
-                        entries.filter_map(|e| Some(e.ok()?.path())).collect();
-                    v.sort();
-                    v
-                }
-                Err(_) => vec![],
-            },
-        };
-        let mut out = Vec::new();
-        for link in candidates {
-            let Ok(target) = fs::read_link(&link) else {
-                continue;
-            };
-            if !is_maids(&target) {
-                continue;
-            }
-            if !dry_run {
-                fs::remove_file(&link)?;
-            }
-            out.push(Report {
-                label: self.label(&link),
-                state: State::Legacy(target),
-                acted: true,
-            });
-        }
-        Ok(out)
-    }
-
     fn label(&self, path: &Path) -> String {
         path.strip_prefix(&self.home)
             .unwrap_or(path)
             .display()
             .to_string()
+    }
+}
+
+/// Remove the mAId-shaped links at a path (Link) or under it (FanOut),
+/// matched by `is_maids`; a dry run lists them.
+fn reap(home: &Path, home_sub: &str, kind: Kind, dry_run: bool) -> Result<Vec<Report>> {
+    let at = home.join(home_sub);
+    let candidates = match kind {
+        Kind::Link => vec![at],
+        Kind::FanOut => match fs::read_dir(&at) {
+            Ok(entries) => {
+                let mut v: Vec<PathBuf> = entries.filter_map(|e| Some(e.ok()?.path())).collect();
+                v.sort();
+                v
+            }
+            Err(_) => vec![],
+        },
+    };
+    let mut out = Vec::new();
+    for link in candidates {
+        let Ok(target) = fs::read_link(&link) else {
+            continue;
+        };
+        if !is_maids(&target) {
+            continue;
+        }
+        if !dry_run {
+            fs::remove_file(&link)?;
+        }
+        out.push(Report {
+            label: link
+                .strip_prefix(home)
+                .unwrap_or(&link)
+                .display()
+                .to_string(),
+            state: State::Legacy(target),
+            acted: true,
+        });
+    }
+    Ok(out)
+}
+
+/// `--force` reaches a Link row's one path, which is mAId's. A FanOut dir
+/// is the agent's, so a foreign entry there is kept even with `--force`.
+fn force_reaches(kind: Kind, force: bool) -> bool {
+    force && kind == Kind::Link
+}
+
+/// Whether a link at a managed location is mAId's to replace or remove.
+/// A FanOut dir is shared with the user, and mAId only ever linked
+/// profile skills there, so a checkout-shaped link in it is the user's.
+fn ours(kind: Kind, target: &Path) -> bool {
+    match kind {
+        Kind::Link => is_maids(target),
+        Kind::FanOut => target.parent().is_some_and(|p| p.ends_with(PROFILE_SKILLS)),
     }
 }
 
@@ -851,11 +927,13 @@ fn exists(p: &Path) -> bool {
     fs::symlink_metadata(p).is_ok()
 }
 
+const PROFILE_SKILLS: &str = "share/maid/skills";
+
 /// Whether a link target is a mAId skills tree, or a skill in one: a
 /// profile's, or a checkout's from before the profile. Matched by path
 /// shape, not provenance.
 fn is_maids(target: &Path) -> bool {
-    let roots = ["share/maid/skills", "resources/content/skills"];
+    let roots = [PROFILE_SKILLS, "resources/content/skills"];
     let tree = |p: &Path| roots.iter().any(|r| p.ends_with(r));
     tree(target) || target.parent().is_some_and(tree)
 }
@@ -943,7 +1021,12 @@ mod tests {
         assert!(!reports.is_empty());
         // Every location was Missing beforehand, and exists now.
         assert!(reports.iter().all(|r| r.state == State::Missing));
-        assert!(exists_at(&home.path().join(".kiro/steering/skills")));
+        for skill in ["kdevkit", "notes"] {
+            assert_eq!(
+                fs::read_link(home.path().join(".kiro/skills").join(skill)).unwrap(),
+                profile.path().join("share/maid/skills").join(skill)
+            );
+        }
         assert!(exists_at(&home.path().join(".gemini/config/skills")));
         // Plugin agents get no links.
         assert!(!exists_at(&home.path().join(".claude/skills")));
@@ -964,7 +1047,7 @@ mod tests {
         let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
         install(home.path(), profile.path(), true, false, None);
-        assert!(!exists_at(&home.path().join(".kiro/steering/skills")));
+        assert!(!exists_at(&home.path().join(".kiro/skills")));
     }
 
     /// A real file at a managed path is never clobbered without --force.
@@ -972,7 +1055,7 @@ mod tests {
     fn a_users_own_file_survives_install() {
         let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        let claimed = home.path().join(".kiro/steering/skills");
+        let claimed = home.path().join(".gemini/config/skills");
         write(&claimed, "mine");
         install(home.path(), profile.path(), false, false, None);
         assert_eq!(fs::read_to_string(&claimed).unwrap(), "mine");
@@ -982,7 +1065,7 @@ mod tests {
     fn a_foreign_symlink_is_replaced_only_with_force() {
         let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        let managed = home.path().join(".kiro/steering/skills");
+        let managed = home.path().join(".gemini/config/skills");
         fs::create_dir_all(managed.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(profile.path(), &managed).unwrap();
 
@@ -1000,21 +1083,18 @@ mod tests {
         let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
         let old = TempDir::new().unwrap();
-        let kiro = home.path().join(".kiro/steering/skills");
+        let kiro = home.path().join(".kiro/skills/kdevkit");
         let agy = home.path().join(".gemini/config/skills");
         for link in [&kiro, &agy] {
             fs::create_dir_all(link.parent().unwrap()).unwrap();
         }
-        std::os::unix::fs::symlink(old.path().join("resources/content/skills"), &kiro).unwrap();
+        std::os::unix::fs::symlink(old.path().join("share/maid/skills/kdevkit"), &kiro).unwrap();
         std::os::unix::fs::symlink(old.path().join("share/maid/skills"), &agy).unwrap();
 
         install(home.path(), profile.path(), false, false, None);
-        for link in [&kiro, &agy] {
-            assert_eq!(
-                fs::read_link(link).unwrap(),
-                profile.path().join("share/maid/skills")
-            );
-        }
+        let skills = profile.path().join("share/maid/skills");
+        assert_eq!(fs::read_link(&kiro).unwrap(), skills.join("kdevkit"));
+        assert_eq!(fs::read_link(&agy).unwrap(), skills);
     }
 
     #[test]
@@ -1042,11 +1122,11 @@ mod tests {
         let home = TempDir::new().unwrap();
         install(home.path(), profile.path(), false, false, None);
         // Something the agent owns, beside our link.
-        let theirs = home.path().join(".kiro/steering/their-own");
+        let theirs = home.path().join(".kiro/skills/their-own/SKILL.md");
         write(&theirs, "theirs");
 
         uninstall(home.path(), profile.path(), false, false, None);
-        assert!(!exists_at(&home.path().join(".kiro/steering/skills")));
+        assert!(!exists_at(&home.path().join(".kiro/skills/kdevkit")));
         assert!(exists_at(&theirs), "the agent's own entry must survive");
     }
 
@@ -1066,7 +1146,7 @@ mod tests {
     fn force_uninstall_refuses_to_delete_a_real_directory() {
         let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        let theirs = home.path().join(".kiro/steering/skills");
+        let theirs = home.path().join(".gemini/config/skills");
         fs::create_dir_all(theirs.join("their-skill")).unwrap();
 
         uninstall(home.path(), profile.path(), false, true, None);
@@ -1079,7 +1159,7 @@ mod tests {
         let home = TempDir::new().unwrap();
         let before = status(home.path(), profile.path(), None);
         assert!(before.iter().all(|r| r.state == State::Missing));
-        assert!(!exists_at(&home.path().join(".kiro/steering/skills")));
+        assert!(!exists_at(&home.path().join(".kiro/skills")));
 
         install(home.path(), profile.path(), false, false, None);
         let after = status(home.path(), profile.path(), None);
@@ -1091,7 +1171,7 @@ mod tests {
         let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
         install(home.path(), profile.path(), false, false, Some(Agent::Kiro));
-        assert!(exists_at(&home.path().join(".kiro/steering/skills")));
+        assert!(exists_at(&home.path().join(".kiro/skills/kdevkit")));
         assert!(!exists_at(&home.path().join(".gemini/config/skills")));
     }
 
@@ -1101,7 +1181,7 @@ mod tests {
         let home = TempDir::new().unwrap();
         install(home.path(), profile.path(), false, false, None);
         uninstall(home.path(), profile.path(), false, false, Some(Agent::Kiro));
-        assert!(!exists_at(&home.path().join(".kiro/steering/skills")));
+        assert!(!exists_at(&home.path().join(".kiro/skills/kdevkit")));
         assert!(exists_at(&home.path().join(".gemini/config/skills")));
     }
 
@@ -1159,19 +1239,203 @@ mod tests {
     fn force_install_never_reports_acting_on_a_real_file() {
         let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        let claimed = home.path().join(".kiro/steering/skills");
+        let claimed = home.path().join(".gemini/config/skills");
         write(&claimed, "mine");
 
         let reports = install(home.path(), profile.path(), false, true, None);
         let this = reports
             .iter()
-            .find(|r| r.label == ".kiro/steering/skills")
+            .find(|r| r.label == ".gemini/config/skills")
             .unwrap();
         assert!(
             !this.acted,
             "create() must not act on a real file, force or not"
         );
         assert_eq!(fs::read_to_string(&claimed).unwrap(), "mine");
+    }
+
+    /// kiro's skills dir is the user's too: their skills stay, and the
+    /// steering link an older install left goes.
+    #[test]
+    fn kiro_install_reaps_the_old_steering_link_and_keeps_the_users_skills() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        let h = home.path();
+        let own = h.join(".kiro/skills/my-own/SKILL.md");
+        let steering_doc = h.join(".kiro/steering/notes.md");
+        write(&own, "mine");
+        write(&steering_doc, "mine");
+        let old = h.join(".kiro/steering/skills");
+        std::os::unix::fs::symlink(profile.path().join("share/maid/skills"), &old).unwrap();
+
+        let reports = install(h, profile.path(), false, false, Some(Agent::Kiro));
+        let reaped = reports
+            .iter()
+            .find(|r| r.label == ".kiro/steering/skills")
+            .unwrap();
+        assert!(matches!(reaped.state, State::Legacy(_)) && reaped.acted);
+        assert!(!exists_at(&old));
+        assert!(exists_at(&h.join(".kiro/skills/kdevkit")));
+        assert!(exists_at(&own) && exists_at(&steering_doc));
+
+        std::os::unix::fs::symlink(profile.path().join("share/maid/skills"), &old).unwrap();
+        uninstall(h, profile.path(), false, false, Some(Agent::Kiro));
+        assert!(!exists_at(&h.join(".kiro/skills/kdevkit")));
+        assert!(!exists_at(&old));
+        assert_eq!(fs::read_to_string(&own).unwrap(), "mine");
+    }
+
+    #[test]
+    fn a_foreign_steering_skills_link_is_kept() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        let at = home.path().join(".kiro/steering/skills");
+        fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink("/elsewhere/skills", &at).unwrap();
+        install(home.path(), profile.path(), false, false, Some(Agent::Kiro));
+        assert_eq!(fs::read_link(&at).unwrap(), Path::new("/elsewhere/skills"));
+    }
+
+    /// Status and a dry run list the old link and leave it.
+    #[test]
+    fn status_lists_the_old_steering_link_without_removing_it() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        let old = home.path().join(".kiro/steering/skills");
+        fs::create_dir_all(old.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink("/old/checkout/resources/content/skills", &old).unwrap();
+        for reports in [
+            status(home.path(), profile.path(), Some(Agent::Kiro)),
+            install(home.path(), profile.path(), true, false, Some(Agent::Kiro)),
+        ] {
+            assert!(
+                reports
+                    .iter()
+                    .any(|r| r.label == ".kiro/steering/skills"
+                        && matches!(r.state, State::Legacy(_)))
+            );
+        }
+        assert!(exists_at(&old));
+    }
+
+    /// The user's own skill with a mAId skill's name is reported, not replaced.
+    #[test]
+    fn a_users_kiro_skill_named_like_a_maid_skill_is_kept() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        let theirs = home.path().join(".kiro/skills/notes/SKILL.md");
+        write(&theirs, "mine");
+        for force in [false, true] {
+            let reports = install(home.path(), profile.path(), false, force, Some(Agent::Kiro));
+            let this = reports
+                .iter()
+                .find(|r| r.label == ".kiro/skills/notes")
+                .unwrap();
+            assert_eq!(this.state, State::Theirs);
+            assert!(!this.acted);
+        }
+        uninstall(home.path(), profile.path(), false, true, Some(Agent::Kiro));
+        assert_eq!(fs::read_to_string(&theirs).unwrap(), "mine");
+    }
+
+    /// A rollback or a later install can drop a skill; its link goes.
+    #[test]
+    fn a_skill_dropped_from_the_profile_goes_on_the_next_install() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        let notes = home.path().join(".kiro/skills/notes");
+        install(home.path(), profile.path(), false, false, Some(Agent::Kiro));
+        fs::remove_dir_all(profile.path().join("share/maid/skills/notes")).unwrap();
+
+        let listed = status(home.path(), profile.path(), Some(Agent::Kiro));
+        let this = listed
+            .iter()
+            .find(|r| r.label == ".kiro/skills/notes")
+            .unwrap();
+        assert!(matches!(this.state, State::Legacy(_)));
+        install(home.path(), profile.path(), true, false, Some(Agent::Kiro));
+        assert!(exists_at(&notes));
+
+        install(home.path(), profile.path(), false, false, Some(Agent::Kiro));
+        assert!(!exists_at(&notes));
+        assert!(exists_at(&home.path().join(".kiro/skills/kdevkit")));
+    }
+
+    #[test]
+    fn uninstall_removes_a_kiro_link_to_a_skill_no_longer_shipped() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        let notes = home.path().join(".kiro/skills/notes");
+        let other = home.path().join(".kiro/skills/gone");
+        install(home.path(), profile.path(), false, false, Some(Agent::Kiro));
+        fs::remove_dir_all(profile.path().join("share/maid/skills/notes")).unwrap();
+        std::os::unix::fs::symlink("/other/profile/share/maid/skills/gone", &other).unwrap();
+        uninstall(home.path(), profile.path(), false, false, Some(Agent::Kiro));
+        assert!(!exists_at(&notes) && !exists_at(&other));
+    }
+
+    /// isolated-verify installs a throwaway profile, then the owner's
+    /// again: the throwaway's links must not outlive it.
+    #[test]
+    fn an_install_from_another_profile_takes_over_every_kiro_link() {
+        let first = make_profile_with_skills();
+        let second = make_profile();
+        write(
+            &second.path().join("share/maid/skills/kdevkit/SKILL.md"),
+            "---\nname: x\ndescription: y\n---\nbody.\n",
+        );
+        let home = TempDir::new().unwrap();
+        install(home.path(), first.path(), false, false, Some(Agent::Kiro));
+        install(home.path(), second.path(), false, false, Some(Agent::Kiro));
+        assert!(!exists_at(&home.path().join(".kiro/skills/notes")));
+        assert_eq!(
+            fs::read_link(home.path().join(".kiro/skills/kdevkit")).unwrap(),
+            second.path().join("share/maid/skills/kdevkit")
+        );
+    }
+
+    #[test]
+    fn force_keeps_a_foreign_link_named_like_a_maid_skill_in_kiros_dir() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        let theirs = home.path().join(".kiro/skills/notes");
+        fs::create_dir_all(theirs.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink("/their/notes", &theirs).unwrap();
+        let reports = install(home.path(), profile.path(), false, true, Some(Agent::Kiro));
+        let this = reports
+            .iter()
+            .find(|r| r.label == ".kiro/skills/notes")
+            .unwrap();
+        assert_eq!((&this.state, this.acted), (&State::Theirs, false));
+        assert_eq!(fs::read_link(&theirs).unwrap(), Path::new("/their/notes"));
+        uninstall(home.path(), profile.path(), false, true, Some(Agent::Kiro));
+        assert_eq!(fs::read_link(&theirs).unwrap(), Path::new("/their/notes"));
+    }
+
+    /// A user's own link to a skill in a checkout looks like mAId's, but
+    /// mAId never made one in kiro's dir: kept, shipped name or not.
+    #[test]
+    fn a_users_link_to_a_checkout_skill_in_kiros_dir_is_kept() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        let mut links = vec![];
+        for name in ["wip", "kdevkit"] {
+            let at = home.path().join(".kiro/skills").join(name);
+            let to = PathBuf::from("/work/mAId/resources/content/skills").join(name);
+            fs::create_dir_all(at.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&to, &at).unwrap();
+            links.push((at, to));
+        }
+        let reports = install(home.path(), profile.path(), false, false, Some(Agent::Kiro));
+        let this = reports
+            .iter()
+            .find(|r| r.label == ".kiro/skills/kdevkit")
+            .unwrap();
+        assert_eq!((&this.state, this.acted), (&State::Theirs, false));
+        uninstall(home.path(), profile.path(), false, false, Some(Agent::Kiro));
+        for (at, to) in links {
+            assert_eq!(fs::read_link(at).unwrap(), to);
+        }
     }
 
     // ── Plugins ──────────────────────────────────────────────────
@@ -1482,7 +1746,6 @@ mod tests {
     fn old_maid_links_are_reaped_and_nothing_else() {
         let home = TempDir::new().unwrap();
         let h = home.path();
-        let p = plugins(h, Path::new("/s/maid/profile"));
         let link = |at: &str, to: &str| {
             let at = h.join(at);
             fs::create_dir_all(at.parent().unwrap()).unwrap();
@@ -1500,8 +1763,8 @@ mod tests {
         link(".codex/skills/foreign", "/elsewhere/skills/foreign");
         write(&h.join(".codex/skills/own/SKILL.md"), "mine");
 
-        let mut reaped = p.reap(".claude/skills", Kind::Link, false).unwrap();
-        reaped.extend(p.reap(".codex/skills", Kind::FanOut, false).unwrap());
+        let mut reaped = reap(h, ".claude/skills", Kind::Link, false).unwrap();
+        reaped.extend(reap(h, ".codex/skills", Kind::FanOut, false).unwrap());
         let labels: Vec<&str> = reaped.iter().map(|r| r.label.as_str()).collect();
         assert_eq!(
             labels,
@@ -1524,9 +1787,7 @@ mod tests {
         let at = home.path().join(".claude/skills");
         fs::create_dir_all(at.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink("/elsewhere/skills", &at).unwrap();
-        let p = plugins(home.path(), Path::new("/s/maid/profile"));
-        assert!(p
-            .reap(".claude/skills", Kind::Link, false)
+        assert!(reap(home.path(), ".claude/skills", Kind::Link, false)
             .unwrap()
             .is_empty());
         assert!(exists_at(&at));
@@ -1538,20 +1799,24 @@ mod tests {
         let at = home.path().join(".claude/skills");
         fs::create_dir_all(at.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink("/p/share/maid/skills", &at).unwrap();
-        let p = plugins(home.path(), Path::new("/s/maid/profile"));
-        assert_eq!(p.reap(".claude/skills", Kind::Link, true).unwrap().len(), 1);
+        assert_eq!(
+            reap(home.path(), ".claude/skills", Kind::Link, true)
+                .unwrap()
+                .len(),
+            1
+        );
         assert!(exists_at(&at));
     }
 
     /// The latest install's uninstall removes a link an older mAId install
-    /// left, without --force, the same rule install uses.
+    /// left, without --force, as install replaces it.
     #[test]
     fn uninstall_removes_a_link_another_maid_install_left() {
         let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        let kiro = home.path().join(".kiro/steering/skills");
+        let kiro = home.path().join(".kiro/skills/kdevkit");
         fs::create_dir_all(kiro.parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink("/old/checkout/resources/content/skills", &kiro).unwrap();
+        std::os::unix::fs::symlink("/old/profile/share/maid/skills/kdevkit", &kiro).unwrap();
         uninstall(home.path(), profile.path(), false, false, Some(Agent::Kiro));
         assert!(!exists_at(&kiro));
     }

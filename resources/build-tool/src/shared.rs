@@ -37,16 +37,15 @@ pub fn usage(msg: impl Into<String>) -> anyhow::Error {
 // `profile_dir`). claude and codex install them as a plugin with their
 // own CLI (`PLUGIN_AGENTS`; see deploy.rs `Plugins`). The rest have no
 // such command and discover skills under their own home dir (kiro
-// ~/.kiro/steering, agy ~/.gemini/config), so the registry maps profile
+// ~/.kiro/skills, agy ~/.gemini/config), so the registry maps profile
 // source → agent home, one row per target, in one of two shapes (`Kind`):
 //
 //   Link   — the agent's home layout matches the profile, so symlink
 //            the home path straight at the source dir. mAId owns it.
 //   FanOut — the agent owns the home dir and puts its own entries
 //            there, so we can't replace it; mirror each source child in
-//            as its own symlink and leave the rest alone. No row uses it
-//            now; it is the shape codex's pre-plugin links had, which
-//            `PLUGIN_AGENTS` names so install can reap them.
+//            as its own symlink and leave the rest alone. kiro's row:
+//            ~/.kiro/skills also holds the user's own skills.
 //
 // Skills are all that's installed. There is no global instruction
 // preamble: loading a project's AGENTS.md / project.md is kdevkit's
@@ -79,9 +78,9 @@ pub enum Agent {
 /// The link rows: agents with no plugin command of their own.
 pub const REGISTRY: &[Entry] = &[
     (
-        ".kiro/steering/skills",
+        ".kiro/skills",
         "share/maid/skills",
-        Kind::Link,
+        Kind::FanOut,
         Agent::Kiro,
     ),
     (
@@ -91,6 +90,11 @@ pub const REGISTRY: &[Entry] = &[
         Agent::Agy,
     ),
 ];
+
+/// Where an older mAId install linked a symlink agent's skills: install
+/// and uninstall remove a mAId link there, status lists it.
+pub const LEGACY_LINKS: &[(Agent, &str, Kind)] =
+    &[(Agent::Kiro, ".kiro/steering/skills", Kind::Link)];
 
 /// Agents that install mAId as a plugin through their own CLI, each with
 /// where the links an older mAId install left live (reaped on install).
@@ -400,7 +404,7 @@ mod tests {
     fn skills_roots_match_each_agents_deployed_layout() {
         let home = Path::new("/home/u");
         for (agent, want) in [
-            (Agent::Kiro, "/home/u/.kiro/steering/skills"),
+            (Agent::Kiro, "/home/u/.kiro/skills"),
             (Agent::Agy, "/home/u/.gemini/config/skills"),
         ] {
             assert_eq!(agent.skills_root(home).unwrap(), Path::new(want));
@@ -415,6 +419,10 @@ mod tests {
                 (Agent::Claude, ".claude/skills"),
                 (Agent::Codex, ".codex/skills")
             ]
+        );
+        assert_eq!(
+            LEGACY_LINKS,
+            [(Agent::Kiro, ".kiro/steering/skills", Kind::Link)]
         );
     }
 
