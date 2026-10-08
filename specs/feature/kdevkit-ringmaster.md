@@ -84,11 +84,19 @@ review briefing written for the whole.
   guided run yet); the codex and kiro spawn paths (no model has run
   them; codex's sandbox profile was checked without one); the
   briefing's replay of the ringmaster's calls, added after the
-  acceptance run; "no wrapper" holds by construction (the verbs are
-  prose the session acts on, with no script added).
+  acceptance run; the `feat/<feature>/work` branch shape and the
+  per-agent "how" lines from the third review (checked against each
+  CLI's help and `codex sandbox`, not run by a model); "no wrapper"
+  holds by construction (the verbs are prose the session acts on,
+  with no script added).
 
 ## Design
 
+- Every kdevkit file states what to do generically, then how per
+  agent (`specs/project.md`, "It has to outlast its agents"): one
+  "read into this session" definition, one per-agent dispatch list
+  in `SKILL.md` §2, "forge" for the review tool and "agent" for the
+  coding agent.
 - `tiers/initiative.md` rewritten: the three modes and the switch
   from guided to ringmaster, the verbs (including the guided
   "start `<feature>` for initiative" and "close initiative"), the git

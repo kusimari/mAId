@@ -194,11 +194,14 @@ Main applies any accepted findings to `project.md` itself. The
 setup narrative never enters main's context — only the structured
 verdict.
 
-How, per agent:
+The result lands in the file the packet names (§9), written by the
+dispatched agent or saved from its final output. How, per agent:
 - Claude Code: the Agent tool.
-- codex: a separate `codex exec "<packet>"` run.
-- kiro: a separate `kiro-cli chat --no-interactive "<packet>"` run;
-  an in-session dispatch is not known yet.
+- codex: a separate `codex exec -o <result-file> "<packet>"` run
+  (read-only by default; `-o` saves its final message).
+- kiro: a separate `kiro-cli chat --no-interactive "<packet>"` run,
+  its output redirected to the result file; an in-session dispatch
+  is not known yet.
 
 Where none is available, read `setup.md` into this session and run
 the validation here.
