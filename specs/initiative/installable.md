@@ -101,6 +101,7 @@ initiative worktree.
 | 2 | native-plugins | claude and codex get mAId as a plugin from a marketplace inside the profile: listed, disableable, updated per install; skills that call each other still resolve; their old links removed; `status` / `uninstall` cover plugins | 1 | merged |
 | 3 | install-rollback | one command returns every agent to the previous install; the Macro test as a script anyone can re-run | 2 | merged |
 | 4 | kiro-skills-path | kiro finds mAId's skills as skills: its link moves from `~/.kiro/steering/skills` to where kiro-cli reads skills (`~/.kiro/skills/<name>`), old link reaped | 1 | merged |
+| 5 | uninstall-keeps-going | `just uninstall` finishes every step past a location it must leave alone, then fails at the end, as install does; the plugin era's stale doc lines fixed (from the initiative briefing) | 2 | running |
 
 ## Decision Log
 
@@ -186,3 +187,6 @@ initiative worktree.
   a "not mAId's (kept)" line and exit 0 · why: both are small and
   correct; failing on a normal state would break install · cost if
   wrong: kiro shows the user's skill instead of mAId's, as reported.
+- Ruling: the initiative briefing's two defects become stream 5 · why:
+  Finish routes briefing defects back as stream fixes · cost if wrong:
+  none.
