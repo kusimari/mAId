@@ -87,6 +87,7 @@ branch, before it goes to `main`:
 | 1 | setup-as-installable | the nix profile with the skills and the browser server as closures; `just install` / `status` / `uninstall`; every agent linked at the profile; nothing installed names a checkout | none | merged |
 | 2 | native-plugins | claude and codex get mAId as a plugin from a marketplace inside the profile: listed, disableable, updated per install; skills that call each other still resolve; their old links removed; `status` / `uninstall` cover plugins | 1 | merged |
 | 3 | install-rollback | one command returns every agent to the previous install; the Macro test as a script anyone can re-run | 2 | running |
+| 4 | kiro-skills-path | kiro finds mAId's skills as skills: its link moves from `~/.kiro/steering/skills` to where kiro-cli reads skills (`~/.kiro/skills/<name>`), old link reaped | 1 | planned |
 
 ## Decision Log
 
@@ -148,3 +149,15 @@ branch, before it goes to `main`:
   `just rollback` takes no agent selector; one paid run of 9 model
   calls · why: each is the least that proves the Experience without
   touching user data · cost if wrong: small.
+- Ruling: the paid Macro test showed kiro does not list mAId's skills
+  (kiro-cli reads `~/.kiro/skills/<name>`; stream 1 linked
+  `~/.kiro/steering/skills`). Stream 3 ships with that red, since its
+  script reports a real defect correctly; a new stream 4 fixes the kiro
+  row · why: the fault is stream 1's layout, and stream 1 is merged ·
+  cost if wrong: one small stream.
+- Ruling: the one remaining paid Macro test run is spent at Finish, on
+  the initiative branch, after stream 4 · why: one run then covers
+  stream 3's late changes and the kiro fix · cost if wrong: none.
+- Ruling: rollback's three profile-layout paths living in the Justfile
+  as well as `deploy.rs` is accepted · why: drift makes rollback refuse,
+  not break · cost if wrong: a refused rollback until both agree.
