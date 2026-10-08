@@ -194,3 +194,19 @@ review briefing written for the whole.
 - The initiative PR body comes from the existing review-briefing role
   at initiative level · the user's review; considered a separate
   initiative summary, rejected as a second mechanism for the same job.
+- Spawn and resume are named per host (Claude Code's Agent tool and
+  `SendMessage`, `codex exec` / `codex exec resume`, `kiro-cli chat
+  --no-interactive` / `--resume-id`) · the user's review: the module
+  must work beyond Claude Code; flags checked against the installed
+  CLIs.
+- The initiative briefing replays the ringmaster's calls (rulings and
+  each stream's closure answers) for the user to ratify · the user's
+  review: a stream's closure answers are a human's calls made by the
+  ringmaster, and the initiative PR is where the human sees them.
+- Worktree confinement is enforced where the host can (codex's
+  sandbox, a narrow permission profile checked without a model) and
+  stays an instruction elsewhere, with backlog
+  `mechanize-session-confinement` for Claude Code, kiro and the paid
+  check · the user's review: mechanize what should not be an
+  instruction; the earlier tooling attempt lost on phase adherence,
+  which does not carry over to a safety boundary.
