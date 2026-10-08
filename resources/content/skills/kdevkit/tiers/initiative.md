@@ -123,8 +123,11 @@ main ─────────────────────────
          "<G>/worktrees/<feature>"="write"}}' "<brief>"
      ```
 
-     It can commit on `feat/*` and write in the worktree; it cannot
-     push (no network), move other refs, or write git hooks or config.
+     It can write in the worktree and commit; it cannot push (no
+     network), move `initiative/*` or `main`, or write git hooks or
+     config. It can still write `/tmp` and other `feat/*` branches
+     (git's ref locks stop a narrower grant), so those stay an
+     instruction.
      With no network it also cannot run paid tests: the ringmaster
      runs those, or spawns that stream on another host.
    - kiro: `kiro-cli chat --no-interactive` started in the worktree;
