@@ -438,6 +438,14 @@ anything else about how the reply starts"), and each imperative sits
 where the agent acts on it rather than sections earlier. Precedence is
 what holds; rewording is not.
 
+**It has to outlast its agents.** Write each instruction as *what*
+must be done, in terms true for any coding agent. Then, where it
+helps, say *how* for each current agent, labelled by agent, using its
+CLI or tools as they are today (checked, with the version where it
+matters). A new agent, or an upgrade, then changes only the "how"
+lines, and the rule an agent must keep never names one host's tool as
+the rule itself.
+
 Both failure modes are silent — the skill does the work and omits the
 contract, or never loads and the agent improvises a plausible answer.
 That is why `discovery` and `integration` exist as test kinds, and why
