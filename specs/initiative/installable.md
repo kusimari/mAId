@@ -167,3 +167,9 @@ branch, before it goes to `main`:
   shown by `just status` · why: a steering fallback would put every
   skill's full text back in every kiro session · cost if wrong: kiro
   loses mAId's skills until the next `just install`.
+- Ruling: at stream 4's review, the ringmaster read the post-review
+  ownership fixes (`ours`, `force_reaches`) instead of a third panel
+  cycle; a user's own same-named skill in `~/.kiro/skills` is kept with
+  a "not mAId's (kept)" line and exit 0 · why: both are small and
+  correct; failing on a normal state would break install · cost if
+  wrong: kiro shows the user's skill instead of mAId's, as reported.
