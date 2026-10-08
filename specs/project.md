@@ -254,7 +254,7 @@ mAId/
 ├── target/                 gitignored — cargo's build dir
 └── specs/
     ├── project.md          this file
-    ├── initiative/         multi-stream initiatives (archived on last-stream close)
+    ├── initiative/         initiatives (kept as the record after close)
     ├── feature/            in-flight + completed feature records
     └── backlog/            per-item files for wanted future work
 ```
@@ -683,8 +683,8 @@ the experience is symmetric across resource kinds.
 
 ## Active initiatives
 
-<!-- One line per in-flight initiative. Archived by the last
-     stream's close(<feature>): commit. -->
+<!-- One line per in-flight initiative, on its initiative
+     branch. Removed by its close(<initiative>): commit. -->
 
 ## Agent Development
 

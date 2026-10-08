@@ -171,8 +171,8 @@ Main's inline checks:
    entirely absent (in which case the §4 Code-review setup
    prompt fires).
 3. If a `## Active initiatives` index exists, every line
-   matches an `$SPEC_ROOT/initiative/*.md` on disk and every
-   on-disk initiative either has an index line or is archived.
+   matches an `$SPEC_ROOT/initiative/*.md` on disk. An initiative
+   file with no index line is a closed one, kept as the record.
 4. The `code_review:` and `review_brief:` blocks (if present)
    parse as YAML with no unknown keys.
 
@@ -370,7 +370,9 @@ requires the explicit cue.
 
 **Under a ringmaster** (§10), the ringmaster's messages are the
 user's cues, and each Review Gate is a stop: reply with what the
-PR/CR body would carry, and open, push and merge nothing.
+PR/CR body would carry, and open, push and merge nothing. At
+closure, stop after the `close()` commit: the ringmaster
+squash-merges your branch into `initiative/<name>`, never `main`.
 
 ### Operational gating
 
@@ -630,9 +632,11 @@ Binding whenever this skill hands work to another agent, tool, or
 skill — a reviewer, a briefing generator, a verify subagent. The
 dispatched thing's own contract governs *what it reads*, never
 *what it may do*. One exception: a ringmaster's feature session
-(§10) may edit, stage and commit inside its own worktree, and
-nowhere else; everything below still binds it, and it never pushes
-or merges.
+(§10) is lifted from the first and last bullets below, inside its
+own worktree only. It may edit, stage, commit and run the project's
+own commands (builds, gates, tests, and paid tests if its brief
+allows them) there. It still never pushes or merges, and the middle
+two bullets bind it fully.
 
 - **No write authority.** No edits, commits, pushes, staging, or
   PR/branch mutation beyond the artefact it was asked for.

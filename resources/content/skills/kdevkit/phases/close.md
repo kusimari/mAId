@@ -1,7 +1,7 @@
 # kdevkit — closure (stage module)
 
 Carries the **closure phase**: reconciling in-flight markers, the
-persistent-layer verify, backlog cleanup, initiative status update,
+persistent-layer verify, backlog cleanup, a ringmaster stream's stop,
 the Closure Review Gate, squash-merge, and branch / worktree
 teardown.
 

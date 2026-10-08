@@ -222,8 +222,8 @@ above as the appended one-liner.
 
 When in-flight initiatives exist (see `tiers/initiative.md` §10),
 `project.md` MAY carry an `## Active initiatives` index near
-the bottom — one line per initiative, removed at last-stream
-close:
+the bottom — one line per initiative, written on the initiative
+branch and removed by its `close(<initiative>)` commit:
 
 ```markdown
 ## Active initiatives
@@ -270,9 +270,9 @@ Validation rules the subagent applies, in order:
    means the gate is off; no setup prompt fires for it).
 4. **`## Active initiatives` index, if present, matches
    `$SPEC_ROOT/initiative/`** — every line in the index has a
-   matching `initiative/<name>.md` on disk; every on-disk
-   initiative either has an index line or is archived. Drift
-   in either direction → `drift`.
+   matching `initiative/<name>.md` on disk. An on-disk initiative
+   with no index line is closed and kept as the record, not
+   drift. A line with no file → `drift`.
 
 `findings` are free-form (one issue + one suggestion per row).
 Main applies accepted findings via Edit against the live
