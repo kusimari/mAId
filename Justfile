@@ -27,6 +27,10 @@ install agent="" kiro_sub="":
     just resources::install-browser-mcp "{{ agent }}" "{{ kiro_sub }}" || rc=1
     exit $rc
 
+# Return every agent to the install before this one; run again to go further back.
+rollback:
+    just resources::rollback-profile
+
 # Remove the plugin, the links, the MCP registration, and (for all agents) the profile.
 uninstall agent="" kiro_sub="":
     just resources::uninstall-skills "{{ agent }}"
@@ -38,6 +42,16 @@ status agent="" kiro_sub="":
     @just resources::status-profile
     @just resources::status-skills "{{ agent }}"
     @just resources::status-browser-mcp "{{ agent }}" "{{ kiro_sub }}"
+
+# The installable Macro test against this machine's real install, free.
+[confirm("This reinstalls mAId several times and leaves no earlier install to roll back to. Continue? (y/N)")]
+verify-install:
+    resources/tests/verify-install
+
+# The same, also asking claude, kiro and codex what they see (9 model calls).
+[confirm("This reinstalls mAId several times, leaves no earlier install to roll back to, and costs API credits (9 model calls). Continue? (y/N)")]
+verify-install-paid:
+    resources/tests/verify-install --ask-agents
 
 # ── workspace hygiene ────────────────────────────────────────────
 # These verbs operate on the Rust workspace itself. They never touch

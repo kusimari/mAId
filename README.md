@@ -25,7 +25,8 @@ the install keeps working.
 
 ## Develop
 
-The repo-local flake's dev shell provides `cargo` and `just`:
+The repo-local flake's dev shell provides `cargo`, `just` and `jq` (the
+install tests need it):
 
 ```
 direnv allow              # loads the flake on shell entry
@@ -52,6 +53,9 @@ every coding agent or one (`claude|kiro|codex|agy`):
 just install [agent] [kiro-sub]     # build the profile, link the agents at it
 just uninstall [agent] [kiro-sub]   # remove the links, the MCP registration, and (no agent) the profile
 just status [agent] [kiro-sub]      # profile generation, links, MCP registration
+just rollback                       # every agent back on the install before this one
+just verify-install                 # the end-to-end install test on this machine (free)
+just verify-install-paid            # the same, also asking each agent (9 model calls)
 ```
 
 Three more groups, namespaced by what they touch:
@@ -134,10 +138,22 @@ What it does:
 
 Agents name the profile path or the marketplace dir beside it, never a
 checkout or a store path, so any later install - from this checkout,
-another clone, or any worktree - takes over by adding a generation. The previous one stays
-until it is 30 days old (`nix profile rollback --profile
-~/.local/state/maid/profile` returns to it). Set `MAID_PROFILE` to use
+another clone, or any worktree - takes over by adding a generation.
+`just rollback` returns every agent to the install before it (all of
+them: the profile is shared), and again to the one before that. An install after a rollback replaces the
+installs rolled back from. Installs older than 30 days are removed,
+except the one before the live install. If the agents cannot take an
+earlier install (one from before the plugin), rollback refuses and
+changes nothing. Set `MAID_PROFILE` to use
 another location.
+
+`just verify-install` proves all of this on this machine's real install:
+it installs from a clone and deletes the clone, checks what each agent
+lists, starts the browser server with only `HOME` set, searches what mAId
+installed for checkout paths, takes over from a second clone and rolls
+back, then uninstalls (keeping your allowlist and learned rules) and
+reinstalls from this checkout. It leaves no earlier install to roll back
+to. `just verify-install-paid` also asks each agent what it sees.
 
 Skill edits in a checkout reach sessions at the next `just install`
 (codex reads its own copy of the plugin, so only an install updates it).

@@ -153,7 +153,18 @@ takes over a link only when it points at a mAId skills tree (a
 profile's, or a checkout's from before the profile); any other
 symlink at a managed path is kept and reported, since mAId never
 touches agent config it did not write. Nix GC roots keep each
-generation alive; install wipes those older than 30 days.
+generation alive; an install that adds a generation wipes those older
+than 30 days, and nix keeps the newest one older than that, so the
+install before the live one survives (an unchanged install adds none and
+skips the wipe, which would otherwise keep only the live one). **Rollback** is `nix profile rollback` plus the plugin install
+(codex serves its cached copy until `codex plugin add` runs). It refuses
+a generation without the skills, the plugin manifest or the browser
+launcher, before switching; it does not switch back on an install
+failure, since install also exits non-zero for a link it left alone.
+nix rolls back to the next lower generation number, so install drops
+the generations above the live one (the ones a rollback returned from),
+after its build succeeds; otherwise a rollback after rollback-then-install would land on
+them rather than on the install before.
 
 Skills reach kiro (and agy) through the registry as symlinks at their
 own skills path (`~/.kiro/steering/skills`), verified to load with no
@@ -202,7 +213,8 @@ re-auth. Its shape differs from skills in two ways:
   join as additional members.
 - **Isolation:** one flake, two outputs. `devShells.default`
   (loaded by `.envrc` via direnv) is the dev closure: the rust
-  toolchain (rust-overlay) and `just`. `packages.default` is
+  toolchain (rust-overlay), `just`, and `jq` (the install tests read
+  the agents' JSON). `packages.default` is
   the installable: the skills plus `chrome-devtools-mcp`
   (packaged from its npm tarball, which has no dependencies)
   wrapped with `nodejs_22`.
@@ -246,7 +258,9 @@ re-auth. Its shape differs from skills in two ways:
     `just kaimux::test`, `just kaimux::integration`.
   - **Install** at the root: `just install [agent] [kiro-sub]`
     (profile, then skills and browser MCP), `just uninstall`,
-    `just status`. Later installables (kaimux) join here.
+    `just status`, `just rollback`, and the Macro test `just
+    verify-install` / `just verify-install-paid` (both `[confirm]`-gated).
+    Later installables (kaimux) join here.
   - **Workspace hygiene** at the root (no namespace —
     operates on every member): `just test`, `just fmt`,
     `just fmt-check`, `just lint`, `just check`,
@@ -269,7 +283,7 @@ mAId/
 ├── Cargo.lock              committed (binary-workspace policy)
 ├── Justfile                root verb surface (workspace hygiene + `mod resources` / `mod kaimux`)
 ├── rust-toolchain.toml     stable + clippy + rustfmt
-├── flake.nix / .envrc      dev shell (rust toolchain + just) and the installable package
+├── flake.nix / .envrc      dev shell (rust toolchain, just, jq) and the installable package
 ├── resources/
 │   ├── Justfile            `resources::*` verb surface (install/uninstall/status/verify)
 │   ├── build-tool/         Rust crate — the pipeline (check/install/uninstall/status/smoke)
@@ -292,6 +306,8 @@ mAId/
 │   │   └── manage          data-driven MCP registrar (MCP_AGENTS table: claude/codex global, kiro per-sub-agent)
 │   └── tests/              fixtures + the attended browser test (the runner itself is in build-tool)
 │       ├── browser-functional   ATTENDED test: drives real Chrome, asserts off-list blocked
+│       ├── rollback             free: `just rollback` and install's generation cleanup, temp HOME
+│       ├── verify-install       the installable Macro test, on the real install (`just verify-install`)
 │       ├── conversational-stream.txt  the --stressed prefix
 │       └── skills/<name>.smoke   fixtures: skill + playback/enact sections (runner owns the five kinds)
 ├── kaimux/                 tmux-pane orchestrator for coding-agent sessions
@@ -333,6 +349,27 @@ claude and codex CLIs in a temp HOME (install, update, a disabled
 plugin, a codex marketplace whose dir is gone, uninstall). Free (no
 model calls) but needs both CLIs, so it is out of `just test`; run it
 after any change to `Plugins`.
+
+`nix develop -c resources/tests/rollback` drives `just rollback` and
+install's generation cleanup against the real claude and codex CLIs in a
+temp HOME and a temp profile (free, under a minute): rollback, an
+install whose build fails keeping the generations it would drop,
+rollback after rollback-then-install, an earlier generation the agents
+cannot take, no earlier generation, the 30-day cleanup keeping the
+previous install (also after an unchanged install), and rollback past a
+link mAId did not write.
+Run it after any change to the profile recipes.
+
+**`just verify-install` is the installable Macro test**
+(`resources/tests/verify-install`), run on the real install: install
+from a clone that is then deleted, what each agent's own CLI lists, the
+browser server under `env -i HOME=…`, a search for checkout paths, a
+second clone's takeover and rollback, uninstall keeping user data, and a
+reinstall from the checkout it ran from (a trap guarantees that, and
+removes any placeholder user-data file it wrote). Free, under a minute;
+`just verify-install-paid` adds 9 model calls asking each agent for its
+skills and for a marker line. It ends with no earlier install to roll
+back to, since uninstall removes the profile.
 
 One test deliberately breaks the fake-`$HOME` pattern:
 `shipped_content_validates` points the validator at the **real**
@@ -697,7 +734,8 @@ Not a service — consumed locally.
 the claude/codex plugin and links kiro and agy at it (see
 Architecture); `just uninstall` reverses it and removes the profile;
 `just status` reports the generation, each plugin and
-each link. `just resources::verify-skills` drives the
+each link; `just rollback` returns every agent to the previous install
+(no selector: the profile is shared). `just resources::verify-skills` drives the
 real AI tools against the installed content. Each takes an
 optional coding-agent selector (`claude|kiro|codex`; omit for all
 three). App workspace members (`kaimux/`) build via

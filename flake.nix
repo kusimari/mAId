@@ -107,6 +107,7 @@
           buildInputs = [
             rustToolchain
             pkgs.just
+            pkgs.jq # the install tests read the agents' JSON
           ];
         };
       }

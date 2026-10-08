@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# Free test of `just rollback` and of the generations `just install`
+# keeps, against the real claude and codex CLIs in a temp HOME and a temp
+# profile. No model calls. Needs nix and both CLIs; from the checkout:
+#
+#   nix develop -c resources/tests/rollback
+#
+# The installs from the clone run its committed recipes; everything else
+# runs this checkout's working tree. Builds run with the real HOME, so nix finds its config and
+# cache; everything that touches an agent runs with the temp one.
+set -uo pipefail
+
+here=$(git rev-parse --show-toplevel)
+cd "$here" || exit 1
+work=$(mktemp -d)
+# The pre-plugin tree is copied from the store, so it is read-only.
+trap 'chmod -R u+w "$work"; rm -rf "$work"' EXIT
+th=$work/home
+mkdir -p "$th" "$work/state/maid"
+export MAID_PROFILE=$work/state/maid/profile
+export CARGO_HOME=${CARGO_HOME:-$HOME/.cargo} CARGO_TARGET_DIR=$here/target
+# nix keeps its settings and fetch cache under these; the agents do not.
+export XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config} XDG_CACHE_HOME=${XDG_CACHE_HOME:-$HOME/.cache}
+unset CODEX_HOME CLAUDE_CONFIG_DIR XDG_STATE_HOME
+
+fails=0
+check() {
+  local what=$1
+  shift
+  if "$@"; then echo "PASS  $what"; else echo "FAIL  $what"; fails=$((fails + 1)); fi
+}
+inhome() { HOME=$th "$@"; }
+gen() { readlink "$MAID_PROFILE" | sed -n 's/.*-\([0-9]*\)-link$/\1/p'; }
+version_of() { jq -r .version "$1/share/maid/marketplace/plugins/maid/.codex-plugin/plugin.json"; }
+listed() {
+  case $1 in
+    claude) inhome claude plugin list --json 2>/dev/null | jq -r '.[] | select(.id == "maid@maid" and .scope == "user") | .version' ;;
+    codex) inhome codex plugin list --json 2>/dev/null | jq -r '.installed[]? | select(.pluginId == "maid@maid") | .version' ;;
+  esac
+}
+both_at() { [ "$(listed claude)" = "$1" ] && [ "$(listed codex)" = "$1" ]; }
+codex_has_marker() { grep -rqs "$marker" "$th/.codex/plugins/cache"; }
+kiro_has_marker() { grep -qs "$marker" "$th/.kiro/steering/skills/notes/SKILL.md"; }
+skills() { inhome just resources::install-skills >"$work/log" 2>&1 || { cat "$work/log"; return 1; }; }
+rollback() { inhome just rollback >"$work/out" 2>&1; }
+
+# Three installs: one older than the plugin marketplace (C), this
+# checkout (A), and a clone with one skill line added (B).
+echo "building..."
+A=$(nix build --no-link --print-out-paths "$here#default") || exit 1
+git clone -q "$here" "$work/b"
+marker="rollback-test marker $RANDOM$RANDOM"
+echo "$marker" >>"$work/b/resources/content/skills/notes/SKILL.md"
+B=$(nix build --no-link --print-out-paths "$work/b#default" 2>/dev/null) || exit 1
+mkdir -p "$work/c/share/maid/skills"
+cp -rL "$A/share/maid/skills/notes" "$work/c/share/maid/skills/"
+C=$(nix store add-path --name maid-before-plugins "$work/c") || exit 1
+vA=$(version_of "$A")
+vB=$(version_of "$B")
+
+nix build --profile "$MAID_PROFILE" "$C" || exit 1
+nix build --profile "$MAID_PROFILE" "$A" && skills || exit 1
+nix build --profile "$MAID_PROFILE" "$B" && skills || exit 1
+check "second install is live in claude, codex and kiro" \
+  eval 'both_at "$vB" && codex_has_marker && kiro_has_marker'
+
+rollback
+rc=$?
+check "rollback returns claude, codex and kiro to the first install" \
+  eval '[ $rc = 0 ] && [ "$(gen)" = 2 ] && both_at "$vA" && ! codex_has_marker && ! kiro_has_marker'
+
+# An install whose build fails leaves the generation rolled back from.
+git clone -q "$here" "$work/broken"
+echo 'not nix' >>"$work/broken/flake.nix"
+just -f "$work/broken/Justfile" resources::install-profile >"$work/log" 2>&1
+rc=$?
+check "an install that fails to build keeps the generations it would drop" \
+  eval '[ $rc != 0 ] && [ "$(gen)" = 2 ] && [ -e "$MAID_PROFILE-3-link" ]'
+
+# A third install (D, the clone edited again), from the clone's recipes,
+# then roll back: back on A, not on B, which the first rollback left above.
+echo "second $marker" >>"$work/b/resources/content/skills/notes/SKILL.md"
+just -f "$work/b/Justfile" resources::install-profile >"$work/log" 2>&1 && skills || exit 1
+vD=$(version_of "$(readlink -f "$MAID_PROFILE")")
+check "install after a rollback drops the generation rolled back from" \
+  eval '[ "$(gen)" = 3 ] && [ ! -e "$MAID_PROFILE-4-link" ] && both_at "$vD"'
+rollback
+rc=$?
+check "rollback after rollback-then-install returns to the install before it" \
+  eval '[ $rc = 0 ] && [ "$(gen)" = 2 ] && both_at "$vA"'
+
+rollback
+rc=$?
+check "rollback to an install the agents cannot take is refused" \
+  eval '[ $rc != 0 ] && [ "$(gen)" = 2 ] && both_at "$vA" && grep -q "staying on generation 2" "$work/out"'
+
+nix profile wipe-history --profile "$MAID_PROFILE" 2>/dev/null
+rollback
+rc=$?
+check "rollback with no earlier install changes nothing" \
+  eval '[ $rc != 0 ] && [ "$(gen)" = 2 ] && both_at "$vA" && grep -q "no install before generation 2" "$work/out"'
+
+# The 30-day cleanup: live on D, both generations dated 40 days back,
+# then an install of A. D, the install before it, must be kept.
+just -f "$work/b/Justfile" resources::install-profile >"$work/log" 2>&1 && skills || exit 1
+touch -h -d '40 days ago' "$MAID_PROFILE"-*-link
+just resources::install-profile >"$work/log" 2>&1 && skills || exit 1
+rollback
+rc=$?
+check "cleanup of old installs keeps the one before the live one" \
+  eval '[ $rc = 0 ] && [ ! -e "$MAID_PROFILE-2-link" ] && [ "$(gen)" = 3 ] && both_at "$vD"'
+
+# An unchanged reinstall while everything is old adds no generation, so
+# it must not wipe: the install before the live one would go.
+just resources::install-profile >"$work/log" 2>&1 && skills || exit 1
+touch -h -d '40 days ago' "$MAID_PROFILE"-*-link
+just resources::install-profile >"$work/log" 2>&1 || exit 1
+check "an unchanged install keeps the install before the live one" \
+  eval '[ "$(gen)" = 4 ] && [ -e "$MAID_PROFILE-3-link" ]'
+
+# A link mAId did not write makes install exit non-zero; rollback still
+# moves every agent, keeps the link, and passes the exit code on.
+just resources::install-profile >"$work/log" 2>&1 && skills || exit 1
+mkdir -p "$work/elsewhere"
+ln -sfn "$work/elsewhere" "$th/.gemini/config/skills"
+rollback
+rc=$?
+check "rollback past a link mAId did not write still moves the agents" \
+  eval '[ $rc != 0 ] && [ "$(gen)" = 3 ] && both_at "$vD" && [ "$(readlink "$th/.gemini/config/skills")" = "$work/elsewhere" ]'
+
+inhome just resources::uninstall-skills >/dev/null 2>&1
+[ "$fails" = 0 ] && echo "all rollback checks passed" || echo "$fails rollback check(s) failed"
+exit $((fails > 0))

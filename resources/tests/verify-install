@@ -1,0 +1,250 @@
+#!/usr/bin/env bash
+# The installable initiative's Macro test, on this machine's real install:
+# install from a clone that is then deleted, check what each agent reports,
+# start the browser server bare, search for checkout paths, take over from
+# a second clone and roll back, then uninstall and reinstall.
+#
+#   resources/tests/verify-install [--ask-agents]
+#
+# --ask-agents adds the paid part: claude, kiro and codex are each asked,
+# in a read-only non-interactive session, which skills they have (step 2)
+# and whether a skill carries the second clone's marker (step 5): 9 model
+# calls. Run through `just verify-install` / `just verify-install-paid`.
+#
+# Tests the committed HEAD (the clones see nothing uncommitted). Touches
+# only what mAId owns. However it exits, it ends with mAId installed from
+# this checkout and the user's allowlist and learned-rules files as they
+# were. Step 6 uninstalls, which removes the profile and its history, so
+# afterwards there is no earlier install to roll back to.
+set -uo pipefail
+
+here=$(git rev-parse --show-toplevel)
+cd "$here" || exit 1
+ask=0
+case ${1:-} in
+  --ask-agents) ask=1 ;;
+  "") ;;
+  *) echo "usage: verify-install [--ask-agents]" >&2; exit 2 ;;
+esac
+
+profile=$(just --evaluate resources::MAID_PROFILE)
+marketplace=$(dirname "$profile")/marketplace
+config=${XDG_CONFIG_HOME:-$HOME/.config}/maid
+allowlist=$config/browser-allowlist
+learned=$config/writing-style/learned.md
+kiro_link=$HOME/.kiro/steering/skills
+work=$(mktemp -d)
+# Share the build cache, so each clone's install rebuilds rather than
+# compiling from scratch.
+export CARGO_TARGET_DIR=$here/target
+
+fails=0
+reinstall=0
+created=()
+created_dirs=()
+pass() { echo "PASS  $*"; }
+fail() { echo "FAIL  $*"; fails=$((fails + 1)); }
+check() {
+  local what=$1
+  shift
+  if "$@"; then pass "$what"; else fail "$what"; fi
+}
+step() { printf '\n== %s\n' "$*"; }
+# Stop here: the trap still reinstalls from this checkout.
+abort() { fail "$*"; exit 1; }
+
+finish() {
+  if [ "$reinstall" = 1 ]; then
+    step "putting mAId back: just install from $here"
+    if just install >"$work/reinstall.log" 2>&1; then
+      pass "reinstalled from this checkout"
+    else
+      tail -n 20 "$work/reinstall.log"
+      fail "reinstall from this checkout; run: just install"
+    fi
+  fi
+  rm -f "${created[@]}"
+  local i
+  for ((i = ${#created_dirs[@]} - 1; i >= 0; i--)); do rmdir "${created_dirs[i]}" 2>/dev/null; done
+  chmod -R u+w "$work" 2>/dev/null
+  rm -rf "$work"
+  echo
+  if [ "$fails" = 0 ]; then echo "Macro test: all checks passed"; else echo "Macro test: $fails check(s) FAILED"; fi
+  exit $((fails > 0))
+}
+trap finish EXIT
+trap 'fail "interrupted"; exit 130' INT TERM
+
+# What each agent reports about mAId, from its own CLI.
+claude_plugin() { claude plugin list --json 2>/dev/null | jq -c '.[] | select(.id == "maid@maid" and .scope == "user")'; }
+codex_plugin() { codex plugin list --json 2>/dev/null | jq -c '.installed[]? | select(.pluginId == "maid@maid")'; }
+listed_at() { # <version>: both list maid@maid, enabled, at it
+  [ "$(claude_plugin | jq -r 'select(.enabled) | .version')" = "$1" ] &&
+    [ "$(codex_plugin | jq -r 'select(.enabled) | .version')" = "$1" ]
+}
+none_listed() { [ -z "$(claude_plugin)" ] && [ -z "$(codex_plugin)" ]; }
+built_version() { jq -r .version "$profile/share/maid/marketplace/plugins/maid/.codex-plugin/plugin.json"; }
+kiro_ok() { [ "$(readlink "$kiro_link")" = "$profile/share/maid/skills" ] && [ -f "$kiro_link/kdevkit/SKILL.md" ]; }
+
+# Read-only, non-interactive, in a scratch dir: the skill-test harness's
+# flags, except kiro runs its default agent (the one that reads its
+# skills) trusted only to read.
+ask_agent() { # <agent> <prompt>; the reply on stdout
+  local dir=$work/ask
+  mkdir -p "$dir"
+  case $1 in
+    claude) (cd "$dir" && claude --print --permission-mode dontAsk --allowedTools=Read,Glob,Grep,Skill "$2") ;;
+    kiro) (cd "$dir" && kiro-cli chat --no-interactive --trust-tools=fs_read "$2") | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' ;;
+    codex)
+      rm -f "$dir/reply"
+      codex exec --cd "$dir" --sandbox read-only -c approval_policy=never --skip-git-repo-check \
+        -o "$dir/reply" "$2" >/dev/null 2>&1
+      cat "$dir/reply" 2>/dev/null
+      ;;
+  esac
+}
+agents=(claude kiro codex)
+
+install_from() { # <checkout> <log>
+  (cd "$1" && just install) >"$2" 2>&1 || { tail -n 20 "$2"; return 1; }
+}
+
+for tool in git jq nix just claude codex; do
+  command -v "$tool" >/dev/null || abort "$tool is not on PATH (run inside the dev shell: nix develop)"
+done
+[ "$ask" = 0 ] || command -v kiro-cli >/dev/null || abort "kiro-cli is not on PATH"
+# A disabled plugin stays disabled across install, so the checks below,
+# which want it enabled, would fail on the user's choice rather than mAId.
+for a in claude codex; do
+  [ "$("${a}_plugin" | jq -r .enabled)" != false ] || abort "maid@maid is disabled in $a; enable it there, then rerun"
+done
+[ -z "$(git status --porcelain)" ] ||
+  echo "note: uncommitted changes are not in the clones and are not tested"
+
+# ── 1 ────────────────────────────────────────────────────────────
+step "1. just install from a clone, then delete the clone"
+clone_a=$work/clone-a
+git clone -q "$here" "$clone_a" || abort "clone this checkout"
+clone_a_real=$(realpath "$clone_a")
+reinstall=1
+install_from "$clone_a" "$work/install-a.log" || abort "just install from the clone"
+pass "just install from $clone_a"
+version_a=$(built_version)
+rm -rf "$clone_a"
+check "the clone is deleted" test ! -e "$clone_a"
+
+# ── 2 ────────────────────────────────────────────────────────────
+step "2. the agents list mAId"
+check "claude and codex list maid@maid, enabled, at $version_a" listed_at "$version_a"
+check "kiro's skills link is mAId's install" kiro_ok
+shipped=$(ls "$profile/share/maid/skills")
+if [ "$ask" = 1 ]; then
+  for a in "${agents[@]}"; do
+    reply=$(ask_agent "$a" "List the names of every skill you can load. Reply with the skill names only, one per line.")
+    # One name per line, as asked; list markers and a maid: prefix allowed.
+    names=$(sed -E 's/^[[:space:]]*([-*•]|[0-9]+[.)])?[[:space:]]*`?(maid:)?//; s/`?[[:space:]]*$//' <<<"$reply")
+    missing=$(for s in $shipped; do grep -qixF -- "$s" <<<"$names" || echo "$s"; done | xargs)
+    check "$a names every mAId skill${missing:+ (missing: $missing)}" test -z "$missing"
+  done
+else
+  echo "skip  asking each agent for its skills (paid: --ask-agents)"
+fi
+
+# ── 3 ────────────────────────────────────────────────────────────
+step "3. the browser server answers MCP initialize with only HOME set"
+browser_home=$HOME
+if ! grep -qsv '^[[:space:]]*\(#\|$\)' "$HOME/.config/maid/browser-allowlist"; then
+  # No site on the user's list, so the launcher would refuse to start.
+  browser_home=$work/browser-home
+  mkdir -p "$browser_home/.config/maid"
+  echo 'https://example.com/*' >"$browser_home/.config/maid/browser-allowlist"
+  echo "note: your allowlist has no site; using a one-site list in a temp HOME"
+fi
+init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"verify-install","version":"0"}}}'
+reply=$({ echo "$init"; sleep 5; } | timeout 10 env -i HOME="$browser_home" "$profile/bin/maid-browser-mcp" 2>"$work/mcp.err" | head -n 1)
+server=$(jq -r 'select(.id == 1) | .result.serverInfo.name // empty' <<<"$reply" 2>/dev/null)
+check "$profile/bin/maid-browser-mcp answers initialize${server:+ (server: $server)}" test -n "$server"
+[ -n "$server" ] || sed 's/^/  /' "$work/mcp.err"
+
+# ── 4 ────────────────────────────────────────────────────────────
+step "4. nothing mAId installed names a checkout"
+{
+  claude plugin marketplace list --json 2>/dev/null | jq -c '.[] | select(.name == "maid")'
+  claude_plugin
+  codex plugin marketplace list --json 2>/dev/null | jq -c '.marketplaces[]? | select(.name == "maid")'
+  codex_plugin
+  claude mcp get chrome-devtools 2>/dev/null
+  codex mcp get chrome-devtools 2>/dev/null
+  for link in "$kiro_link" "$HOME/.gemini/config/skills" "$marketplace"/* "$marketplace"/.[!.]*; do
+    [ -L "$link" ] && echo "$link -> $(readlink "$link")"
+  done
+} >"$work/config.txt"
+checkouts=("$clone_a" "$clone_a_real" "$here" "$(realpath "$here")")
+hits=$({
+  grep -nF "${checkouts[@]/#/-e}" "$work/config.txt"
+  grep -n '/resources/content/skills' "$work/config.txt"
+  grep -RIlF "${checkouts[@]/#/-e}" "$(readlink -f "$profile")"
+  grep -RIl '/resources/content/skills' "$(readlink -f "$profile")"
+} | sort -u)
+check "no checkout path in the agents' mAId entries, links or the install" test -z "$hits"
+[ -z "$hits" ] || sed 's/^/  /' <<<"$hits"
+[ -s "$work/config.txt" ] || fail "the agents reported no mAId entries to search"
+
+# ── 5 ────────────────────────────────────────────────────────────
+step "5. a second clone with one skill changed takes over; rollback returns"
+clone_b=$work/clone-b
+git clone -q "$here" "$clone_b" || abort "clone this checkout again"
+nonce=$RANDOM$RANDOM$RANDOM
+marker="Macro test marker: $nonce"
+echo "$marker" >>"$clone_b/resources/content/skills/notes/SKILL.md"
+install_from "$clone_b" "$work/install-b.log" || abort "just install from the second clone"
+version_b=$(built_version)
+rm -rf "$clone_b"
+check "claude and codex moved to the second clone's $version_b" eval '[ "$version_b" != "$version_a" ] && listed_at "$version_b"'
+check "kiro reads the changed skill" grep -qF "$marker" "$kiro_link/notes/SKILL.md"
+marker_prompt="Open the SKILL.md of your skill named notes and look for a line that starts with 'Macro test marker'. If there is one, reply with that whole line. If there is none, reply: NO MARKER."
+asked() { # <expect: has|lacks>
+  [ "$ask" = 1 ] || { echo "skip  asking each agent for the marker (paid: --ask-agents)"; return; }
+  local a reply
+  for a in "${agents[@]}"; do
+    reply=$(ask_agent "$a" "$marker_prompt")
+    if [ "$1" = has ]; then
+      check "$a quotes the marker" grep -qF "$nonce" <<<"$reply"
+    else
+      check "$a no longer sees the marker" eval '! grep -qF "$nonce" <<<"$reply" && [ -n "$reply" ]'
+    fi
+  done
+}
+asked has
+just rollback >"$work/rollback.log" 2>&1
+rc=$?
+check "just rollback, from this checkout" test "$rc" = 0
+[ "$rc" = 0 ] || tail -n 20 "$work/rollback.log"
+check "claude and codex are back on $version_a" listed_at "$version_a"
+check "kiro reads the old text" eval '[ -f "$kiro_link/notes/SKILL.md" ] && ! grep -qF "$marker" "$kiro_link/notes/SKILL.md"'
+asked lacks
+
+# ── 6 ────────────────────────────────────────────────────────────
+step "6. just uninstall keeps user data; then reinstall from this checkout"
+for f in "$allowlist" "$learned"; do
+  if [ ! -e "$f" ]; then
+    # Comment-only, so it enables nothing; removed at the end, with any
+    # directory made for it.
+    d=$(dirname "$f")
+    new_dirs=()
+    while [ ! -e "$d" ]; do new_dirs=("$d" "${new_dirs[@]}"); d=$(dirname "$d"); done
+    mkdir -p "$(dirname "$f")"
+    created_dirs+=("${new_dirs[@]}")
+    echo "# placeholder written by verify-install, removed when it ends" >"$f"
+    created+=("$f")
+  fi
+done
+before=$(sha256sum "$allowlist" "$learned")
+just uninstall >"$work/uninstall.log" 2>&1 || { tail -n 20 "$work/uninstall.log"; fail "just uninstall"; }
+check "neither claude nor codex lists maid@maid" none_listed
+check "kiro's skills link is gone" test ! -L "$kiro_link"
+check "the allowlist and learned-rules files are untouched" eval '[ "$(sha256sum "$allowlist" "$learned" 2>/dev/null)" = "$before" ]'
+install_from "$here" "$work/install-here.log" && reinstall=0
+check "just install from this checkout" test "$reinstall" = 0
+check "claude and codex list this checkout's $(built_version)" listed_at "$(built_version)"
+check "kiro's skills link is mAId's install" kiro_ok

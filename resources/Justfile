@@ -16,11 +16,59 @@ export MAID_PROFILE := env("MAID_PROFILE", env("XDG_STATE_HOME", env("HOME") / "
 # Nix sees tracked files only, so `git add` a new file first.
 [no-cd]
 install-profile:
+    #!/usr/bin/env bash
+    set -eu
     cargo run -p build-tool --release --quiet -- validate
     mkdir -p "$(dirname "$MAID_PROFILE")"
-    nix build --profile "$MAID_PROFILE" "{{ justfile_directory() }}#default"
-    nix profile wipe-history --profile "$MAID_PROFILE" --older-than 30d
-    @{{ just_executable() }} -f {{ source_file() }} status-profile
+    out=$(nix build --no-link --print-out-paths "{{ justfile_directory() }}#default")
+    {{ just_executable() }} -f {{ source_file() }} _drop-rolled-back
+    live=$(readlink "$MAID_PROFILE" 2>/dev/null || true)
+    nix build --profile "$MAID_PROFILE" "$out"
+    # The wipe keeps the newest generation older than the cutoff. With no
+    # new generation that is the live one, and the one before it would go.
+    if [ "$(readlink "$MAID_PROFILE")" != "$live" ]; then
+        nix profile wipe-history --profile "$MAID_PROFILE" --older-than 30d
+    fi
+    {{ just_executable() }} -f {{ source_file() }} status-profile
+
+# The plugin install runs again after the switch: codex serves its cached
+# copy of the plugin, and claude's listed version stays stale, until it
+# does. A generation missing what the agents are pointed at (one from
+# before the plugin) is refused, and nothing changes.
+# Switch the profile one generation back and point the agents at it.
+[no-cd]
+rollback-profile:
+    #!/usr/bin/env bash
+    set -u
+    num() { sed -n 's/.*-\([0-9]*\)-link$/\1/p'; }
+    from=$(readlink "$MAID_PROFILE" | num)
+    [ -n "$from" ] || { echo "no mAId install at $MAID_PROFILE to roll back from (run: just install)" >&2; exit 1; }
+    to=$(printf '%s\n' "$MAID_PROFILE"-*-link | num | awk -v from="$from" '$1 < from' | sort -n | tail -n 1)
+    [ -n "$to" ] || { echo "no install before generation $from to roll back to" >&2; exit 1; }
+    for need in share/maid/skills share/maid/marketplace/plugins/maid/.codex-plugin/plugin.json bin/maid-browser-mcp; do
+        [ -e "$MAID_PROFILE-$to-link/$need" ] ||
+            { echo "generation $to has no $need, so the agents cannot use it; staying on generation $from" >&2; exit 1; }
+    done
+    nix profile rollback --profile "$MAID_PROFILE" --to "$to" || exit 1
+    # Its exit code is install's: non-zero also when a link was left alone.
+    {{ just_executable() }} -f {{ source_file() }} install-skills; rc=$?
+    {{ just_executable() }} -f {{ source_file() }} status-profile
+    exit $rc
+
+# Generations above the live one are installs a rollback returned from.
+# nix rolls back to the next lower number, so unless they go, a rollback
+# after the next install lands on them instead of on the install before it.
+[no-cd]
+_drop-rolled-back:
+    #!/usr/bin/env bash
+    set -u
+    live=$(readlink "$MAID_PROFILE" 2>/dev/null | sed -n 's/.*-\([0-9]*\)-link$/\1/p')
+    [ -n "$live" ] || exit 0
+    for link in "$MAID_PROFILE"-*-link; do
+        n=${link#"$MAID_PROFILE"-}
+        n=${n%-link}
+        if [ "$n" -gt "$live" ] 2>/dev/null; then rm -f "$link" && echo "dropped generation $n (rolled back from)"; fi
+    done
 
 # Remove the mAId profile. Its store paths go at the next nix GC.
 [no-cd]
