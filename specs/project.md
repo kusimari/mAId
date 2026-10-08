@@ -152,7 +152,8 @@ mAId's marketplace and plugin are recognised by name (`maid`,
 takes over a link only when it points at a mAId skills tree (a
 profile's, or a checkout's from before the profile); any other
 symlink at a managed path is kept and reported, since mAId never
-touches agent config it did not write. Nix GC roots keep each
+touches agent config it did not write. Install and uninstall run
+their other steps past such a location, then exit non-zero. Nix GC roots keep each
 generation alive; an install that adds a generation wipes those older
 than 30 days, and nix keeps the newest one older than that, so the
 install before the live one survives (an unchanged install adds none and
@@ -243,7 +244,8 @@ re-auth. Its shape differs from skills in two ways:
     taking the coding-agent selector (`claude|kiro|codex`; omit
     for all three): `just resources::install-profile` (validate +
     build the profile, no selector), `just resources::install-skills
-    [agent]` (link at the profile),
+    [agent]` (install the claude/codex plugin, link the rest at
+    the profile),
     `…::uninstall-skills [agent]`, `…::status-skills [agent]`,
     `…::check-skills [agent]` (pre-install: reads each skill from
     the checkout, so no deploy is needed), `…::smoke-skills

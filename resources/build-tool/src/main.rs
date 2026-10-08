@@ -5,9 +5,9 @@
 //! Invoked via the project's Justfile, in pipeline order:
 //!   just resources::check-skills [agent]      verify each skill from the checkout (no install needed)
 //!   just resources::install-profile           validate the checkout, build it into the profile
-//!   just resources::install-skills [agent]    link the agents at the profile
-//!   just resources::uninstall-skills [agent]  remove the managed symlinks
-//!   just resources::status-skills [agent]     report each managed symlink's current state
+//!   just resources::install-skills [agent]    install the claude/codex plugin, link the rest at the profile
+//!   just resources::uninstall-skills [agent]  remove the plugin and the managed symlinks
+//!   just resources::status-skills [agent]     report each plugin's version and each managed symlink
 //!   just resources::smoke-skills [agent]      verify against the deployed tree
 //!   just resources::verify-skills [agent]     both verification stages
 //! An optional `--agent <claude|kiro|codex|agy>` scopes any of them to one
@@ -92,7 +92,8 @@ enum Cmd {
     Check(VerifyArgs),
     /// Validate the checkout's content, before it is built into the profile.
     Validate,
-    /// Validate the profile's content and link the agents at it.
+    /// Validate the profile's content, install the claude/codex plugin,
+    /// and link the other agents at it.
     Install(DeployArgs),
     /// Remove what install deployed, leaving anything not ours.
     Uninstall(DeployArgs),

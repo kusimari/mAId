@@ -200,8 +200,8 @@ verify-skills-dry name="":
 # `<action>-browser-mcp` pattern so they read as peers of the
 # `*-skills` verbs (`browser-mcp-allow` keeps its name — it manages
 # the allowlist, not the registration lifecycle). Desktop-only;
-# graceful skip where there is no GUI Chrome, no nix, or no harness
-# CLI. The allowlist is user-owned data — uninstall never touches it.
+# graceful skip where there is no GUI Chrome or no harness CLI. The
+# allowlist is user-owned data — uninstall never touches it.
 # Needs the profile (install-profile); the registration names the
 # profile path, so later installs need no re-registration.
 #

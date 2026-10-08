@@ -31,11 +31,17 @@ install agent="" kiro_sub="":
 rollback:
     just resources::rollback-profile
 
+# A step that fails, such as one leaving a location alone as install
+# does, is reported, the rest still runs, and the run exits non-zero.
 # Remove the plugin, the links, the MCP registration, and (for all agents) the profile.
 uninstall agent="" kiro_sub="":
-    just resources::uninstall-skills "{{ agent }}"
-    just resources::uninstall-browser-mcp "{{ agent }}" "{{ kiro_sub }}"
-    {{ if agent == "" { "just resources::uninstall-profile" } else { "true" } }}
+    #!/usr/bin/env bash
+    set -u
+    rc=0
+    just resources::uninstall-skills "{{ agent }}" || rc=1
+    just resources::uninstall-browser-mcp "{{ agent }}" "{{ kiro_sub }}" || rc=1
+    {{ if agent == "" { "just resources::uninstall-profile || rc=1" } else { "" } }}
+    exit $rc
 
 # Report the profile generation, the plugins, the links, and the MCP registration.
 status agent="" kiro_sub="":

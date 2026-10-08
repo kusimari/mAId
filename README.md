@@ -50,9 +50,9 @@ Feature specs: [`specs/feature/`](./specs/feature/).
 every coding agent or one (`claude|kiro|codex|agy`):
 
 ```
-just install [agent] [kiro-sub]     # build the profile, link the agents at it
-just uninstall [agent] [kiro-sub]   # remove the links, the MCP registration, and (no agent) the profile
-just status [agent] [kiro-sub]      # profile generation, links, MCP registration
+just install [agent] [kiro-sub]     # build the profile, point the agents at it (plugin or links)
+just uninstall [agent] [kiro-sub]   # remove the plugin, the links, the MCP registration, and (no agent) the profile
+just status [agent] [kiro-sub]      # profile generation, plugins, links, MCP registration
 just rollback                       # every agent back on the install before this one
 just verify-install                 # the end-to-end install test on this machine (free)
 just verify-install-paid            # the same, also asking each agent (9 model calls)
