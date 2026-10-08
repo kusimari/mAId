@@ -109,9 +109,10 @@ main ─────────────────────────
      (the worktree exists); resume with `SendMessage`.
    - codex: confined by its sandbox, so the boundary is enforced, not
      asked for. With `G` the absolute `git -C <worktree> rev-parse
-     --git-common-dir`, pass the same flags to start and to resume
-     (`codex exec resume <session-id> "<message>"`), and never
-     `--sandbox`, which overrides them:
+     --git-common-dir`, start it as below. Resume from inside the
+     worktree, since resume takes no `-C`: `cd <worktree> && codex
+     exec resume <session-id>` with the same `-c` flags and the
+     message. Never pass `--sandbox`, which overrides them:
 
      ```
      codex exec -C <worktree> -c approval_policy="never" \
@@ -124,6 +125,8 @@ main ─────────────────────────
 
      It can commit on `feat/*` and write in the worktree; it cannot
      push (no network), move other refs, or write git hooks or config.
+     With no network it also cannot run paid tests: the ringmaster
+     runs those, or spawns that stream on another host.
    - kiro: `kiro-cli chat --no-interactive` started in the worktree;
      resume with `--resume-id <session-id>`.
 

@@ -81,7 +81,10 @@ review briefing written for the whole.
   session, in ringmaster mode. It proves the ringmaster loop, the
   initiative briefing, and worktrees kept until close.
 - Not proven: guided mode and the guided-to-ringmaster switch (no
-  guided run yet); "no wrapper" holds by construction (the verbs are
+  guided run yet); the codex and kiro spawn paths (no model has run
+  them; codex's sandbox profile was checked without one); the
+  briefing's replay of the ringmaster's calls, added after the
+  acceptance run; "no wrapper" holds by construction (the verbs are
   prose the session acts on, with no script added).
 
 ## Design
