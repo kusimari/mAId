@@ -107,7 +107,9 @@ main ─────────────────────────
    Code: the Agent tool, not isolated, since the worktree exists;
    other hosts: their headless CLI started in the worktree). Its
    brief, per §9's packet contract:
-   - Receives: the worktree path (and that the session's shell may
+   - Receives: "load kdevkit and its judge the way this agent loads
+     skills" (by name, never an install path, which changes as the
+     project installs); the worktree path (and that the session's shell may
      not keep a `cd` between commands, so every command names it);
      the initiative spec path and its stream row; what merged
      streams settled that this one builds on, and facts already
