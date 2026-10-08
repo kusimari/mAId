@@ -79,6 +79,10 @@ commit per feature under it.
 
 - [x] Module, template, resident rules, closure step.
 - [x] Fixture, dry-run, `just ci`.
+- [x] Briefing defects fixed: closed-initiative lifecycle in every
+      verify rule, `show initiatives`, the safety-floor exception, the
+      resident merge destination, the initiative worktree, the merge
+      message.
 - [ ] First real run: the `installable` initiative.
 
 ## Session Log
@@ -112,3 +116,14 @@ commit per feature under it.
   already hold it.
 - The initiative spec stays after `close(<initiative>)` · same as
   feature specs; the old rule deleted it.
+- `show initiatives` lists `initiative/*` branches, not `main`'s index
+  · the index line lives on the initiative branch and is removed
+  before the merge, so `main` never carries it; considered putting it
+  on `main`, which means a commit to `main` per initiative start.
+- A closed initiative's file with no index line is not drift · it
+  follows from keeping the spec as the record; the verify rule in
+  `SKILL.md` §2 and `setup.md` both say so.
+- The initiative's merge commit message is authored and passed
+  explicitly: `feat(<name>): <Goal in one line>`, body the Goal and
+  one line per feature · §8.6's rule, applied to the one merge it did
+  not cover.
