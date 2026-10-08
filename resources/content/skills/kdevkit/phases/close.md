@@ -126,8 +126,9 @@ ones; asking is mandatory even when the answer is "none".
 
 **3.5 · An initiative's stream.** If the feature spec carries
 `Part of initiative: [[<name>]]`, step 6 merges into
-`initiative/<name>`, not `main`, and the branch and worktree stay
-until the initiative closes (`tiers/initiative.md` §10).
+`initiative/<name>`, not `main`, and the branch
+(`feat/<feature>/work`) and worktree stay until the initiative
+closes (`tiers/initiative.md` §10).
 - *Guided:* close as normal, mark the stream's Streams row merged in
   the same squash, and skip steps 7-8.
 - *Under a ringmaster:* answer step 3's backlog question with your

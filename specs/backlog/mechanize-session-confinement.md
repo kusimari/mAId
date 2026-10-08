@@ -25,10 +25,15 @@ checked by a run.
   confines writes but a linked worktree then cannot commit (its gitdir
   is in the main repo). A `-c` permission profile extending
   `:workspace` with write on the common gitdir's `objects`,
-  `refs/heads/feat`, `logs/refs/heads/feat` and `worktrees/<name>`,
-  plus `approval_policy="never"` and no `--sandbox`, lets it commit on
-  `feat/*` and blocks push (no network), other refs, hooks and config.
-  Leaks: `/tmp` is writable; sibling `feat/*` refs are writable.
+  `refs/heads/feat/<feature>`, `logs/refs/heads/feat/<feature>` and
+  `worktrees/<name>` (the worktree's directory name), plus
+  `approval_policy="never"` and no `--sandbox`, lets it commit on its
+  own `feat/<feature>/work` branch. Checked with `codex sandbox`: it
+  blocks push (no network), moving a sibling stream's branch or the
+  initiative branch, creating a branch, and writing hooks or config.
+  The `/work` level is what makes this work: git's lock file for a
+  ref sits in the ref's directory, so a stream needs a directory of
+  its own. Leak: `/tmp` is writable.
 - **Claude Code:** the Agent tool's `isolation: worktree` makes its own
   worktree from the default branch, cannot take an existing one, and
   does not stop push. The workable route is a headless `claude -p` in

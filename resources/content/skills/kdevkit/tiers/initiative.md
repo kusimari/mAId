@@ -57,12 +57,12 @@ the work with the agent's own tools, not a wrapper.
   `$SPEC_ROOT/initiative/<name>.md` there, and commit
   `plan(<name>): initial spec`. Stop for approval.
 - **"start `<feature>` for initiative `<name>`"** (guided): add a
-  Streams row if there is none, make the feature's worktree cut from
-  `initiative/<name>`, and run the normal feature flow there with the
-  user as the user. Its PR targets `initiative/<name>` (push that
-  branch first if the remote lacks it; the user chose guided mode, so
-  this push is theirs), and closure squash-merges into it with the
-  message §8.6 asks for.
+  Streams row if there is none, make the feature's worktree on a new
+  branch `feat/<feature>/work` cut from `initiative/<name>`, and run
+  the normal feature flow there with the user as the user. Its PR
+  targets `initiative/<name>` (push that branch first if the remote
+  lacks it; the user chose guided mode, so this push is theirs), and
+  closure squash-merges into it with the message §8.6 asks for.
 - **"run initiative `<name>`"**: become its ringmaster (below). Also
   the way to resume one: everything needed is on disk.
 - **"close initiative `<name>`"** (either mode): run Finish (step 6
@@ -76,9 +76,12 @@ the work with the agent's own tools, not a wrapper.
 ```
 main ──────────────────────────────●  merge commit (--no-ff), the user's
   └─ initiative/<name> ─ f1 ─ f2 ─ f3     one squash commit per feature
-       └─ feat/<feature>   (worktree per feature, cut from the initiative branch)
+       └─ feat/<feature>/work   (worktree per feature, cut from the initiative branch)
 ```
 
+- A stream's branch is `feat/<feature>/work`, in both modes. The
+  extra level gives each stream a ref directory of its own, so an
+  agent's sandbox can grant that stream's branch and no other.
 - Each feature squash-merges into `initiative/<name>`, with the
   message §8.6 asks for. Under a ringmaster, feature branches are
   never pushed and open no PR; guided, each has its PR.
@@ -102,37 +105,41 @@ main ─────────────────────────
    that each ship something the Macro test can see, with what each
    needs before it can start. Commit `plan(<name>): streams`.
 3. **Spawn** every stream whose needs have merged:
-   `git worktree add <worktrees>/<feature> -b feat/<feature>
-   initiative/<name>`, then a feature session in that worktree: one
-   that runs while this session goes on, works only in that
-   worktree, commits but never pushes or moves `initiative/*` or
-   `main` (§9 Dispatch safety floor), and can be resumed with a
-   message. The spawn enforces what the agent can; the rest is the
-   brief's instruction. Per agent:
+   `git worktree add <worktrees>/<feature> -b
+   feat/<feature>/work initiative/<name>`, then a feature session
+   in that worktree: one that runs while this session goes on, works
+   only in that worktree, commits only on its own branch, never
+   pushes or moves any other branch (§9 Dispatch safety floor), and
+   can be resumed with a message. The spawn enforces what the agent
+   can; the rest is the brief's instruction. Per agent:
    - Claude Code: the Agent tool, in the background, not isolated
      (the worktree exists); resume with `SendMessage`. Nothing is
      enforced.
    - codex: confined by its sandbox, so the boundary is enforced, not
      asked for. With `G` the absolute `git -C <worktree> rev-parse
-     --git-common-dir`, start it as below. Resume from inside the
-     worktree, since resume takes no `-C`: `cd <worktree> && codex
-     exec resume <session-id>` with the same `-c` flags and the
-     message. Never pass `--sandbox`, which overrides them:
+     --git-common-dir`, and `<wt>` the worktree's directory name
+     under `<G>/worktrees` (the last part of `git -C <worktree>
+     rev-parse --git-dir`; git may add a suffix), start it as below.
+     Resume from inside the worktree, since resume takes no `-C`:
+     `cd <worktree> && codex exec resume <session-id>` with the same
+     `-c` flags and the message. Never pass `--sandbox`, which
+     overrides them:
 
      ```
      codex exec -C <worktree> -c approval_policy="never" \
        -c default_permissions="stream" \
        -c 'permissions.stream={extends=":workspace", filesystem={
-         "<G>/objects"="write", "<G>/refs/heads/feat"="write",
-         "<G>/logs/refs/heads/feat"="write",
-         "<G>/worktrees/<feature>"="write"}}' "<brief>"
+         "<G>/objects"="write",
+         "<G>/refs/heads/feat/<feature>"="write",
+         "<G>/logs/refs/heads/feat/<feature>"="write",
+         "<G>/worktrees/<wt>"="write"}}' "<brief>"
      ```
 
-     It can write in the worktree and commit; it cannot push (no
-     network), move `initiative/*` or `main`, or write git hooks or
-     config. It can still write `/tmp` and other `feat/*` branches
-     (git's ref locks stop a narrower grant), so those stay an
-     instruction.
+     It can write in the worktree and commit on its own branch. It
+     cannot push (no network), move another stream's branch,
+     `initiative/*` or `main`, create a branch, or write git hooks
+     or config. Beyond those grants only `/tmp` is writable, and
+     that stays an instruction.
    - kiro: `kiro-cli chat --no-interactive "<brief>"` started in the
      worktree; resume with `--resume-id <session-id>`. Nothing is
      enforced. With no prompt to ask, approve tools up front:

@@ -219,3 +219,9 @@ review briefing written for the whole.
   session", defined once; "subagent" becomes a dispatched agent;
   bare "host" becomes agent or forge · the user's review, applying
   project.md's "It has to outlast its agents".
+- A stream's branch is `feat/<feature>/work`, cut from the initiative
+  branch, in both modes · the user's review: the extra level gives
+  each stream its own ref directory, so codex's sandbox grants that
+  stream's branch only (checked with `codex sandbox`, no model);
+  sibling streams, the initiative branch and new branches are now
+  blocked, and only `/tmp` stays an instruction.

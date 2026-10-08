@@ -336,8 +336,8 @@ Then commit and stop for approval, per `tiers/initiative.md`.
 A feature session for an initiative stream (guided, or started by a
 ringmaster) writes its spec from the feature template above, with:
 
-- `## Git Setup > Base:` `initiative/<name>`, and the stream's
-  worktree.
+- `## Git Setup > Branch:` `feat/<feature>/work`; `Base:`
+  `initiative/<name>`, and the stream's worktree.
 - `Part of initiative: [[<name>]]` (`phases/plan.md` §6 auto-link).
 - The four interviews scoped to its Streams row; the initiative's
   Experience and Constraints bind it.

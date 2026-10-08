@@ -271,8 +271,9 @@ Resolve the entry mode for feature work:
    interviews (§6) and write the spec.
 3. **A stream of an initiative** — "start `<feature>` for
    initiative `<name>`" (the user guides it), or a ringmaster's
-   brief (§10). Cut from `initiative/<name>`; otherwise a normal
-   **start**. Under a ringmaster, the ringmaster is the user.
+   brief (§10). Branch `feat/<feature>/work`, cut from
+   `initiative/<name>`; otherwise a normal **start**. Under a
+   ringmaster, the ringmaster is the user.
 
 **A spec on disk is not a reviewed spec** — when entering with a
 populated `feature/<feature>.md`, start in §6 Planning (not §7
@@ -532,7 +533,8 @@ on-`main` shape. CI-restricted projects may substitute
 in the `kdevkit` block.
 
 Branch naming: `<type>/<short-description>` — `feat` · `fix` ·
-`chore` · `docs` · `refactor` · `test`.
+`chore` · `docs` · `refactor` · `test`. An initiative stream's
+branch is `feat/<feature>/work` (§10).
 
 ### Author identity
 
@@ -636,14 +638,15 @@ skill — a reviewer, a briefing generator, a verify agent. The
 dispatched thing's own contract governs *what it reads*, never
 *what it may do*. One exception: a ringmaster's feature session
 (§10) is lifted from the first and last bullets below, inside its
-own worktree only. It may edit, stage, commit and run the
+own worktree and branch only. It may edit, stage, commit and run the
 project's own commands (builds, gates, tests, and paid tests if its
 brief allows them) there. It still never pushes or merges, and the
 middle two bullets bind it fully. Where the agent can enforce part
 of this, the spawn enforces it; the rest is this instruction
 (backlog `mechanize-session-confinement`). codex: its sandbox
-(§10) blocks push and moving `initiative/*` or `main`. Claude Code,
-kiro: nothing is enforced.
+(§10) lets it commit only on its own branch and blocks push; only
+`/tmp` stays writable beyond its grants. Claude Code, kiro: nothing
+is enforced.
 
 - **No write authority.** No edits, commits, pushes, staging, or
   PR/branch mutation beyond the artefact it was asked for.
