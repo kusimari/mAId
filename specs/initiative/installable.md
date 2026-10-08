@@ -60,6 +60,19 @@ branch, before it goes to `main`:
    learned-rules files are untouched. Then `just install` from the
    initiative worktree, to leave the machine installed.
 
+### Result
+
+2026-10-08, `just verify-install-paid` on `initiative/installable`
+after stream 4 (9 model calls): all 26 checks pass. Step 1: install
+from a clone, clone deleted. Step 2: claude and codex list `maid@maid`
+enabled; kiro links each skill; claude, kiro and codex each name every
+mAId skill. Step 3: the browser server answers `initialize` with only
+`HOME` set. Step 4: no checkout path in anything mAId installed. Step 5:
+a second clone takes over (all three quote its marker); `just rollback`
+returns all three to the previous text. Step 6: uninstall leaves no
+mAId entry and the user-data files byte-identical; reinstall from the
+initiative worktree.
+
 ## Constraints
 
 - The user space is a nix profile, and so is the dev environment (the
