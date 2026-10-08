@@ -118,7 +118,7 @@ review briefing written for the whole.
       verify rule, `show initiatives`, the safety-floor exception, the
       resident merge destination, the initiative worktree, the merge
       message.
-- [ ] First real run: the `installable` initiative.
+- [x] First real run: the `installable` initiative.
 
 ## Session Log
 
@@ -136,6 +136,22 @@ review briefing written for the whole.
   feature into `initiative/<name>`, `git merge --no-ff` into `main`;
   `git log --first-parent main` shows one line per initiative and
   `main^1..main^2` its features. The repo allows merge commits.
+
+- 2026-10-08 · Acceptance: `installable` run in ringmaster mode from
+  one session, with no user input between "run initiative" and the
+  close-out. Five streams (one added mid-run when the paid Macro test
+  found kiro reading the wrong path, one from the initiative briefing's
+  defects), two in parallel; one RETURN (stream 1, a constraint
+  breach); four planning and five review stops answered by the
+  ringmaster with rulings in the initiative's Decision Log; the
+  Macro test passed 26/26; the initiative briefing went from 2 defects
+  to none. Fixes the run forced into this module: the brief names the
+  worktree in every command, carries what earlier streams settled,
+  loads skills by name with a path fallback (an agent can hold the
+  skill list it started with); a stream proposes its squash message and
+  answers closure's backlog step itself; a defect-list stream gets the
+  planning cue in its brief. Not exercised: guided mode, the switch to
+  ringmaster, a resumed ringmaster.
 
 ## Decision Log
 
