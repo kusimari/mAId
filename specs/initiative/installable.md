@@ -139,3 +139,12 @@ branch, before it goes to `main`:
   reword fails loud); `maid` / `maid@maid` are mAId's by name · why:
   each is the least that serves the Experience, and each failure mode
   is loud · cost if wrong: small, local fixes.
+- Ruling: at stream 3's planning, accept its six recommendations: no
+  extra keep-one-generation floor (nix keeps the previous live one; a
+  test pins it); the Macro test writes a comment-only allowlist or
+  learned-rules file only where one is missing, and deletes only those;
+  step 3 uses a temp HOME with a one-pattern allowlist; a Macro test run
+  leaves one install in the rollback history, said in its prompt;
+  `just rollback` takes no agent selector; one paid run of 9 model
+  calls · why: each is the least that proves the Experience without
+  touching user data · cost if wrong: small.
