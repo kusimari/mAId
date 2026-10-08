@@ -161,3 +161,9 @@ branch, before it goes to `main`:
 - Ruling: rollback's three profile-layout paths living in the Justfile
   as well as `deploy.rs` is accepted · why: drift makes rollback refuse,
   not break · cost if wrong: a refused rollback until both agree.
+- Ruling: at stream 4's planning, kiro gets one link per skill in
+  `~/.kiro/skills`, beside the user's own skills there, which another
+  tool manages; the risk that tool prunes mAId's links is accepted and
+  shown by `just status` · why: a steering fallback would put every
+  skill's full text back in every kiro session · cost if wrong: kiro
+  loses mAId's skills until the next `just install`.
