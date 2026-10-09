@@ -74,7 +74,7 @@ the work with the agent's own tools, not a wrapper.
 ### Git shape
 
 ```
-main ──────────────────────────────●  merge commit (--no-ff), the user's
+main ──────────────────────────────●  squash or merge commit, the user's
   └─ initiative/<name> ─ f1 ─ f2 ─ f3     one squash commit per feature
        └─ feat/<feature>/work   (worktree per feature, cut from the initiative branch)
 ```
@@ -85,12 +85,19 @@ main ─────────────────────────
 - Each feature squash-merges into `initiative/<name>`, with the
   message §8.6 asks for. Under a ringmaster, feature branches are
   never pushed and open no PR; guided, each has its PR.
-- The initiative reaches `main` as one merge commit, so
-  `git log --first-parent main` shows the initiative and
-  `git log <merge>^1..<merge>^2` its features. Its message is
-  authored like §8.6's squash message and passed explicitly
-  (`git merge --no-ff -m`, or the forge's merge-commit message
-  field), never the forge default: subject `feat(<name>): <the
+- How the initiative reaches `main` is the user's choice, asked at
+  the merge:
+  - **Squash** (the default): one commit on `main`. The branch's
+    commits stay recoverable from the forge's PR ref (on GitHub,
+    `refs/pull/<n>/head`).
+  - **Merge commit**: each feature stays its own commit, so one can
+    be reverted or bisected alone; `git log --first-parent main`
+    shows the initiative and `<merge>^1..<merge>^2` its features.
+    Collapse the branch's spec-only commits first, so it carries the
+    plan, the features and the close.
+
+  Either way the message is authored like §8.6's and passed
+  explicitly, never the forge default: subject `feat(<name>): <the
   Goal in one line>`, body the Goal and one line per feature.
 - When a feature lands while another is in flight, the other rebases
   onto `initiative/<name>` and re-runs its gates before its next stop.
@@ -203,9 +210,9 @@ main ─────────────────────────
    - Commit `close(<name>):` (Streams all merged; the spec stays as
      the record), and remove the initiative's feature worktrees and
      branches.
-   - Stop for the user with the briefing and the merge message
-     drafted: pushing the branch, the PR, and the merge commit to
-     `main` are theirs.
+   - Stop for the user with the briefing and the message drafted,
+     and ask squash or merge commit: pushing the branch, the PR, and
+     the merge to `main` are theirs.
 
 ### The record
 
