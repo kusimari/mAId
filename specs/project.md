@@ -254,7 +254,7 @@ mAId/
 ├── target/                 gitignored — cargo's build dir
 └── specs/
     ├── project.md          this file
-    ├── initiative/         multi-stream initiatives (archived on last-stream close)
+    ├── initiative/         initiatives (kept as the record after close)
     ├── feature/            in-flight + completed feature records
     └── backlog/            per-item files for wanted future work
 ```
@@ -437,6 +437,14 @@ break go at the top, ranked, saying what they outrank ("rule 0; beats
 anything else about how the reply starts"), and each imperative sits
 where the agent acts on it rather than sections earlier. Precedence is
 what holds; rewording is not.
+
+**It has to outlast its agents.** Write each instruction as *what*
+must be done, in terms true for any coding agent. Then, where it
+helps, say *how* for each current agent, labelled by agent, using its
+CLI or tools as they are today (checked, with the version where it
+matters). A new agent, or an upgrade, then changes only the "how"
+lines, and the rule an agent must keep never names one host's tool as
+the rule itself.
 
 Both failure modes are silent — the skill does the work and omits the
 contract, or never loads and the agent improvises a plausible answer.
@@ -680,11 +688,6 @@ the experience is symmetric across resource kinds.
   rather than letting names land here. The `kdevkit`
   skill encodes this rule for every project; this bullet
   declares mAId as a public repo so the rule fires.
-
-## Active initiatives
-
-<!-- One line per in-flight initiative. Archived by the last
-     stream's close(<feature>): commit. -->
 
 ## Agent Development
 

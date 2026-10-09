@@ -1,107 +1,237 @@
-# kdevkit — initiative tier (tier module)
+# kdevkit - initiative tier (tier module)
 
-Carries the **initiative tier**: when multi-stream work earns an
-initiative, the three entry verbs, cross-stream rebase mechanics,
-and how the tiers map onto multi-repo shapes.
+Carries the **initiative tier**: a goal too big for one branch,
+delivered as several features, either guided by the user feature by
+feature or run for them by a **ringmaster** session.
 
-**Read this when** an initiative is in play — `$SPEC_ROOT/initiative/`
-exists and the work references one, an initiative entry verb fires
-("start initiative", "show initiatives", "stream `<n>` for
-`<initiative>`"), or the current feature spec carries a
-`Part of initiative:` link. Unlike the phase modules this is
-tier-scoped, not stage-scoped: it can apply during any phase.
+**Read this when** an initiative is in play: an initiative verb fires,
+the work names a file in `$SPEC_ROOT/initiative/`, or a feature spec
+carries `Part of initiative:`. It applies during any phase.
 
-The initiative file template and interview shape live in
-`interviews.md`.
+The initiative template and interview live in `interviews.md`.
 
 ## 10 · Initiative tier
 
-The fourth tier in kdevkit, slotted between project (timeless)
-and feature (one branch). An initiative captures multi-feature
-work that can't fit on one branch — the *why* plus the ordered
-*streams* (each stream = one feature = one branch / CR /
-squash-merge) that deliver it, plus a Status table updated by
-each stream's closure commit.
+An initiative is a goal that lands as several features, one branch
+each. A large change that ships as one branch stays a feature.
 
-Initiatives are time-bound: created when the multi-stream work
-is identified, archived by the last stream's
-`close(<feature>):` commit (§8.3.5).
+### Three ways to work; the user picks
 
-### When to create one
+- **A feature**: the normal flow (§3-§8), no initiative.
+- **A guided initiative**: the user plans the streams (or asks for a
+  proposal) and starts and steers each feature session themselves.
+  Each feature opens a PR into `initiative/<name>`, so every feature
+  gets a human review.
+- **A ringmaster initiative**: the user approves the spec and says
+  "run initiative"; one session does the rest (below). No PR until the
+  end.
 
-Any time CR review or planning produces "this needs to land as
-several CRs in order," the work is an initiative. The signal
-is sequential dependency between branches, not just a large
-feature. A large feature that can ship as one branch stays a
-feature; only when the work has to fan out across multiple
-branches in a defined order does it become an initiative.
+Both initiative modes share the spec, the Streams table, the branch
+shape and the final PR, so the user can switch mid-way: "run
+initiative" picks up from the Streams table.
 
-### Initiative entry verbs
+### The split of work
 
-- **"start initiative `<name>`"** — write
-  `$SPEC_ROOT/initiative/<name>.md` and populate
-  `project.md`'s `## Active initiatives` index with a one-line
-  entry. **Inline-Read `interviews.md`** for the initiative
-  file template + the three short initiative interviews
-  (Why → Streams → initiative-level Decisions). After the
-  spec is written, commit as `plan(<initiative>): initial
-  spec`, push, and open the Planning Review Gate per §6 / §9
-  with phase-specific body content: **Why** + **Streams** +
-  **Decisions taken at the initiative level**.
-- **"show initiatives"** — list active initiatives from
-  `project.md`'s index. Read-only; no commit.
-- **"stream `<n>` for `<initiative>`"** — start a feature
-  whose Git Setup names the initiative as its parent.
-  **Inline-Read `interviews.md`** for the
-  template-fill steps (which fields populate from the parent
-  initiative's stream entry, which come from the four
-  feature interviews). The feature spec's `Part of
-  initiative: [[<name>]]` line auto-populates per §6;
-  otherwise the flow is a normal §3 feature start followed
-  by §6 Planning.
+- **The user** writes what they want: the **Goal**, the
+  **Experience** (what they can do and observe when it is done), the
+  **Macro test** that proves it, and the **Constraints**.
+- **The ringmaster** (ringmaster mode: the session the user runs the
+  initiative from) decides the features, runs each one in its own
+  session and worktree, and plays the user at every feature gate. It
+  judges like the senior developer beside the user would (the judge:
+  `kyodakit` unless `judgement:` names another), against the
+  Experience and Macro test. It never edits code.
+- **A feature session** runs the normal feature flow on its own
+  branch. Under a ringmaster, the ringmaster's messages are its
+  user's words.
 
-### Cross-stream rebase mechanics
+### Verbs
 
-When Stream `n+1` is in-flight and Stream `n` re-ships to
-`main` after CR review:
+Things the user says in an ordinary agent session; the session does
+the work with the agent's own tools, not a wrapper.
 
-1. From Stream `n+1`'s branch:
-   `git fetch origin && git rebase origin/main`. Resolve
-   conflicts in place.
-2. Re-run §7 Quality + Test + Code Review Gates for the slice
-   that intersects the rebased change. Threshold and
-   retry-budget semantics unchanged.
-3. Force-push: `git push --force-with-lease`. Only after §7
-   reverifies — never push a rebased branch with stale gates.
-   Plain `--force` is unsafe against concurrent pushes;
-   `--force-with-lease` is the contract.
-4. If the rebase substantially changed the diff (e.g. shrunk
-   because Stream `n`'s changes are now in `main`), update the
-   open CR/PR body so reviewers aren't reading against a stale
-   summary.
+- **"start initiative `<name>`"**: make the initiative's worktree
+  (`git worktree add <worktrees>/initiative-<name> -b
+  initiative/<name> main`, in the project's worktree convention),
+  interview the user (`interviews.md`), write
+  `$SPEC_ROOT/initiative/<name>.md` there, and commit
+  `plan(<name>): initial spec`. Stop for approval.
+- **"start `<feature>` for initiative `<name>`"** (guided): add a
+  Streams row if there is none, make the feature's worktree on a new
+  branch `feat/<feature>/work` cut from `initiative/<name>`, and run
+  the normal feature flow there with the user as the user. Its PR
+  targets `initiative/<name>` (push that branch first if the remote
+  lacks it; the user chose guided mode, so this push is theirs), and
+  closure squash-merges into it with the message §8.6 asks for.
+- **"run initiative `<name>`"**: become its ringmaster (below). Also
+  the way to resume one: everything needed is on disk.
+- **"close initiative `<name>`"** (either mode): run Finish (step 6
+  below) once every Streams row is merged. A ringmaster reaches it
+  on its own.
+- **"show initiatives"**: list the `initiative/*` branches, local and
+  remote, with each one's Goal line. Read-only.
 
-This is the only place §9's "new commits, never amends" rule
-yields — the sequential-stream contract requires rebasing.
+### Git shape
 
-### Working across repo shapes (guidance, not contract)
+```
+main ──────────────────────────────●  merge commit (--no-ff), the user's
+  └─ initiative/<name> ─ f1 ─ f2 ─ f3     one squash commit per feature
+       └─ feat/<feature>/work   (worktree per feature, cut from the initiative branch)
+```
 
-Tier definitions (project / initiative / feature / backlog)
-are about *how* to work. *Where* the work lives is orthogonal:
+- A stream's branch is `feat/<feature>/work`, in both modes. The
+  extra level gives each stream a ref directory of its own, so an
+  agent's sandbox can grant that stream's branch and no other.
+- Each feature squash-merges into `initiative/<name>`, with the
+  message §8.6 asks for. Under a ringmaster, feature branches are
+  never pushed and open no PR; guided, each has its PR.
+- The initiative reaches `main` as one merge commit, so
+  `git log --first-parent main` shows the initiative and
+  `git log <merge>^1..<merge>^2` its features. Its message is
+  authored like §8.6's squash message and passed explicitly
+  (`git merge --no-ff -m`, or the forge's merge-commit message
+  field), never the forge default: subject `feat(<name>): <the
+  Goal in one line>`, body the Goal and one line per feature.
+- When a feature lands while another is in flight, the other rebases
+  onto `initiative/<name>` and re-runs its gates before its next stop.
 
-- **Single-repo** (default): `$SPEC_ROOT = specs/` (or
-  `docs/specs/`, `.kdevkit/`). All four tiers live here.
-- **Multi-repo, per-repo specs**: each repo carries its own
-  `specs/`. An initiative whose streams span repos is awkward
-  — the initiative spec lives in one repo by convention; each
-  cross-repo stream's feature spec lives in the repo where the
-  stream's branch lives. Cross-repo references use
-  fully-qualified paths or repo names.
-- **Cross-repo program** (multiple repos under one umbrella):
-  out of scope for kdevkit. A separate top-level "program"
-  surface (in a workspace-level directory, not inside any one
-  repo) is the right shape; the skill does not encode this.
+### The ringmaster loop
 
-The tier definitions are repo-shape agnostic; this guidance
-shows how they map onto common shapes without baking
-assumptions into the templates.
+1. **Ground.** Read `project.md`, the initiative spec, its Streams
+   table, and `git worktree list`. Work from the initiative's own
+   worktree, made by "start initiative"; if it is missing (a fresh
+   machine), add it for the existing `initiative/<name>` branch.
+2. **Plan the streams** if the table is empty: the fewest features
+   that each ship something the Macro test can see, with what each
+   needs before it can start. Commit `plan(<name>): streams`.
+3. **Spawn** every stream whose needs have merged:
+   `git worktree add <worktrees>/<feature> -b
+   feat/<feature>/work initiative/<name>`, then a feature session
+   in that worktree: one that runs while this session goes on, works
+   only in that worktree, commits only on its own branch, never
+   pushes or moves any other branch (§9 Dispatch safety floor), and
+   can be resumed with a message. The spawn enforces what the agent
+   can; the rest is the brief's instruction. Per agent:
+   - Claude Code: the Agent tool, in the background, not isolated
+     (the worktree exists); resume with `SendMessage`. Nothing is
+     enforced.
+   - codex: confined by its sandbox, so the boundary is enforced, not
+     asked for. With `G` the absolute `git -C <worktree> rev-parse
+     --git-common-dir`, and `<wt>` the worktree's directory name
+     under `<G>/worktrees` (the last part of `git -C <worktree>
+     rev-parse --git-dir`; git may add a suffix), start it as below.
+     Resume from inside the worktree, since resume takes no `-C`:
+     `cd <worktree> && codex exec resume <session-id>` with the same
+     `-c` flags and the message. Never pass `--sandbox`, which
+     overrides them:
 
+     ```
+     codex exec -C <worktree> -c approval_policy="never" \
+       -c default_permissions="stream" \
+       -c 'permissions.stream={extends=":workspace", filesystem={
+         "<G>/objects"="write",
+         "<G>/refs/heads/feat/<feature>"="write",
+         "<G>/logs/refs/heads/feat/<feature>"="write",
+         "<G>/worktrees/<wt>"="write"}}' "<brief>"
+     ```
+
+     It can write in the worktree and commit on its own branch. It
+     cannot push (no network), move another stream's branch,
+     `initiative/*` or `main`, create a branch, or write git hooks
+     or config. Beyond those grants only `/tmp` is writable, and
+     that stays an instruction.
+   - kiro: `kiro-cli chat --no-interactive "<brief>"` started in the
+     worktree; resume with `--resume-id <session-id>`. Nothing is
+     enforced. With no prompt to ask, approve tools up front:
+     `--trust-all-tools`, or `--trust-tools=<names>`.
+
+   A stream with paid tests needs network. Where its agent's
+   confinement denies network (codex above), the ringmaster runs
+   those tests, or spawns that stream on an agent that allows them.
+
+   Its brief, per §9's packet contract:
+   - Receives:
+     - "load kdevkit and its judge the way this agent loads skills",
+       by name (an install path changes as the project installs),
+       plus each one's `SKILL.md` path as installed right now, for an
+       agent that cannot find them by name (it may hold the skill
+       list it started with);
+     - the worktree path, and that the shell may not keep a `cd`
+       between commands, so every command names it;
+     - the initiative spec path and the stream's row;
+     - what merged streams settled that this one builds on, and facts
+       already checked, each marked "verify what you build on";
+     - "run kdevkit's feature flow for `<feature>`; I am your user;
+       stop at each gate and reply with what the gate's PR body would
+       carry";
+     - any paid-test allowance from Constraints.
+   - Excluded: this session's history, and other streams' work in
+     flight (what merged streams settled is passed above).
+   - Returns: at each stop, the gate it reached and the spec path;
+     at closure, its `close()` commit, its backlog answer, and the
+     squash message it proposes.
+4. **Play the user at each stop.** Read the artefact on disk (the
+   spec, the briefing, the diff against `initiative/<name>`), never
+   only the summary. Then resume the session with either the cue
+   (`spec looks good`, `ship it`) or a return naming fault layer,
+   issue, fix and done-when (§5). Ask what a senior reviewer would:
+   does this serve the Experience, is it the least and the right
+   design, does the test prove it.
+5. **Merge.** On closure, the feature session makes its `close()`
+   commit, stops, and replies with the squash message it proposes
+   (§8.6). The ringmaster checks the message against the diff,
+   squash-merges the branch into `initiative/<name>` with it,
+   updates the Streams row, and spawns whatever that unblocked. The
+   feature's worktree and branch stay, for the user to inspect,
+   until the initiative closes.
+6. **Finish** (both modes). When every stream has merged:
+   - Run the Macro test on the initiative branch and record the
+     result in the spec.
+   - Write the initiative PR's body. With `review_brief` enabled,
+     dispatch the review briefing (§7, `phases/review.md`) at
+     initiative level; otherwise write the §9 body covering the same
+     ground (requirements as understood, design decisions and their
+     effect on the existing design, the changes in review order, what
+     the tests say). The briefing receives the initiative spec as
+     the spec, each feature spec, the diff `main...initiative/<name>`,
+     and the Macro test result. The briefing replays the calls the
+     ringmaster made for the user (the Decision Log's rulings, each
+     stream's closure answers) as items for them to ratify. Route its
+     defects back as a fix stream, as for any feature; a stream whose
+     whole scope is a list of defects gets the planning cue in its
+     brief.
+   - Commit `close(<name>):` (Streams all merged; the spec stays as
+     the record), and remove the initiative's feature worktrees and
+     branches.
+   - Stop for the user with the briefing and the merge message
+     drafted: pushing the branch, the PR, and the merge commit to
+     `main` are theirs.
+
+### The record
+
+Nothing new: git log, the initiative spec, and each feature spec's
+Handoff (§5). Whoever runs the streams (the ringmaster, or the user
+when guiding) writes only:
+
+- **Streams**: one row per feature, `planned → running → merged`
+  (or `blocked: <why>`).
+- **Decision Log**: one line per call it made for the user,
+  `- Ruling: <what> · why: <why> · cost if wrong: <cost>`.
+
+A ringmaster resuming in a new session rebuilds from those, the
+branches, and the worktrees. A stream whose session is gone gets a
+fresh one on its worktree; its spec's Handoff says where it was.
+
+### When the ringmaster stops for the user
+
+Only for:
+
+- an outward or irreversible action: push, PR, merge to `main`,
+  publish, deleting anything not made by this initiative;
+- a question whose answer changes the Experience or Macro test;
+- three rounds on the same problem without progress (the judge's
+  rule);
+- spend the Constraints do not allow, such as paid tests over budget.
+
+Anything else it decides, records as a Ruling, and carries on. It
+does not ask whether to continue.

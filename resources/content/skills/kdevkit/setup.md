@@ -3,8 +3,9 @@
 This file carries the schemas, templates, and one-time setup
 prompts that fire only on **project genesis** or when an
 on-disk `project.md` is found to have drifted from the kdevkit
-schema. Loaded by main on demand (inline-Read for create flows,
-fresh-context subagent for verify) — never always-on.
+schema. Loaded by main on demand (read into this session for
+create flows, a dispatched verify agent for verify) — never
+always-on.
 
 ## `project.md` template
 
@@ -46,8 +47,8 @@ keep them in place so future sessions re-read the intent.
 project-knowledge layer — the persistent *why* and *shape*. It is
 not a repo-root `AGENTS.md`: operational command strings belong in
 `AGENTS.md` where the repo keeps one, and kdevkit never writes its
-own scaffold (these headers, HTML prompts, logs, the initiatives
-index) into `AGENTS.md`. Keep both persistent files lean — exact
+own scaffold (these headers, HTML prompts, logs) into
+`AGENTS.md`. Keep both persistent files lean — exact
 commands and explicit boundaries over prose; over-stuffed context
 files degrade agent performance.
 
@@ -93,13 +94,18 @@ organised by skill. Keys under `kdevkit`:
 
   - **`reviewer`** — the legacy single-lens shape. Prefix-tagged
     `<ref>` grammar so the orchestrator knows what to dispatch:
-    `host-native` (default) — the host coding agent's built-in
-    review; `skill:<name>` — a skill in the registry (bare strings
-    without a prefix default to `skill:`); `mcp:<server>.<tool>` —
-    an MCP server's tool; `agent:<name>` — a named project-
-    configured agent. Present with no `lenses:` → the gate runs
-    this one reviewer as a single lens, exactly as before the
-    panel existed.
+    `host-native` (default) — the running agent's own built-in code
+    review (per agent, below); `skill:<name>` — a skill in the
+    registry (bare strings without a prefix default to `skill:`);
+    `mcp:<server>.<tool>` — an MCP server's tool; `agent:<name>` — a
+    named project-configured agent. Present with no `lenses:` → the
+    gate runs this one reviewer as a single lens, exactly as before
+    the panel existed.
+
+    `host-native`, per agent. Claude Code: the `/code-review`
+    skill. codex: `codex exec review --base <base>`. kiro: not
+    known yet. Where the agent has none, run the shipped
+    `correctness` lens as a fresh-context dispatch (SKILL.md §2).
   - **`lenses`** — the panel shape. A list of `{ id, focus?,
     enabled? }`. `id` is required. Shipped ids (`correctness`,
     `security`, `comment-hygiene`) need no `focus` — the reviewer
@@ -188,7 +194,7 @@ entry (regardless of fresh / continue / pick-up mode) keeps
 the prompt out of the dev loop:
 
 > _"This project doesn't declare a code reviewer. Use the
-> host's native review (default), or point to a project-specific
+> agent's built-in review (default), or point to a project-specific
 > one (`skill:<name>` / `mcp:<server>.<tool>` / `agent:<name>`)?
 > Reply 'default', paste a reference, or 'skip'."_
 
@@ -218,26 +224,9 @@ by editing the block.
 The same prompt fires from the first-time `project.md` flow
 above as the appended one-liner.
 
-## Optional `## Active initiatives` index
+## Verify schema (for the dispatched verify agent)
 
-When in-flight initiatives exist (see `tiers/initiative.md` §10),
-`project.md` MAY carry an `## Active initiatives` index near
-the bottom — one line per initiative, removed at last-stream
-close:
-
-```markdown
-## Active initiatives
-
-- **<name>** (`initiative/<name>.md`) — <one-line intent>
-```
-
-The index lets the agent skip loading every initiative file
-unconditionally; only the initiative(s) referenced by the
-current entry cue or the current feature load.
-
-## Verify schema (for the verify-as-subagent primitive)
-
-The verify subagent (dispatched by SKILL.md §2 when drift is
+The verify agent (dispatched by SKILL.md §2 when drift is
 detected) validates `project.md` against the canonical schema
 above. Returns:
 
@@ -254,7 +243,7 @@ above. Returns:
 }
 ```
 
-Validation rules the subagent applies, in order:
+Validation rules the verify agent applies, in order:
 
 1. **Six required headings present**, in fixed order: Mission,
    Architecture, Tech Stack, Layout, Testing, Deployment. Out
@@ -268,19 +257,15 @@ Validation rules the subagent applies, in order:
    keys** — only `enabled` and `generator` are recognized. The
    block is optional and its absence is **not** drift (absent
    means the gate is off; no setup prompt fires for it).
-4. **`## Active initiatives` index, if present, matches
-   `$SPEC_ROOT/initiative/`** — every line in the index has a
-   matching `initiative/<name>.md` on disk; every on-disk
-   initiative either has an index line or is archived. Drift
-   in either direction → `drift`.
 
 `findings` are free-form (one issue + one suggestion per row).
-Main applies accepted findings via Edit against the live
-`project.md`. The subagent does not return diff hunks — it
+Main applies accepted findings to the live `project.md` itself.
+The verify agent does not return diff hunks — it
 doesn't see the live file post-context, so the safest contract
 is "describe the issue and the remedy"; main applies the edit
 against the actual file.
 
-If the host doesn't support fresh-context subagent dispatch,
-main inline-Reads this file and runs the validation itself.
+If the agent can't dispatch a fresh-context agent (SKILL.md §2),
+main reads this file into this session and runs the validation
+itself.
 Behavior degrades to today's footprint; no breakage.

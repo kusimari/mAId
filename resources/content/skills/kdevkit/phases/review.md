@@ -20,7 +20,7 @@ diff vs. base, which gates ran, whether findings are open.
 ### Comment-prefix convention
 
 When the agent operates the CR/PR review surface under the
-human's identity (the common case for host-driven review
+human's identity (the common case for forge review
 CLIs that bind to the operator's account), both parties post
 under the same author — the review tool threads by author,
 not content, so review notes and agent replies land flat in
@@ -86,8 +86,8 @@ review, since there is nothing green to brief.
 
 **Opt-in.** Read `kdevkit.review_brief:` from `project.md` (§2).
 Absent or `enabled: false` → no briefing; the Review Gate below
-behaves as it always has. **Inline-Read `setup.md`** for the key
-schema.
+behaves as it always has. **Read `setup.md` into this session**
+for the key schema.
 
 **Resolve the generator** — a *role*, never a hard-coded product:
 
@@ -119,8 +119,10 @@ than defining it:
 
 **How it wants to run** — separate/fresh context, tool
 restrictions, read-only, whatever the generator specifies. Set
-that up as asked; where the host can't, say which guarantee is
-weaker.
+that up as asked; where the agent can't, say which guarantee is
+weaker. Read-only, per agent. Claude Code: `claude -p --tools
+Read`, or an agent type with no edit, write or shell tool. codex:
+`codex exec --sandbox read-only`. kiro: not known yet.
 
 If a generator asks for something kdevkit cannot supply or
 arrange, report that and let the user decide — don't quietly

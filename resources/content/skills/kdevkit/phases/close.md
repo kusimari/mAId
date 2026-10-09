@@ -1,7 +1,7 @@
 # kdevkit — closure (stage module)
 
 Carries the **closure phase**: reconciling in-flight markers, the
-persistent-layer verify, backlog cleanup, initiative status update,
+persistent-layer verify, backlog cleanup, a ringmaster stream's stop,
 the Closure Review Gate, squash-merge, and branch / worktree
 teardown.
 
@@ -124,20 +124,19 @@ for every touched section and closure proceeds.
 feature close out? Pick any, or 'none'."_ `git rm` the chosen
 ones; asking is mandatory even when the answer is "none".
 
-**3.5 · Initiative Status update (auto).** If the closing
-feature is a stream of an active initiative (the feature spec
-carries `Part of initiative: [[<name>]]` near the top), update
-the initiative's Status table row: branch, CR, status =
-`shipped`, ship date, one-line learning. Stage the edit. If
-this is the **last** stream (every other row in the Status
-table is already `shipped`), the same staged edit also
-archives the initiative spec — `git rm
-$SPEC_ROOT/initiative/<name>.md` and remove the line from
-`project.md`'s `## Active initiatives` index (the index is a
-bullet list; the Status table is the per-initiative file). No
-separate `close(<initiative>):` commit; the last stream's
-`close(<feature>):` does the work. See `interviews.md` for the table
-format.
+**3.5 · An initiative's stream.** If the feature spec carries
+`Part of initiative: [[<name>]]`, step 6 merges into
+`initiative/<name>`, not `main`, and the branch
+(`feat/<feature>/work`) and worktree stay until the initiative
+closes (`tiers/initiative.md` §10).
+- *Guided:* close as normal, mark the stream's Streams row merged in
+  the same squash, and skip steps 7-8.
+- *Under a ringmaster:* answer step 3's backlog question with your
+  own judgement and record the answer in the Session Log (the
+  initiative briefing replays it). Leave the initiative spec alone,
+  stop after step 4's commit without pushing, and reply with your
+  backlog answer and step 6's squash message; the ringmaster does
+  the rest.
 
 **4 · Commit + push.** Staged closure edits land in one or
 more `close(<feature>):` commits per §9. Push.
@@ -172,12 +171,12 @@ explicitly at the merge:
   order, the verification dump, links to branches about to be
   deleted.
 
-**Never leave the message to the host's default.** A forge that
+**Never leave the message to the forge's default.** A forge that
 concatenates commit messages writes the transcript onto `main`
 permanently, and the merge still looks like it worked. Pass the
 message every time — there is no merge this step performs without one.
 
-A configurable host default is worth pointing at the review body, as a
+A configurable forge default is worth pointing at the review body, as a
 floor for the merges made *outside* this workflow: from the forge's own
 UI, or by someone not running kdevkit. That setting is repo-wide and
 changes other people's merges, so **surface it and get agreement

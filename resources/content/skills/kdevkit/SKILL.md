@@ -1,7 +1,7 @@
 ---
 name: kdevkit
-description: 'Spec-driven dev on a repo with specs/: plan or start a feature, run the dev loop through quality/test/review gates, act on review comments, close one out ("ship it", "close it", "feature done", "plan this", "add to backlog"), or record a durable project fact. Four tiers (project/initiative/feature/backlog); three-phase feature branch, one squash-merge.'
-version: 4.7.0
+description: 'Spec-driven dev on a repo with specs/: plan or start a feature, run an initiative of several features (guided, or as its ringmaster), run the dev loop through quality/test/review gates, act on review comments, close one out ("ship it", "close it", "feature done", "plan this", "add to backlog"), or record a durable project fact. Four tiers (project/initiative/feature/backlog); three-phase feature branch, one squash-merge.'
+version: 4.8.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, initiative, public-repo]
 ---
 
@@ -35,9 +35,9 @@ Four surfaces:
 1. **Project invariants** — `project.md`. Mission, architecture,
    tech stack, layout, testing, deployment. Timeless;
    cross-feature.
-2. **Initiative specs** — one file per multi-stream initiative
-   under `initiative/<name>.md`. Why + ordered streams + status
-   table. Time-bound (last-stream closure archives them).
+2. **Initiative specs** — one file per multi-feature initiative
+   under `initiative/<name>.md`. Goal, Experience and Macro test
+   (the user's), Streams and rulings (whoever runs the streams).
 3. **Feature specs** — one file per feature. Requirements,
    design, test strategy, implementation plan, session +
    decision logs.
@@ -57,10 +57,12 @@ and closure's eight steps — over-stuffed context measurably
 degrades performance, and the rule that slips first on a long
 session is the one about order.
 
-Read a module by inline-Read, at the moment its trigger fires — the
-same way `setup.md` and `interviews.md` already load. Not reading
-the module for your stage means running that stage from memory:
-don't.
+**Read a module into this session** at the moment its trigger
+fires: load the file into your own context, not a dispatched
+agent's. Every "read `<file>` into this session" in this skill
+means this. Claude Code: the Read tool. codex: a shell read
+(`sed -n`). kiro: `fs_read`. Not reading the module for your stage
+means running that stage from memory: don't.
 
 | Read this module | When |
 |---|---|
@@ -73,8 +75,9 @@ don't.
 | `interviews.md` | Feature / backlog / initiative genesis — interview prompts and file templates. |
 
 **Read the senior-developer judgement with every phase module.** At
-session start and each time you read a phase module, also inline-Read
-the judge's `SKILL.md`, before the next step. The judge is `kyodakit` by
+session start and each time you read a phase module, also read
+the judge's `SKILL.md` into this session, before the next step.
+The judge is `kyodakit` by
 default. A project overrides it with `judgement:` in `project.md`: another
 skill's name, `path:<file>` for a judge `SKILL.md` in the repo, or `off`
 (see `setup.md`). If the judge is not installed, say so once and carry
@@ -143,16 +146,17 @@ If missing/empty and feature work begins, ask one question:
 > _"Briefly describe this project — purpose, tech stack, and any
 > hard constraints."_
 
-Then **inline-Read `setup.md`** and follow its template +
-first-time detection prose to write `$SPEC_ROOT/project.md`.
+Then **read `setup.md` into this session** and follow its
+template + first-time detection prose to write
+`$SPEC_ROOT/project.md`.
 
-### Structural verify (verify-as-subagent)
+### Structural verify (dispatched)
 
 A small structural check runs at session start to confirm
 `project.md` matches the kdevkit schema without pulling the
-schema narrative into main's context. **Main runs four
+schema narrative into main's context. **Main runs three
 lightweight checks inline**; on any drift signal it dispatches
-the subagent for full canonical-schema validation against
+the verify agent for full canonical-schema validation against
 `setup.md`.
 
 **These two schema checks are two copies of the same rule** — a
@@ -170,43 +174,46 @@ Main's inline checks:
    present (with at least `reviewer:` **or** `lenses:` set) or
    entirely absent (in which case the §4 Code-review setup
    prompt fires).
-3. If a `## Active initiatives` index exists, every line
-   matches an `$SPEC_ROOT/initiative/*.md` on disk and every
-   on-disk initiative either has an index line or is archived.
-4. The `code_review:` and `review_brief:` blocks (if present)
+3. The `code_review:` and `review_brief:` blocks (if present)
    parse as YAML with no unknown keys.
 
-Clean → no further action. Any drift → dispatch a **fresh-
-context agent call** (the same primitive the Code Review Gate
-uses), per §9's dispatch packet contract:
+Clean → no further action. Any drift → dispatch a **fresh-context
+agent**: a separate agent that starts with only its packet, none
+of this session's history. The Code Review Gate and the Review
+Briefing dispatch the same way. Per §9's dispatch packet contract:
 
 ```
-Receives:  the path to project.md, the path to setup.md, and
-           the on-disk listing of $SPEC_ROOT/initiative/.
-Excluded:  everything else — the subagent's whole job is the
+Receives:  the path to project.md and the path to setup.md.
+Excluded:  everything else — the verify agent's whole job is the
            schema, not the project's content.
 Returns:   { "status": "clean" | "drift",
              "findings": [ { "section", "issue", "suggestion" }, ... ] }
 ```
 
-Main applies any accepted findings via Edit. The setup
-narrative never enters main's context — only the structured
+Main applies any accepted findings to `project.md` itself. The
+setup narrative never enters main's context — only the structured
 verdict.
 
-How the host translates "fresh-context agent call" is
-host-specific (Claude Code's Agent tool, Kiro's equivalent,
-Codex's CLI). Where unavailable, fall back to inline-Read of
-`setup.md` and run the validation in main.
+The result lands in the file the packet names (§9), written by the
+dispatched agent or saved from its final output. How, per agent:
+- Claude Code: the Agent tool.
+- codex: a separate `codex exec -o <result-file> "<packet>"` run
+  (read-only by default; `-o` saves its final message).
+- kiro: a separate `kiro-cli chat --no-interactive "<packet>"` run,
+  its output redirected to the result file; an in-session dispatch
+  is not known yet.
+
+Where none is available, read `setup.md` into this session and run
+the validation here.
 
 ### Session-start read order
 
 When the spec tree carries initiatives, the agent reads at
-session start in this order: `project.md` → the **Active
-initiatives** index → the current initiative (if the entry cue
-references one or the current feature is auto-linked to one,
-per §6) → feature(s) for the current branch. Read only the
-referenced initiative(s); do not load the whole `initiative/`
-tree unconditionally.
+session start in this order: `project.md` → the current
+initiative (if the entry cue names one, or the feature spec's
+`Part of initiative:` line does) → feature(s) for the current
+branch. Read only that initiative; do not load the whole
+`initiative/` tree.
 
 ### Context layers & the AGENTS.md convention
 
@@ -237,9 +244,8 @@ do not duplicate the same commands across both files.
 **Never corrupt the AGENTS.md convention.** Anything written to a
 repo-root `AGENTS.md` must still read as a normal, lean AGENTS.md
 to any tool or human. Never write kdevkit-internal scaffold into
-it — the fixed six-section headers, HTML-comment prompts,
-Session/Decision logs, or the `## Active initiatives` index. That
-scaffold stays in `project.md` and the spec tree. AGENTS.md holds
+it — the fixed six-section headers, HTML-comment prompts, or
+Session/Decision logs. That scaffold stays in `project.md` and the spec tree. AGENTS.md holds
 operational instruction, not methodology structure.
 
 **Lean beats detailed.** Both persistent layers stay concise:
@@ -253,8 +259,9 @@ to what the agent writes into `project.md` and `AGENTS.md`.
 
 Entry cues: `"let's start / continue / pick up <feature>"`, or a
 branch like `feat/user-auth`. Initiative-tier cues:
-`"start initiative <name>"`, `"show initiatives"`,
-`"stream <n> for <initiative>"` — see §10 for what each does.
+`"start initiative <name>"`, `"start <feature> for initiative
+<name>"`, `"run initiative <name>"`, `"close initiative <name>"`,
+`"show initiatives"` — see §10 for what each does.
 
 Resolve the entry mode for feature work:
 
@@ -265,10 +272,11 @@ Resolve the entry mode for feature work:
    What/Why.
 2. **Start `<feature>`** — if neither file exists, run the four
    interviews (§6) and write the spec.
-3. **Stream `<n>` for `<initiative>`** — start a feature whose
-   Git Setup names the initiative as its parent. Auto-populates
-   the feature spec's `Part of initiative: [[<name>]]` link
-   (§6). Otherwise behaves as a normal **start** entry.
+3. **A stream of an initiative** — "start `<feature>` for
+   initiative `<name>`" (the user guides it), or a ringmaster's
+   brief (§10). Branch `feat/<feature>/work`, cut from
+   `initiative/<name>`; otherwise a normal **start**. Under a
+   ringmaster, the ringmaster is the user.
 
 **A spec on disk is not a reviewed spec** — when entering with a
 populated `feature/<feature>.md`, start in §6 Planning (not §7
@@ -289,8 +297,8 @@ interviews in §6 only run when no spec is found.
 When the user describes wanted-but-not-now work — an idea, a
 frustration, a "we should eventually" — write it to
 `$SPEC_ROOT/backlog/<item-name>.md` using the **backlog item
-template** (inline-Read `interviews.md` for the template body
-if not already in context). One file per item; never
+template** (read `interviews.md` into this session for the
+template body if not already in context). One file per item; never
 consolidate into a single `FIXES.md` or `TODO.md`. Closure-time
 cleanup of resolved items lives in §8 step 3.
 
@@ -317,7 +325,7 @@ One-time setup decisions on entry:
   — firing on entry (regardless of fresh / continue / pick-up
   mode) keeps the prompt out of the dev loop, even though the
   §7 Code Review Gate is the only gate that reads the config.
-  **Inline-Read `setup.md`** for the prompt's exact wording,
+  **Read `setup.md` into this session** for the prompt's wording,
   the `[agent]:` heads-up note, and the sticky-write rules.
   After the user replies, sticky-write the answer to
   `project.md`'s `## Agent Development > kdevkit` block.
@@ -367,6 +375,12 @@ Do not chain phases automatically. Two gating layers stack:
 
 Both Review Gate greens close the inner loop; closure (§8)
 requires the explicit cue.
+
+**Under a ringmaster** (§10), the ringmaster's messages are the
+user's cues, and each Review Gate is a stop: reply with what the
+PR/CR body would carry, and open, push and merge nothing. At
+closure, stop after the `close()` commit: the ringmaster
+squash-merges your branch into `initiative/<name>`, never `main`.
 
 ### Operational gating
 
@@ -485,10 +499,10 @@ return work to planning without passing through dev — because the criterion
 is which layer the fault entered, not how far back that is.
 ### Initiative-stream auto-link
 
-When this feature is a stream of an active initiative, §6
-Planning auto-populates the `Part of initiative: [[<name>]]`
-line in the feature spec — see §6 (and §10 for what counts as
-active and how matching resolves).
+When this feature is a stream of an initiative (the entry cue, a
+ringmaster's brief, or the initiative's Streams table names it), §6
+Planning auto-populates the `Part of initiative: [[<name>]]` line in
+the feature spec — see §6 and §10.
 
 ## 9 · Cross-cutting rules (always-on)
 
@@ -509,16 +523,11 @@ Existing types: `feat` · `fix` · `chore` · `docs` · `refactor`
   promotion). No code edits.
 - **`close(<feature>):`** — feature-closure-phase. Reconciles
   in-flight markers, applies any `project.md` verify edit,
-  `git rm`s resolved backlog items, updates the parent
-  initiative's Status table (§8.3.5) and archives it on
-  last-stream close. No code edits — drift goes back to the
-  dev loop.
-- **`plan(<initiative>):`** — initiative-planning. Authors
-  `$SPEC_ROOT/initiative/<name>.md` and adds the
-  `## Active initiatives` index entry to `project.md`. No
-  code edits. There is no `close(<initiative>):` type — the
-  last stream's `close(<feature>):` archives the initiative
-  spec (§8.3.5).
+  `git rm`s resolved backlog items. No code edits — drift
+  goes back to the dev loop.
+- **`plan(<initiative>):`** / **`close(<initiative>):`** — the
+  initiative spec and its close-out, on the initiative branch
+  (§10). No code edits.
 
 The §8.6 squash-merge collapses every phase into one commit on
 `main`; the type encodes the on-branch narrative, not the
@@ -527,7 +536,8 @@ on-`main` shape. CI-restricted projects may substitute
 in the `kdevkit` block.
 
 Branch naming: `<type>/<short-description>` — `feat` · `fix` ·
-`chore` · `docs` · `refactor` · `test`.
+`chore` · `docs` · `refactor` · `test`. An initiative stream's
+branch is `feat/<feature>/work` (§10).
 
 ### Author identity
 
@@ -553,7 +563,7 @@ phase-specific content section + any per-gate exception.
 - **Title.** `<type>(scope): subject` — Conventional Commits
   shape (above). The phase prefix (`plan(...)` / dev type /
   rewritten `feat(...)` at close) carries the phase signal
-  across hosts.
+  across forges.
 - **Body.** **Why** (motivation, not file changes — the diff
   is authoritative for *what*) + *phase-specific content* +
   **Reading order** (grouped by phase: *Read for intent:* … ;
@@ -580,7 +590,7 @@ submission; commit hygiene (below) on every commit.
 
 Public projects must not leak internal names. Public-mode
 signal: a `project.md` Hard-constraints bullet declaring the
-repo public, or `git remote` on an obviously public host while
+repo public, or `git remote` on an obviously public forge while
 `project.md` is silent (treat as public until told otherwise).
 
 When public, NEVER write internal names into skills / agents /
@@ -627,9 +637,19 @@ optionality, and the forward-only rule.
 ### Dispatch safety floor
 
 Binding whenever this skill hands work to another agent, tool, or
-skill — a reviewer, a briefing generator, a verify subagent. The
+skill — a reviewer, a briefing generator, a verify agent. The
 dispatched thing's own contract governs *what it reads*, never
-*what it may do*:
+*what it may do*. One exception: a ringmaster's feature session
+(§10) is lifted from the first and last bullets below, inside its
+own worktree and branch only. It may edit, stage, commit and run the
+project's own commands (builds, gates, tests, and paid tests if its
+brief allows them) there. It still never pushes or merges, and the
+middle two bullets bind it fully. Where the agent can enforce part
+of this, the spawn enforces it; the rest is this instruction
+(backlog `mechanize-session-confinement`). codex: its sandbox
+(§10) lets it commit only on its own branch and blocks push; only
+`/tmp` stays writable beyond its grants. Claude Code, kiro: nothing
+is enforced.
 
 - **No write authority.** No edits, commits, pushes, staging, or
   PR/branch mutation beyond the artefact it was asked for.
@@ -651,7 +671,7 @@ dispatched tool's authority by being read at the wrong moment.
 The safety floor above governs what a dispatched agent may **do**;
 this governs what it **receives** and **returns**. Every dispatch
 to a fresh-context agent — the Code Review Gate's lenses, the
-Review Briefing generator, the §2 structural verify subagent —
+Review Briefing generator, the §2 structural verify agent —
 states its packet in this shape, so the contract is learned once:
 
 ```
@@ -660,10 +680,10 @@ Excluded:  <enumerated exclusions, with why>
 Returns:   <shape>
 ```
 
-**`Returns` is a file, not the dispatched agent's reply.** A host's
-agent-dispatch primitive returns free-form text, and the parent
-"may summarize it in its own response" — a prose contract is
-therefore unenforceable. Findings, verdicts, and structured output
+**`Returns` is a file, not the dispatched agent's reply.** A
+dispatched agent's reply is free-form text that the parent may
+paraphrase before acting on it, so a prose contract can't be
+enforced. Findings, verdicts, and structured output
 go to a file the dispatching phase reads; only a defect narrative
 too irreducibly prose to structure (a briefing) rides the reply.
 

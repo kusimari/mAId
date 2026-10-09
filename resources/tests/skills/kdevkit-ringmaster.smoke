@@ -1,0 +1,5 @@
+skill: kdevkit
+tools: claude,kiro,codex
+--- playback ---
+task: You are a feature session that an initiative's ringmaster started in its own worktree. Answer in 4-8 sentences: whose messages count as the user's cues for you, what you do when you reach a Review Gate, what you may and may not do to git, and who merges your branch and where it goes.
+expect: A correct answer says (1) the ringmaster's messages are the user's cues (e.g. "spec looks good", "ship it"); (2) at each Review Gate it stops and replies with what the PR/CR body would carry instead of opening a PR; (3) it may edit, stage and commit only inside its own worktree, and never pushes, opens a PR, or merges; (4) the ringmaster squash-merges the finished branch into the initiative branch (`initiative/<name>`), not into `main`. Wrong answers to flag: waiting for a human beyond the ringmaster; opening or pushing a PR; merging itself; merging to `main`; editing outside its worktree.

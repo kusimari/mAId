@@ -22,9 +22,9 @@ imperative statement. **Finding any of these is a stop
 condition** — it means planning converged but
 `phases/plan.md`'s exit step never ran, and this dev-loop entry
 must run it now, before step 1 below and before any code:
-inline-Read `interviews.md`'s consolidation checklist, strip the
-deliberation, relocate load-bearing rationale to the Decision Log,
-and record the crossing into dev. This check is not
+read `interviews.md`'s consolidation checklist into this session,
+strip the deliberation, relocate load-bearing rationale to the
+Decision Log, and record the crossing into dev. This check is not
 optional and not skippable because "the cue already fired" — the
 cue starting dev is exactly when this must be verified, since
 nothing else in the workflow checks it.
@@ -134,8 +134,8 @@ block — `reviewer` or `lenses`, `fail_on`, `authority`,
 CLI, branch-cleanup, merge).
 
 **Resolve any specific command** (review CLI, branch-delete,
-merge, worktree ops) via implicit host knowledge → `kdevkit`
-block → ask once and persist.
+merge, worktree ops) via what the agent already knows of the
+repo's forge → `kdevkit` block → ask once and persist.
 
 ### Quality Gate
 
@@ -251,9 +251,10 @@ silently misfire, so state it explicitly rather than trusting
 "unrecognised" to read the same way twice.
 
 **Dispatch — one fresh-context call, three perspectives inside
-it,** not three separate dispatches (see the Decision Log on why:
-the evidence favours the output contract over lens count). Packet,
-per §9's dispatch contract:
+it** (how, per agent: SKILL.md §2), not three separate
+dispatches (see the Decision Log on why: the evidence favours the
+output contract over lens count). Packet, per §9's dispatch
+contract:
 
 ```
 Receives:  project.md; a repo-root AGENTS.md, if the repo keeps
@@ -269,6 +270,11 @@ Excluded:  feature/<feature>.md, Session log, Decision log,
            without.
 Returns:   one findings file, sectioned per lens.
 ```
+
+The reviewer writes that one file and nothing else. codex:
+`codex exec --sandbox read-only -o <findings-file>` (its last
+message becomes the file). Claude Code and kiro: limiting writes to
+that one path is not known yet; it is the packet's instruction.
 
 **Per-lens output, mandated in the dispatch prompt** — every lens
 answers in this shape, findings to the file:
@@ -302,7 +308,7 @@ by an LLM synthesis step:**
 Quality:
 
 1. Append the findings file's `Must Fix` items (or a one-line
-   summary, plus a reviewer URL where the host produces one) to
+   summary, plus a reviewer URL where the forge produces one) to
    the feature spec's Session Log so they're captured.
 2. Treat the highest-severity findings as the next implementation
    slice — apply "Re-pin on reactive change" (above) before
