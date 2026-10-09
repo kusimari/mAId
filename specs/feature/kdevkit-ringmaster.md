@@ -22,14 +22,10 @@ review briefing written for the whole.
 
 ## Handoff
 
-- **Stage:** review
-- **Ready for:** the user's review on the PR; the acceptance run
-  (`installable`, ringmaster mode) is done and recorded in the Session
-  Log
-- **Carry forward:** merge this PR before `initiative/installable`,
-  which is stacked on it; if this PR is squash-merged, rebase that
-  branch with `git rebase --onto main <this branch's last commit>`
-  (the branch name is deleted at closure, so use the sha)
+- **Stage:** closed
+- **Ready for:** nothing - shipped
+- **Carry forward:** none. Open work is backlog
+  `mechanize-session-confinement` and `skills-state-what-not-commands`.
 - **Deliberately left:** a guided run, the guided-to-ringmaster switch
   and a resumed ringmaster (not yet exercised); the multi-repo guidance
   and the detailed cross-stream rebase steps from the old module; hosts
@@ -43,6 +39,8 @@ review briefing written for the whole.
   why: the user set the design in conversation and asked for it built
   in this session
 - dev → review
+- review → closure
+- closure → closed
 
 ## Requirements
 
@@ -166,6 +164,13 @@ review briefing written for the whole.
   answers closure's backlog step itself; a defect-list stream gets the
   planning cue in its brief. Not exercised: guided mode, the switch to
   ringmaster, a resumed ringmaster.
+
+- 2026-10-09 · Closure. Persistent layers: `specs/project.md` already
+  carries this feature's durable edits (Layout's `initiative/` line, the
+  index section removed, "It has to outlast its agents" under Writing a
+  skill); no further change, since the ringmaster's mechanics live in
+  the skill, not the project. Backlog: none closed; two filed
+  (`mechanize-session-confinement`, `skills-state-what-not-commands`).
 
 ## Decision Log
 
