@@ -190,9 +190,9 @@ main ─────────────────────────
    - Write the initiative PR's body. With `review_brief` enabled,
      dispatch the review briefing (§7, `phases/review.md`) at
      initiative level; otherwise write the §9 body covering the same
-     ground (requirements as understood, design decisions and their
-     effect on the existing design, the changes in review order, what
-     the tests say). The briefing receives the initiative spec as
+     ground (requirements as understood, the resulting design and its
+     effect on the existing design, a review order by design area,
+     what the tests say). The briefing receives the initiative spec as
      the spec, each feature spec, the diff `main...initiative/<name>`,
      and the Macro test result. The briefing replays the calls the
      ringmaster made for the user (the Decision Log's rulings, each
