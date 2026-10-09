@@ -1,7 +1,7 @@
 # Initiative: installable
 
-- Branch: `initiative/installable` (stacked on `feat/kdevkit-ringmaster`;
-  rebase onto `main` once that lands)
+- Branch: `initiative/installable`, on `main` (rebased after the
+  ringmaster feature it was stacked on merged)
 - Status: closed 2026-10-08; five streams merged; Macro test passed.
   Reaches `main` as one merge commit (`git merge --no-ff`, or the
   forge's "Create a merge commit"), with this message:
