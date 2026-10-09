@@ -233,3 +233,8 @@ review briefing written for the whole.
   stream's branch only (checked with `codex sandbox`, no model);
   sibling streams, the initiative branch and new branches are now
   blocked, and only `/tmp` stays an instruction.
+- Ship without a further initiative run, and keep the what-then-how
+  refactor in this PR · the user's call at the third review: the
+  branch shape and per-agent paths get their first run in the next
+  initiative (backlog `mechanize-session-confinement`); the refactor
+  rewords without changing behaviour.
