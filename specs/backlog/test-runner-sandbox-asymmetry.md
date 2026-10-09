@@ -37,7 +37,11 @@ Surfaced twice. The `writing-style-behavioral-verification` code
 review (91/100) and its Closure Review Gate (88/100) both flagged it:
 the learning-loop fixture must guard against mutating the installed,
 symlinked, version-controlled `SKILL.md`, because the skill's own
-Learning-loop contract instructs editing that very file. The fixture
+Learning-loop contract instructs editing that very file. (Since the
+`installable` initiative, 2026-10-09, the installed copy is read-only
+and learned rules go to a user-owned file, so that particular risk is
+gone; an unsandboxed claude can still write anywhere else, including
+the checkout, which keeps this item open.) The fixture
 guards by *prompt text only* ("do NOT call any file-editing tool") —
 which is the strongest a fixture author can do, but it is not
 enforcement. If claude ignores the prompt on the unsandboxed path, a

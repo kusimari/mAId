@@ -20,8 +20,14 @@ metadata:
 > for the write path is therefore `resources/tests/isolated-verify`: paid
 > sweeps run from a throwaway clone, so an escape hits the clone. Still open:
 > claude (`--dangerously-skip-permissions`) and kiro (`--trust-all-tools`)
-> on behavioral tests, which can reach any path, including the checkout
-> through the `~/.claude/skills` symlink.
+> on behavioral tests, which can reach any path, including the checkout.
+>
+> **2026-10-09, `installable` initiative:** installed skills no longer
+> link into the checkout; they resolve into the mAId profile's
+> read-only store path (claude and codex through the `maid` plugin,
+> kiro through per-skill links). So the route through an installed
+> skill into the checkout is gone, and a redirected `$HOME` needs the
+> profile installed into it (`MAID_PROFILE`), not the checkout linked.
 
 
 # Test runner — confine behavioral tests to their scratch workdir
@@ -75,10 +81,11 @@ suite should make this impossible instead.
 - Does `claude --print` accept a scoped write sandbox equivalent to
   codex's `workspace-write`? If not, is a throwaway `$HOME` plus a
   pre/post `git status` tripwire the best available guard?
-- Do the installed skill symlinks still resolve under a redirected
-  `$HOME`? They point back into the checkout, so a fake `$HOME` needs
-  the skills tree linked in or the agent won't find the skill at all —
-  which would turn every behavioral test red for the wrong reason.
+- Do mAId's skills still resolve under a redirected `$HOME`? They
+  come from the mAId profile now, so a fake `$HOME` needs an install
+  into it (see the 2026-10-09 note) or the agent won't find the skill
+  at all — which would turn every behavioral test red for the wrong
+  reason.
 - Should the tripwire also cover `$HOME` (not just the checkout)? A
   test that writes into the user's real `~/notes` would be just as
   wrong and is not currently detected.
