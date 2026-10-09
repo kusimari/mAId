@@ -5,21 +5,26 @@
 #   resources/tests/isolated-verify <check|smoke|verify> [build-tool flags...]
 #   e.g. resources/tests/isolated-verify verify kyodakit --repeat 3
 #
-# It clones the committed HEAD (uncommitted edits are not tested), points
-# every agent's skill links at the clone, runs the tests there, then puts
-# the links back on whichever checkout owned them before. It reports what
-# the tests changed in the clone and in this checkout, and exits non-zero
-# if either changed. Run through `just resources::verify-skills-isolated`.
+# It clones the committed HEAD (uncommitted edits are not tested), builds
+# the clone into a throwaway profile, points every agent at it (links, and
+# the claude and codex plugins), runs the tests there, then puts every
+# agent back on whichever profile owned it before. It reports what the
+# tests changed in the clone and in this checkout, and exits 3 if either
+# changed, 4 if the agents could not be put back as they were. Run through
+# `just resources::verify-skills-isolated`.
 set -uo pipefail
 
 here=$(git rev-parse --show-toplevel)
 stage=${1:?usage: isolated-verify <check|smoke|verify> [flags...]}
 shift
 
-# Who owns the links now, so they can be restored to exactly that.
-owner=$(readlink "$HOME/.claude/skills" 2>/dev/null | sed 's|/resources/content/skills$||')
-# A crashed earlier run can leave links on a clone that no longer exists.
-[ -n "$owner" ] && [ -d "$owner" ] || owner=$here
+# Who owns the install now, so it can be restored to exactly that.
+# MAID_PROFILE is the default profile, exported by resources/Justfile.
+owner=$(readlink "$HOME/.kiro/skills/kdevkit" 2>/dev/null | sed -n 's|/share/maid/skills/kdevkit$||p')
+# A crashed earlier run can leave links on a profile that no longer exists.
+[ -n "$owner" ] && [ -d "$owner" ] || owner=${MAID_PROFILE:?run through just}
+[ -d "$owner/share/maid/skills" ] ||
+  { echo "no mAId profile at $owner to restore the links to; run: just install" >&2; exit 1; }
 
 [ -z "$(git -C "$here" status --porcelain)" ] ||
   echo "note: uncommitted changes are not in the clone and are not tested" >&2
@@ -31,12 +36,38 @@ git clone -q "$here" "$clone"
 export CARGO_TARGET_DIR=$here/target
 bt() { (cd "$1" && shift && cargo run -p build-tool --release --quiet -- "$@"); }
 before=$(git -C "$here" status --porcelain; git -C "$here" for-each-ref)
+# Each plugin agent's plugin and marketplace, with the state's first word
+# (ok, disabled, missing, STALE, WRONG, unreadable). Stale, elsewhere or
+# unreadable before the run is current after the restore.
+plugins() { MAID_PROFILE=$owner bt "$here" status 2>/dev/null | awk '$2 == "plugin" || $2 == "marketplace" { print $1, $2, $4 }'; }
+# Old mAId links would be reaped by the clone's install and not come back.
+if MAID_PROFILE=$owner bt "$here" status 2>/dev/null | grep -q ' old link -> '; then
+  echo "old mAId skill links are still installed; run: just install, then retry" >&2
+  rm -rf "$work"
+  exit 1
+fi
+plugins_before=$(plugins | sed 's/ \(STALE\|WRONG\|unreadable\)$/ ok/')
+# Agents with no mAId plugin before the run get none after it; their
+# marketplace line is not compared, since uninstall removes it too.
+plugins_absent=$(printf '%s\n' "$plugins_before" | awk '$2 == "plugin" && $3 == "missing" { print $1 }')
+compared() { local a; local lines; lines=$(cat); for a in $plugins_absent; do lines=$(printf '%s\n' "$lines" | grep -v "^$a marketplace "); done; printf '%s\n' "$lines"; }
 
 restore() {
-  bt "$clone" uninstall --force >/dev/null 2>&1
-  bt "$owner" install --force >/dev/null 2>&1
-  echo "links restored to $owner"
-  local leaked=0
+  local leaked=0 unrestored=0 a
+  # Not uninstall first: that would drop a plugin the user disabled and
+  # install it again enabled.
+  MAID_PROFILE=$owner bt "$here" install --force >/dev/null 2>&1 || unrestored=1
+  for a in $plugins_absent; do
+    MAID_PROFILE=$owner bt "$here" uninstall --agent "$a" >/dev/null 2>&1 || unrestored=1
+  done
+  [ "$(plugins | compared)" = "$(printf '%s\n' "$plugins_before" | compared)" ] || unrestored=1
+  if [ "$unrestored" = 0 ]; then
+    echo "agents restored to $owner"
+  else
+    echo "agents NOT restored to $owner; run: just install" >&2
+    printf '%s\n' "$plugins_before" | sed 's/^/  before: /' >&2
+    MAID_PROFILE=$owner bt "$here" status 2>&1 | sed 's/^/  now: /' >&2
+  fi
   if [ -n "$(git -C "$clone" status --porcelain)" ]; then
     echo "LEAK (contained) — tests changed the clone:"
     git -C "$clone" status --porcelain | sed 's/^/  /'
@@ -49,8 +80,11 @@ restore() {
   fi
   rm -rf "$work"
   [ "$leaked" = 0 ] || exit 3
+  [ "$unrestored" = 0 ] || exit 4
 }
 trap restore EXIT
 
+export MAID_PROFILE=$work/profile
+nix build --profile "$MAID_PROFILE" "$clone#default" || exit 1
 bt "$clone" install --force >/dev/null
 bt "$clone" "$stage" "$@"

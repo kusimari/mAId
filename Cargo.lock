@@ -89,6 +89,7 @@ dependencies = [
  "clap",
  "gray_matter",
  "serde",
+ "serde_json",
  "tempfile",
 ]
 

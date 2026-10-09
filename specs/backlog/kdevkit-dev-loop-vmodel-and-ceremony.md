@@ -303,9 +303,9 @@ need the full rubric.
 
 ## Note on editing the skill
 
-`resources/content/skills/kdevkit/SKILL.md` is the source behind
-the managed skills symlink — edit it here in the repo, not under
-`~/.claude/skills/kdevkit/`. Changes land in the next session. All
+`resources/content/skills/kdevkit/SKILL.md` is the source — edit it
+here in the repo; the installed copy in the mAId profile is
+read-only. Changes reach sessions at the next `just install`. All
 three rules are always-on operational content (§5/§7), so they
 belong in `SKILL.md`, not the deferred `setup.md` / `interviews.md`,
 per the skill's own multi-file placement rule.

@@ -7,6 +7,11 @@ metadata:
 
 # build-tool language: Rust vs. typed functional Python
 
+> **2026-10-09:** this records the build-tool as it was evaluated.
+> Since the `installable` initiative it also drives the claude and
+> codex plugin CLIs, beside linking kiro and agy at the mAId profile;
+> the language question is unchanged.
+
 ## What was evaluated
 
 Whether `resources/build-tool` (the symlink installer) should move

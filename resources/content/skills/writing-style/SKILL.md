@@ -36,8 +36,9 @@ keep.
 ### Pending learned rules
 
 When you load this skill at session start, check the
-`## Learned rules` section below. If it has entries, offer
-promotion — *"You have N learned rules pending promotion. Want
+`## Learned rules` section below and the user's learned-rules
+file (see Learning loop). Rules in either apply now. If either
+has entries, offer promotion — *"You have N learned rules pending promotion. Want
 to review them now? &lt;list&gt;"*. If the user declines or
 ignores the offer, proceed normally.
 
@@ -178,12 +179,12 @@ Phrases like "I prefer X" or "stop using Y" are **not**
 triggers — they're conversational and would generate
 false-positive captures.
 
-On a prefix match: append a dated entry to the
-`## Learned rules` section below, newest at top. Edit the
-file at `~/.claude/skills/writing-style/SKILL.md` (or the
-kiro path if Claude isn't where you're running) — the path
-is a symlink into the mAId checkout, so the edit lands in
-the version-controlled source.
+On a prefix match: append a dated entry under the
+`## Learned rules` heading of the user's learned-rules file,
+`${XDG_CONFIG_HOME:-~/.config}/maid/writing-style/learned.md`,
+newest at top. Create the file with that heading if it is
+missing. Never edit this `SKILL.md`: the installed copy is
+read-only, and the file is the user's own data.
 
 Entry shape:
 
@@ -198,8 +199,7 @@ recommended. Use them when the user's framing makes them
 natural.
 
 After writing, confirm with one short line:
-*"Added to `## Learned rules`. Run `git status` in the
-mAId checkout to see the diff."*
+*"Added to `## Learned rules` in `<the file's path>`."*
 
 ### Promotion
 
@@ -208,26 +208,29 @@ Stable learned rules belong in the curated body above
 Paragraph structure / POV / Emphasis / Other patterns).
 Promote them via two paths:
 
-1. **Next-session offer.** On session start, if
-   `## Learned rules` has entries, offer to review them
+1. **Next-session offer.** On session start, if either
+   `## Learned rules` list has entries, offer to review them
    before answering the user's actual prompt.
 2. **On-demand.** The user says "promote learned rules"
    or "review learned rules". List pending entries with
    proposed target sections; ask the user to confirm
    each.
 
-On confirmation: edit the target section to add the rule
-in its existing voice (terse, declarative), then remove
-the entry from `## Learned rules`. Both edits land in
-the same file write.
+On confirmation: in a mAId checkout, edit
+`resources/content/skills/writing-style/SKILL.md`'s target
+section to add the rule in its existing voice (terse,
+declarative), and remove the entry from the `## Learned rules`
+list it came from. Without a checkout at hand, say so and leave
+the entry pending. The promoted rule reaches sessions at the
+next `just install`.
 
 ## Learned rules
 
-<!-- Newest at top. Entries are explicit teach turns
-     (`new rule:` / `add rule:` / `style rule:` prefix).
-     At session start or on-demand, the assistant offers
-     to promote stable entries into the body sections
-     above. -->
+<!-- Shipped entries pending promotion. New teach turns go
+     to the user's learned-rules file, not here (see
+     Learning loop). At session start or on-demand, the
+     assistant offers to promote stable entries into the
+     body sections above. -->
 
 - 2026-07-08 · use a spaced hyphen " - " for interruptions and asides, not an em-dash
   · *example:* "Define that role first - what problem this person owns - and then bring in the org footprint"

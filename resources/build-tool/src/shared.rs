@@ -33,18 +33,19 @@ pub fn usage(msg: impl Into<String>) -> anyhow::Error {
 // ─────────────────────────────────────────────────────────────────
 // Registry — the deployment manifest.
 //
-// The job: mAId keeps skills in the checkout; each coding agent expects
-// them under its own home dir and discovers them there natively (claude
-// ~/.claude/skills, kiro ~/.kiro/steering, codex ~/.codex/skills — all
-// verified to load skills with no extra preamble). The registry maps
-// checkout source → agent home, one row per target, in one of two
-// shapes (`Kind`):
+// The job: `just install` builds the skills into the mAId profile (see
+// `profile_dir`). claude and codex install them as a plugin with their
+// own CLI (`PLUGIN_AGENTS`; see deploy.rs `Plugins`). The rest have no
+// such command and discover skills under their own home dir (kiro
+// ~/.kiro/skills, agy ~/.gemini/config), so the registry maps profile
+// source → agent home, one row per target, in one of two shapes (`Kind`):
 //
-//   Link   — the agent's home layout matches the checkout, so symlink
+//   Link   — the agent's home layout matches the profile, so symlink
 //            the home path straight at the source dir. mAId owns it.
 //   FanOut — the agent owns the home dir and puts its own entries
 //            there, so we can't replace it; mirror each source child in
-//            as its own symlink and leave the rest alone.
+//            as its own symlink and leave the rest alone. kiro's row:
+//            ~/.kiro/skills also holds the user's own skills.
 //
 // Skills are all that's installed. There is no global instruction
 // preamble: loading a project's AGENTS.md / project.md is kdevkit's
@@ -52,7 +53,7 @@ pub fn usage(msg: impl Into<String>) -> anyhow::Error {
 // global per-tool file.
 // ─────────────────────────────────────────────────────────────────
 
-pub type Entry = (&'static str, &'static str, Kind, Agent); // (home_subpath, source_subpath, kind, agent)
+pub type Entry = (&'static str, &'static str, Kind, Agent); // (home_subpath, profile_subpath, kind, agent)
 
 /// A concrete symlink to manage, resolved from an entry: (home, source).
 pub type Link = (PathBuf, PathBuf);
@@ -74,35 +75,54 @@ pub enum Agent {
     Agy,
 }
 
+/// The link rows: agents with no plugin command of their own.
 pub const REGISTRY: &[Entry] = &[
     (
-        ".claude/skills",
-        "resources/content/skills",
-        Kind::Link,
-        Agent::Claude,
-    ),
-    (
-        ".kiro/steering/skills",
-        "resources/content/skills",
-        Kind::Link,
+        ".kiro/skills",
+        "share/maid/skills",
+        Kind::FanOut,
         Agent::Kiro,
     ),
     (
-        ".codex/skills",
-        "resources/content/skills",
-        Kind::FanOut,
-        Agent::Codex,
-    ),
-    (
         ".gemini/config/skills",
-        "resources/content/skills",
+        "share/maid/skills",
         Kind::Link,
         Agent::Agy,
     ),
 ];
 
+/// Where an older mAId install linked a symlink agent's skills: install
+/// and uninstall remove a mAId link there, status lists it.
+pub const LEGACY_LINKS: &[(Agent, &str, Kind)] =
+    &[(Agent::Kiro, ".kiro/steering/skills", Kind::Link)];
+
+/// Agents that install mAId as a plugin through their own CLI, each with
+/// where the links an older mAId install left live (reaped on install).
+pub const PLUGIN_AGENTS: &[(Agent, &str, Kind)] = &[
+    (Agent::Claude, ".claude/skills", Kind::Link),
+    (Agent::Codex, ".codex/skills", Kind::FanOut),
+];
+
+/// The plugin and the marketplace it comes from, as both CLIs name them.
+pub const PLUGIN_ID: &str = "maid@maid";
+pub const MARKETPLACE: &str = "maid";
+
+/// Where flake.nix puts the marketplace in the profile.
+pub const PROFILE_MARKETPLACE_DIR: &str = "share/maid/marketplace";
+
+/// The marketplace dir the agents are pointed at: a real dir beside the
+/// profile whose entries link into it. Codex records a marketplace by its
+/// resolved path, so registering the profile itself would pin one
+/// generation's store path.
+pub fn marketplace_root(profile: &Path) -> PathBuf {
+    profile
+        .parent()
+        .unwrap_or(Path::new("/"))
+        .join("marketplace")
+}
+
 impl Agent {
-    /// Every agent, in registry order. `registry_rows_cover_every_agent`
+    /// Every agent. `every_agent_is_deployed_by_exactly_one_mechanism`
     /// holds this in step with REGISTRY.
     pub const ALL: &'static [Agent] = &[Agent::Claude, Agent::Kiro, Agent::Codex, Agent::Agy];
 
@@ -136,6 +156,21 @@ impl Agent {
                         .join(", ")
                 ))
             })
+    }
+
+    /// The CLI an agent is driven through.
+    pub fn cli(self) -> &'static str {
+        match self {
+            Agent::Claude => "claude",
+            Agent::Kiro => "kiro-cli",
+            Agent::Codex => "codex",
+            Agent::Agy => "agy",
+        }
+    }
+
+    /// Whether this agent gets mAId as a plugin rather than by link.
+    pub fn is_plugin(self) -> bool {
+        PLUGIN_AGENTS.iter().any(|(a, ..)| *a == self)
     }
 
     /// This agent's REGISTRY row.
@@ -194,18 +229,22 @@ pub fn validate_agents(agents: Option<&str>) -> Result<Option<Vec<Agent>>> {
     }
 }
 
-/// The one source tree skills are authored in, per REGISTRY. Every row
-/// shares it — `registry_rows_share_one_content_source` pins that — so
-/// the first row answers. REGISTRY is a non-empty const.
-fn content_source() -> &'static str {
-    REGISTRY[0].1
-}
+/// Where skills are authored in the checkout.
+pub const CONTENT_DIR: &str = "resources/content";
+
+/// Where flake.nix puts that tree in the profile. Every REGISTRY row
+/// names its `skills/` child.
+pub const PROFILE_CONTENT_DIR: &str = "share/maid";
 
 /// Where `<skill>`'s SKILL.md lives in the checkout — the pre-install
 /// source. Agent-independent by design: before install there is only
 /// one copy, which is why the explicit test kinds need no deploy.
 pub fn checkout_skill(checkout: &Path, skill: &str) -> PathBuf {
-    checkout.join(content_source()).join(skill).join("SKILL.md")
+    checkout
+        .join(CONTENT_DIR)
+        .join("skills")
+        .join(skill)
+        .join("SKILL.md")
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -233,6 +272,25 @@ pub fn repo_root() -> Result<PathBuf> {
     Ok(root)
 }
 
+/// The mAId profile: the nix profile `just install` builds into and every
+/// agent's links point at. The Justfile owns where it is and passes it in.
+pub fn profile_dir() -> Result<PathBuf> {
+    let raw = std::env::var("MAID_PROFILE")
+        .context("MAID_PROFILE not set — invoke via `just` (resources/Justfile sets it)")?;
+    let profile = PathBuf::from(&raw);
+    profile
+        .is_absolute()
+        .then_some(profile)
+        .ok_or_else(|| anyhow!("MAID_PROFILE must be an absolute path (got {raw:?})"))
+}
+
+/// Whether a program is on PATH. Scans PATH directly: `command -v` is a
+/// shell builtin, so spawning it always fails.
+pub fn on_path(program: &str) -> bool {
+    std::env::var_os("PATH")
+        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
+}
+
 pub fn home_dir() -> Result<PathBuf> {
     let raw = std::env::var("HOME").context("HOME is not set")?;
     let home = PathBuf::from(&raw);
@@ -258,9 +316,10 @@ mod tests {
 
     #[test]
     fn selected_entries_scopes_to_one_agent() {
-        let codex = selected_entries(Some(Agent::Codex));
-        assert_eq!(codex.len(), 1);
-        assert_eq!(codex[0].3, Agent::Codex);
+        let kiro = selected_entries(Some(Agent::Kiro));
+        assert_eq!(kiro.len(), 1);
+        assert_eq!(kiro[0].3, Agent::Kiro);
+        assert!(selected_entries(Some(Agent::Claude)).is_empty());
     }
 
     #[test]
@@ -297,33 +356,29 @@ mod tests {
         assert_eq!(Agent::parse("agy").unwrap(), Agent::Agy);
     }
 
-    /// `ALL` is hand-written while REGISTRY is the manifest, so this
-    /// asserts set equality both ways — an agent missing from either
-    /// side fails. Length-only comparison would miss a substitution.
+    /// Every agent is deployed one way: by plugin or by link, never both,
+    /// never neither. `ALL` is hand-written, so this checks it both ways.
     #[test]
-    fn registry_rows_cover_every_agent() {
-        let tagged: Vec<Agent> = REGISTRY.iter().map(|(.., agent)| *agent).collect();
+    fn every_agent_is_deployed_by_exactly_one_mechanism() {
         for agent in Agent::ALL {
-            assert!(
-                tagged.contains(agent),
-                "{} has no REGISTRY row",
-                agent.name()
-            );
+            let linked = REGISTRY.iter().any(|(.., a)| a == agent);
+            assert!(linked != agent.is_plugin(), "{}", agent.name());
         }
-        for agent in &tagged {
-            assert!(
-                Agent::ALL.contains(agent),
-                "REGISTRY tags {} which Agent::ALL omits",
-                agent.name()
-            );
+        for agent in REGISTRY
+            .iter()
+            .map(|(.., a)| a)
+            .chain(PLUGIN_AGENTS.iter().map(|(a, ..)| a))
+        {
+            assert!(Agent::ALL.contains(agent), "{} not in ALL", agent.name());
         }
+        assert!(Agent::Claude.is_plugin() && Agent::Codex.is_plugin());
     }
 
     /// A selector that parses but matches no row installs nothing while
     /// reporting success, so parsing alone is not enough to assert.
     #[test]
-    fn every_agent_name_selects_exactly_its_own_rows() {
-        for agent in Agent::ALL {
+    fn every_linked_agent_name_selects_exactly_its_own_rows() {
+        for agent in Agent::ALL.iter().filter(|a| !a.is_plugin()) {
             let rows = selected_entries(Some(validate_agent(Some(agent.name())).unwrap().unwrap()));
             assert!(
                 !rows.is_empty(),
@@ -334,20 +389,41 @@ mod tests {
         }
     }
 
-    /// The four deployed roots, spelled out literally: a REGISTRY row
-    /// edited to the wrong home path is otherwise invisible here, since
-    /// every other assertion derives from the same rows.
+    #[test]
+    fn the_marketplace_root_sits_beside_the_profile() {
+        assert_eq!(
+            marketplace_root(Path::new("/s/maid/profile")),
+            Path::new("/s/maid/marketplace")
+        );
+    }
+
+    /// The linked roots and the old plugin-agent link paths, spelled out
+    /// literally: a row edited to the wrong home path is otherwise
+    /// invisible here, since every other assertion derives from the rows.
     #[test]
     fn skills_roots_match_each_agents_deployed_layout() {
         let home = Path::new("/home/u");
         for (agent, want) in [
-            (Agent::Claude, "/home/u/.claude/skills"),
-            (Agent::Kiro, "/home/u/.kiro/steering/skills"),
-            (Agent::Codex, "/home/u/.codex/skills"),
+            (Agent::Kiro, "/home/u/.kiro/skills"),
             (Agent::Agy, "/home/u/.gemini/config/skills"),
         ] {
             assert_eq!(agent.skills_root(home).unwrap(), Path::new(want));
         }
+        assert_eq!(Agent::Claude.skills_root(home), None);
+        assert_eq!(
+            PLUGIN_AGENTS
+                .iter()
+                .map(|(a, p, _)| (*a, *p))
+                .collect::<Vec<_>>(),
+            [
+                (Agent::Claude, ".claude/skills"),
+                (Agent::Codex, ".codex/skills")
+            ]
+        );
+        assert_eq!(
+            LEGACY_LINKS,
+            [(Agent::Kiro, ".kiro/steering/skills", Kind::Link)]
+        );
     }
 
     #[test]
@@ -358,13 +434,13 @@ mod tests {
         );
     }
 
-    /// `checkout_skill` reads the source path off a single row, so a row
-    /// pointing somewhere else would make the pre-install source depend
-    /// on which row answered.
+    /// flake.nix copies the skills to this one profile path; a row naming
+    /// another would link an agent at nothing.
     #[test]
-    fn registry_rows_share_one_content_source() {
-        let sources: Vec<&str> = REGISTRY.iter().map(|(_, s, ..)| *s).collect();
-        assert!(sources.windows(2).all(|w| w[0] == w[1]), "{sources:?}");
+    fn every_row_links_at_the_profiles_skills() {
+        for (_, source, ..) in REGISTRY {
+            assert_eq!(*source, format!("{PROFILE_CONTENT_DIR}/skills"));
+        }
     }
 
     #[test]

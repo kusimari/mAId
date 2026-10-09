@@ -1,9 +1,91 @@
-# Resources verbs operate on $HOME — they read or write the
-# symlinks the AI tools consume — except `check-skills`, which
-# needs no deployment at all. Validation of content runs inside
-# `install`. Recipes invoke from the workspace root (via
-# `[no-cd]`), so `cargo run -p build-tool` resolves against the
-# workspace, not this directory.
+# Resources verbs operate on $HOME — the claude and codex plugin, and
+# the symlinks kiro and agy read — except `check-skills`, which
+# needs no deployment at all. Recipes invoke from the workspace
+# root (via `[no-cd]`), so `cargo run -p build-tool` resolves
+# against the workspace, not this directory.
+#
+# What the agents use lives in the mAId profile, not the checkout:
+# `install-profile` builds this checkout's flake into it as a new
+# generation, and every link, plugin marketplace and MCP registration
+# names the profile path (or the marketplace dir beside it). Delete the checkout and they keep working; install from
+# another checkout and its generation takes over.
+
+export MAID_PROFILE := env("MAID_PROFILE", env("XDG_STATE_HOME", env("HOME") / ".local/state") / "maid/profile")
+
+# Validate content and build this checkout into the mAId profile.
+# Nix sees tracked files only, so `git add` a new file first.
+[no-cd]
+install-profile:
+    #!/usr/bin/env bash
+    set -eu
+    cargo run -p build-tool --release --quiet -- validate
+    mkdir -p "$(dirname "$MAID_PROFILE")"
+    out=$(nix build --no-link --print-out-paths "{{ justfile_directory() }}#default")
+    {{ just_executable() }} -f {{ source_file() }} _drop-rolled-back
+    live=$(readlink "$MAID_PROFILE" 2>/dev/null || true)
+    nix build --profile "$MAID_PROFILE" "$out"
+    # The wipe keeps the newest generation older than the cutoff. With no
+    # new generation that is the live one, and the one before it would go.
+    if [ "$(readlink "$MAID_PROFILE")" != "$live" ]; then
+        nix profile wipe-history --profile "$MAID_PROFILE" --older-than 30d
+    fi
+    {{ just_executable() }} -f {{ source_file() }} status-profile
+
+# The plugin install runs again after the switch: codex serves its cached
+# copy of the plugin, and claude's listed version stays stale, until it
+# does. A generation missing what the agents are pointed at (one from
+# before the plugin) is refused, and nothing changes.
+# Switch the profile one generation back and point the agents at it.
+[no-cd]
+rollback-profile:
+    #!/usr/bin/env bash
+    set -u
+    num() { sed -n 's/.*-\([0-9]*\)-link$/\1/p'; }
+    from=$(readlink "$MAID_PROFILE" | num)
+    [ -n "$from" ] || { echo "no mAId install at $MAID_PROFILE to roll back from (run: just install)" >&2; exit 1; }
+    to=$(printf '%s\n' "$MAID_PROFILE"-*-link | num | awk -v from="$from" '$1 < from' | sort -n | tail -n 1)
+    [ -n "$to" ] || { echo "no install before generation $from to roll back to" >&2; exit 1; }
+    for need in share/maid/skills share/maid/marketplace/plugins/maid/.codex-plugin/plugin.json bin/maid-browser-mcp; do
+        [ -e "$MAID_PROFILE-$to-link/$need" ] ||
+            { echo "generation $to has no $need, so the agents cannot use it; staying on generation $from" >&2; exit 1; }
+    done
+    nix profile rollback --profile "$MAID_PROFILE" --to "$to" || exit 1
+    # Its exit code is install's: non-zero also when a link was left alone.
+    {{ just_executable() }} -f {{ source_file() }} install-skills; rc=$?
+    {{ just_executable() }} -f {{ source_file() }} status-profile
+    exit $rc
+
+# Generations above the live one are installs a rollback returned from.
+# nix rolls back to the next lower number, so unless they go, a rollback
+# after the next install lands on them instead of on the install before it.
+[no-cd]
+_drop-rolled-back:
+    #!/usr/bin/env bash
+    set -u
+    live=$(readlink "$MAID_PROFILE" 2>/dev/null | sed -n 's/.*-\([0-9]*\)-link$/\1/p')
+    [ -n "$live" ] || exit 0
+    for link in "$MAID_PROFILE"-*-link; do
+        n=${link#"$MAID_PROFILE"-}
+        n=${n%-link}
+        if [ "$n" -gt "$live" ] 2>/dev/null; then rm -f "$link" && echo "dropped generation $n (rolled back from)"; fi
+    done
+
+# Remove the mAId profile. Its store paths go at the next nix GC.
+[no-cd]
+uninstall-profile:
+    rm -f "$MAID_PROFILE" "$MAID_PROFILE"-*-link
+    @echo "removed  $MAID_PROFILE"
+
+# Smoke reads the profile, so it must be this checkout's build: the
+# store path nix would build now equals the one installed.
+[no-cd]
+_profile-is-current:
+    @want=$(nix eval --raw "{{ justfile_directory() }}#default.outPath") || { echo "cannot evaluate this checkout's flake" >&2; exit 1; }; [ "$want" = "$(readlink -f "$MAID_PROFILE")" ] || { echo "the installed profile is not this checkout's build; run: just install (or use verify-skills-isolated)" >&2; exit 1; }
+
+# Report which generation the profile is on, and its store path.
+[no-cd]
+status-profile:
+    @if [ -e "$MAID_PROFILE" ]; then echo "profile  $MAID_PROFILE generation $(readlink "$MAID_PROFILE" | sed 's/.*-\([0-9]*\)-link$/\1/') -> $(readlink -f "$MAID_PROFILE")"; else echo "profile  $MAID_PROFILE missing (run: just install)"; fi
 
 # First arg is the coding-agent selector (claude|kiro|codex|agy; omit for
 # all); remaining flags pass through, e.g.
@@ -14,17 +96,17 @@
 #   just resources::install-skills --force         (all agents, repoint)
 # The `=~ '^-'` guard lets a leading flag (no agent given) pass through
 # as a flag rather than being mistaken for an agent name.
-# Validate content and create/refresh $HOME-facing skill symlinks.
+# Install or update the claude/codex plugin; link kiro and agy (run install-profile first).
 [no-cd]
 install-skills agent="" *FLAGS:
     cargo run -p build-tool --release --quiet -- install {{ if agent =~ '^-' { agent } else if agent != "" { "--agent " + agent } else { "" } }} {{ FLAGS }}
 
-# Remove install-managed skill symlinks (optionally for one agent).
+# Remove the plugin and the skill links (optionally for one agent).
 [no-cd]
 uninstall-skills agent="" *FLAGS:
     cargo run -p build-tool --release --quiet -- uninstall {{ if agent =~ '^-' { agent } else if agent != "" { "--agent " + agent } else { "" } }} {{ FLAGS }}
 
-# Report each managed skill symlink's state (optionally for one agent).
+# Report each plugin's version and each skill link (optionally for one agent).
 [no-cd]
 status-skills agent="":
     cargo run -p build-tool --release --quiet -- status {{ if agent != "" { "--agent " + agent } else { "" } }}
@@ -48,7 +130,7 @@ check-skills agent="" *FLAGS:
 # Verify skills AFTER install, against the deployed tree.
 [confirm("This costs API credits and takes minutes. Continue? (y/N)")]
 [no-cd]
-smoke-skills agent="" *FLAGS:
+smoke-skills agent="" *FLAGS: _profile-is-current
     cargo run -p build-tool --release --quiet -- smoke {{ if agent =~ '^-' { agent } else if agent != "" { "--agent " + agent } else { "" } }} {{ FLAGS }}
 
 # One `verify` invocation, not two lines: just runs recipe lines in
@@ -58,14 +140,14 @@ smoke-skills agent="" *FLAGS:
 # Both stages: pre-install checks, then post-install smoke.
 [confirm("This costs API credits and takes minutes. Continue? (y/N)")]
 [no-cd]
-verify-skills agent="":
+verify-skills agent="": _profile-is-current
     cargo run -p build-tool --release --quiet -- verify {{ if agent != "" { "--agent " + agent } else { "" } }}
 
 # e.g. `just resources::verify-skills-one kdevkit-planning`
 # Drive a single fixture through both stages, optionally scoped to one agent.
 [confirm("This costs API credits and takes minutes. Continue? (y/N)")]
 [no-cd]
-verify-skills-one name agent="":
+verify-skills-one name agent="": _profile-is-current
     cargo run -p build-tool --release --quiet -- verify "{{ name }}" {{ if agent != "" { "--agent " + agent } else { "" } }}
 
 # Paid tests from a throwaway clone, so a test that escapes its scratch dir
@@ -112,13 +194,16 @@ verify-skills-dry name="":
 
 # ── browser-control MCP ──────────────────────────────────────────
 # Register Google's chrome-devtools-mcp with the installed agent
-# harnesses, launched via resources/browser/launch so the user's
+# harnesses, launched via the profile's maid-browser-mcp (the
+# flake's wrap of resources/browser/launch) so the user's
 # allowlist is enforced. The register/report verbs follow the
 # `<action>-browser-mcp` pattern so they read as peers of the
 # `*-skills` verbs (`browser-mcp-allow` keeps its name — it manages
 # the allowlist, not the registration lifecycle). Desktop-only;
-# graceful skip where there is no GUI Chrome, no nix, or no harness
-# CLI. The allowlist is user-owned data — uninstall never touches it.
+# graceful skip where there is no GUI Chrome or no harness CLI. The
+# allowlist is user-owned data — uninstall never touches it.
+# Needs the profile (install-profile); the registration names the
+# profile path, so later installs need no re-registration.
 #
 # Every verb takes the uniform coding-agent selector as its first
 # argument (claude|kiro|codex; omit for all three). Kiro partitions
@@ -133,7 +218,7 @@ verify-skills-dry name="":
 # Register the browser-control MCP server (optionally for one agent).
 [no-cd]
 install-browser-mcp agent="" kiro_sub="":
-    resources/browser/manage install "{{ source_directory() }}/browser/launch" "{{ agent }}" "{{ kiro_sub }}"
+    resources/browser/manage install "$MAID_PROFILE/bin/maid-browser-mcp" "{{ agent }}" "{{ kiro_sub }}"
 
 # Remove the browser-control server registration (keeps allowlist).
 [no-cd]

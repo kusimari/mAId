@@ -35,7 +35,7 @@ user's *already-running* Chrome over the DevTools Protocol
 also the risk; the safety posture below is not optional.
 
 The tools are only present after the capability is installed
-(`just resources::install-browser-mcp`). If the browser tools
+(`just install`). If the browser tools
 are not in your toolset, say so and point the user at that verb
 — do not pretend to drive.
 

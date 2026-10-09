@@ -5,22 +5,21 @@
 //! agent's home layout is the least durable knowledge in this repo, so it
 //! is quarantined behind one trait rather than spread through the stages.
 //!
-//! Ideally an agent would install its own skills and we would just hand
-//! one over. None can, today — verified against all three CLIs: `claude`
-//! and `kiro-cli` expose no skill verb at all, and `codex plugin add`
-//! takes `PLUGIN@MARKETPLACE`, so it cannot install from a local
-//! checkout. Until one of them grows that command, `Symlinks` below is
-//! the whole implementation.
-//!
-//! When one does, it becomes a second `Deploy` impl — an
-//! `AgentManaged { … }` that shells out to the agent's own verb — and
-//! nothing in `stages` changes. That is the point of the boundary.
+//! Where an agent can install mAId itself, we hand it over: claude and
+//! codex install the profile's marketplace with their own plugin CLI
+//! (`Plugins`). kiro and agy have no such command, so `Symlinks` links
+//! their skills dirs at the profile. `Deployment` routes each agent to
+//! one of the two, and nothing in `stages` knows which.
 
-use crate::shared::{selected_entries, Agent, Entry, Kind, Link};
-use anyhow::{anyhow, Result};
+use crate::shared::{
+    marketplace_root, on_path, selected_entries, Agent, Entry, Kind, Link, LEGACY_LINKS,
+    MARKETPLACE, PLUGIN_AGENTS, PLUGIN_ID, PROFILE_MARKETPLACE_DIR,
+};
+use anyhow::{anyhow, Context, Result};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// What a deployment target reports about one managed location.
 #[derive(Debug, PartialEq, Eq)]
@@ -35,6 +34,21 @@ pub enum State {
     Occupied(&'static str),
     /// The source we would deploy from doesn't exist.
     SourceMissing,
+    /// A plugin, enabled, at this install's version.
+    Current(String),
+    /// A plugin, enabled, at another version than this install's.
+    Stale { found: String, want: String },
+    /// A plugin the user disabled.
+    Disabled { found: String, want: String },
+    /// The agent's CLI is not on PATH, so there is nothing to install into.
+    NoCli(&'static str),
+    /// A mAId link install removes: an old location, or a skill this
+    /// install does not ship.
+    Legacy(PathBuf),
+    /// An entry mAId did not write in a dir the agent owns; kept.
+    Theirs,
+    /// The agent's CLI would not report its plugins.
+    Unreadable(String),
 }
 
 impl State {
@@ -48,6 +62,18 @@ impl State {
                 format!("WRONG -> {} (expected {})", found.display(), want.display())
             }
             State::Occupied(what) => format!("non-symlink ({what})"),
+            State::Current(v) => format!("ok {v}"),
+            State::Stale { found, want } => {
+                format!("STALE {found} (this install is {want}; run: just install)")
+            }
+            State::Disabled { found, want } if found == want => format!("disabled {found}"),
+            State::Disabled { found, want } => {
+                format!("disabled {found}, STALE (this install is {want})")
+            }
+            State::NoCli(cli) => format!("{cli} not on PATH"),
+            State::Legacy(target) => format!("old link -> {}", target.display()),
+            State::Theirs => "not mAId's (kept)".into(),
+            State::Unreadable(why) => format!("unreadable ({why}); run: just install"),
         }
     }
 }
@@ -88,33 +114,42 @@ pub trait Deploy {
 
 /// Deployment by symlink into `$HOME`, per the registry.
 ///
-/// The shim. It exists because no agent can install a skill for us yet;
-/// see the module comment.
+/// For agents with no plugin command of their own; see the module comment.
 pub struct Symlinks {
     pub home: PathBuf,
-    pub checkout: PathBuf,
+    /// What the registry's source paths are relative to: the mAId profile.
+    /// Links name this path, never the store path behind it, so a new
+    /// generation reaches every agent without relinking.
+    pub source: PathBuf,
 }
 
 impl Deploy for Symlinks {
     fn install(&self, agent: Option<Agent>, dry_run: bool, force: bool) -> Result<Vec<Report>> {
-        self.act(agent, |link| self.create(link, dry_run, force))
+        // New links first: an install that fails keeps the old ones.
+        let mut out = self.act(agent, |link, kind| self.create(link, kind, dry_run, force))?;
+        out.extend(self.reap_unshipped(agent, dry_run)?);
+        out.extend(self.reap_legacy(agent, dry_run)?);
+        Ok(out)
     }
 
     fn uninstall(&self, agent: Option<Agent>, dry_run: bool, force: bool) -> Result<Vec<Report>> {
-        self.act(agent, |link| self.remove(link, dry_run, force))
+        let mut out = self.act(agent, |link, kind| self.remove(link, kind, dry_run, force))?;
+        out.extend(self.reap_unshipped(agent, dry_run)?);
+        out.extend(self.reap_legacy(agent, dry_run)?);
+        Ok(out)
     }
 
     fn status(&self, agent: Option<Agent>) -> Result<Vec<Report>> {
-        self.act(agent, |link| Ok((self.inspect(link), false)))
+        let mut out = self.act(agent, |link, _| Ok((self.inspect(link), false)))?;
+        out.extend(self.reap_unshipped(agent, true)?);
+        out.extend(self.reap_legacy(agent, true)?);
+        Ok(out)
     }
 
     fn is_deployed(&self, agent: Agent) -> bool {
-        // The skills ROOT existing is the wrong question for a FanOut
-        // agent: codex owns ~/.codex/skills and may have it
-        // present-but-empty (or non-empty for reasons unrelated to us),
-        // so the directory existing proves nothing about whether we
-        // deployed into it. Ask instead whether at least one of our own
-        // links resolves to something that is actually there —
+        // A skills dir existing proves nothing about whether we deployed
+        // into it (a FanOut dir is the agent's own). Ask instead whether
+        // at least one of our own links resolves to something there —
         // `State::Ok` alone is not enough, since it only means the
         // symlink points where the registry says, not that the target
         // still exists (the source can be deleted out from under an
@@ -130,17 +165,62 @@ impl Deploy for Symlinks {
 }
 
 impl Symlinks {
+    /// Remove mAId links in a FanOut dir to skills this profile does not
+    /// ship (dropped, or only in another profile); a dry run lists them.
+    fn reap_unshipped(&self, agent: Option<Agent>, dry_run: bool) -> Result<Vec<Report>> {
+        let mut out = Vec::new();
+        for (home_sub, source_sub, kind, _) in selected_entries(agent) {
+            if kind != Kind::FanOut {
+                continue;
+            }
+            let source = self.source.join(source_sub);
+            for found in reap(&self.home, home_sub, kind, true)? {
+                let at = self.home.join(&found.label);
+                if !matches!(&found.state, State::Legacy(t) if ours(kind, t)) {
+                    continue;
+                }
+                if at.file_name().is_some_and(|n| exists(&source.join(n))) {
+                    continue;
+                }
+                if !dry_run {
+                    fs::remove_file(&at)?;
+                }
+                out.push(found);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Remove the links an older mAId install left where the selected
+    /// agents no longer read skills; a dry run lists them.
+    fn reap_legacy(&self, agent: Option<Agent>, dry_run: bool) -> Result<Vec<Report>> {
+        let mut out = Vec::new();
+        for (a, home_sub, kind) in LEGACY_LINKS {
+            if agent.is_none_or(|sel| sel == *a) {
+                out.extend(reap(&self.home, home_sub, *kind, dry_run)?);
+            }
+        }
+        Ok(out)
+    }
+
     /// Resolve the selection to concrete locations and apply `f` to each,
     /// in a deterministic order so two runs are diffable.
     fn act(
         &self,
         agent: Option<Agent>,
-        f: impl Fn(&Link) -> io::Result<(State, bool)>,
+        f: impl Fn(&Link, Kind) -> io::Result<(State, bool)>,
     ) -> Result<Vec<Report>> {
         let mut out = Vec::new();
         for entry in selected_entries(agent) {
             for link in self.expand(entry)? {
-                let (state, acted) = f(&link)?;
+                let (state, acted) = f(&link, entry.2)?;
+                let state = match (entry.2, state) {
+                    (Kind::FanOut, State::Wrong { found, .. }) if !ours(Kind::FanOut, &found) => {
+                        State::Theirs
+                    }
+                    (Kind::FanOut, State::Occupied(_)) => State::Theirs,
+                    (_, state) => state,
+                };
                 out.push(Report {
                     label: self.label(&link.0),
                     state,
@@ -152,7 +232,7 @@ impl Symlinks {
     }
 
     /// Name a location by its path relative to `$HOME`, so a fan-out
-    /// child reads as `.codex/skills/<name>`.
+    /// child reads as `<dir>/<name>`.
     fn label(&self, home_path: &Path) -> String {
         home_path
             .strip_prefix(&self.home)
@@ -162,45 +242,32 @@ impl Symlinks {
     }
 
     /// Resolve a registry entry to the concrete symlinks it manages —
-    /// `Link` yields one; `FanOut` yields one per child. FanOut unions the
-    /// source's current children (what should exist) with home symlinks
-    /// already pointing into this source (so a child renamed or removed in
-    /// source is still reaped, not orphaned as a dangling link in a dir we
-    /// don't own). Keyed by home path for dedupe + deterministic order.
+    /// `Link` yields one; `FanOut` yields one per source child, sorted so
+    /// two runs are diffable. Links to children no longer shipped are
+    /// `reap_unshipped`'s.
     fn expand(&self, entry: Entry) -> io::Result<Vec<Link>> {
         let (home_sub, source_sub, kind, _agent) = entry;
         let home = self.home.join(home_sub);
-        let source = self.checkout.join(source_sub);
+        let source = self.source.join(source_sub);
         match kind {
             Kind::Link => Ok(vec![(home, source)]),
-            Kind::FanOut => {
-                use std::collections::BTreeMap;
-                let mut links: BTreeMap<PathBuf, PathBuf> = BTreeMap::new();
-                if source.is_dir() {
-                    for e in fs::read_dir(&source)?.filter_map(Result::ok) {
-                        links.insert(home.join(e.file_name()), e.path());
-                    }
-                }
-                if home.is_dir() {
-                    for e in fs::read_dir(&home)?.filter_map(Result::ok) {
-                        let h = e.path();
-                        if let Ok(target) = fs::read_link(&h) {
-                            if target.starts_with(&source) {
-                                links.entry(h).or_insert(target);
-                            }
-                        }
-                    }
-                }
-                Ok(links.into_iter().collect())
+            Kind::FanOut if source.is_dir() => {
+                let mut links: Vec<Link> = fs::read_dir(&source)?
+                    .filter_map(Result::ok)
+                    .map(|e| (home.join(e.file_name()), e.path()))
+                    .collect();
+                links.sort();
+                Ok(links)
             }
+            Kind::FanOut => Ok(vec![]),
         }
     }
 
     /// What is at a location now.
     fn inspect(&self, (home, source): &Link) -> State {
         // Inspect home first: a symlink already pointing at `source` is
-        // ours to reap even if `source` is now gone (an orphaned fan-out
-        // child). SourceMissing only when there's nothing at home to act on.
+        // ours to reap even if `source` is now gone. SourceMissing only when
+        // there's nothing at home to act on.
         match fs::symlink_metadata(home) {
             Err(_) if exists(source) => State::Missing,
             Err(_) => State::SourceMissing,
@@ -217,16 +284,23 @@ impl Symlinks {
         }
     }
 
-    fn create(&self, link: &Link, dry_run: bool, force: bool) -> io::Result<(State, bool)> {
+    fn create(
+        &self,
+        link: &Link,
+        kind: Kind,
+        dry_run: bool,
+        force: bool,
+    ) -> io::Result<(State, bool)> {
         let (home, source) = link;
         let state = self.inspect(link);
-        // Only Missing or a foreign symlink (with --force) are ever
-        // actionable. Occupied is never actionable here, force or not —
-        // mAId does not overwrite a real file or directory to install.
-        let act = matches!(
-            (&state, force),
-            (State::Missing, _) | (State::Wrong { .. }, true)
-        );
+        // Missing, or a symlink another mAId install left, is ours to set.
+        // Any other symlink needs --force. Occupied is never actionable,
+        // force or not: mAId does not overwrite a real file or directory.
+        let act = match &state {
+            State::Missing => true,
+            State::Wrong { found, .. } => force_reaches(kind, force) || ours(kind, found),
+            _ => false,
+        };
         if act && !dry_run {
             if let State::Wrong { .. } = &state {
                 fs::remove_file(home)?;
@@ -239,15 +313,23 @@ impl Symlinks {
         Ok((state, act))
     }
 
-    fn remove(&self, link: &Link, dry_run: bool, force: bool) -> io::Result<(State, bool)> {
+    fn remove(
+        &self,
+        link: &Link,
+        kind: Kind,
+        dry_run: bool,
+        force: bool,
+    ) -> io::Result<(State, bool)> {
         let (home, _) = link;
         let state = self.inspect(link);
         let act = match &state {
             State::Ok(_) => true,
+            // A link another mAId install left is ours, as on install.
+            State::Wrong { found, .. } if ours(kind, found) => true,
             // --force reaps foreign symlinks and files, never a real
             // directory: mAId only ever creates symlinks, so a real dir at
             // a managed path belongs to the owning tool.
-            State::Wrong { .. } | State::Occupied("file") if force => true,
+            State::Wrong { .. } | State::Occupied("file") if force_reaches(kind, force) => true,
             _ => false,
         };
         if act && !dry_run {
@@ -255,6 +337,562 @@ impl Symlinks {
         }
         Ok((state, act))
     }
+}
+
+/// Every agent, each deployed the one way it supports.
+pub struct Deployment {
+    pub links: Symlinks,
+    pub plugins: Plugins,
+}
+
+impl Deploy for Deployment {
+    fn install(&self, agent: Option<Agent>, dry_run: bool, force: bool) -> Result<Vec<Report>> {
+        let mut out = self.links.install(agent, dry_run, force)?;
+        out.extend(self.plugins.install(agent, dry_run, force)?);
+        Ok(out)
+    }
+
+    fn uninstall(&self, agent: Option<Agent>, dry_run: bool, force: bool) -> Result<Vec<Report>> {
+        let mut out = self.links.uninstall(agent, dry_run, force)?;
+        out.extend(self.plugins.uninstall(agent, dry_run, force)?);
+        Ok(out)
+    }
+
+    fn status(&self, agent: Option<Agent>) -> Result<Vec<Report>> {
+        let mut out = self.links.status(agent)?;
+        out.extend(self.plugins.status(agent)?);
+        Ok(out)
+    }
+
+    fn is_deployed(&self, agent: Agent) -> bool {
+        match agent.is_plugin() {
+            true => self.plugins.is_deployed(agent),
+            false => self.links.is_deployed(agent),
+        }
+    }
+}
+
+/// Deployment as a plugin, through the agent's own CLI, from the
+/// marketplace in the profile. The CLI owns its config and cache; mAId
+/// only asks it to add, update and remove `maid@maid`.
+pub struct Plugins {
+    pub home: PathBuf,
+    pub profile: PathBuf,
+}
+
+/// The entries of the marketplace root, each a link into the profile.
+const ROOT_ENTRIES: [&str; 3] = [".claude-plugin", ".agents", "plugins"];
+
+/// What an agent's plugin list says about mAId's plugin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Listed {
+    pub version: String,
+    pub enabled: bool,
+}
+
+impl Deploy for Plugins {
+    fn install(&self, agent: Option<Agent>, dry_run: bool, _force: bool) -> Result<Vec<Report>> {
+        let agents = plugin_agents(agent);
+        if agents.is_empty() {
+            return Ok(vec![]);
+        }
+        let want = self.want()?;
+        let root = self.root();
+        let mut out = vec![self.ensure_root(dry_run)?];
+        for (a, legacy, kind) in agents {
+            // The old links stay until the plugin is in: an agent whose CLI
+            // is missing, or whose install fails, keeps its skills.
+            if !on_path(a.cli()) {
+                out.push(self.report(a, State::NoCli(a.cli()), false));
+                continue;
+            }
+            self.repair(a, dry_run)?;
+            let state = self.state(a, Some(&want))?;
+            let (steps, acted) = install_steps(a, &state, self.recorded(a)?.as_deref(), &root);
+            if !dry_run {
+                for step in &steps {
+                    self.cli(a, step)?;
+                }
+                self.check_installed(a, &want, acted)?;
+            }
+            out.push(self.report(a, state, acted));
+            out.extend(reap(&self.home, legacy, kind, dry_run)?);
+        }
+        Ok(out)
+    }
+
+    fn uninstall(&self, agent: Option<Agent>, dry_run: bool, _force: bool) -> Result<Vec<Report>> {
+        let mut out = Vec::new();
+        for (a, legacy, kind) in plugin_agents(agent) {
+            out.extend(reap(&self.home, legacy, kind, dry_run)?);
+            self.repair(a, dry_run)?;
+            let state = self.state(a, None)?;
+            if matches!(state, State::NoCli(_)) {
+                out.push(self.report(a, state, false));
+                continue;
+            }
+            let installed = state != State::Missing;
+            let steps = uninstall_steps(a, installed, self.recorded(a)?.is_some());
+            if !dry_run {
+                for step in &steps {
+                    self.cli(a, step)?;
+                }
+            }
+            out.push(self.report(a, state, installed));
+        }
+        // The root is shared by every plugin agent, so it goes only with all.
+        if agent.is_none() {
+            out.extend(self.remove_root(dry_run)?);
+        }
+        Ok(out)
+    }
+
+    /// One agent's CLI refusing to answer is reported on its lines, so
+    /// the rest of the status still prints.
+    fn status(&self, agent: Option<Agent>) -> Result<Vec<Report>> {
+        let want = self.want().ok();
+        // One line: status prints one location per line.
+        let unreadable = |e: anyhow::Error| {
+            State::Unreadable(
+                format!("{e:#}")
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            )
+        };
+        let mut out = Vec::new();
+        for (a, legacy, kind) in plugin_agents(agent) {
+            // Old links still there: a dry-run reap lists them.
+            out.extend(reap(&self.home, legacy, kind, true)?);
+            let state = self.state(a, want.as_deref()).unwrap_or_else(unreadable);
+            let has_cli = !matches!(state, State::NoCli(_));
+            out.push(self.report(a, state, false));
+            if has_cli {
+                out.push(Report {
+                    label: format!("{} marketplace {MARKETPLACE}", a.name()),
+                    state: self
+                        .recorded(a)
+                        .map(|r| marketplace_state(r, &self.root()))
+                        .unwrap_or_else(unreadable),
+                    acted: false,
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    fn is_deployed(&self, agent: Agent) -> bool {
+        let Ok(want) = self.want() else {
+            return false;
+        };
+        matches!(self.state(agent, Some(&want)), Ok(State::Current(_)))
+            && self.recorded(agent).is_ok_and(|r| r == Some(self.root()))
+    }
+}
+
+impl Plugins {
+    fn root(&self) -> PathBuf {
+        marketplace_root(&self.profile)
+    }
+
+    fn source(&self) -> PathBuf {
+        self.profile.join(PROFILE_MARKETPLACE_DIR)
+    }
+
+    /// The plugin version this install built.
+    fn want(&self) -> Result<String> {
+        let manifest = self.source().join("plugins/maid/.codex-plugin/plugin.json");
+        let text = fs::read_to_string(&manifest).with_context(|| {
+            format!(
+                "no plugin manifest at {} — build the profile first (just install)",
+                manifest.display()
+            )
+        })?;
+        plugin_version(&text).with_context(|| format!("{}", manifest.display()))
+    }
+
+    fn report(&self, agent: Agent, state: State, acted: bool) -> Report {
+        Report {
+            label: format!("{} plugin {PLUGIN_ID}", agent.name()),
+            state,
+            acted,
+        }
+    }
+
+    /// Run the agent's CLI with this deployment's HOME, returning stdout.
+    fn cli(&self, agent: Agent, args: &[String]) -> Result<String> {
+        let out = Command::new(agent.cli())
+            .args(args)
+            .env("HOME", &self.home)
+            .output()
+            .with_context(|| format!("cannot run {}", agent.cli()))?;
+        if !out.status.success() {
+            return Err(anyhow!(
+                "{} {} failed: {}",
+                agent.cli(),
+                args.join(" "),
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
+    fn state(&self, agent: Agent, want: Option<&str>) -> Result<State> {
+        if !on_path(agent.cli()) {
+            return Ok(State::NoCli(agent.cli()));
+        }
+        let json = self.cli(agent, &strings(&["plugin", "list", "--json"]))?;
+        Ok(plugin_state(parse_listed(agent, &json)?, want))
+    }
+
+    /// Where the agent's `maid` marketplace points, if it has one. codex
+    /// records the resolved path, so one that resolves to the root is the
+    /// root (HOME itself may sit behind a symlink).
+    fn recorded(&self, agent: Agent) -> Result<Option<PathBuf>> {
+        let json = self.cli(
+            agent,
+            &strings(&["plugin", "marketplace", "list", "--json"]),
+        )?;
+        let root = self.root();
+        Ok(
+            parse_recorded(agent, &json)?.map(|found| match same_dir(&found, &root) {
+                true => root,
+                false => found,
+            }),
+        )
+    }
+
+    /// A CLI can exit 0 without doing what it was asked, so read back
+    /// both the plugin and its marketplace.
+    fn check_installed(&self, agent: Agent, want: &str, acted: bool) -> Result<()> {
+        let after = self.state(agent, Some(want))?;
+        let installed = match &after {
+            State::Current(_) => true,
+            State::Disabled { found, .. } => !acted || found == want,
+            _ => false,
+        };
+        let recorded = self.recorded(agent)?;
+        if installed && recorded.as_deref() == Some(self.root().as_path()) {
+            return Ok(());
+        }
+        Err(anyhow!(
+            "{} plugin {PLUGIN_ID} is {} after install, its marketplace {}",
+            agent.name(),
+            after.describe(),
+            marketplace_state(recorded, &self.root()).describe()
+        ))
+    }
+
+    /// codex refuses every plugin command while the dir its `maid`
+    /// marketplace was added from is gone (an isolated run that died
+    /// before restoring). Removing that record lets install add it again.
+    fn repair(&self, agent: Agent, dry_run: bool) -> Result<()> {
+        if agent != Agent::Codex || !on_path(agent.cli()) {
+            return Ok(());
+        }
+        match self.recorded(agent) {
+            Ok(_) => return Ok(()),
+            // Only that refusal; any other error is not ours to guess at.
+            Err(e) if format!("{e:#}").contains(&format!("`{MARKETPLACE}` at ")) => {}
+            Err(e) => return Err(e),
+        }
+        if !dry_run {
+            self.cli(
+                agent,
+                &strings(&["plugin", "marketplace", "remove", MARKETPLACE]),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Make the root a real dir whose entries link into the profile path.
+    fn ensure_root(&self, dry_run: bool) -> Result<Report> {
+        let root = self.root();
+        let mut acted = false;
+        for entry in ROOT_ENTRIES {
+            let (at, want) = (root.join(entry), self.source().join(entry));
+            match fs::symlink_metadata(&at) {
+                Ok(m) if m.file_type().is_symlink() => {
+                    if fs::read_link(&at)? == want {
+                        continue;
+                    }
+                    if !dry_run {
+                        fs::remove_file(&at)?;
+                    }
+                }
+                Ok(_) => {
+                    return Err(anyhow!(
+                        "{} is not a link mAId made; move it and re-run",
+                        at.display()
+                    ))
+                }
+                Err(_) => {}
+            }
+            acted = true;
+            if !dry_run {
+                fs::create_dir_all(&root)?;
+                std::os::unix::fs::symlink(&want, &at)?;
+            }
+        }
+        Ok(Report {
+            label: self.label(&root),
+            state: match acted {
+                true => State::Missing,
+                false => State::Ok(self.source()),
+            },
+            acted,
+        })
+    }
+
+    fn remove_root(&self, dry_run: bool) -> Result<Vec<Report>> {
+        let root = self.root();
+        if !root.is_dir() {
+            return Ok(vec![]);
+        }
+        if !dry_run {
+            for entry in ROOT_ENTRIES {
+                let at = root.join(entry);
+                if fs::symlink_metadata(&at).is_ok_and(|m| m.file_type().is_symlink()) {
+                    fs::remove_file(at)?;
+                }
+            }
+        }
+        // Anything else in it is not ours, so the dir stays.
+        let removed = dry_run || fs::remove_dir(&root).is_ok();
+        Ok(vec![Report {
+            label: self.label(&root),
+            state: match removed {
+                true => State::Ok(self.source()),
+                false => State::Occupied("dir"),
+            },
+            acted: removed,
+        }])
+    }
+
+    fn label(&self, path: &Path) -> String {
+        path.strip_prefix(&self.home)
+            .unwrap_or(path)
+            .display()
+            .to_string()
+    }
+}
+
+/// Remove the mAId-shaped links at a path (Link) or under it (FanOut),
+/// matched by `is_maids`; a dry run lists them.
+fn reap(home: &Path, home_sub: &str, kind: Kind, dry_run: bool) -> Result<Vec<Report>> {
+    let at = home.join(home_sub);
+    let candidates = match kind {
+        Kind::Link => vec![at],
+        Kind::FanOut => match fs::read_dir(&at) {
+            Ok(entries) => {
+                let mut v: Vec<PathBuf> = entries.filter_map(|e| Some(e.ok()?.path())).collect();
+                v.sort();
+                v
+            }
+            Err(_) => vec![],
+        },
+    };
+    let mut out = Vec::new();
+    for link in candidates {
+        let Ok(target) = fs::read_link(&link) else {
+            continue;
+        };
+        if !is_maids(&target) {
+            continue;
+        }
+        if !dry_run {
+            fs::remove_file(&link)?;
+        }
+        out.push(Report {
+            label: link
+                .strip_prefix(home)
+                .unwrap_or(&link)
+                .display()
+                .to_string(),
+            state: State::Legacy(target),
+            acted: true,
+        });
+    }
+    Ok(out)
+}
+
+/// `--force` reaches a Link row's one path, which is mAId's. A FanOut dir
+/// is the agent's, so a foreign entry there is kept even with `--force`.
+fn force_reaches(kind: Kind, force: bool) -> bool {
+    force && kind == Kind::Link
+}
+
+/// Whether a link at a managed location is mAId's to replace or remove.
+/// A FanOut dir is shared with the user, and mAId only ever linked
+/// profile skills there, so a checkout-shaped link in it is the user's.
+fn ours(kind: Kind, target: &Path) -> bool {
+    match kind {
+        Kind::Link => is_maids(target),
+        Kind::FanOut => target.parent().is_some_and(|p| p.ends_with(PROFILE_SKILLS)),
+    }
+}
+
+/// The plugin agents an `--agent` selection covers.
+fn plugin_agents(agent: Option<Agent>) -> Vec<(Agent, &'static str, Kind)> {
+    PLUGIN_AGENTS
+        .iter()
+        .filter(|(a, ..)| agent.is_none_or(|sel| sel == *a))
+        .copied()
+        .collect()
+}
+
+fn strings(args: &[&str]) -> Vec<String> {
+    args.iter().map(|s| s.to_string()).collect()
+}
+
+fn plugin_version(manifest: &str) -> Result<String> {
+    let v: serde_json::Value = serde_json::from_str(manifest)?;
+    v["version"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("plugin manifest has no version"))
+}
+
+/// mAId's plugin in an agent's `plugin list --json`. claude lists one
+/// entry per scope; mAId installs at user scope.
+fn parse_listed(agent: Agent, json: &str) -> Result<Option<Listed>> {
+    let v: serde_json::Value = serde_json::from_str(json)
+        .with_context(|| format!("{} plugin list --json: not JSON", agent.cli()))?;
+    let (entries, id_key) = match agent {
+        Agent::Claude => (v.as_array(), "id"),
+        _ => (v["installed"].as_array(), "pluginId"),
+    };
+    let entries =
+        entries.ok_or_else(|| anyhow!("{} plugin list --json: unexpected shape", agent.cli()))?;
+    let ours = entries
+        .iter()
+        .find(|e| e[id_key] == PLUGIN_ID && (agent != Agent::Claude || e["scope"] == "user"));
+    ours.map(|e| {
+        Ok(Listed {
+            version: e["version"]
+                .as_str()
+                .ok_or_else(|| anyhow!("{PLUGIN_ID} listed with no version"))?
+                .to_string(),
+            enabled: e["enabled"]
+                .as_bool()
+                .ok_or_else(|| anyhow!("{PLUGIN_ID} listed with no enabled flag"))?,
+        })
+    })
+    .transpose()
+}
+
+/// The path an agent's `maid` marketplace was added from.
+fn parse_recorded(agent: Agent, json: &str) -> Result<Option<PathBuf>> {
+    let v: serde_json::Value = serde_json::from_str(json)
+        .with_context(|| format!("{} plugin marketplace list --json: not JSON", agent.cli()))?;
+    let (entries, path_key) = match agent {
+        Agent::Claude => (v.as_array(), "path"),
+        _ => (v["marketplaces"].as_array(), "root"),
+    };
+    let entries = entries.ok_or_else(|| {
+        anyhow!(
+            "{} plugin marketplace list --json: unexpected shape",
+            agent.cli()
+        )
+    })?;
+    Ok(entries
+        .iter()
+        .find(|e| e["name"] == MARKETPLACE)
+        .and_then(|e| e[path_key].as_str())
+        .map(PathBuf::from))
+}
+
+/// Whether two paths name the same existing directory.
+fn same_dir(a: &Path, b: &Path) -> bool {
+    a == b || matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
+}
+
+/// Whether an agent's `maid` marketplace is the one this install made.
+fn marketplace_state(recorded: Option<PathBuf>, root: &Path) -> State {
+    match recorded {
+        None => State::Missing,
+        Some(found) if found == root => State::Ok(found),
+        Some(found) => State::Wrong {
+            found,
+            want: root.to_path_buf(),
+        },
+    }
+}
+
+/// `want` is `None` when there is no install to compare against.
+fn plugin_state(listed: Option<Listed>, want: Option<&str>) -> State {
+    let Some(Listed { version, enabled }) = listed else {
+        return State::Missing;
+    };
+    let want = want.unwrap_or(&version).to_string();
+    match (enabled, version == want) {
+        (false, _) => State::Disabled {
+            found: version,
+            want,
+        },
+        (true, true) => State::Current(version),
+        (true, false) => State::Stale {
+            found: version,
+            want,
+        },
+    }
+}
+
+/// The CLI calls that bring one agent to this install, and whether they
+/// change the plugin (as opposed to only repointing its marketplace).
+fn install_steps(
+    agent: Agent,
+    state: &State,
+    recorded: Option<&Path>,
+    root: &Path,
+) -> (Vec<Vec<String>>, bool) {
+    let root = root.display().to_string();
+    let mut steps = Vec::new();
+    if recorded != Some(Path::new(&root)) {
+        // claude repoints a marketplace on add; codex refuses a new path.
+        if agent == Agent::Codex && recorded.is_some() {
+            steps.push(strings(&["plugin", "marketplace", "remove", MARKETPLACE]));
+        }
+        steps.push(strings(&["plugin", "marketplace", "add", &root]));
+    }
+    let plugin = match (agent, state) {
+        (Agent::Claude, State::Missing) => {
+            Some(&["plugin", "install", PLUGIN_ID, "--scope", "user"][..])
+        }
+        // claude keeps a disabled plugin disabled across an update.
+        (Agent::Claude, State::Stale { .. }) => {
+            Some(&["plugin", "update", PLUGIN_ID, "--scope", "user"][..])
+        }
+        (Agent::Claude, State::Disabled { found, want }) if found != want => {
+            Some(&["plugin", "update", PLUGIN_ID, "--scope", "user"][..])
+        }
+        // `codex plugin add` installs or updates, and re-enables a disabled
+        // plugin, so a disabled one is left alone.
+        (Agent::Codex, State::Missing | State::Stale { .. }) => {
+            Some(&["plugin", "add", PLUGIN_ID][..])
+        }
+        _ => None,
+    };
+    let acted = plugin.is_some();
+    steps.extend(plugin.map(strings));
+    (steps, acted)
+}
+
+/// The CLI calls that remove mAId's plugin and marketplace from an agent.
+fn uninstall_steps(agent: Agent, installed: bool, recorded: bool) -> Vec<Vec<String>> {
+    let remove = match agent {
+        Agent::Claude => strings(&["plugin", "uninstall", PLUGIN_ID, "--scope", "user"]),
+        _ => strings(&["plugin", "remove", PLUGIN_ID]),
+    };
+    // Plugin before marketplace: codex orphans the plugin's config entry
+    // when its marketplace goes first.
+    [
+        installed.then_some(remove),
+        recorded.then(|| strings(&["plugin", "marketplace", "remove", MARKETPLACE])),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 /// A target that deploys nothing, for the check stage.
@@ -289,6 +927,17 @@ fn exists(p: &Path) -> bool {
     fs::symlink_metadata(p).is_ok()
 }
 
+const PROFILE_SKILLS: &str = "share/maid/skills";
+
+/// Whether a link target is a mAId skills tree, or a skill in one: a
+/// profile's, or a checkout's from before the profile. Matched by path
+/// shape, not provenance.
+fn is_maids(target: &Path) -> bool {
+    let roots = [PROFILE_SKILLS, "resources/content/skills"];
+    let tree = |p: &Path| roots.iter().any(|r| p.ends_with(r));
+    tree(target) || target.parent().is_some_and(tree)
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Tests — the shim's own. Every case here is about $HOME layout, which
 // is exactly the knowledge this module quarantines.
@@ -297,41 +946,38 @@ fn exists(p: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::REGISTRY;
     use tempfile::TempDir;
 
-    fn sym(home: &Path, checkout: &Path) -> Symlinks {
+    fn sym(home: &Path, profile: &Path) -> Symlinks {
         Symlinks {
             home: home.to_path_buf(),
-            checkout: checkout.to_path_buf(),
+            source: profile.to_path_buf(),
         }
     }
 
     /// Deploy and report, the way the install verb does.
     fn install(
         home: &Path,
-        checkout: &Path,
+        profile: &Path,
         dry_run: bool,
         force: bool,
         agent: Option<Agent>,
     ) -> Vec<Report> {
-        sym(home, checkout).install(agent, dry_run, force).unwrap()
+        sym(home, profile).install(agent, dry_run, force).unwrap()
     }
 
     fn uninstall(
         home: &Path,
-        checkout: &Path,
+        profile: &Path,
         dry_run: bool,
         force: bool,
         agent: Option<Agent>,
     ) -> Vec<Report> {
-        sym(home, checkout)
-            .uninstall(agent, dry_run, force)
-            .unwrap()
+        sym(home, profile).uninstall(agent, dry_run, force).unwrap()
     }
 
-    fn status(home: &Path, checkout: &Path, agent: Option<Agent>) -> Vec<Report> {
-        sym(home, checkout).status(agent).unwrap()
+    fn status(home: &Path, profile: &Path, agent: Option<Agent>) -> Vec<Report> {
+        sym(home, profile).status(agent).unwrap()
     }
 
     fn write(p: &Path, s: &str) {
@@ -341,20 +987,20 @@ mod tests {
         fs::write(p, s).unwrap();
     }
 
-    /// A checkout with a skills source but no skills in it.
-    fn make_checkout() -> TempDir {
+    /// A profile with a skills dir but no skills in it.
+    fn make_profile() -> TempDir {
         let dir = TempDir::new().unwrap();
-        fs::create_dir_all(dir.path().join("resources/content/skills")).unwrap();
+        fs::create_dir_all(dir.path().join("share/maid/skills")).unwrap();
         dir
     }
 
-    /// A checkout with two child skills, for the FanOut entry.
-    fn make_checkout_with_skills() -> TempDir {
-        let dir = make_checkout();
+    /// A profile with two child skills, for the FanOut entry.
+    fn make_profile_with_skills() -> TempDir {
+        let dir = make_profile();
         for name in ["kdevkit", "notes"] {
             write(
                 &dir.path()
-                    .join("resources/content/skills")
+                    .join("share/maid/skills")
                     .join(name)
                     .join("SKILL.md"),
                 "---\nname: x\ndescription: y\n---\nbody.\n",
@@ -369,79 +1015,126 @@ mod tests {
 
     #[test]
     fn install_creates_every_registry_location() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        let reports = install(home.path(), checkout.path(), false, false, None);
+        let reports = install(home.path(), profile.path(), false, false, None);
         assert!(!reports.is_empty());
         // Every location was Missing beforehand, and exists now.
         assert!(reports.iter().all(|r| r.state == State::Missing));
-        assert!(exists_at(&home.path().join(".claude/skills")));
-        assert!(exists_at(&home.path().join(".codex/skills/kdevkit")));
+        for skill in ["kdevkit", "notes"] {
+            assert_eq!(
+                fs::read_link(home.path().join(".kiro/skills").join(skill)).unwrap(),
+                profile.path().join("share/maid/skills").join(skill)
+            );
+        }
         assert!(exists_at(&home.path().join(".gemini/config/skills")));
+        // Plugin agents get no links.
+        assert!(!exists_at(&home.path().join(".claude/skills")));
+        assert!(!exists_at(&home.path().join(".codex/skills")));
     }
 
     #[test]
     fn install_is_idempotent() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        install(home.path(), checkout.path(), false, false, None);
-        let again = install(home.path(), checkout.path(), false, false, None);
+        install(home.path(), profile.path(), false, false, None);
+        let again = install(home.path(), profile.path(), false, false, None);
         assert!(again.iter().all(|r| matches!(r.state, State::Ok(_))));
     }
 
     #[test]
     fn dry_run_changes_nothing() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        install(home.path(), checkout.path(), true, false, None);
-        assert!(!exists_at(&home.path().join(".claude/skills")));
+        install(home.path(), profile.path(), true, false, None);
+        assert!(!exists_at(&home.path().join(".kiro/skills")));
     }
 
     /// A real file at a managed path is never clobbered without --force.
     #[test]
     fn a_users_own_file_survives_install() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        let claimed = home.path().join(".claude/skills");
+        let claimed = home.path().join(".gemini/config/skills");
         write(&claimed, "mine");
-        install(home.path(), checkout.path(), false, false, None);
+        install(home.path(), profile.path(), false, false, None);
         assert_eq!(fs::read_to_string(&claimed).unwrap(), "mine");
     }
 
     #[test]
     fn a_foreign_symlink_is_replaced_only_with_force() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        let managed = home.path().join(".claude/skills");
+        let managed = home.path().join(".gemini/config/skills");
         fs::create_dir_all(managed.parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink(checkout.path(), &managed).unwrap();
+        std::os::unix::fs::symlink(profile.path(), &managed).unwrap();
 
-        install(home.path(), checkout.path(), false, false, None);
-        assert_eq!(fs::read_link(&managed).unwrap(), checkout.path());
+        install(home.path(), profile.path(), false, false, None);
+        assert_eq!(fs::read_link(&managed).unwrap(), profile.path());
 
-        install(home.path(), checkout.path(), false, true, None);
-        assert_ne!(fs::read_link(&managed).unwrap(), checkout.path());
+        install(home.path(), profile.path(), false, true, None);
+        assert_ne!(fs::read_link(&managed).unwrap(), profile.path());
+    }
+
+    /// The latest install takes over what an earlier one left, from a
+    /// checkout or another profile, without --force.
+    #[test]
+    fn a_link_another_maid_install_left_is_replaced_without_force() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        let old = TempDir::new().unwrap();
+        let kiro = home.path().join(".kiro/skills/kdevkit");
+        let agy = home.path().join(".gemini/config/skills");
+        for link in [&kiro, &agy] {
+            fs::create_dir_all(link.parent().unwrap()).unwrap();
+        }
+        std::os::unix::fs::symlink(old.path().join("share/maid/skills/kdevkit"), &kiro).unwrap();
+        std::os::unix::fs::symlink(old.path().join("share/maid/skills"), &agy).unwrap();
+
+        install(home.path(), profile.path(), false, false, None);
+        let skills = profile.path().join("share/maid/skills");
+        assert_eq!(fs::read_link(&kiro).unwrap(), skills.join("kdevkit"));
+        assert_eq!(fs::read_link(&agy).unwrap(), skills);
+    }
+
+    #[test]
+    fn only_a_maid_skills_tree_or_one_skill_in_it_is_maids() {
+        for yes in [
+            "../p/share/maid/skills",
+            "/p/share/maid/skills/",
+            "/c/resources/content/skills/notes",
+        ] {
+            assert!(is_maids(Path::new(yes)), "{yes}");
+        }
+        for no in [
+            "/p/share/maid/skills/notes/sub",
+            "/p/share/maid/skills-old",
+            "/p/my-share/maid/skills",
+            "/p",
+        ] {
+            assert!(!is_maids(Path::new(no)), "{no}");
+        }
     }
 
     #[test]
     fn uninstall_removes_only_what_we_deployed() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        install(home.path(), checkout.path(), false, false, None);
-        // Something the agent owns, beside our fan-out children.
-        let theirs = home.path().join(".codex/skills/their-own");
+        install(home.path(), profile.path(), false, false, None);
+        // Something the agent owns, beside our link.
+        let theirs = home.path().join(".kiro/skills/their-own/SKILL.md");
         write(&theirs, "theirs");
 
-        uninstall(home.path(), checkout.path(), false, false, None);
-        assert!(!exists_at(&home.path().join(".claude/skills")));
+        uninstall(home.path(), profile.path(), false, false, None);
+        assert!(!exists_at(&home.path().join(".kiro/skills/kdevkit")));
         assert!(exists_at(&theirs), "the agent's own entry must survive");
     }
 
     #[test]
     fn uninstall_is_idempotent_on_a_clean_home() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        let reports = uninstall(home.path(), checkout.path(), false, false, None);
+        let reports = uninstall(home.path(), profile.path(), false, false, None);
         assert!(reports
             .iter()
             .all(|r| matches!(r.state, State::Missing | State::SourceMissing)));
@@ -451,59 +1144,44 @@ mod tests {
     /// mAId only ever creates symlinks, so a real dir belongs to the tool.
     #[test]
     fn force_uninstall_refuses_to_delete_a_real_directory() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        let theirs = home.path().join(".codex/skills");
+        let theirs = home.path().join(".gemini/config/skills");
         fs::create_dir_all(theirs.join("their-skill")).unwrap();
 
-        uninstall(home.path(), checkout.path(), false, true, None);
+        uninstall(home.path(), profile.path(), false, true, None);
         assert!(theirs.join("their-skill").exists());
     }
 
     #[test]
     fn status_reports_every_location_without_changing_it() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        let before = status(home.path(), checkout.path(), None);
+        let before = status(home.path(), profile.path(), None);
         assert!(before.iter().all(|r| r.state == State::Missing));
-        assert!(!exists_at(&home.path().join(".claude/skills")));
+        assert!(!exists_at(&home.path().join(".kiro/skills")));
 
-        install(home.path(), checkout.path(), false, false, None);
-        let after = status(home.path(), checkout.path(), None);
+        install(home.path(), profile.path(), false, false, None);
+        let after = status(home.path(), profile.path(), None);
         assert!(after.iter().all(|r| matches!(r.state, State::Ok(_))));
     }
 
     #[test]
     fn a_scoped_install_touches_only_that_agent() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        install(
-            home.path(),
-            checkout.path(),
-            false,
-            false,
-            Some(Agent::Codex),
-        );
-        assert!(exists_at(&home.path().join(".codex/skills/kdevkit")));
-        assert!(!exists_at(&home.path().join(".claude/skills")));
-        assert!(!exists_at(&home.path().join(".kiro/steering/skills")));
+        install(home.path(), profile.path(), false, false, Some(Agent::Kiro));
+        assert!(exists_at(&home.path().join(".kiro/skills/kdevkit")));
         assert!(!exists_at(&home.path().join(".gemini/config/skills")));
     }
 
     #[test]
     fn a_scoped_uninstall_leaves_other_agents_deployed() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        install(home.path(), checkout.path(), false, false, None);
-        uninstall(
-            home.path(),
-            checkout.path(),
-            false,
-            false,
-            Some(Agent::Claude),
-        );
-        assert!(!exists_at(&home.path().join(".claude/skills")));
-        assert!(exists_at(&home.path().join(".kiro/steering/skills")));
+        install(home.path(), profile.path(), false, false, None);
+        uninstall(home.path(), profile.path(), false, false, Some(Agent::Kiro));
+        assert!(!exists_at(&home.path().join(".kiro/skills/kdevkit")));
         assert!(exists_at(&home.path().join(".gemini/config/skills")));
     }
 
@@ -511,51 +1189,22 @@ mod tests {
     /// agent owns.
     #[test]
     fn fanout_yields_one_link_per_source_child() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        let fanout = *REGISTRY
-            .iter()
-            .find(|(.., k, _)| *k == Kind::FanOut)
-            .unwrap();
-        let links = sym(home.path(), checkout.path()).expand(fanout).unwrap();
+        let fanout = (".x/skills", "share/maid/skills", Kind::FanOut, Agent::Kiro);
+        let links = sym(home.path(), profile.path()).expand(fanout).unwrap();
         assert_eq!(links.len(), 2, "one per child skill");
-    }
-
-    /// A child removed from source is still reaped rather than left
-    /// dangling in a directory we don't own.
-    #[test]
-    fn fanout_reaps_an_orphaned_child() {
-        let checkout = make_checkout_with_skills();
-        let home = TempDir::new().unwrap();
-        install(
-            home.path(),
-            checkout.path(),
-            false,
-            false,
-            Some(Agent::Codex),
-        );
-        fs::remove_dir_all(checkout.path().join("resources/content/skills/notes")).unwrap();
-
-        let reports = uninstall(
-            home.path(),
-            checkout.path(),
-            false,
-            false,
-            Some(Agent::Codex),
-        );
-        assert!(reports.len() >= 2, "the orphan is still planned for");
-        assert!(!exists_at(&home.path().join(".codex/skills/notes")));
     }
 
     #[test]
     fn is_deployed_answers_the_smoke_precondition() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        let target = sym(home.path(), checkout.path());
-        assert!(!target.is_deployed(Agent::Claude));
+        let target = sym(home.path(), profile.path());
+        assert!(!target.is_deployed(Agent::Kiro));
         assert!(!target.is_deployed(Agent::Agy));
-        install(home.path(), checkout.path(), false, false, None);
-        assert!(target.is_deployed(Agent::Claude));
+        install(home.path(), profile.path(), false, false, None);
+        assert!(target.is_deployed(Agent::Kiro));
         assert!(target.is_deployed(Agent::Agy));
     }
 
@@ -563,39 +1212,11 @@ mod tests {
     /// finds no skill.
     #[test]
     fn a_dangling_link_does_not_count_as_deployed() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        install(home.path(), checkout.path(), false, false, None);
-        fs::remove_dir_all(checkout.path().join("resources/content/skills")).unwrap();
-        assert!(!sym(home.path(), checkout.path()).is_deployed(Agent::Claude));
-    }
-
-    /// The bug an audit caught: for a FanOut agent, an existing-but-empty
-    /// (or unrelated-content) skills root must NOT read as deployed. Only
-    /// codex is FanOut, and its root existing proves nothing about
-    /// whether WE put anything there.
-    #[test]
-    fn an_empty_fanout_root_does_not_count_as_deployed() {
-        let checkout = make_checkout();
-        let home = TempDir::new().unwrap();
-        // codex's root exists, pre-created, but nothing of ours is in it.
-        fs::create_dir_all(home.path().join(".codex/skills")).unwrap();
-        assert!(!sym(home.path(), checkout.path()).is_deployed(Agent::Codex));
-    }
-
-    #[test]
-    fn a_fanout_deployment_is_detected_once_a_child_resolves() {
-        let checkout = make_checkout_with_skills();
-        let home = TempDir::new().unwrap();
-        assert!(!sym(home.path(), checkout.path()).is_deployed(Agent::Codex));
-        install(
-            home.path(),
-            checkout.path(),
-            false,
-            false,
-            Some(Agent::Codex),
-        );
-        assert!(sym(home.path(), checkout.path()).is_deployed(Agent::Codex));
+        install(home.path(), profile.path(), false, false, None);
+        fs::remove_dir_all(profile.path().join("share/maid/skills")).unwrap();
+        assert!(!sym(home.path(), profile.path()).is_deployed(Agent::Kiro));
     }
 
     #[test]
@@ -616,20 +1237,616 @@ mod tests {
     /// file it never touched and exited 0 for a blocked install.
     #[test]
     fn force_install_never_reports_acting_on_a_real_file() {
-        let checkout = make_checkout_with_skills();
+        let profile = make_profile_with_skills();
         let home = TempDir::new().unwrap();
-        let claimed = home.path().join(".claude/skills");
+        let claimed = home.path().join(".gemini/config/skills");
         write(&claimed, "mine");
 
-        let reports = install(home.path(), checkout.path(), false, true, None);
+        let reports = install(home.path(), profile.path(), false, true, None);
         let this = reports
             .iter()
-            .find(|r| r.label == ".claude/skills")
+            .find(|r| r.label == ".gemini/config/skills")
             .unwrap();
         assert!(
             !this.acted,
             "create() must not act on a real file, force or not"
         );
         assert_eq!(fs::read_to_string(&claimed).unwrap(), "mine");
+    }
+
+    /// kiro's skills dir is the user's too: their skills stay, and the
+    /// steering link an older install left goes.
+    #[test]
+    fn kiro_install_reaps_the_old_steering_link_and_keeps_the_users_skills() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        let h = home.path();
+        let own = h.join(".kiro/skills/my-own/SKILL.md");
+        let steering_doc = h.join(".kiro/steering/notes.md");
+        write(&own, "mine");
+        write(&steering_doc, "mine");
+        let old = h.join(".kiro/steering/skills");
+        std::os::unix::fs::symlink(profile.path().join("share/maid/skills"), &old).unwrap();
+
+        let reports = install(h, profile.path(), false, false, Some(Agent::Kiro));
+        let reaped = reports
+            .iter()
+            .find(|r| r.label == ".kiro/steering/skills")
+            .unwrap();
+        assert!(matches!(reaped.state, State::Legacy(_)) && reaped.acted);
+        assert!(!exists_at(&old));
+        assert!(exists_at(&h.join(".kiro/skills/kdevkit")));
+        assert!(exists_at(&own) && exists_at(&steering_doc));
+
+        std::os::unix::fs::symlink(profile.path().join("share/maid/skills"), &old).unwrap();
+        uninstall(h, profile.path(), false, false, Some(Agent::Kiro));
+        assert!(!exists_at(&h.join(".kiro/skills/kdevkit")));
+        assert!(!exists_at(&old));
+        assert_eq!(fs::read_to_string(&own).unwrap(), "mine");
+    }
+
+    #[test]
+    fn a_foreign_steering_skills_link_is_kept() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        let at = home.path().join(".kiro/steering/skills");
+        fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink("/elsewhere/skills", &at).unwrap();
+        install(home.path(), profile.path(), false, false, Some(Agent::Kiro));
+        assert_eq!(fs::read_link(&at).unwrap(), Path::new("/elsewhere/skills"));
+    }
+
+    /// Status and a dry run list the old link and leave it.
+    #[test]
+    fn status_lists_the_old_steering_link_without_removing_it() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        let old = home.path().join(".kiro/steering/skills");
+        fs::create_dir_all(old.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink("/old/checkout/resources/content/skills", &old).unwrap();
+        for reports in [
+            status(home.path(), profile.path(), Some(Agent::Kiro)),
+            install(home.path(), profile.path(), true, false, Some(Agent::Kiro)),
+        ] {
+            assert!(
+                reports
+                    .iter()
+                    .any(|r| r.label == ".kiro/steering/skills"
+                        && matches!(r.state, State::Legacy(_)))
+            );
+        }
+        assert!(exists_at(&old));
+    }
+
+    /// The user's own skill with a mAId skill's name is reported, not replaced.
+    #[test]
+    fn a_users_kiro_skill_named_like_a_maid_skill_is_kept() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        let theirs = home.path().join(".kiro/skills/notes/SKILL.md");
+        write(&theirs, "mine");
+        for force in [false, true] {
+            let reports = install(home.path(), profile.path(), false, force, Some(Agent::Kiro));
+            let this = reports
+                .iter()
+                .find(|r| r.label == ".kiro/skills/notes")
+                .unwrap();
+            assert_eq!(this.state, State::Theirs);
+            assert!(!this.acted);
+        }
+        uninstall(home.path(), profile.path(), false, true, Some(Agent::Kiro));
+        assert_eq!(fs::read_to_string(&theirs).unwrap(), "mine");
+    }
+
+    /// A rollback or a later install can drop a skill; its link goes.
+    #[test]
+    fn a_skill_dropped_from_the_profile_goes_on_the_next_install() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        let notes = home.path().join(".kiro/skills/notes");
+        install(home.path(), profile.path(), false, false, Some(Agent::Kiro));
+        fs::remove_dir_all(profile.path().join("share/maid/skills/notes")).unwrap();
+
+        let listed = status(home.path(), profile.path(), Some(Agent::Kiro));
+        let this = listed
+            .iter()
+            .find(|r| r.label == ".kiro/skills/notes")
+            .unwrap();
+        assert!(matches!(this.state, State::Legacy(_)));
+        install(home.path(), profile.path(), true, false, Some(Agent::Kiro));
+        assert!(exists_at(&notes));
+
+        install(home.path(), profile.path(), false, false, Some(Agent::Kiro));
+        assert!(!exists_at(&notes));
+        assert!(exists_at(&home.path().join(".kiro/skills/kdevkit")));
+    }
+
+    #[test]
+    fn uninstall_removes_a_kiro_link_to_a_skill_no_longer_shipped() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        let notes = home.path().join(".kiro/skills/notes");
+        let other = home.path().join(".kiro/skills/gone");
+        install(home.path(), profile.path(), false, false, Some(Agent::Kiro));
+        fs::remove_dir_all(profile.path().join("share/maid/skills/notes")).unwrap();
+        std::os::unix::fs::symlink("/other/profile/share/maid/skills/gone", &other).unwrap();
+        uninstall(home.path(), profile.path(), false, false, Some(Agent::Kiro));
+        assert!(!exists_at(&notes) && !exists_at(&other));
+    }
+
+    /// isolated-verify installs a throwaway profile, then the owner's
+    /// again: the throwaway's links must not outlive it.
+    #[test]
+    fn an_install_from_another_profile_takes_over_every_kiro_link() {
+        let first = make_profile_with_skills();
+        let second = make_profile();
+        write(
+            &second.path().join("share/maid/skills/kdevkit/SKILL.md"),
+            "---\nname: x\ndescription: y\n---\nbody.\n",
+        );
+        let home = TempDir::new().unwrap();
+        install(home.path(), first.path(), false, false, Some(Agent::Kiro));
+        install(home.path(), second.path(), false, false, Some(Agent::Kiro));
+        assert!(!exists_at(&home.path().join(".kiro/skills/notes")));
+        assert_eq!(
+            fs::read_link(home.path().join(".kiro/skills/kdevkit")).unwrap(),
+            second.path().join("share/maid/skills/kdevkit")
+        );
+    }
+
+    #[test]
+    fn force_keeps_a_foreign_link_named_like_a_maid_skill_in_kiros_dir() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        let theirs = home.path().join(".kiro/skills/notes");
+        fs::create_dir_all(theirs.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink("/their/notes", &theirs).unwrap();
+        let reports = install(home.path(), profile.path(), false, true, Some(Agent::Kiro));
+        let this = reports
+            .iter()
+            .find(|r| r.label == ".kiro/skills/notes")
+            .unwrap();
+        assert_eq!((&this.state, this.acted), (&State::Theirs, false));
+        assert_eq!(fs::read_link(&theirs).unwrap(), Path::new("/their/notes"));
+        uninstall(home.path(), profile.path(), false, true, Some(Agent::Kiro));
+        assert_eq!(fs::read_link(&theirs).unwrap(), Path::new("/their/notes"));
+    }
+
+    /// A user's own link to a skill in a checkout looks like mAId's, but
+    /// mAId never made one in kiro's dir: kept, shipped name or not.
+    #[test]
+    fn a_users_link_to_a_checkout_skill_in_kiros_dir_is_kept() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        let mut links = vec![];
+        for name in ["wip", "kdevkit"] {
+            let at = home.path().join(".kiro/skills").join(name);
+            let to = PathBuf::from("/work/mAId/resources/content/skills").join(name);
+            fs::create_dir_all(at.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&to, &at).unwrap();
+            links.push((at, to));
+        }
+        let reports = install(home.path(), profile.path(), false, false, Some(Agent::Kiro));
+        let this = reports
+            .iter()
+            .find(|r| r.label == ".kiro/skills/kdevkit")
+            .unwrap();
+        assert_eq!((&this.state, this.acted), (&State::Theirs, false));
+        uninstall(home.path(), profile.path(), false, false, Some(Agent::Kiro));
+        for (at, to) in links {
+            assert_eq!(fs::read_link(at).unwrap(), to);
+        }
+    }
+
+    // ── Plugins ──────────────────────────────────────────────────
+
+    fn plugins(home: &Path, profile: &Path) -> Plugins {
+        Plugins {
+            home: home.to_path_buf(),
+            profile: profile.to_path_buf(),
+        }
+    }
+
+    fn steps(agent: Agent, state: State, recorded: Option<&str>) -> (Vec<String>, bool) {
+        let (steps, acted) = install_steps(
+            agent,
+            &state,
+            recorded.map(Path::new),
+            Path::new("/s/marketplace"),
+        );
+        (steps.into_iter().map(|s| s.join(" ")).collect(), acted)
+    }
+
+    fn stale() -> State {
+        State::Stale {
+            found: "1.0.0-a".into(),
+            want: "1.0.0-b".into(),
+        }
+    }
+
+    fn disabled(found: &str) -> State {
+        State::Disabled {
+            found: found.into(),
+            want: "1.0.0-b".into(),
+        }
+    }
+
+    #[test]
+    fn claude_listing_finds_the_user_scope_entry() {
+        let json = r#"[
+          {"id":"maid@maid","version":"1.0.0-p","scope":"project","enabled":true},
+          {"id":"maid@maid","version":"1.0.0-u","scope":"user","enabled":false},
+          {"id":"other@x","version":"9","scope":"user","enabled":true}]"#;
+        assert_eq!(
+            parse_listed(Agent::Claude, json).unwrap(),
+            Some(Listed {
+                version: "1.0.0-u".into(),
+                enabled: false
+            })
+        );
+        assert_eq!(parse_listed(Agent::Claude, "[]").unwrap(), None);
+    }
+
+    #[test]
+    fn codex_listing_finds_the_installed_entry() {
+        let json = r#"{"installed":[{"pluginId":"maid@maid","version":"1.0.0-c","enabled":true}],
+                       "available":[]}"#;
+        assert_eq!(
+            parse_listed(Agent::Codex, json).unwrap(),
+            Some(Listed {
+                version: "1.0.0-c".into(),
+                enabled: true
+            })
+        );
+        assert_eq!(
+            parse_listed(Agent::Codex, r#"{"installed":[]}"#).unwrap(),
+            None
+        );
+    }
+
+    /// Output we cannot read must not pass as "not installed", or install
+    /// would re-add over whatever is there.
+    #[test]
+    fn an_unreadable_listing_is_an_error() {
+        assert!(parse_listed(Agent::Claude, "not json").is_err());
+        assert!(parse_listed(Agent::Claude, "{}").is_err());
+        assert!(parse_listed(Agent::Codex, "[]").is_err());
+        assert!(parse_listed(Agent::Codex, r#"{"installed":[{"pluginId":"maid@maid"}]}"#).is_err());
+        let no_flag = r#"{"installed":[{"pluginId":"maid@maid","version":"1"}]}"#;
+        assert!(parse_listed(Agent::Codex, no_flag).is_err());
+    }
+
+    #[test]
+    fn the_recorded_marketplace_path_is_read_per_cli() {
+        let claude = r#"[{"name":"other","path":"/o"},{"name":"maid","path":"/s/marketplace"}]"#;
+        let codex = r#"{"marketplaces":[{"name":"maid","root":"/s/marketplace"}]}"#;
+        assert_eq!(
+            parse_recorded(Agent::Claude, claude).unwrap(),
+            Some(PathBuf::from("/s/marketplace"))
+        );
+        assert_eq!(
+            parse_recorded(Agent::Codex, codex).unwrap(),
+            Some(PathBuf::from("/s/marketplace"))
+        );
+        assert_eq!(parse_recorded(Agent::Claude, "[]").unwrap(), None);
+        assert!(parse_recorded(Agent::Codex, "[]").is_err());
+    }
+
+    #[test]
+    fn plugin_state_compares_against_this_install() {
+        let listed = |v: &str, enabled| {
+            Some(Listed {
+                version: v.into(),
+                enabled,
+            })
+        };
+        assert_eq!(plugin_state(None, Some("b")), State::Missing);
+        assert_eq!(
+            plugin_state(listed("b", true), Some("b")),
+            State::Current("b".into())
+        );
+        assert_eq!(
+            plugin_state(listed("a", true), Some("b")),
+            State::Stale {
+                found: "a".into(),
+                want: "b".into()
+            }
+        );
+        assert_eq!(
+            plugin_state(listed("a", false), Some("b")),
+            State::Disabled {
+                found: "a".into(),
+                want: "b".into()
+            }
+        );
+        // No install to compare with: whatever is there counts as current.
+        assert_eq!(
+            plugin_state(listed("a", true), None),
+            State::Current("a".into())
+        );
+    }
+
+    #[test]
+    fn a_missing_plugin_is_installed_after_its_marketplace_is_added() {
+        assert_eq!(
+            steps(Agent::Claude, State::Missing, None),
+            (
+                vec![
+                    "plugin marketplace add /s/marketplace".to_string(),
+                    "plugin install maid@maid --scope user".to_string()
+                ],
+                true
+            )
+        );
+        assert_eq!(
+            steps(Agent::Codex, State::Missing, None),
+            (
+                vec![
+                    "plugin marketplace add /s/marketplace".to_string(),
+                    "plugin add maid@maid".to_string()
+                ],
+                true
+            )
+        );
+    }
+
+    #[test]
+    fn a_current_plugin_on_the_right_marketplace_needs_nothing() {
+        for agent in [Agent::Claude, Agent::Codex] {
+            assert_eq!(
+                steps(
+                    agent,
+                    State::Current("1.0.0-b".into()),
+                    Some("/s/marketplace")
+                ),
+                (vec![], false)
+            );
+        }
+    }
+
+    #[test]
+    fn a_stale_plugin_is_updated() {
+        assert_eq!(
+            steps(Agent::Claude, stale(), Some("/s/marketplace")).0,
+            ["plugin update maid@maid --scope user"]
+        );
+        assert_eq!(
+            steps(Agent::Codex, stale(), Some("/s/marketplace")).0,
+            ["plugin add maid@maid"]
+        );
+    }
+
+    /// claude's update keeps a plugin disabled; codex's add re-enables it,
+    /// so a disabled codex plugin is not touched.
+    #[test]
+    fn a_disabled_plugin_stays_disabled() {
+        assert_eq!(
+            steps(Agent::Claude, disabled("1.0.0-a"), Some("/s/marketplace")),
+            (
+                vec!["plugin update maid@maid --scope user".to_string()],
+                true
+            )
+        );
+        assert_eq!(
+            steps(Agent::Claude, disabled("1.0.0-b"), Some("/s/marketplace")),
+            (vec![], false)
+        );
+        assert_eq!(
+            steps(Agent::Codex, disabled("1.0.0-a"), Some("/s/marketplace")),
+            (vec![], false)
+        );
+    }
+
+    /// claude repoints a marketplace on add; codex refuses a changed path,
+    /// so its old one is removed first.
+    #[test]
+    fn a_marketplace_at_another_path_is_repointed() {
+        let current = || State::Current("1.0.0-b".into());
+        assert_eq!(
+            steps(Agent::Claude, current(), Some("/old")).0,
+            ["plugin marketplace add /s/marketplace"]
+        );
+        assert_eq!(
+            steps(Agent::Codex, current(), Some("/old")).0,
+            [
+                "plugin marketplace remove maid",
+                "plugin marketplace add /s/marketplace"
+            ]
+        );
+    }
+
+    #[test]
+    fn uninstall_removes_the_plugin_before_its_marketplace() {
+        let joined = |a, i, r| {
+            uninstall_steps(a, i, r)
+                .into_iter()
+                .map(|s| s.join(" "))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            joined(Agent::Codex, true, true),
+            ["plugin remove maid@maid", "plugin marketplace remove maid"]
+        );
+        assert_eq!(
+            joined(Agent::Claude, true, true),
+            [
+                "plugin uninstall maid@maid --scope user",
+                "plugin marketplace remove maid"
+            ]
+        );
+        assert!(joined(Agent::Claude, false, false).is_empty());
+    }
+
+    #[test]
+    fn the_wanted_version_is_read_from_the_profile() {
+        let profile = make_profile();
+        let home = TempDir::new().unwrap();
+        let err = plugins(home.path(), profile.path()).want().unwrap_err();
+        assert!(format!("{err:#}").contains("just install"), "{err:#}");
+        write(
+            &profile
+                .path()
+                .join("share/maid/marketplace/plugins/maid/.codex-plugin/plugin.json"),
+            r#"{"name":"maid","version":"1.0.0-abc"}"#,
+        );
+        assert_eq!(
+            plugins(home.path(), profile.path()).want().unwrap(),
+            "1.0.0-abc"
+        );
+    }
+
+    #[test]
+    fn the_marketplace_root_links_into_the_profile_path() {
+        let state = TempDir::new().unwrap();
+        let profile = state.path().join("profile");
+        let home = TempDir::new().unwrap();
+        let p = plugins(home.path(), &profile);
+        let root = state.path().join("marketplace");
+
+        assert!(p.ensure_root(false).unwrap().acted);
+        for entry in ROOT_ENTRIES {
+            assert_eq!(
+                fs::read_link(root.join(entry)).unwrap(),
+                profile.join("share/maid/marketplace").join(entry)
+            );
+        }
+        assert!(!p.ensure_root(false).unwrap().acted, "idempotent");
+
+        // A root left pointing at another profile is repointed.
+        let other = plugins(home.path(), &state.path().join("other/profile"));
+        fs::create_dir_all(state.path().join("other")).unwrap();
+        fs::rename(&root, state.path().join("other/marketplace")).unwrap();
+        assert!(other.ensure_root(false).unwrap().acted);
+        fs::rename(state.path().join("other/marketplace"), &root).unwrap();
+        assert!(p.ensure_root(false).unwrap().acted);
+        assert_eq!(
+            fs::read_link(root.join("plugins")).unwrap(),
+            profile.join("share/maid/marketplace/plugins")
+        );
+
+        p.remove_root(false).unwrap();
+        assert!(!exists_at(&root));
+    }
+
+    #[test]
+    fn a_real_dir_in_the_marketplace_root_is_refused_and_kept() {
+        let state = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let p = plugins(home.path(), &state.path().join("profile"));
+        let theirs = state.path().join("marketplace/plugins");
+        fs::create_dir_all(&theirs).unwrap();
+        assert!(p.ensure_root(false).is_err());
+        p.remove_root(false).unwrap();
+        assert!(theirs.is_dir());
+    }
+
+    /// Old links into any mAId skills tree go, including a codex link to a
+    /// skill no longer shipped; anything else at those paths stays.
+    #[test]
+    fn old_maid_links_are_reaped_and_nothing_else() {
+        let home = TempDir::new().unwrap();
+        let h = home.path();
+        let link = |at: &str, to: &str| {
+            let at = h.join(at);
+            fs::create_dir_all(at.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(to, at).unwrap();
+        };
+        link(".claude/skills", "/s/maid/profile/share/maid/skills");
+        link(
+            ".codex/skills/kdevkit",
+            "/s/maid/profile/share/maid/skills/kdevkit",
+        );
+        link(
+            ".codex/skills/gone",
+            "/old/checkout/resources/content/skills/gone",
+        );
+        link(".codex/skills/foreign", "/elsewhere/skills/foreign");
+        write(&h.join(".codex/skills/own/SKILL.md"), "mine");
+
+        let mut reaped = reap(h, ".claude/skills", Kind::Link, false).unwrap();
+        reaped.extend(reap(h, ".codex/skills", Kind::FanOut, false).unwrap());
+        let labels: Vec<&str> = reaped.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                ".claude/skills",
+                ".codex/skills/gone",
+                ".codex/skills/kdevkit"
+            ]
+        );
+        assert!(!exists_at(&h.join(".claude/skills")));
+        assert!(!exists_at(&h.join(".codex/skills/kdevkit")));
+        assert!(!exists_at(&h.join(".codex/skills/gone")));
+        assert!(exists_at(&h.join(".codex/skills/foreign")));
+        assert!(exists_at(&h.join(".codex/skills/own/SKILL.md")));
+    }
+
+    #[test]
+    fn a_foreign_claude_skills_link_is_not_reaped() {
+        let home = TempDir::new().unwrap();
+        let at = home.path().join(".claude/skills");
+        fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink("/elsewhere/skills", &at).unwrap();
+        assert!(reap(home.path(), ".claude/skills", Kind::Link, false)
+            .unwrap()
+            .is_empty());
+        assert!(exists_at(&at));
+    }
+
+    #[test]
+    fn dry_run_reaps_nothing() {
+        let home = TempDir::new().unwrap();
+        let at = home.path().join(".claude/skills");
+        fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink("/p/share/maid/skills", &at).unwrap();
+        assert_eq!(
+            reap(home.path(), ".claude/skills", Kind::Link, true)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(exists_at(&at));
+    }
+
+    /// The latest install's uninstall removes a link an older mAId install
+    /// left, without --force, as install replaces it.
+    #[test]
+    fn uninstall_removes_a_link_another_maid_install_left() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        let kiro = home.path().join(".kiro/skills/kdevkit");
+        fs::create_dir_all(kiro.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink("/old/profile/share/maid/skills/kdevkit", &kiro).unwrap();
+        uninstall(home.path(), profile.path(), false, false, Some(Agent::Kiro));
+        assert!(!exists_at(&kiro));
+    }
+
+    #[test]
+    fn a_marketplace_elsewhere_reads_as_wrong() {
+        let root = Path::new("/s/marketplace");
+        assert_eq!(marketplace_state(None, root), State::Missing);
+        assert_eq!(
+            marketplace_state(Some(root.into()), root),
+            State::Ok(root.into())
+        );
+        assert!(matches!(
+            marketplace_state(Some("/tmp/x/marketplace".into()), root),
+            State::Wrong { .. }
+        ));
+    }
+
+    #[test]
+    fn a_path_through_a_symlinked_home_is_the_same_dir() {
+        let real = TempDir::new().unwrap();
+        let alias = TempDir::new().unwrap();
+        let via = alias.path().join("home");
+        std::os::unix::fs::symlink(real.path(), &via).unwrap();
+        fs::create_dir_all(real.path().join("marketplace")).unwrap();
+        assert!(same_dir(
+            &real.path().join("marketplace"),
+            &via.join("marketplace")
+        ));
+        assert!(!same_dir(&real.path().join("marketplace"), alias.path()));
+        assert!(!same_dir(Path::new("/gone/a"), Path::new("/gone/b")));
     }
 }

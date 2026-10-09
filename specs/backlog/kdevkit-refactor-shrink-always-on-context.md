@@ -111,8 +111,9 @@ had to be physically moved to match execution order).
 so a wrapper has precedent — but does it belong there or as a
 separate crate? How does it stay tool-agnostic across
 claude/kiro/codex, which is the project's whole mission? Does a
-code-driven loop conflict with the "skills are plain markdown
-symlinks, no runtime" deploy invariant (the browser-MCP precedent
+code-driven loop conflict with the "skills are plain markdown, no
+runtime" deploy invariant (since 2026-10-09 skills install from a nix
+profile, as a plugin or links) (the browser-MCP precedent
 shows a runnable resource is possible, but it's the exception)? What
 happens when a user drives kdevkit *without* the wrapper — does the
 prose still have to stand alone, which would defeat the savings?

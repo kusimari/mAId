@@ -837,19 +837,8 @@ pub fn invocation(
 }
 
 /// Whether an agent's CLI is on PATH.
-///
-/// Scans PATH directly rather than shelling out: `command -v` is a shell
-/// builtin, not a binary, so spawning it always fails and the check would
-/// silently be doing nothing.
 pub fn agent_available(agent: Agent) -> bool {
-    let program = match agent {
-        Agent::Claude => "claude",
-        Agent::Kiro => "kiro-cli",
-        Agent::Codex => "codex",
-        Agent::Agy => "agy",
-    };
-    std::env::var_os("PATH")
-        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
+    crate::shared::on_path(agent.cli())
 }
 
 // ─────────────────────────────────────────────────────────────────

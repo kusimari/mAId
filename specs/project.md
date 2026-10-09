@@ -8,10 +8,12 @@
 Tool-agnostic source of truth for my agentic resources — mostly
 skills — compiled into whatever AI tool I'm using (Claude Code,
 Kiro, Codex, future tools). The repo is the checked-in source;
-`just resources::install-skills` creates the `$HOME`-facing symlinks
-each tool reads from. Every supported tool discovers skills natively at
-its own skills path, so skills install as plain symlinks with no
-global instruction preamble; the one non-skill resource
+`just install` builds it into a nix profile in user space and links
+each tool at that profile, so what is installed never depends on the
+checkout. claude and codex install the skills as a plugin through
+their own plugin commands; kiro (and agy) discover them natively at
+their own skills path, by symlink. Either way there is no global
+instruction preamble; the one non-skill resource
 (browser-control MCP) registers as a runnable server via Just verbs
 (see Architecture). One canonical set of resources, many consumer
 surfaces. Apps that ship binaries (today: future `kaimux/`, the
@@ -36,8 +38,9 @@ Two halves at the top level:
      sibling files, or files under subdirectories — that the
      always-on `SKILL.md` inline-Reads when a stated trigger
      fires. `SKILL.md` stays the only validated and discovered
-     file; modules ride along because the registry symlinks the
-     skills *directory*, so adding one needs no build-tool change.
+     file; modules ride along because a skill is installed as a whole
+     *directory* (copied into the plugin, or linked), so adding one
+     needs no build-tool change.
      This is how an always-on file stays lean as a workflow grows:
      new phase-specific rules land in a module, not in the file
      loaded every session. `kdevkit` is the worked example
@@ -61,24 +64,23 @@ Two halves at the top level:
      doesn't control.
   2. **Tooling** (`resources/build-tool/`) — Rust crate
      organised as the pipeline it performs: validate content,
-     check each skill in isolation, install the `$HOME`-facing
-     symlinks, then smoke-test what is deployed. One file per
+     check each skill in isolation, install into each agent (plugin
+     or `$HOME` symlinks), then smoke-test what is deployed. One file per
      category — `main.rs` (the clap shim), `shared.rs` (agents,
      registry, roots), `harness.rs` (driving an agent and scoring
      the reply), `deploy.rs` (how a skill reaches an agent), `stages.rs`
      (the pipeline: content → check → install → smoke). Dependencies
      run one direction: stages → {harness, deploy} → shared.
 
-     **`deploy.rs` is a shim, not a design.** The pipeline declares
-     *what* it wants deployed; `deploy.rs` alone knows *how*, behind a
-     `Deploy` trait (`install` / `uninstall` / `status` / `is_deployed`,
-     each returning a `Report`, never a path). `Symlinks` — the
+     **`deploy.rs` hands over to the agent where it can.** The pipeline
+     declares *what* it wants deployed; `deploy.rs` alone knows *how*,
+     behind a `Deploy` trait (`install` / `uninstall` / `status` /
+     `is_deployed`, each returning a `Report`, never a path). `Plugins`
+     drives claude's and codex's own plugin CLIs; `Symlinks` (the
      $HOME-layout knowledge, `Link`/`FanOut` registry expansion,
-     `--force` semantics — is its only implementation, and exists only
-     because no coding agent exposes a command to install or list its
-     own skills yet (checked: none do, as of this writing). When one
-     does, that becomes a second `Deploy` impl and nothing in `stages.rs`
-     changes. `check` needs no deployment at all — it receives a
+     `--force` semantics) covers the agents with no such command (kiro,
+     agy). `Deployment` routes each agent to one of them, so nothing in
+     `stages.rs` knows which. `check` needs no deployment at all — it receives a
      `NoDeploy` target and runs with no `$HOME`, which is what makes
      "check needs no install" a structural fact rather than a
      convention the prompt merely honours. The only bash left in the
@@ -109,8 +111,10 @@ Both halves are members of one cargo workspace at the
 root, so `cargo build --workspace` covers everything.
 
 **Registry** lives inline at the top of
-`resources/build-tool/src/shared.rs` (a slice of
-`(home_subpath, source_subpath, kind, agent)` tuples). The
+`resources/build-tool/src/shared.rs`: `REGISTRY`, a slice of
+`(home_subpath, source_subpath, kind, agent)` tuples for the linked
+agents, and `PLUGIN_AGENTS` for the plugin ones (with where each
+one's pre-plugin links lived, which install reaps). The
 authoritative manifest for what gets installed where. The
 `agent` tag is what lets install/uninstall/status be scoped
 to one coding agent (`--agent`, surfaced as the Just verbs'
@@ -120,10 +124,60 @@ expected `$HOME` paths as registry entries, not rewriting
 content. Content stays tool-agnostic; the registry translates
 it into each tool's expected layout.
 
-Skills deploy through the registry as symlinks — each supported tool
-discovers them natively at its own skills path (`~/.claude/skills`,
-`~/.kiro/steering/skills`, `~/.codex/skills`), verified to load with
-no extra preamble. mAId installs no global instruction file:
+**Install = a profile, then links.** `just install` builds the
+checkout's flake `default` package into the mAId profile
+(`${XDG_STATE_HOME:-~/.local/state}/maid/profile`, set in
+`resources/Justfile`) as a new generation: the skills under
+`share/maid/skills`, and the runtimes resources need as nix closures
+under `bin/`, and the plugin marketplace under `share/maid/marketplace`
+(the skills live in its plugin; `share/maid/skills` links there). Every
+link and MCP registration names the *profile* path, never a store path
+or a checkout, so the checkout can be deleted, and an install from any
+other checkout or worktree takes over by adding a generation without
+touching agent config.
+
+**Plugins (claude, codex).** Both agents are pointed at
+`<profile's dir>/marketplace`, a real directory of links into the
+profile path: codex records a marketplace by its resolved path, so
+registering the profile itself would pin one generation's store path.
+The plugin's version is a hash of its content, computed in the flake
+build; both CLIs cache by version and only compare for change, so an
+install updates exactly when content changed (claude reads the
+marketplace live; codex reads its cached copy, so install must run
+`codex plugin add`). A disabled plugin stays disabled: `codex plugin
+add` would re-enable it, so install leaves a disabled codex plugin
+alone. Skills are `maid:<name>` there; a bare name still resolves.
+mAId's marketplace and plugin are recognised by name (`maid`,
+`maid@maid`), as its links are by path shape. Install
+takes over a link only when it points at a mAId skills tree (a
+profile's, or a checkout's from before the profile); any other
+symlink at a managed path is kept and reported, since mAId never
+touches agent config it did not write. Install and uninstall run
+their other steps past such a location, then exit non-zero. Nix GC roots keep each
+generation alive; an install that adds a generation wipes those older
+than 30 days, and nix keeps the newest one older than that, so the
+install before the live one survives (an unchanged install adds none and
+skips the wipe, which would otherwise keep only the live one). **Rollback** is `nix profile rollback` plus the plugin install
+(codex serves its cached copy until `codex plugin add` runs). It refuses
+a generation without the skills, the plugin manifest or the browser
+launcher, before switching; it does not switch back on an install
+failure, since install also exits non-zero for a link it left alone.
+nix rolls back to the next lower generation number, so install drops
+the generations above the live one (the ones a rollback returned from),
+after its build succeeds; otherwise a rollback after rollback-then-install would land on
+them rather than on the install before.
+
+Skills reach kiro (and agy) through the registry as symlinks at their
+own skills path, verified to load with no extra preamble. kiro reads
+`~/.kiro/skills/*/SKILL.md`, a dir that also holds the user's own
+skills, so it gets one link per skill (`FanOut`); kiro's steering dir
+is context, not skills, and the link an older install left there is
+reaped (`LEGACY_LINKS`). In a FanOut dir mAId owns only links into a
+profile's skills, since it never put a checkout link there: those it
+repoints, and removes when the profile no longer ships the skill.
+Anything else there is the user's, kept even with `--force`, and
+reported as kept without failing the run, so a user's skill named
+like a mAId one wins in kiro. mAId installs no global instruction file:
 `AGENTS.md` is a repo-root convention (per-project, alongside
 README.md), not a global per-tool preamble, and "load the project's
 AGENTS.md / project.md" is kdevkit's work-time instruction rather
@@ -139,8 +193,9 @@ re-auth. Its shape differs from skills in two ways:
   in the harness config as a symlink. An MCP server is an
   out-of-process service the harness *calls*, so only its
   *registration* goes in each harness config (`claude mcp
-  add` / `kiro-cli mcp add`); its *runtime* (Node) is mAId's
-  own, supplied from the repo flake. This is why the registry
+  add` / `kiro-cli mcp add`); its *runtime* (the pinned
+  chrome-devtools-mcp and its Node) is a closure in the mAId
+  profile. This is why the registry
   above can't express it — registration is a runnable command,
   not a symlink — so it lives in `resources::browser-mcp-*`
   Just verbs (shell over each harness's MCP CLI), keeping the
@@ -151,9 +206,10 @@ re-auth. Its shape differs from skills in two ways:
   Enforcement is at the browser (a launch flag), not in skill
   prose — a prompt-injected agent still can't leave the list.
   Deny-by-default: an empty/absent list refuses to start. A
-  thin launcher (`resources/browser/launch`) re-reads the file
-  and enters the flake on each (re)connect, so edits apply next
-  session without restarting Chrome.
+  thin launcher (`resources/browser/launch`, installed as the
+  profile's `bin/maid-browser-mcp`) re-reads the file on each
+  (re)connect, so edits apply next session without restarting
+  Chrome.
 
 ## Tech Stack
 
@@ -164,22 +220,32 @@ re-auth. Its shape differs from skills in two ways:
   surface. `resources/build-tool` is today's only
   workspace member; future Rust crates (e.g. `kaimux/`)
   join as additional members.
-- **Isolation:** `flake.nix` + `.envrc` load the rust
-  toolchain + `just` via direnv (rust-overlay). Cargo and
-  just are hard prerequisites — no `./install` shim. Users
-  on machines without them enter `nix develop` themselves.
-  The flake also bundles `nodejs_22` — the runtime the
-  browser-control MCP server (`chrome-devtools-mcp`, run via
-  `npx`) needs — so that capability is self-contained in mAId:
-  `nix` is its only host prerequisite, node need not be on the
-  user's PATH.
+- **Isolation:** one flake, two outputs. `devShells.default`
+  (loaded by `.envrc` via direnv) is the dev closure: the rust
+  toolchain (rust-overlay), `just`, and `jq` (the install tests read
+  the agents' JSON). `packages.default` is
+  the installable: the skills plus `chrome-devtools-mcp`
+  (packaged from its npm tarball, which has no dependencies)
+  wrapped with `nodejs_22`.
+- **Dependencies.** mAId does not care how a prerequisite got
+  onto PATH (host package, home-manager, nix profile), and does
+  not check for it; a missing one fails in the step that needs it.
+
+  | Kind | What | Provided by |
+  |---|---|---|
+  | Runtime prerequisites | coding-agent CLIs, `git`, a graphical Chrome (browser only) | the environment |
+  | Runtime-provided | skills, node, chrome-devtools-mcp | the mAId profile |
+  | Install and dev prerequisites | `nix` with flakes; `direnv` optional | the developer |
 - **Entrypoints:** Justfile organised as a root file with
   `mod` declarations per area, so verbs are namespaced by
   what they touch:
   - **`resources::*`** (operate on `$HOME` or the AI tools).
     Verbs follow the `<action>-<resource-kind>` pattern, each
     taking the coding-agent selector (`claude|kiro|codex`; omit
-    for all three): `just resources::install-skills [agent]`,
+    for all three): `just resources::install-profile` (validate +
+    build the profile, no selector), `just resources::install-skills
+    [agent]` (install the claude/codex plugin, link the rest at
+    the profile),
     `…::uninstall-skills [agent]`, `…::status-skills [agent]`,
     `…::check-skills [agent]` (pre-install: reads each skill from
     the checkout, so no deploy is needed), `…::smoke-skills
@@ -200,6 +266,11 @@ re-auth. Its shape differs from skills in two ways:
   - **`kaimux::*`** (operate on the kaimux crate):
     `just kaimux::build` (release + copy to `dist/`),
     `just kaimux::test`, `just kaimux::integration`.
+  - **Install** at the root: `just install [agent] [kiro-sub]`
+    (profile, then skills and browser MCP), `just uninstall`,
+    `just status`, `just rollback`, and the Macro test `just
+    verify-install` / `just verify-install-paid` (both `[confirm]`-gated).
+    Later installables (kaimux) join here.
   - **Workspace hygiene** at the root (no namespace —
     operates on every member): `just test`, `just fmt`,
     `just fmt-check`, `just lint`, `just check`,
@@ -222,27 +293,31 @@ mAId/
 ├── Cargo.lock              committed (binary-workspace policy)
 ├── Justfile                root verb surface (workspace hygiene + `mod resources` / `mod kaimux`)
 ├── rust-toolchain.toml     stable + clippy + rustfmt
-├── flake.nix / .envrc      repo-local rust toolchain + just (direnv + rust-overlay)
+├── flake.nix / .envrc      dev shell (rust toolchain, just, jq) and the installable package
 ├── resources/
 │   ├── Justfile            `resources::*` verb surface (install/uninstall/status/verify)
 │   ├── build-tool/         Rust crate — the pipeline (check/install/uninstall/status/smoke)
-│   │   ├── Cargo.toml      deps: clap, anyhow, gray_matter, serde, tempfile
+│   │   ├── Cargo.toml      deps: clap, anyhow, gray_matter, serde, serde_json, tempfile
 │   │   ├── src/main.rs     the shim: clap surface + dispatch, in pipeline order
 │   │   ├── src/lib.rs      module wiring + the pipeline doc comment
 │   │   ├── src/shared.rs   Agent, REGISTRY, roots — what every stage speaks
 │   │   ├── src/harness.rs  fixtures, the five kinds, prompts, invocation, verdicts
-│   │   ├── src/deploy.rs   the Deploy trait; Symlinks is its only impl (a shim — see Architecture)
+│   │   ├── src/deploy.rs   the Deploy trait: Plugins (claude, codex) and Symlinks (kiro, agy)
 │   │   ├── src/stages.rs   content → check → install → smoke
-│   │   └── tests/integration.rs  cross-stage tests against the real repo
-│   ├── content/            the deployable skills (symlinked in)
+│   │   ├── tests/integration.rs  cross-stage tests against the real repo
+│   │   ├── tests/plugins.rs  ignored: Plugins against the real claude/codex CLIs in a temp HOME
+│   │   └── tests/no_cli.rs   install with no agent CLI on PATH keeps the old links
+│   ├── content/            the deployable skills (copied into the profile)
 │   │   ├── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
 │   │   ├── skills/kdevkit/  SKILL.md core + phases/, tiers/, setup.md, interviews.md
 │   │   └── skills/kyodakit/ SKILL.md: developer judgement, any language
 │   ├── browser/            browser-control MCP (not symlinked — runnable)
-│   │   ├── launch          allowlist-enforcing launcher; enters flake, execs chrome-devtools-mcp
+│   │   ├── launch          allowlist-enforcing launcher; the flake wraps it as maid-browser-mcp
 │   │   └── manage          data-driven MCP registrar (MCP_AGENTS table: claude/codex global, kiro per-sub-agent)
 │   └── tests/              fixtures + the attended browser test (the runner itself is in build-tool)
 │       ├── browser-functional   ATTENDED test: drives real Chrome, asserts off-list blocked
+│       ├── rollback             free: `just rollback` and install's generation cleanup, temp HOME
+│       ├── verify-install       the installable Macro test, on the real install (`just verify-install`)
 │       ├── conversational-stream.txt  the --stressed prefix
 │       └── skills/<name>.smoke   fixtures: skill + playback/enact sections (runner owns the five kinds)
 ├── kaimux/                 tmux-pane orchestrator for coding-agent sessions
@@ -274,9 +349,37 @@ crate's 53 unit tests against a tempdir `Store`. Fast
 (sub-second). No real `$HOME` side effects, no API credits.
 Load-bearing — this is the kdevkit Test Gate default. `deploy.rs` carries
 the structural coverage: a full install→status→uninstall round-trip in
-a fake `$HOME`, `--force` semantics per state, and `FanOut` orphan
-reaping and deployment detection — the tests most sensitive to a
-symlink-layout regression.
+a fake `$HOME`, `--force` semantics per state, and deployment
+detection — the tests most sensitive to a symlink-layout regression —
+and, for `Plugins`, reading each CLI's listing, the commands each
+plugin state leads to, and reaping the links an older install left.
+
+`cargo test -p build-tool --test plugins -- --ignored` drives the real
+claude and codex CLIs in a temp HOME (install, update, a disabled
+plugin, a codex marketplace whose dir is gone, uninstall). Free (no
+model calls) but needs both CLIs, so it is out of `just test`; run it
+after any change to `Plugins`.
+
+`nix develop -c resources/tests/rollback` drives `just rollback` and
+install's generation cleanup against the real claude and codex CLIs in a
+temp HOME and a temp profile (free, under a minute): rollback, an
+install whose build fails keeping the generations it would drop,
+rollback after rollback-then-install, an earlier generation the agents
+cannot take, no earlier generation, the 30-day cleanup keeping the
+previous install (also after an unchanged install), and rollback past a
+link mAId did not write.
+Run it after any change to the profile recipes.
+
+**`just verify-install` is the installable Macro test**
+(`resources/tests/verify-install`), run on the real install: install
+from a clone that is then deleted, what each agent's own CLI lists, the
+browser server under `env -i HOME=…`, a search for checkout paths, a
+second clone's takeover and rollback, uninstall keeping user data, and a
+reinstall from the checkout it ran from (a trap guarantees that, and
+removes any placeholder user-data file it wrote). Free, under a minute;
+`just verify-install-paid` adds 9 model calls asking each agent for its
+skills and for a marker line. It ends with no earlier install to roll
+back to, since uninstall removes the profile.
 
 One test deliberately breaks the fake-`$HOME` pattern:
 `shipped_content_validates` points the validator at the **real**
@@ -301,15 +404,17 @@ verbs) scopes to one or more, default all three, all required. Slow
 (minutes) and costs API credits; gated behind a confirmation prompt in
 the Justfile.
 
-**Only `smoke` needs the symlinks deployed.** The reach axis is the
+**Only `smoke` needs the skills installed** (it reads the installed
+copy, so run `just install` after an edit). The reach axis is the
 install boundary: an explicit prompt carries the skill's own text
 inline, so `check` needs no install at all — which is what makes a
 content change provable *before* it is made live for every session on
 the machine. An implicit prompt makes the agent find the skill unaided,
 competing against every other installed skill for a capped, shared
-description listing, so `smoke` requires
-`just resources::install-skills` to have run (it says so and stops,
-rather than failing every test obscurely). A failure therefore
+description listing, so `smoke` requires `just install` to have run
+(it says so and stops, rather than failing every test obscurely), and
+`smoke-skills`, `verify-skills` and `verify-skills-one` refuse a profile
+that is not this checkout's build. A failure therefore
 localises: pre-install means the content is wrong; post-install with
 check passing means deployment or description-budget competition.
 
@@ -421,7 +526,7 @@ reads the body.
 
 **It also has to parse.** Frontmatter is YAML, so a `: ` anywhere
 inside a `description:` value reads as a nested mapping and the whole
-skill fails validation — `install-skills` then refuses to deploy *any*
+skill fails validation — `just install` then refuses to deploy *any*
 skill, not just the broken one. Descriptions naturally attract it
 (`specs/: plan or start`, `briefing tool: read-only`). **Single-quote
 the value** whenever it contains a colon; the values already use `"`
@@ -533,8 +638,8 @@ kdevkit's Test Gate uses `just test` by default. SKILL.md
 prose revisions add `just resources::check-skills` (judge mode)
 as their A/B evidence — the pre-install stage is the one that
 isolates content, so it is the honest A/B. kdevkit's close-out can run
-`just resources::status-skills` after an install to confirm
-symlinks resolved.
+`just status` after an install to confirm the profile generation and
+that every link resolves.
 
 ### Functional tests are user-driven
 
@@ -562,9 +667,11 @@ The fixture file's basename (without `.smoke`) is the
 **Prefer the isolated verb for any paid run.** `just
 resources::verify-skills-isolated <check|smoke|verify> [name] [flags]`
 runs the same tests from a throwaway clone of the committed branch: it
-points every agent's skill links at the clone, runs, puts the links
-back on whichever checkout owned them, and exits 3 if a test changed
-the clone or this checkout. Tests have escaped their scratch dir into
+builds the clone into a throwaway profile, points every agent's skill
+links at it, runs, puts the links back on whichever profile owned them,
+and exits 3 if a test changed
+the clone or this checkout (4 if the links could not be put back). It
+needs an existing `just install`, the profile it restores the links to. Tests have escaped their scratch dir into
 the real checkout before (see
 `specs/backlog/test-runner-workdir-containment.md`); in the clone,
 that damage is contained and reported. Commit first: uncommitted edits
@@ -633,23 +740,25 @@ slice.
      in a traditional sense, describe how it's consumed. -->
 
 Not a service — consumed locally.
-`just resources::install-skills` validates content and creates the
-`$HOME`-facing symlinks; `just resources::uninstall-skills`
-reverses them. `just resources::status-skills` reports current
-managed-symlink state. `just resources::verify-skills` drives the
+`just install` validates content, builds the mAId profile, installs
+the claude/codex plugin and links kiro and agy at it (see
+Architecture); `just uninstall` reverses it and removes the profile;
+`just status` reports the generation, each plugin and
+each link; `just rollback` returns every agent to the previous install
+(no selector: the profile is shared). `just resources::verify-skills` drives the
 real AI tools against the installed content. Each takes an
 optional coding-agent selector (`claude|kiro|codex`; omit for all
 three). App workspace members (`kaimux/`) build via
 `just kaimux::build` (a one-liner over `cargo build -p kaimux
 --release` + copy into `dist/`).
 
-The browser-control MCP deploys separately from skills
-(env-gated, opt-in): `just resources::install-browser-mcp
-[agent] [kiro-sub]` registers the server with each harness
+The browser-control MCP is registered by `just install` too
+(env-gated): `just resources::install-browser-mcp [agent]
+[kiro-sub]`, which it calls, registers the server with each harness
 (claude/codex global; kiro per named sub-agent) and prints the
 one-time manual step (enable Chrome remote debugging via
 `chrome://inspect`). It graceful-skips where a prereq is missing
-(no GUI Chrome, no `nix`, no harness CLI) — never a
+(no GUI Chrome, no harness CLI) — never a
 half-register. `uninstall-browser-mcp` removes the registration
 but preserves the user-owned allowlist (it's user data). Skills
 and the installable stay separate verbs (skills always safe;
@@ -659,22 +768,29 @@ the experience is symmetric across resource kinds.
 
 ### Hard constraints
 
-- **Never write into `~/.claude/skills/`, `~/.kiro/steering/skills/`,
-  `~/.codex/skills/`, or any registry destination directly.** These
-  paths are symlinks back into the checkout; a non-symlink file there
-  breaks deploy invariants. Edit the source under
-  `resources/content/` instead — the symlink exposes changes
-  live. (This guardrail is mAId-project context — it protects mAId's
-  own deploy invariant — which is why it lives here, not in a
-  globally-installed preamble.)
+- **Never write into mAId's links under `~/.kiro/skills/`, any registry
+  destination, or the plugin's copies under claude's and codex's
+  plugin dirs directly.** They are symlinks into the mAId profile (a
+  read-only nix store path) or the agent's own cache. Edit the source
+  under `resources/content/` and `just install`. (This
+  guardrail is mAId-project context — it protects mAId's own deploy
+  invariant — which is why it lives here, not in a globally-installed
+  preamble.)
 - **Registry is the single source of truth** for deployment.
   Adding a new managed path = a registry change + CR, never an
   ad-hoc edit.
-- **No global state mutation** on install. The rust toolchain
-  and `just` come from the repo-local flake; `build-tool` is
-  invoked through `cargo run -p build-tool` (wrapped by Just)
-  from the checkout — no shim under `~/.local/bin`, no
-  `cargo install` anywhere in the install path.
+- **No global state mutation** on install beyond what mAId
+  owns: the mAId profile, its marketplace dir, the registry's links,
+  the `maid@maid` plugin and `maid` marketplace registrations, and
+  the MCP registrations. Never the user's default nix profile (a
+  home-manager may own it). The rust toolchain and `just` come
+  from the dev shell; `build-tool` is invoked through `cargo run
+  -p build-tool` (wrapped by Just) from the checkout — no shim
+  under `~/.local/bin`, no `cargo install` anywhere in the
+  install path.
+- **Installed means checkout-free.** Nothing installed may name a
+  checkout path, and no runtime fetch (no `npx …@latest`): a
+  runtime is a pinned closure in the profile.
 - **No changes to the user's env-workplace** from this
   repo. mAId stays a pure-content workspace; bootstrap
   drivers belong on the env side.
