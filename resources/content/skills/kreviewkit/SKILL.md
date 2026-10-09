@@ -1,7 +1,7 @@
 ---
 name: kreviewkit
 description: 'Brief a human before they review a change — "review what was done", "prep this for review", "brief the review", "summarise this change for a reviewer". Independent review-briefing tool: read-only reviewer turns a spec + diff into the briefing a reviewer reads first. Becomes the PR/CR body; not a scoring gate. Opens with `[kreviewkit] applies`.'
-version: 1.2.0
+version: 1.3.0
 tags: [review, pr, cr, briefing, reviewer, spec, diff, independent]
 ---
 
@@ -357,20 +357,25 @@ also satisfy the usual body shape (section 3 *is* the reading order).
 
 When the spec is an initiative (a goal delivered as several features,
 each with its own spec and its own commit), the reviewer is judging
-the whole, and each feature's detail was briefed when it shipped. So
-lift every section a level:
+the design that resulted, not the order it was built in; each
+feature's detail was briefed when it shipped. So brief the end state,
+never commit by commit:
 
 - **§1** plays back how the Goal and the user-facing experience were
-  understood, the design that came out of it, and how it changed the
-  existing design. Per feature, only its highlights: what it decided
-  and what it changed, never its minutiae.
+  understood, then the design as it now stands: its parts, what each
+  owns and how they connect (a picture where it helps), and how it
+  changed the existing design. A feature appears only where it
+  explains a design choice.
 - **§2** reconciles the stated experience against the whole diff, with
   the initiative's end-to-end test result as the evidence, and names
   what that test does not cover.
-- **§3** orders the feature commits, ranked by risk, each with what to
-  look for; the same three buckets apply inside each.
+- **§3** is a review order by design area, ranked by risk: for each
+  part of the design, the files and functions that implement it and
+  what to check there. The same three buckets apply. A commit is named
+  only as a pointer, never as the unit of review.
 - **§4** keeps only the trade-offs that span features or that the
-  user has not yet ratified.
+  user has not yet ratified, including the calls made for the user
+  while the features were built.
 
 ## Before you return — self-check
 
