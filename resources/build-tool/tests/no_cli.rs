@@ -51,3 +51,31 @@ fn old_links_stay_when_the_agents_cli_is_missing() {
         }
     }
 }
+
+/// With no plugin CLI, the bring-ins are recorded skipped with its reason.
+#[test]
+fn bring_ins_are_skipped_naming_the_missing_cli() {
+    use build_tool::deploy::BringIns;
+    use build_tool::shared::BRING_INS;
+    let home = TempDir::new().unwrap();
+    let empty = TempDir::new().unwrap();
+    std::env::set_var("PATH", empty.path());
+    let b = &BRING_INS[0];
+    let target = BringIns::new(
+        home.path().to_path_buf(),
+        BRING_INS,
+        &home.path().join("parts"),
+    )
+    .unwrap();
+    assert!(target.install(None, false, false).unwrap().is_empty());
+    let placed = target.placed(None).unwrap();
+    for agent in [Agent::Claude, Agent::Codex] {
+        let why = format!("{} not on PATH", agent.cli());
+        for item in [
+            Item::skipped(What::Marketplace, b.marketplace, &why),
+            Item::skipped(What::Plugin, b.plugin_id(b.plugins[0]), &why),
+        ] {
+            assert!(placed.contains(&(agent, item)), "{placed:?}");
+        }
+    }
+}

@@ -16,12 +16,12 @@
 //! is all of them.
 
 use anyhow::Result;
-use build_tool::deploy::{Deployment, NoDeploy, Plugins, Symlinks};
+use build_tool::deploy::{BringIns, Deployment, NoDeploy, Plugins, Symlinks};
 use build_tool::harness::{Selection, Stage};
 use build_tool::part::What;
 use build_tool::shared::{
     home_dir, parts_dir, profile_dir, repo_root, usage, validate_agent, validate_agents, Agent,
-    UsageError, CONTENT_DIR, PROFILE_CONTENT_DIR,
+    UsageError, BRING_INS, CONTENT_DIR, PROFILE_CONTENT_DIR,
 };
 use build_tool::stages;
 use clap::{Parser, Subcommand};
@@ -160,7 +160,10 @@ fn run(cli: Cli) -> Result<u8> {
     // Lazy, because `check` must work with no $HOME at all — it carries
     // each skill inline, so resolving a home would reintroduce the
     // coupling that stage exists to avoid.
-    let deployment = || -> Result<Deployment> {
+    //
+    // Only install and uninstall act on what mAId owns, so only they stop
+    // on a part list that cannot be read; the rest report it.
+    let deployment_for = |acting: bool| -> Result<Deployment> {
         Ok(Deployment {
             links: Symlinks {
                 home: home_dir()?,
@@ -170,14 +173,19 @@ fn run(cli: Cli) -> Result<u8> {
                 home: home_dir()?,
                 profile: profile_dir()?,
             },
+            bring_ins: match acting {
+                true => BringIns::new(home_dir()?, BRING_INS, &parts_dir()?)?,
+                false => BringIns::reporting(home_dir()?, BRING_INS, &parts_dir()?),
+            },
         })
     };
+    let deployment = || deployment_for(false);
     match cli.cmd {
         // No deployment target at all: the guarantee is structural.
         Cmd::Check(args) => verify(Stage::Check, args, &NoDeploy, &root, false),
         Cmd::Validate => stages::cmd_validate(&root.join(CONTENT_DIR)),
         Cmd::Install(a) => stages::cmd_install(
-            &deployment()?,
+            &deployment_for(true)?,
             &profile_dir()?.join(PROFILE_CONTENT_DIR),
             &parts_dir()?,
             a.dry_run,
@@ -185,7 +193,7 @@ fn run(cli: Cli) -> Result<u8> {
             validate_agent(a.agent.as_deref())?,
         ),
         Cmd::Uninstall(a) => stages::cmd_uninstall(
-            &deployment()?,
+            &deployment_for(true)?,
             &parts_dir()?,
             a.dry_run,
             a.force,

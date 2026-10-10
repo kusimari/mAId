@@ -76,6 +76,37 @@ pub fn path(dir: &Path) -> PathBuf {
     dir.join(format!("{PART}.json"))
 }
 
+/// mAId's list, if there is one, refusing a format or part it does not
+/// know.
+fn read(dir: &Path) -> Result<Option<PartList>> {
+    let at = path(dir);
+    let list: PartList = match fs::read_to_string(&at) {
+        Ok(text) => serde_json::from_str(&text)
+            .with_context(|| format!("{} is not a part list", at.display()))?,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).with_context(|| format!("cannot read {}", at.display())),
+    };
+    ensure!(
+        list.format == FORMAT && list.part == PART,
+        "{} is format {} of part {:?}; refusing to read or rewrite it",
+        at.display(),
+        list.format,
+        list.part
+    );
+    Ok(Some(list))
+}
+
+/// What mAId's list says it placed on `agent`, skips left out: what an
+/// earlier install added and so may remove. No list owns nothing.
+pub fn placed(dir: &Path, agent: Agent) -> Result<Vec<Item>> {
+    let Some(mut list) = read(dir)? else {
+        return Ok(vec![]);
+    };
+    let mut items = list.harnesses.remove(agent.cli()).unwrap_or_default();
+    items.retain(|i| i.skipped.is_none());
+    Ok(items)
+}
+
 /// Replace `agent`'s entries of `kinds` in `scope` with `items`, keeping
 /// every other entry. Recording in a scope also drops an unscoped skip of
 /// those kinds: it was skipped for want of a scope. The file goes when
@@ -88,23 +119,11 @@ pub fn record(
     items: Vec<Item>,
 ) -> Result<()> {
     let at = path(dir);
-    let mut list = match fs::read_to_string(&at) {
-        Ok(text) => serde_json::from_str(&text)
-            .with_context(|| format!("{} is not a part list", at.display()))?,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => PartList {
-            format: FORMAT,
-            part: PART.into(),
-            harnesses: BTreeMap::new(),
-        },
-        Err(e) => return Err(e).with_context(|| format!("cannot read {}", at.display())),
-    };
-    ensure!(
-        list.format == FORMAT && list.part == PART,
-        "{} is format {} of part {:?}; refusing to rewrite it",
-        at.display(),
-        list.format,
-        list.part
-    );
+    let mut list = read(dir)?.unwrap_or_else(|| PartList {
+        format: FORMAT,
+        part: PART.into(),
+        harnesses: BTreeMap::new(),
+    });
     let entries = list.harnesses.entry(agent.cli().into()).or_default();
     let replaced = |i: &Item| match (i.scope.as_deref(), scope) {
         (found, want) if found == want => true,
@@ -284,6 +303,37 @@ mod tests {
         let parts = dir.path().join("parts");
         record(&parts, Agent::Kiro, SKILL, None, vec![]).unwrap();
         assert!(!parts.exists());
+    }
+
+    #[test]
+    fn placed_reads_one_harness_and_leaves_out_skips() {
+        let dir = TempDir::new().unwrap();
+        assert_eq!(placed(dir.path(), Agent::Claude).unwrap(), vec![]);
+        let plugin = Item::placed(What::Plugin, "p@m");
+        let skip = Item::skipped(What::Marketplace, "m", "not mAId's");
+        let kinds = &[What::Plugin, What::Marketplace];
+        record(
+            dir.path(),
+            Agent::Claude,
+            kinds,
+            None,
+            vec![plugin.clone(), skip],
+        )
+        .unwrap();
+        let other = vec![Item::placed(What::Plugin, "q@m")];
+        record(dir.path(), Agent::Codex, kinds, None, other).unwrap();
+        assert_eq!(placed(dir.path(), Agent::Claude).unwrap(), vec![plugin]);
+        assert_eq!(placed(dir.path(), Agent::Kiro).unwrap(), vec![]);
+    }
+
+    /// Ownership decides what uninstall removes, so a list mAId cannot
+    /// read as its own owns nothing and stops the run.
+    #[test]
+    fn placed_refuses_a_list_in_another_format() {
+        let dir = TempDir::new().unwrap();
+        let text = r#"{"format":2,"part":"maid-harness","harnesses":{"claude":[{"kind":"plugin","name":"p"}]}}"#;
+        fs::write(path(dir.path()), text).unwrap();
+        assert!(placed(dir.path(), Agent::Claude).is_err());
     }
 
     #[test]

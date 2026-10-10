@@ -76,6 +76,14 @@ placed_on_all() {
   entries kiro-cli | grep -qx "skill notes"
 }
 check "the part list names what install placed on claude, codex and kiro" placed_on_all
+vendor=anthropic-agent-skills
+brought_in() {
+  for h in claude codex; do
+    entries $h | grep -qx "marketplace $vendor" && entries $h | grep -qx "plugin document-skills@$vendor" || return 1
+  done
+  entries kiro-cli | grep -qx "marketplace $vendor skipped"
+}
+check "the part list names the vendor marketplace placed on claude and codex, skipped on kiro" brought_in
 
 # Whole-status reads each harness's own listing: everything mAId placed is
 # there, and a second part's list beside mAId's is checked the same way.
@@ -89,6 +97,12 @@ maid_whole() {
   for h in kiro agy; do whole $h && shows "skill notes" || return 1; done
 }
 check "status --whole finds what mAId placed on each harness" maid_whole
+vendor_whole() {
+  for h in claude codex; do
+    whole $h && shows "marketplace $vendor" && shows "plugin document-skills@$vendor" || return 1
+  done
+}
+check "status --whole finds the vendor marketplace and plugin on claude and codex" vendor_whole
 other=$(dirname "$partlist")/other.json
 echo '{"format":1,"part":"other","harnesses":{"claude":[{"kind":"marketplace","name":"maid"},{"kind":"plugin","name":"absent@nowhere"}]}}' >"$other"
 whole
@@ -167,5 +181,13 @@ check "the part list names agy's skills as skipped past that link" \
 inhome just resources::uninstall-skills >/dev/null 2>&1
 inhome just resources::uninstall-browser-mcp >/dev/null 2>&1
 check "uninstall removes the part list" eval '[ ! -e "$partlist" ]'
+# A listing that is not JSON must not pass as "removed".
+vendor_gone() {
+  local cli m
+  for cli in claude codex; do
+    m=$(inhome $cli plugin marketplace list --json 2>/dev/null) && jq -e . <<<"$m" >/dev/null && ! grep -q "$vendor" <<<"$m" || return 1
+  done
+}
+check "uninstall removes the vendor marketplace from claude and codex" vendor_gone
 [ "$fails" = 0 ] && echo "all rollback checks passed" || echo "$fails rollback check(s) failed"
 exit $((fails > 0))

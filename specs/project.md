@@ -80,7 +80,8 @@ Two halves at the top level:
      drives claude's and codex's own plugin CLIs; `Symlinks` (the
      $HOME-layout knowledge, `Link`/`FanOut` registry expansion,
      `--force` semantics) covers the agents with no such command (kiro,
-     agy). `Deployment` routes each agent to one of them, so nothing in
+     agy). `Deployment` routes each agent to one of them, then runs
+     `BringIns` (the vendor marketplaces, below), so nothing in
      `stages.rs` knows which. `check` needs no deployment at all — it receives a
      `NoDeploy` target and runs with no `$HOME`, which is what makes
      "check needs no install" a structural fact rather than a
@@ -115,7 +116,8 @@ root, so `cargo build --workspace` covers everything.
 `resources/build-tool/src/shared.rs`: `REGISTRY`, a slice of
 `(home_subpath, source_subpath, kind, agent)` tuples for the linked
 agents, and `PLUGIN_AGENTS` for the plugin ones (with where each
-one's pre-plugin links lived, which install reaps). The
+one's pre-plugin links lived, which install reaps), and `BRING_INS` for
+the vendor marketplaces mAId registers with the plugin ones. The
 authoritative manifest for what gets installed where. The
 `agent` tag is what lets install/uninstall/status be scoped
 to one coding agent (`--agent`, surfaced as the Just verbs'
@@ -167,6 +169,28 @@ nix rolls back to the next lower generation number, so install drops
 the generations above the live one (the ones a rollback returned from),
 after its build succeeds; otherwise a rollback after rollback-then-install would land on
 them rather than on the install before.
+
+**Bring-ins (claude, codex).** A vendor's plugin marketplace mAId
+brings in is a `BRING_INS` row in the registry: the name both CLIs list
+it under, its public git source, a commit, the plugins to install from
+it, and the commands its skills run. Install registers it and installs
+the plugins through each CLI, after mAId's own plugin, so a failure there
+(no network) leaves mAId's skills in and exits non-zero. Nothing of the
+vendor's is copied into the profile. Neither CLI records who added a
+marketplace, so an item is mAId's only when mAId's part list names it
+as placed or the run added it; a marketplace or plugin the user had
+already is kept, recorded skipped "not mAId's", and never removed.
+Uninstall removes mAId's plugins, then mAId's marketplace unless a plugin
+not mAId's is installed from it (removing a marketplace uninstalls every
+plugin from it). codex is pinned to the commit (`--ref`); claude's CLI
+takes only a branch or tag, so claude holds the commit current when it
+first registered it, and third-party marketplaces do not auto-update.
+The row's commit applies to fresh installs only: a marketplace already
+registered is not re-pinned when it changes. A part list that cannot be
+read stops install and uninstall (ownership is unknown); `status` reports
+it and carries on. kiro and agy have no plugin marketplace, so the part list
+records them skipped. The first row is the vendor's document skills
+(`xlsx`, `pptx`, `docx`, `pdf`).
 
 Skills reach kiro (and agy) through the registry as symlinks at their
 own skills path, verified to load with no extra preamble. kiro reads
@@ -339,6 +363,7 @@ know is one entry it cannot check, not a refused file.
   |---|---|---|
   | Runtime prerequisites | coding-agent CLIs, `git`, a graphical Chrome (browser only) | the environment |
   | Runtime-provided | skills, node, chrome-devtools-mcp | the mAId profile |
+  | What the vendor document skills run | `python` with openpyxl, pandas, pypdf, pdfplumber, reportlab, pypdfium2, pdf2image, Pillow, lxml, defusedxml, python-pptx, markitdown; `node` with the `docx` and `pptxgenjs` packages; LibreOffice (`soffice`), `pandoc`, `markitdown`, `qpdf`, poppler (`pdftotext`, `pdftoppm`, `pdfimages`), ImageMagick (`magick`) | the environment; `just status` names each missing command |
   | Install and dev prerequisites | `nix` with flakes; `direnv` optional | the developer |
 - **Entrypoints:** Justfile organised as a root file with
   `mod` declarations per area, so verbs are namespaced by
@@ -408,12 +433,12 @@ mAId/
 │   │   ├── src/lib.rs      module wiring + the pipeline doc comment
 │   │   ├── src/shared.rs   Agent, REGISTRY, roots — what every stage speaks
 │   │   ├── src/harness.rs  fixtures, the five kinds, prompts, invocation, verdicts
-│   │   ├── src/deploy.rs   the Deploy trait: Plugins (claude, codex) and Symlinks (kiro, agy)
+│   │   ├── src/deploy.rs   the Deploy trait: Plugins (claude, codex), Symlinks (kiro, agy), BringIns
 │   │   ├── src/part.rs     mAId's part list: the format and its one writer
 │   │   ├── src/whole.rs    whole-status: every part's list, checked against each harness
 │   │   ├── src/stages.rs   content → check → install → smoke
 │   │   ├── tests/integration.rs  cross-stage tests against the real repo
-│   │   ├── tests/plugins.rs  ignored: Plugins against the real claude/codex CLIs in a temp HOME
+│   │   ├── tests/plugins.rs  ignored: Plugins and BringIns against the real claude/codex CLIs in a temp HOME
 │   │   └── tests/no_cli.rs   install with no agent CLI on PATH keeps the old links
 │   ├── content/            the deployable skills (copied into the profile)
 │   │   ├── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
@@ -466,9 +491,12 @@ on a PATH it is handed, never the real ones.
 
 `cargo test -p build-tool --test plugins -- --ignored` drives the real
 claude and codex CLIs in a temp HOME (install, update, a disabled
-plugin, a codex marketplace whose dir is gone, uninstall). Free (no
-model calls) but needs both CLIs, so it is out of `just test`; run it
-after any change to `Plugins`.
+plugin, a codex marketplace whose dir is gone, uninstall), and the
+bring-ins: install and a no-op reinstall, uninstall keeping a marketplace
+another plugin uses, the user's own marketplace kept and not claimed, and
+an unreachable source failing the run. Free (no model calls) but needs
+both CLIs and network (it clones the vendor repo), so it is out of `just
+test`; run it after any change to `Plugins` or `BringIns`.
 
 `nix develop -c resources/tests/rollback` drives `just rollback` and
 install's generation cleanup against the real claude and codex CLIs in a
@@ -478,8 +506,9 @@ rollback after rollback-then-install, an earlier generation the agents
 cannot take, no earlier generation, the 30-day cleanup keeping the
 previous install (also after an unchanged install), rollback past a
 link mAId did not write, the part list install leaves (placed,
-skipped, gone after uninstall), and `just status --whole` finding what
-mAId placed, then a second part's list beside it.
+skipped, the vendor marketplace, gone after uninstall), and `just status
+--whole` finding what mAId placed, then a second part's list beside it.
+It needs network for the vendor marketplace.
 Run it after any change to the profile recipes or the part list.
 
 **`just verify-install` is the installable Macro test**
@@ -853,7 +882,8 @@ slice.
 
 Not a service — consumed locally.
 `just install` validates content, builds the mAId profile, installs
-the claude/codex plugin and links kiro and agy at it, and writes
+the claude/codex plugin and links kiro and agy at it, registers the
+vendor marketplaces it brings in (Architecture, "Bring-ins"), and writes
 mAId's part list (see Architecture, "My harness"); `just uninstall`
 reverses it, removing the list, and removes the profile;
 `just status` reports the generation, each plugin and
@@ -896,7 +926,8 @@ the experience is symmetric across resource kinds.
 - **No global state mutation** on install beyond what mAId
   owns: the mAId profile, its marketplace dir, the registry's links,
   the `maid@maid` plugin and `maid` marketplace registrations, the
-  MCP registrations, and its own part list. Never the user's default
+  bring-in marketplaces and plugins it added, the MCP registrations, and
+  its own part list. Never the user's default
   nix profile (a home-manager may own it). The rust toolchain and `just` come
   from the dev shell; `build-tool` is invoked through `cargo run
   -p build-tool` (wrapped by Just) from the checkout — no shim

@@ -1,12 +1,14 @@
 //! The plugin deployment against the real claude and codex CLIs, in a temp
-//! HOME. No model calls, but it needs both CLIs and takes seconds, so it
-//! is ignored by `just test`:
+//! HOME. No model calls, but it needs both CLIs and takes seconds (the
+//! bring-in test also clones the vendor repo), so it is ignored by
+//! `just test`:
 //!
 //!   cargo test -p build-tool --test plugins -- --ignored
 
-use build_tool::deploy::{Deploy, Plugins, State};
-use build_tool::part::{Item, What};
-use build_tool::shared::{on_path, Agent};
+use build_tool::deploy::{BringIns, Deploy, Plugins, State};
+use build_tool::part::{self, Item, What};
+use build_tool::shared::{on_path, Agent, BRING_INS};
+use build_tool::stages;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -82,14 +84,7 @@ fn marketplaces(p: &Plugins) -> Vec<State> {
 #[test]
 #[ignore = "drives the real claude and codex CLIs"]
 fn plugins_install_update_disable_and_uninstall_with_the_real_clis() {
-    // Either override would point a CLI past the temp HOME at real config.
-    let overridden = ["CODEX_HOME", "CLAUDE_CONFIG_DIR"]
-        .iter()
-        .any(|v| std::env::var_os(v).is_some());
-    if !(on_path("claude") && on_path("codex")) || overridden {
-        eprintln!(
-            "skipped: needs claude and codex on PATH, and CODEX_HOME and CLAUDE_CONFIG_DIR unset"
-        );
+    if !real_clis() {
         return;
     }
     let home = TempDir::new().unwrap();
@@ -223,4 +218,160 @@ fn plugins_install_update_disable_and_uninstall_with_the_real_clis() {
     }
     assert!(!root.exists());
     assert_eq!(p.placed(None).unwrap(), vec![]);
+}
+
+/// Whether this run can drive the real CLIs without reaching real config.
+fn real_clis() -> bool {
+    // Either override would point a CLI past the temp HOME at real config.
+    let overridden = ["CODEX_HOME", "CLAUDE_CONFIG_DIR"]
+        .iter()
+        .any(|v| std::env::var_os(v).is_some());
+    let ok = on_path("claude") && on_path("codex") && !overridden;
+    if !ok {
+        eprintln!(
+            "skipped: needs claude and codex on PATH, and CODEX_HOME and CLAUDE_CONFIG_DIR unset"
+        );
+    }
+    ok
+}
+
+#[test]
+#[ignore = "drives the real claude and codex CLIs, and clones the vendor repo"]
+fn bring_ins_install_and_uninstall_only_what_maid_added() {
+    if !real_clis() {
+        return;
+    }
+    let home = TempDir::new().unwrap();
+    let h = home.path();
+    let parts = h.join(".local/state/my-harness/parts");
+    let content = h.join("content");
+    fs::create_dir_all(content.join("skills/alpha")).unwrap();
+    fs::write(
+        content.join("skills/alpha/SKILL.md"),
+        "---\nname: alpha\ndescription: Alpha.\n---\n",
+    )
+    .unwrap();
+    // A fresh one per step, as each `just` run reads ownership anew.
+    let target = || BringIns::new(h.to_path_buf(), BRING_INS, &parts).unwrap();
+    let install = || stages::cmd_install(&target(), &content, &parts, false, false, None).unwrap();
+    let uninstall = || stages::cmd_uninstall(&target(), &parts, false, false, None).unwrap();
+    let b = &BRING_INS[0];
+    let (market, plugin) = (b.marketplace, b.plugin_id(b.plugins[0]));
+    let other = format!("example-skills@{market}");
+    let entries = |a: Agent| part::placed(&parts, a).unwrap();
+    let listed = |cli: &str, id: &str| run(h, cli, &["plugin", "list", "--json"]).contains(id);
+    let has_market =
+        |cli: &str| run(h, cli, &["plugin", "marketplace", "list", "--json"]).contains(market);
+    let mine = vec![
+        Item::placed(What::Marketplace, market),
+        Item::placed(What::Plugin, plugin.as_str()),
+    ];
+
+    // Nothing there: both placed, codex pinned to the commit.
+    assert_eq!(install(), 0);
+    for cli in ["claude", "codex"] {
+        assert!(listed(cli, &plugin) && has_market(cli), "{cli}");
+    }
+    let config = fs::read_to_string(h.join(".codex/config.toml")).unwrap();
+    assert!(config.contains(&format!("ref = \"{}\"", b.rev)), "{config}");
+    let mut sorted = mine.clone();
+    sorted.sort();
+    assert_eq!(entries(Agent::Claude), sorted);
+    assert_eq!(entries(Agent::Codex), sorted);
+
+    // Again: nothing to do.
+    assert!(target()
+        .install(None, false, false)
+        .unwrap()
+        .iter()
+        .all(|r| !r.acted));
+
+    // The user installs another plugin from mAId's marketplace: uninstall
+    // removes mAId's plugin and keeps the marketplace, which stays listed.
+    run(
+        h,
+        "claude",
+        &["plugin", "install", &other, "--scope", "user"],
+    );
+    run(h, "codex", &["plugin", "add", &other]);
+    assert_eq!(uninstall(), 0);
+    for cli in ["claude", "codex"] {
+        assert!(
+            !listed(cli, &plugin) && listed(cli, &other) && has_market(cli),
+            "{cli}"
+        );
+    }
+    assert_eq!(
+        entries(Agent::Codex),
+        [Item::placed(What::Marketplace, market)]
+    );
+    run(
+        h,
+        "claude",
+        &["plugin", "uninstall", &other, "--scope", "user"],
+    );
+    run(h, "codex", &["plugin", "remove", &other]);
+    assert_eq!(uninstall(), 0);
+    for cli in ["claude", "codex"] {
+        assert!(!has_market(cli), "{cli}");
+    }
+    assert!(!part::path(&parts).exists());
+
+    // The user's own marketplace: kept and not claimed; mAId's plugin from
+    // it is mAId's, and goes on uninstall.
+    run(h, "claude", &["plugin", "marketplace", "add", b.source]);
+    run(h, "codex", &["plugin", "marketplace", "add", b.source]);
+    assert_eq!(install(), 0);
+    let theirs = Item::skipped(What::Marketplace, market, "not mAId's");
+    for a in [Agent::Claude, Agent::Codex] {
+        assert!(target()
+            .placed(Some(a))
+            .unwrap()
+            .contains(&(a, theirs.clone())));
+        assert_eq!(entries(a), [Item::placed(What::Plugin, plugin.as_str())]);
+    }
+    assert_eq!(uninstall(), 0);
+    for cli in ["claude", "codex"] {
+        assert!(!listed(cli, &plugin) && has_market(cli), "{cli}");
+    }
+}
+
+const UNREACHABLE: &[build_tool::shared::BringIn] = &[build_tool::shared::BringIn {
+    marketplace: "unreachable",
+    source: "https://127.0.0.1:9/none.git",
+    rev: "0123456789012345678901234567890123456789",
+    plugins: &["docs"],
+    needs: &[],
+}];
+
+#[test]
+#[ignore = "drives the real claude and codex CLIs"]
+fn a_bring_in_that_cannot_be_reached_fails_the_run_and_is_recorded() {
+    if !real_clis() {
+        return;
+    }
+    let home = TempDir::new().unwrap();
+    let h = home.path();
+    let parts = h.join("parts");
+    let content = h.join("content");
+    fs::create_dir_all(content.join("skills/alpha")).unwrap();
+    fs::write(
+        content.join("skills/alpha/SKILL.md"),
+        "---\nname: alpha\ndescription: Alpha.\n---\n",
+    )
+    .unwrap();
+    let target = BringIns::new(h.to_path_buf(), UNREACHABLE, &parts).unwrap();
+    assert_eq!(
+        stages::cmd_install(&target, &content, &parts, false, false, None).unwrap(),
+        1
+    );
+    for a in [Agent::Claude, Agent::Codex] {
+        let placed = target.placed(Some(a)).unwrap();
+        for item in [
+            Item::skipped(What::Marketplace, "unreachable", "failed"),
+            Item::skipped(What::Plugin, "docs@unreachable", "failed"),
+        ] {
+            assert!(placed.contains(&(a, item)), "{placed:?}");
+        }
+    }
 }

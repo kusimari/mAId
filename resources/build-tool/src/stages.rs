@@ -263,6 +263,13 @@ fn outcome_line(report: &crate::deploy::Report, dry_run: bool, removing: bool) -
             skipped += 1;
             format!("{tag}skip          {at} (unreadable: {why})")
         }
+        (State::Failed(why), _) => {
+            skipped += 1;
+            format!("{tag}FAILED        {at} ({why})")
+        }
+        (State::InUse, _) => {
+            format!("{tag}skip          {at} (in use by a plugin not mAId's; kept)")
+        }
         (State::Current(_) | State::Stale { .. } | State::Disabled { .. }, true) if removing => {
             format!("{tag}removed       {at}")
         }

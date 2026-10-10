@@ -107,6 +107,51 @@ pub const PLUGIN_AGENTS: &[(Agent, &str, Kind)] = &[
 pub const PLUGIN_ID: &str = "maid@maid";
 pub const MARKETPLACE: &str = "maid";
 
+/// A vendor's plugin marketplace mAId registers with each plugin agent
+/// through its own CLI, and the plugins it installs from it. The content
+/// stays the vendor's: nothing of it is copied into the profile.
+#[derive(Debug, PartialEq, Eq)]
+pub struct BringIn {
+    /// The name both CLIs list the marketplace under.
+    pub marketplace: &'static str,
+    /// A public git URL.
+    pub source: &'static str,
+    /// The commit codex is pinned to. claude's CLI takes only a branch or
+    /// tag, so it holds the commit current when it was first registered.
+    pub rev: &'static str,
+    pub plugins: &'static [&'static str],
+    /// Commands the plugins' skills run, which the environment provides;
+    /// status names any not on PATH.
+    pub needs: &'static [&'static str],
+}
+
+impl BringIn {
+    /// A plugin's id as both CLIs list it.
+    pub fn plugin_id(&self, plugin: &str) -> String {
+        format!("{plugin}@{}", self.marketplace)
+    }
+}
+
+/// The vendor marketplaces `just install` brings in.
+pub const BRING_INS: &[BringIn] = &[BringIn {
+    marketplace: "anthropic-agent-skills",
+    source: "https://github.com/anthropics/skills.git",
+    rev: "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+    plugins: &["document-skills"],
+    needs: &[
+        "python",
+        "node",
+        "soffice",
+        "pandoc",
+        "markitdown",
+        "qpdf",
+        "pdftotext",
+        "pdftoppm",
+        "pdfimages",
+        "magick",
+    ],
+}];
+
 /// Where flake.nix puts the marketplace in the profile.
 pub const PROFILE_MARKETPLACE_DIR: &str = "share/maid/marketplace";
 
@@ -456,6 +501,28 @@ mod tests {
             LEGACY_LINKS,
             [(Agent::Kiro, ".kiro/steering/skills", Kind::Link)]
         );
+    }
+
+    /// Spelled out: a row edited to the wrong URL or a short commit would
+    /// otherwise register something else, or fail only at install.
+    #[test]
+    fn the_bring_ins_are_the_vendors_document_skills_pinned_to_a_commit() {
+        let [b] = BRING_INS else {
+            panic!("one bring-in expected")
+        };
+        assert_eq!(b.marketplace, "anthropic-agent-skills");
+        assert_eq!(b.source, "https://github.com/anthropics/skills.git");
+        assert_eq!(b.plugins, ["document-skills"]);
+        assert_eq!(
+            b.plugin_id("document-skills"),
+            "document-skills@anthropic-agent-skills"
+        );
+        assert!(
+            b.rev.len() == 40 && b.rev.bytes().all(|c| c.is_ascii_hexdigit()),
+            "{}",
+            b.rev
+        );
+        assert!(b.needs.contains(&"soffice") && b.needs.contains(&"python"));
     }
 
     #[test]
