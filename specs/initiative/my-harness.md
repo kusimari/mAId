@@ -93,3 +93,8 @@ Under a scratch HOME:
   server registered into a named agent is lost when another part
   re-renders that agent; the global config is read by any agent that
   includes it · cost if wrong: one more stream
+- Ruling (to ratify): vendor plugin marketplaces reach claude and codex
+  only; kiro and agy are recorded as skipped · why: neither has a plugin
+  marketplace, and reaching them means copying proprietary vendor files
+  into a skills path · cost if wrong: document skills missing in kiro
+  and agy
