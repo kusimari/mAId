@@ -8,6 +8,7 @@
 //!   just resources::install-skills [agent]    install the claude/codex plugin, link the rest at the profile
 //!   just resources::uninstall-skills [agent]  remove the plugin and the managed symlinks
 //!   just resources::status-skills [agent]     report each plugin's version and each managed symlink
+//!   just resources::status-whole [agent]      check every part's list against each harness
 //!   just resources::smoke-skills [agent]      verify against the deployed tree
 //!   just resources::verify-skills [agent]     both verification stages
 //! An optional `--agent <claude|kiro|codex|agy>` scopes any of them to one
@@ -100,6 +101,14 @@ enum Cmd {
     Uninstall(DeployArgs),
     /// Report what is deployed and whether it points where it should.
     Status(DeployArgs),
+    /// Check every part list in the parts dir against each harness's own
+    /// listing or config. Exits 1 when anything placed is missing or
+    /// unreadable, or a list was refused.
+    Whole {
+        /// Scope to one coding agent (claude|kiro|codex|agy); default all.
+        #[arg(long)]
+        agent: Option<String>,
+    },
     /// Verify skills AFTER install, from the deployed tree: the kinds
     /// where the agent must find the skill among everything installed.
     Smoke(VerifyArgs),
@@ -183,6 +192,11 @@ fn run(cli: Cli) -> Result<u8> {
             validate_agent(a.agent.as_deref())?,
         ),
         Cmd::Status(a) => stages::cmd_status(&deployment()?, validate_agent(a.agent.as_deref())?),
+        Cmd::Whole { agent } => build_tool::whole::cmd_whole(
+            &parts_dir()?,
+            &home_dir()?,
+            validate_agent(agent.as_deref())?,
+        ),
         Cmd::Smoke(args) => verify(Stage::Smoke, args, &deployment()?, &root, false),
         Cmd::Verify(args) => {
             let check = verify(Stage::Check, clone_args(&args), &NoDeploy, &root, true)?;

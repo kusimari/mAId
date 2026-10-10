@@ -863,17 +863,37 @@ fn plugin_version(manifest: &str) -> Result<String> {
         .ok_or_else(|| anyhow!("plugin manifest has no version"))
 }
 
+/// The entries of a plugin agent's `plugin list --json`, and the key
+/// that names each plugin. `None` for a shape this does not know.
+pub fn listed_plugins(
+    agent: Agent,
+    v: &serde_json::Value,
+) -> Option<(&Vec<serde_json::Value>, &'static str)> {
+    match agent {
+        Agent::Claude => v.as_array().map(|e| (e, "id")),
+        _ => v["installed"].as_array().map(|e| (e, "pluginId")),
+    }
+}
+
+/// The entries of a plugin agent's `plugin marketplace list --json`, each
+/// with a `name`, and the key that holds where it was added from.
+pub fn listed_marketplaces(
+    agent: Agent,
+    v: &serde_json::Value,
+) -> Option<(&Vec<serde_json::Value>, &'static str)> {
+    match agent {
+        Agent::Claude => v.as_array().map(|e| (e, "path")),
+        _ => v["marketplaces"].as_array().map(|e| (e, "root")),
+    }
+}
+
 /// mAId's plugin in an agent's `plugin list --json`. claude lists one
 /// entry per scope; mAId installs at user scope.
 fn parse_listed(agent: Agent, json: &str) -> Result<Option<Listed>> {
     let v: serde_json::Value = serde_json::from_str(json)
         .with_context(|| format!("{} plugin list --json: not JSON", agent.cli()))?;
-    let (entries, id_key) = match agent {
-        Agent::Claude => (v.as_array(), "id"),
-        _ => (v["installed"].as_array(), "pluginId"),
-    };
-    let entries =
-        entries.ok_or_else(|| anyhow!("{} plugin list --json: unexpected shape", agent.cli()))?;
+    let (entries, id_key) = listed_plugins(agent, &v)
+        .ok_or_else(|| anyhow!("{} plugin list --json: unexpected shape", agent.cli()))?;
     let ours = entries
         .iter()
         .find(|e| e[id_key] == PLUGIN_ID && (agent != Agent::Claude || e["scope"] == "user"));
@@ -895,11 +915,7 @@ fn parse_listed(agent: Agent, json: &str) -> Result<Option<Listed>> {
 fn parse_recorded(agent: Agent, json: &str) -> Result<Option<PathBuf>> {
     let v: serde_json::Value = serde_json::from_str(json)
         .with_context(|| format!("{} plugin marketplace list --json: not JSON", agent.cli()))?;
-    let (entries, path_key) = match agent {
-        Agent::Claude => (v.as_array(), "path"),
-        _ => (v["marketplaces"].as_array(), "root"),
-    };
-    let entries = entries.ok_or_else(|| {
+    let (entries, path_key) = listed_marketplaces(agent, &v).ok_or_else(|| {
         anyhow!(
             "{} plugin marketplace list --json: unexpected shape",
             agent.cli()

@@ -43,11 +43,17 @@ uninstall agent="" kiro_sub="":
     {{ if agent == "" { "just resources::uninstall-profile || rc=1" } else { "" } }}
     exit $rc
 
-# Report the profile generation, the plugins, the links, and the MCP registration.
+# A step that fails stops the report and fails the run.
+# Report the profile, plugins, links and MCP; `--whole`: check every part's list on each harness.
+# `--whole` goes in either place: `just status --whole [agent]` or `just status <agent> --whole`.
 status agent="" kiro_sub="":
-    @just resources::status-profile
-    @just resources::status-skills "{{ agent }}"
-    @just resources::status-browser-mcp "{{ agent }}" "{{ kiro_sub }}"
+    #!/usr/bin/env bash
+    set -eu
+    if [ "{{ agent }}" = --whole ]; then exec just resources::status-whole "{{ kiro_sub }}"; fi
+    if [ "{{ kiro_sub }}" = --whole ]; then exec just resources::status-whole "{{ agent }}"; fi
+    just resources::status-profile
+    just resources::status-skills "{{ agent }}"
+    just resources::status-browser-mcp "{{ agent }}" "{{ kiro_sub }}"
 
 # The installable Macro test against this machine's real install, free.
 [confirm("This reinstalls mAId several times and leaves no earlier install to roll back to. Continue? (y/N)")]

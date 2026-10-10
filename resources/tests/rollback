@@ -77,6 +77,27 @@ placed_on_all() {
 }
 check "the part list names what install placed on claude, codex and kiro" placed_on_all
 
+# Whole-status reads each harness's own listing: everything mAId placed is
+# there, and a second part's list beside mAId's is checked the same way.
+whole() { inhome just status --whole "$@" >"$work/whole" 2>/dev/null; }
+shows() { grep -qx "    present        $1" "$work/whole"; }
+maid_whole() {
+  whole || return 1
+  for h in claude codex; do
+    whole $h && shows "plugin maid@maid" && shows "marketplace maid" || return 1
+  done
+  for h in kiro agy; do whole $h && shows "skill notes" || return 1; done
+}
+check "status --whole finds what mAId placed on each harness" maid_whole
+other=$(dirname "$partlist")/other.json
+echo '{"format":1,"part":"other","harnesses":{"claude":[{"kind":"marketplace","name":"maid"},{"kind":"plugin","name":"absent@nowhere"}]}}' >"$other"
+whole
+rc=$?
+check "status --whole reports a second part beside mAId's and fails on what it lacks" \
+  eval '[ $rc != 0 ] && grep -qx "  other" "$work/whole" && grep -qx "  maid-harness" "$work/whole" && grep -qx "    missing        plugin absent@nowhere" "$work/whole"'
+rm "$other"
+check "removing that list leaves mAId whole" maid_whole
+
 rollback
 rc=$?
 check "rollback returns claude, codex and kiro to the first install" \

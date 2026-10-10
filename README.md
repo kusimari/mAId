@@ -53,6 +53,7 @@ every coding agent or one (`claude|kiro|codex|agy`):
 just install [agent] [kiro-sub]     # build the profile, point the agents at it (plugin or links)
 just uninstall [agent] [kiro-sub]   # remove the plugin, the links, the MCP registration, and (no agent) the profile
 just status [agent] [kiro-sub]      # profile generation, plugins, links, MCP registration
+just status --whole [agent]         # what every part's list says it placed, checked on each harness
 just rollback                       # every agent back on the install before this one
 just verify-install                 # the end-to-end install test on this machine (free)
 just verify-install-paid            # the same, also asking each agent (9 model calls)
@@ -69,6 +70,7 @@ just resources::install-profile            # validate content + build the checko
 just resources::install-skills [agent]     # install or update the claude/codex plugin; link kiro (and agy) at the profile
 just resources::uninstall-skills [agent]   # remove the plugin and the links
 just resources::status-skills [agent]      # report each plugin's version and each link
+just resources::status-whole [agent]       # check every part's list against each harness
 just resources::check-skills [agent]      # pre-install: verify each skill from the checkout (costs API credits, gated)
 just resources::smoke-skills [agent]      # post-install: verify against the deployed tree (gated)
 just resources::verify-skills [agent]     # both stages

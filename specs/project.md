@@ -285,6 +285,36 @@ is the one writer: install and uninstall record what `Deploy::placed`
 reads back, and the browser-MCP script records its server through
 `build-tool record`.
 
+**Whole-status.** `just status --whole [agent]` reads every part's list
+(`whole.rs`) and reports each entry, per harness and part, as present
+(`present (disabled)` where the listing says the user turned it off;
+that does not fail the run), missing, skipped (with the part's reason), not checkable (no way to read
+that kind there, or the CLI is not on PATH) or unreadable. It refuses
+(and lists) a file that is not JSON, in another format, or whose `part`
+is not its file name, or an entry without a string `kind` and `name`,
+and exits non-zero when an entry is missing or
+unreadable or a file was refused.
+Presence is read from the harness's own listing or config:
+
+| Harness | skill | agent | mcp | plugin | marketplace | setting |
+|---|---|---|---|---|---|---|
+| `claude` | `~/.claude/skills/<n>/SKILL.md` | `~/.claude/agents/*.md` frontmatter `name` | `~/.claude.json` `mcpServers` (scope `user`) | `claude plugin list --json`, `user` scope only | `claude plugin marketplace list --json` | `~/.claude/settings.json` top-level key |
+| `codex` | `~/.codex/skills/<n>/SKILL.md` | - | `codex mcp list --json` | `codex plugin list --json` | `codex plugin marketplace list --json` | - |
+| `kiro-cli` | `~/.kiro/skills/<n>/SKILL.md` | `~/.kiro/agents/*.json` `name` (or file name) | the agent named by `scope`, its `mcpServers`; no scope: `~/.kiro/settings/mcp.json` | - | - | `~/.kiro/settings/cli.json` key |
+| `agy` | `~/.gemini/config/skills/<n>/SKILL.md` | - | - | - | - | - |
+
+`-` is not checkable, as is a `scope` where the harness has one place,
+and a claude plugin scope other than `user` (claude lists those per
+directory). A kiro MCP's sub-agent comes from each entry's `scope`, so
+`--whole` takes no sub-agent argument.
+claude's MCP is read from its config because `claude mcp list` and `get`
+start each server. agy is checked by path only. An agent file that does
+not parse is unreadable, by its file name, not missing.
+
+A reader of part lists keeps its own lenient structs beside the writer's
+strict ones (`whole.rs` beside `part.rs`): a kind or harness it does not
+know is one entry it cannot check, not a refused file.
+
 ## Tech Stack
 
 <!-- Languages, runtimes, frameworks, key libraries. Versions
@@ -342,7 +372,9 @@ reads back, and the browser-MCP script records its server through
     `just kaimux::test`, `just kaimux::integration`.
   - **Install** at the root: `just install [agent] [kiro-sub]`
     (profile, then skills and browser MCP), `just uninstall`,
-    `just status`, `just rollback`, and the Macro test `just
+    `just status` (`--whole`: every part's list against each
+    harness), `just
+    rollback`, and the Macro test `just
     verify-install` / `just verify-install-paid` (both `[confirm]`-gated).
     Later installables (kaimux) join here.
   - **Workspace hygiene** at the root (no namespace —
@@ -378,6 +410,7 @@ mAId/
 │   │   ├── src/harness.rs  fixtures, the five kinds, prompts, invocation, verdicts
 │   │   ├── src/deploy.rs   the Deploy trait: Plugins (claude, codex) and Symlinks (kiro, agy)
 │   │   ├── src/part.rs     mAId's part list: the format and its one writer
+│   │   ├── src/whole.rs    whole-status: every part's list, checked against each harness
 │   │   ├── src/stages.rs   content → check → install → smoke
 │   │   ├── tests/integration.rs  cross-stage tests against the real repo
 │   │   ├── tests/plugins.rs  ignored: Plugins against the real claude/codex CLIs in a temp HOME
@@ -428,6 +461,8 @@ a fake `$HOME`, `--force` semantics per state, and deployment
 detection — the tests most sensitive to a symlink-layout regression —
 and, for `Plugins`, reading each CLI's listing, the commands each
 plugin state leads to, and reaping the links an older install left.
+`whole.rs` checks each (harness, kind) against a temp HOME and stub CLIs
+on a PATH it is handed, never the real ones.
 
 `cargo test -p build-tool --test plugins -- --ignored` drives the real
 claude and codex CLIs in a temp HOME (install, update, a disabled
@@ -442,8 +477,9 @@ install whose build fails keeping the generations it would drop,
 rollback after rollback-then-install, an earlier generation the agents
 cannot take, no earlier generation, the 30-day cleanup keeping the
 previous install (also after an unchanged install), rollback past a
-link mAId did not write, and the part list install leaves (placed,
-skipped, gone after uninstall).
+link mAId did not write, the part list install leaves (placed,
+skipped, gone after uninstall), and `just status --whole` finding what
+mAId placed, then a second part's list beside it.
 Run it after any change to the profile recipes or the part list.
 
 **`just verify-install` is the installable Macro test**
@@ -821,7 +857,8 @@ the claude/codex plugin and links kiro and agy at it, and writes
 mAId's part list (see Architecture, "My harness"); `just uninstall`
 reverses it, removing the list, and removes the profile;
 `just status` reports the generation, each plugin and
-each link; `just rollback` returns every agent to the previous install
+each link, and `just status --whole` checks every part's list against
+each harness; `just rollback` returns every agent to the previous install
 (no selector: the profile is shared). `just resources::verify-skills` drives the
 real AI tools against the installed content. Each takes an
 optional coding-agent selector (`claude|kiro|codex`; omit for all

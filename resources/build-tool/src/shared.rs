@@ -67,7 +67,7 @@ pub enum Kind {
 /// One coding agent mAId deploys to. Rows below are keyed by this, so
 /// the variant — not a string — is what identifies an agent; the only
 /// place a name is spelled is `Agent::name`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Agent {
     Claude,
     Kiro,
@@ -185,6 +185,21 @@ impl Agent {
         self.entry().map(|(home_sub, ..)| home.join(home_sub))
     }
 
+    /// The dir under `$HOME` this agent reads standalone skills from: its
+    /// REGISTRY row, or for a plugin agent where mAId linked skills before
+    /// it shipped a plugin.
+    pub fn user_skills_dir(self) -> &'static str {
+        self.entry()
+            .map(|(home_sub, ..)| *home_sub)
+            .or_else(|| {
+                PLUGIN_AGENTS
+                    .iter()
+                    .find(|(a, ..)| *a == self)
+                    .map(|(_, sub, _)| *sub)
+            })
+            .expect("every agent has a skills dir")
+    }
+
     /// Where this agent reads `<skill>`'s SKILL.md once installed — the
     /// post-install source, i.e. what the deployment exposes.
     pub fn installed_skill(self, home: &Path, skill: &str) -> Option<PathBuf> {
@@ -298,8 +313,14 @@ pub fn parts_dir() -> Result<PathBuf> {
 /// Whether a program is on PATH. Scans PATH directly: `command -v` is a
 /// shell builtin, so spawning it always fails.
 pub fn on_path(program: &str) -> bool {
-    std::env::var_os("PATH")
-        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
+    find_on(std::env::var_os("PATH").as_deref(), program).is_some()
+}
+
+/// Where `program` is in a PATH value.
+pub fn find_on(path: Option<&std::ffi::OsStr>, program: &str) -> Option<PathBuf> {
+    std::env::split_paths(path?)
+        .map(|dir| dir.join(program))
+        .find(|p| p.is_file())
 }
 
 pub fn home_dir() -> Result<PathBuf> {

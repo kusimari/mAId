@@ -113,6 +113,11 @@ uninstall-skills agent="" *FLAGS:
 status-skills agent="":
     cargo run -p build-tool --release --quiet -- status {{ if agent != "" { "--agent " + agent } else { "" } }}
 
+# Check every part's list against each harness (optionally one); see `just status --whole`.
+[no-cd]
+status-whole agent="":
+    cargo run -p build-tool --release --quiet -- whole {{ if agent != "" { "--agent " + agent } else { "" } }}
+
 # ── verification ─────────────────────────────────────────────────
 # Two stages, on opposite sides of install. `check` reads each skill from
 # the CHECKOUT: its kinds name the skill's path in the prompt, so nothing

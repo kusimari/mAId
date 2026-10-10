@@ -20,6 +20,8 @@
 //!               about $HOME layout, behind a swappable trait
 //!   stages.rs   the pipeline: content, check, install, smoke. Declares
 //!               what it wants; `deploy` and `harness` do it.
+//!   whole.rs    whole-status: every part's list, checked against each
+//!               base harness's own listing or config
 //!
 //! Dependencies run one direction — later stages may read earlier ones
 //! and the shared vocabulary, never the reverse — which is readable off
@@ -34,3 +36,4 @@ pub mod harness;
 pub mod part;
 pub mod shared;
 pub mod stages;
+pub mod whole;
