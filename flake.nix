@@ -107,7 +107,7 @@
           buildInputs = [
             rustToolchain
             pkgs.just
-            pkgs.jq # the install tests read the agents' JSON
+            pkgs.jq # the install tests read the agents' JSON; install edits kiro's MCP config
           ];
         };
       }

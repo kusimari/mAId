@@ -50,9 +50,9 @@ Feature specs: [`specs/feature/`](./specs/feature/).
 every coding agent or one (`claude|kiro|codex|agy`):
 
 ```
-just install [agent] [kiro-sub]     # build the profile, point the agents at it (plugin or links)
-just uninstall [agent] [kiro-sub]   # remove the plugin, the links, the MCP registration, and (no agent) the profile
-just status [agent] [kiro-sub]      # profile generation, plugins, links, MCP registration
+just install [agent]                # build the profile, point the agents at it (plugin or links)
+just uninstall [agent]              # remove the plugin, the links, the MCP registration, and (no agent) the profile
+just status [agent]                 # profile generation, plugins, links, MCP registration
 just status --whole [agent]         # what every part's list says it placed, checked on each harness
 just rollback                       # every agent back on the install before this one
 just verify-install                 # the end-to-end install test on this machine (free)
@@ -77,11 +77,11 @@ just resources::verify-skills [agent]     # both stages
 just resources::verify-skills-one <name> [agent]   # single fixture, both stages
 just resources::verify-skills-dry [name]  # construct + structurally check every prompt; free
 
-just resources::install-browser-mcp [agent] [kiro-sub]     # register the browser-control MCP server (claude/codex global; kiro into the named sub-agent)
-just resources::uninstall-browser-mcp [agent] [kiro-sub]   # remove it (keeps your allowlist)
-just resources::status-browser-mcp [agent] [kiro-sub]      # report registration state + allowlist size
+just resources::install-browser-mcp [agent]               # register the browser-control MCP server (globally, for each agent)
+just resources::uninstall-browser-mcp [agent]             # remove it (keeps your allowlist)
+just resources::status-browser-mcp [agent]                # report registration state + allowlist size
 just resources::browser-mcp-allow <pattern>               # append a site pattern to the allowlist
-just resources::verify-browser-mcp [claude|kiro|codex] [kiro-sub]   # ATTENDED: drives real Chrome (run by hand)
+just resources::verify-browser-mcp [claude|kiro|codex] [kiro-agent]   # ATTENDED: drives real Chrome (run by hand)
 ```
 
 **`kaimux::*`** — operate on the kaimux crate:
@@ -217,15 +217,11 @@ Three things to know before first use:
    logged-in site. Edit it directly or use
    `resources::browser-mcp-allow '<pattern>'`; changes take
    effect on the next session — Chrome is not restarted.
-3. **Kiro is per-agent.** Claude and codex expose a registered
-   server to every session, so no agent is named. Kiro partitions
-   MCP servers per agent and `kiro-cli chat` runs a specific agent
-   — so name the sub-agent to register into:
-   `just install kiro <kiro-sub>`. Omit it
-   and kiro is skipped (claude and codex still install). mAId
-   never guesses which of your agents to write into. Use the
-   *same* sub-agent name when testing:
-   `… verify-browser-mcp kiro <kiro-sub>`.
+3. **Kiro reads it from its global MCP config.** mAId adds
+   `chrome-devtools` to `~/.kiro/settings/mcp.json` and touches no
+   other entry there. A kiro agent sees it when it pulls in the
+   global config (kiro's default agent does). If that file already
+   has a `chrome-devtools` that is not mAId's, mAId leaves it alone.
 
 The `browser` skill teaches the agent the safe driving loop and
 the attended-use safety posture. `uninstall-browser-mcp` removes

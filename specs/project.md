@@ -217,14 +217,26 @@ re-auth. Its shape differs from skills in two ways:
 - **Registration vs. runtime split.** A skill lives entirely
   in the harness config as a symlink. An MCP server is an
   out-of-process service the harness *calls*, so only its
-  *registration* goes in each harness config (`claude mcp
-  add` / `kiro-cli mcp add`); its *runtime* (the pinned
+  *registration* goes in each harness's global config (`claude mcp
+  add` / `codex mcp add`, and for kiro an edit of
+  `~/.kiro/settings/mcp.json`); its *runtime* (the pinned
   chrome-devtools-mcp and its Node) is a closure in the mAId
   profile. This is why the registry
   above can't express it — registration is a runnable command,
   not a symlink — so it lives in `resources::browser-mcp-*`
   Just verbs (shell over each harness's MCP CLI), keeping the
   Rust build-tool pure-symlink.
+- **Kiro's registration is a direct edit.** `kiro-cli mcp add`
+  needs a login and writes every other server back through its own
+  struct, dropping keys it does not know, so `manage` sets mAId's
+  entry in kiro's global config with `jq` and leaves every other key
+  as it is. The entry is mAId's only while its `command` is the
+  profile's `bin/maid-browser-mcp`: install and uninstall leave any
+  other `chrome-devtools` alone (install records it as skipped, "not
+  mAId's"). The write is atomic (a temp file beside the resolved
+  target, with its mode, renamed over it), and uninstall needs no
+  `kiro-cli`. Kiro agents get it by pulling the global config in; mAId
+  writes into no kiro agent file.
 - **Browser-enforced allowlist.** The agent may act only on
   sites in a user-owned allowlist file
   (`${XDG_CONFIG_HOME:-$HOME/.config}/maid/browser-allowlist`).
@@ -281,7 +293,7 @@ whole-status reads every `*.json` file in the dir that is not a dotfile.
     ],
     "kiro-cli": [
       { "kind": "skill", "name": "notes" },
-      { "kind": "mcp", "name": "chrome-devtools", "scope": "my-agent" }
+      { "kind": "mcp", "name": "chrome-devtools" }
     ]
   }
 }
@@ -294,8 +306,9 @@ whole-status reads every `*.json` file in the dir that is not a dotfile.
   `kiro-cli`, `agy`), one list of entries each.
 - `kind`: `skill`, `mcp`, `agent`, `plugin`, `marketplace` or
   `setting`. `name`: what the harness's own listing calls it.
-- `scope`, optional: where inside the harness, when it has more than
-  one place (kiro's MCP servers live per sub-agent).
+- `scope`, optional: where inside the harness, for a part that places
+  something in one of several places. mAId places everything in one
+  place per harness and writes none.
 - `skipped`, optional: install meant to place this and did not, and
   why. A reader reports such an entry and does not check it for
   presence.
@@ -351,7 +364,8 @@ know is one entry it cannot check, not a refused file.
 - **Isolation:** one flake, two outputs. `devShells.default`
   (loaded by `.envrc` via direnv) is the dev closure: the rust
   toolchain (rust-overlay), `just`, and `jq` (the install tests read
-  the agents' JSON). `packages.default` is
+  the agents' JSON, and the browser MCP install edits kiro's global
+  config with it). `packages.default` is
   the installable: the skills plus `chrome-devtools-mcp`
   (packaged from its npm tarball, which has no dependencies)
   wrapped with `nodejs_22`.
@@ -387,7 +401,7 @@ know is one entry it cannot check, not a refused file.
     [name]` (construct and structurally check every prompt
     without calling an agent; free).
     Browser-control MCP adds
-    `install-browser-mcp [agent] [kiro-sub]` /
+    `install-browser-mcp [agent]` /
     `uninstall-browser-mcp` / `status-browser-mcp` /
     `browser-mcp-allow <pattern>` (register/report the server
     + append allowlist patterns), plus `verify-browser-mcp`
@@ -395,7 +409,7 @@ know is one entry it cannot check, not a refused file.
   - **`kaimux::*`** (operate on the kaimux crate):
     `just kaimux::build` (release + copy to `dist/`),
     `just kaimux::test`, `just kaimux::integration`.
-  - **Install** at the root: `just install [agent] [kiro-sub]`
+  - **Install** at the root: `just install [agent]`
     (profile, then skills and browser MCP), `just uninstall`,
     `just status` (`--whole`: every part's list against each
     harness), `just
@@ -446,9 +460,10 @@ mAId/
 │   │   └── skills/kyodakit/ SKILL.md: developer judgement, any language
 │   ├── browser/            browser-control MCP (not symlinked — runnable)
 │   │   ├── launch          allowlist-enforcing launcher; the flake wraps it as maid-browser-mcp
-│   │   └── manage          data-driven MCP registrar (MCP_AGENTS table: claude/codex global, kiro per-sub-agent)
+│   │   └── manage          data-driven MCP registrar (MCP_AGENTS table; every agent global, kiro by editing its config)
 │   └── tests/              fixtures + the attended browser test (the runner itself is in build-tool)
 │       ├── browser-functional   ATTENDED test: drives real Chrome, asserts off-list blocked
+│       ├── browser-mcp          free: kiro's browser MCP registration, temp HOME, stub CLIs
 │       ├── rollback             free: `just rollback` and install's generation cleanup, temp HOME
 │       ├── verify-install       the installable Macro test, on the real install (`just verify-install`)
 │       ├── conversational-stream.txt  the --stressed prefix
@@ -497,6 +512,16 @@ another plugin uses, the user's own marketplace kept and not claimed, and
 an unreachable source failing the run. Free (no model calls) but needs
 both CLIs and network (it clones the vendor repo), so it is out of `just
 test`; run it after any change to `Plugins` or `BringIns`.
+
+`nix develop -c resources/tests/browser-mcp` drives
+`resources/browser/manage` for kiro in a temp HOME with stub `kiro-cli`
+and Chrome (free, seconds): other servers and keys in kiro's global
+config kept, reruns byte-identical, a same-named entry that is not
+mAId's left alone, a config that is not JSON left alone, a linked
+config kept a link with its mode through an atomic rename, a link
+cycle refused, uninstall with no `kiro-cli`, the part list's entries
+and whole-status reading them, and kiro-cli never run. Run it after
+any change to `manage`.
 
 `nix develop -c resources/tests/rollback` drives `just rollback` and
 install's generation cleanup against the real claude and codex CLIs in a
@@ -897,9 +922,9 @@ three). App workspace members (`kaimux/`) build via
 --release` + copy into `dist/`).
 
 The browser-control MCP is registered by `just install` too
-(env-gated): `just resources::install-browser-mcp [agent]
-[kiro-sub]`, which it calls, registers the server with each harness
-(claude/codex global; kiro per named sub-agent) and prints the
+(env-gated): `just resources::install-browser-mcp [agent]`, which
+it calls, registers the server globally with each harness (kiro in
+its global MCP config) and prints the
 one-time manual step (enable Chrome remote debugging via
 `chrome://inspect`). It graceful-skips where a prereq is missing
 (no GUI Chrome, no harness CLI) — never a

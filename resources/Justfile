@@ -213,29 +213,27 @@ verify-skills-dry name="":
 # profile path, so later installs need no re-registration.
 #
 # Every verb takes the uniform coding-agent selector as its first
-# argument (claude|kiro|codex; omit for all three). Kiro partitions
-# MCP servers per named sub-agent, so targeting kiro also needs a
-# trailing sub-agent name; omit it and kiro is skipped (claude and
-# codex are global — their server is visible to every session).
+# argument (claude|kiro|codex; omit for all three). Each registration
+# is global: claude's and codex's user config, kiro's global MCP
+# config, which kiro agents pull in.
 
 # Usage:
 #   just resources::install-browser-mcp             (all three)
 #   just resources::install-browser-mcp codex       (codex only)
-#   just resources::install-browser-mcp kiro my-sub  (kiro sub-agent)
 # Register the browser-control MCP server (optionally for one agent).
 [no-cd]
-install-browser-mcp agent="" kiro_sub="":
-    resources/browser/manage install "$MAID_PROFILE/bin/maid-browser-mcp" "{{ agent }}" "{{ kiro_sub }}"
+install-browser-mcp agent="":
+    resources/browser/manage install "$MAID_PROFILE/bin/maid-browser-mcp" "{{ agent }}"
 
 # Remove the browser-control server registration (keeps allowlist).
 [no-cd]
-uninstall-browser-mcp agent="" kiro_sub="":
-    resources/browser/manage uninstall "{{ agent }}" "{{ kiro_sub }}"
+uninstall-browser-mcp agent="":
+    resources/browser/manage uninstall "$MAID_PROFILE/bin/maid-browser-mcp" "{{ agent }}"
 
 # Report browser-control registration state and allowlist size.
 [no-cd]
-status-browser-mcp agent="" kiro_sub="":
-    resources/browser/manage status "{{ agent }}" "{{ kiro_sub }}"
+status-browser-mcp agent="":
+    resources/browser/manage status "$MAID_PROFILE/bin/maid-browser-mcp" "{{ agent }}"
 
 # Append a site pattern to the allowlist verbatim (hand-edit fallback).
 [no-cd]
@@ -248,13 +246,13 @@ browser-mcp-allow pattern:
 # by hand. Requires install-browser-mcp + Chrome remote debugging.
 # The `verify-browser-mcp` name mirrors `verify-skills`: it's the
 # token/attended verify for the installable. Omit the agent to drive
-# every available one; kiro is tested only when its sub-agent name is
-# given (the agent that carries the chrome-devtools server). e.g.
+# every available one; kiro runs its default agent, or the one named
+# (it must pull in kiro's global MCP config). e.g.
 #   just resources::verify-browser-mcp                 (all available)
 #   just resources::verify-browser-mcp codex
 #   just resources::verify-browser-mcp kiro my-agent
 # ATTENDED: drive real Chrome via the browser MCP; confirm off-list blocked.
 [confirm("This drives your real Chrome through the coding agents. Chrome must be running with remote debugging enabled. Continue? (y/N)")]
 [no-cd]
-verify-browser-mcp agent="" kiro_sub="":
-    resources/tests/browser-functional {{ agent }} {{ if kiro_sub != "" { "--kiro-agent=" + kiro_sub } else { "" } }}
+verify-browser-mcp agent="" kiro_agent="":
+    resources/tests/browser-functional {{ agent }} {{ if kiro_agent != "" { "--kiro-agent=" + kiro_agent } else { "" } }}

@@ -73,7 +73,7 @@ placed_on_all() {
   for h in claude codex; do
     entries $h | grep -qx "plugin maid@maid" && entries $h | grep -qx "marketplace maid" && mcp_entry $h || return 1
   done
-  entries kiro-cli | grep -qx "skill notes"
+  entries kiro-cli | grep -qx "skill notes" && mcp_entry kiro-cli
 }
 check "the part list names what install placed on claude, codex and kiro" placed_on_all
 vendor=anthropic-agent-skills
