@@ -59,7 +59,7 @@ Under a scratch HOME:
 |---|---|---|---|---|
 | M1 | harness-contract | Vocabulary, additivity rules, part-list format; install writes `parts/maid-harness.json` | - | merged |
 | M5 | whole-status | `just status --whole` reads every part list and checks each harness | M1 | merged |
-| M3 | vendor-marketplaces | Vendor marketplaces as bring-ins (backlog `office-document-skills`) | M1 | running |
+| M3 | vendor-marketplaces | Vendor marketplaces as bring-ins (backlog `office-document-skills`) | M1 | merged |
 | M2 | memory | Memory skill, the way into the store per harness, `just memory-harvest` | M1 | running |
 | M6 | kiro-global-mcp | kiro gets mAId's MCP server from kiro's global MCP config, not a named sub-agent | M1 | running |
 | M4 | agy-verified | agy loads skills and the memory include | M2 | planned |
