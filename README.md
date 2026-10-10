@@ -50,13 +50,22 @@ Feature specs: [`specs/feature/`](./specs/feature/).
 every coding agent or one (`claude|kiro|codex|agy`):
 
 ```
-just install [agent]                # build the profile, point the agents at it (plugin or links)
+just install [agent]                # build the profile, point the agents at it (plugin or links), and claude's memory at the default store
 just uninstall [agent]              # remove the plugin, the links, the MCP registration, and (no agent) the profile
-just status [agent]                 # profile generation, plugins, links, MCP registration
+just status [agent]                 # profile generation, plugins, links, MCP registration, memory stores
 just status --whole [agent]         # what every part's list says it placed, checked on each harness
 just rollback                       # every agent back on the install before this one
 just verify-install                 # the end-to-end install test on this machine (free)
 just verify-install-paid            # the same, also asking each agent (9 model calls)
+```
+
+**Memory** (root) - stores are git checkouts you own; memories live in
+`<store>/memory/` in Claude Code's own format:
+
+```
+just memory-store <name> <path> [--default]   # add or update a store (an existing checkout); --default: automatic memory goes there
+just memory-store-remove <name>               # forget a store (the checkout is left alone)
+just memory-harvest [--to <name>]             # copy each agent's own memory into a store, leaving the originals
 ```
 
 Three more groups, namespaced by what they touch:
@@ -82,6 +91,11 @@ just resources::uninstall-browser-mcp [agent]             # remove it (keeps you
 just resources::status-browser-mcp [agent]                # report registration state + allowlist size
 just resources::browser-mcp-allow <pattern>               # append a site pattern to the allowlist
 just resources::verify-browser-mcp [claude|kiro|codex] [kiro-agent]   # ATTENDED: drives real Chrome (run by hand)
+
+just resources::add-memory-store <name> <path> [--default]  # what `just memory-store` wraps
+just resources::remove-memory-store <name>                  # what `just memory-store-remove` wraps
+just resources::status-memory                               # every configured store, and where claude's memory goes
+just resources::harvest-memory [--to <name>]                # what `just memory-harvest` wraps
 ```
 
 **`kaimux::*`** — operate on the kaimux crate:

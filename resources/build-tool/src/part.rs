@@ -44,6 +44,10 @@ pub struct Item {
     pub scope: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skipped: Option<String>,
+    /// For a setting: the value the part set, so it can tell its own value
+    /// from another part's later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
 }
 
 impl Item {
@@ -53,6 +57,7 @@ impl Item {
             name: name.into(),
             scope: None,
             skipped: None,
+            value: None,
         }
     }
 
@@ -303,6 +308,24 @@ mod tests {
         let parts = dir.path().join("parts");
         record(&parts, Agent::Kiro, SKILL, None, vec![]).unwrap();
         assert!(!parts.exists());
+    }
+
+    #[test]
+    fn a_settings_value_is_read_back() {
+        let dir = TempDir::new().unwrap();
+        let item = Item {
+            value: Some("/s/memory".into()),
+            ..Item::placed(What::Setting, "k")
+        };
+        record(
+            dir.path(),
+            Agent::Claude,
+            &[What::Setting],
+            None,
+            vec![item.clone()],
+        )
+        .unwrap();
+        assert_eq!(placed(dir.path(), Agent::Claude).unwrap(), vec![item]);
     }
 
     #[test]

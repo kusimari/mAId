@@ -13,6 +13,8 @@
 export MAID_PROFILE := env("MAID_PROFILE", env("XDG_STATE_HOME", env("HOME") / ".local/state") / "maid/profile")
 # Every part of my harness keeps its part list here; mAId's is maid-harness.json.
 export MY_HARNESS_PARTS := env("MY_HARNESS_PARTS", env("XDG_STATE_HOME", env("HOME") / ".local/state") / "my-harness/parts")
+# Every part's memory config (its stores, at most one default); mAId's is maid-harness.json.
+export MY_HARNESS_MEMORY := env("MY_HARNESS_MEMORY", env("XDG_CONFIG_HOME", env("HOME") / ".config") / "my-harness/memory")
 
 # Validate content and build this checkout into the mAId profile.
 # Nix sees tracked files only, so `git add` a new file first.
@@ -198,6 +200,33 @@ verify-skills-kind kind agent="":
 [no-cd]
 verify-skills-dry name="":
     cargo run -p build-tool --release --quiet -- verify {{ if name != "" { name } else { "" } }} --dry-run
+
+# ── memory ───────────────────────────────────────────────────────
+# Memory stores are git checkouts the user owns, memories under
+# `<store>/memory/`. mAId configures only its own stores, names a default
+# only when told to (`--default`), and never writes to a store that is not
+# configured or not there. Install points claude's automatic memory at
+# mAId's default store.
+
+# Add or update one of mAId's memory stores (an existing checkout); --default to make it the default.
+[no-cd]
+add-memory-store name path *FLAGS:
+    cargo run -p build-tool --release --quiet -- memory add-store {{ quote(name) }} {{ quote(path) }} {{ FLAGS }}
+
+# Remove one of mAId's memory stores (the store itself is left alone).
+[no-cd]
+remove-memory-store name:
+    cargo run -p build-tool --release --quiet -- memory remove-store {{ quote(name) }}
+
+# Report every configured memory store and where claude's memory goes.
+[no-cd]
+status-memory:
+    cargo run -p build-tool --release --quiet -- memory status
+
+# Copy each agent's own memory into a store (--to <name>; default the default store).
+[no-cd]
+harvest-memory *FLAGS:
+    cargo run -p build-tool --release --quiet -- memory harvest {{ FLAGS }}
 
 # ── browser-control MCP ──────────────────────────────────────────
 # Register Google's chrome-devtools-mcp with the installed agent

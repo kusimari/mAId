@@ -18,10 +18,12 @@
 use anyhow::Result;
 use build_tool::deploy::{BringIns, Deployment, NoDeploy, Plugins, Symlinks};
 use build_tool::harness::{Selection, Stage};
+use build_tool::memory;
 use build_tool::part::What;
 use build_tool::shared::{
-    home_dir, parts_dir, profile_dir, repo_root, usage, validate_agent, validate_agents, Agent,
-    UsageError, BRING_INS, CONTENT_DIR, PROFILE_CONTENT_DIR,
+    codex_home, home_dir, memory_config_dir, parts_dir, profile_dir, repo_root, usage,
+    validate_agent, validate_agents, Agent, UsageError, BRING_INS, CONTENT_DIR,
+    PROFILE_CONTENT_DIR,
 };
 use build_tool::stages;
 use clap::{Parser, Subcommand};
@@ -132,6 +134,31 @@ enum Cmd {
         /// What was placed; none clears this kind and scope.
         names: Vec<String>,
     },
+    /// Memory stores: configure them, report them, harvest into one.
+    #[command(subcommand)]
+    Memory(MemoryCmd),
+}
+
+#[derive(Subcommand)]
+enum MemoryCmd {
+    /// Add or update one of mAId's stores (an existing checkout).
+    AddStore {
+        name: String,
+        path: std::path::PathBuf,
+        /// Also make it the default store, unless another part names one.
+        #[arg(long)]
+        default: bool,
+    },
+    /// Remove one of mAId's stores.
+    RemoveStore { name: String },
+    /// Report every configured store and where Claude's memory goes.
+    Status,
+    /// Copy each harness's own memory into a store, leaving the originals.
+    Harvest {
+        /// A configured store; default the default store.
+        #[arg(long)]
+        to: Option<String>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -184,21 +211,38 @@ fn run(cli: Cli) -> Result<u8> {
         // No deployment target at all: the guarantee is structural.
         Cmd::Check(args) => verify(Stage::Check, args, &NoDeploy, &root, false),
         Cmd::Validate => stages::cmd_validate(&root.join(CONTENT_DIR)),
-        Cmd::Install(a) => stages::cmd_install(
-            &deployment_for(true)?,
-            &profile_dir()?.join(PROFILE_CONTENT_DIR),
-            &parts_dir()?,
-            a.dry_run,
-            a.force,
-            validate_agent(a.agent.as_deref())?,
-        ),
-        Cmd::Uninstall(a) => stages::cmd_uninstall(
-            &deployment_for(true)?,
-            &parts_dir()?,
-            a.dry_run,
-            a.force,
-            validate_agent(a.agent.as_deref())?,
-        ),
+        Cmd::Install(a) => {
+            let agent = validate_agent(a.agent.as_deref())?;
+            let rc = stages::cmd_install(
+                &deployment_for(true)?,
+                &profile_dir()?.join(PROFILE_CONTENT_DIR),
+                &parts_dir()?,
+                a.dry_run,
+                a.force,
+                agent,
+            )?;
+            let memory = stages::cmd_install_memory(
+                &home_dir()?,
+                &memory_config_dir()?,
+                &parts_dir()?,
+                a.dry_run,
+                agent,
+            )?;
+            Ok(rc.max(memory))
+        }
+        Cmd::Uninstall(a) => {
+            let agent = validate_agent(a.agent.as_deref())?;
+            let rc = stages::cmd_uninstall(
+                &deployment_for(true)?,
+                &parts_dir()?,
+                a.dry_run,
+                a.force,
+                agent,
+            )?;
+            let memory =
+                stages::cmd_uninstall_memory(&home_dir()?, &parts_dir()?, a.dry_run, agent)?;
+            Ok(rc.max(memory))
+        }
         Cmd::Status(a) => stages::cmd_status(&deployment()?, validate_agent(a.agent.as_deref())?),
         Cmd::Whole { agent } => build_tool::whole::cmd_whole(
             &parts_dir()?,
@@ -225,6 +269,29 @@ fn run(cli: Cli) -> Result<u8> {
             skipped.as_deref(),
             &names,
         ),
+        Cmd::Memory(m) => {
+            let config = memory_config_dir()?;
+            match m {
+                MemoryCmd::AddStore {
+                    name,
+                    path,
+                    default,
+                } => {
+                    println!("{}", memory::add_store(&config, &name, &path, default)?);
+                    Ok(0)
+                }
+                MemoryCmd::RemoveStore { name } => {
+                    println!("{}", memory::remove_store(&config, &name)?);
+                    Ok(0)
+                }
+                MemoryCmd::Status => {
+                    stages::cmd_memory_status(&home_dir()?, &config, &parts_dir()?)
+                }
+                MemoryCmd::Harvest { to } => {
+                    stages::cmd_harvest(&home_dir()?, &codex_home()?, &config, to.as_deref())
+                }
+            }
+        }
     }
 }
 

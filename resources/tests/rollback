@@ -22,6 +22,8 @@ export CARGO_HOME=${CARGO_HOME:-$HOME/.cargo} CARGO_TARGET_DIR=$here/target
 # nix keeps its settings and fetch cache under these; the agents do not.
 export XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config} XDG_CACHE_HOME=${XDG_CACHE_HOME:-$HOME/.cache}
 unset CODEX_HOME CLAUDE_CONFIG_DIR XDG_STATE_HOME MY_HARNESS_PARTS
+# XDG_CONFIG_HOME stays real for nix, so the memory config must not.
+export MY_HARNESS_MEMORY=$work/config/my-harness/memory
 
 fails=0
 check() {

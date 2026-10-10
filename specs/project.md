@@ -312,6 +312,8 @@ whole-status reads every `*.json` file in the dir that is not a dotfile.
 - `skipped`, optional: install meant to place this and did not, and
   why. A reader reports such an entry and does not check it for
   presence.
+- `value`, optional: for a `setting`, the value the part set, so a later
+  install can tell its own value from another part's.
 - An entry without `skipped` is placed: the harness lists it, in
   whatever state (a plugin the user disabled is still placed).
 
@@ -351,6 +353,62 @@ not parse is unreadable, by its file name, not missing.
 A reader of part lists keeps its own lenient structs beside the writer's
 strict ones (`whole.rs` beside `part.rs`): a kind or harness it does not
 know is one entry it cannot check, not a refused file.
+
+**Memory.** A memory store is a git checkout the user owns; its memories
+are `<store>/memory/`, in Claude Code's own auto-memory format: an index
+`MEMORY.md` (one line per memory, `- [name](file.md) - hook`) and one file
+per memory with frontmatter `name`, `description` and `metadata.type`
+(`user`, `feedback`, `project` or `reference`). Syncing a store (pull,
+commit, push) is the user's.
+
+Stores are configured per part, one file each in
+`${XDG_CONFIG_HOME:-$HOME/.config}/my-harness/memory/<part>.json`:
+
+```json
+{ "format": 1, "part": "maid-harness",
+  "default": "personal",
+  "stores": { "personal": "/home/me/stores/personal" } }
+```
+
+- Readers take the union of every non-dotfile `*.json`. A file of an
+  unknown format is reported and ignored. A store name in two files is
+  unusable, and two files setting `default` leave no default: nothing is
+  routed by guess.
+- A part writes only its own file. The default is a one-value setting
+  (rule 3): a part sets `default` only when no other file holds one or its
+  own already does, and only when the user asks (mAId: `just memory-store
+  <name> <path> --default`); install never names one.
+- Automatic memory goes only to the default store. Another store gets only
+  what the user names it for in that request. Nothing is written to a
+  store that is not configured, or whose path is gone; that is reported.
+
+**Claude's `autoMemoryDirectory` follows the default store.** In user
+settings (`~/.claude/settings.json`) it replaces every project's memory dir
+with one shared dir, so the store's `MEMORY.md` is cross-project and must
+stay small: Claude loads its first 200 lines or 25 KB. Its value is a
+part's only when it equals the `value` the part's list records having set
+(rule 2: a part owns what it wrote). A value set by hand is another's, even
+one naming the part's own store, and is left alone.
+A part's install sets it to its default store's `memory/` dir only when its
+own file names the default, that store exists, and the key is empty or
+already the part's; when its own file no longer names a usable default and
+the key is still the part's, install removes it, so the part now owning the
+default can claim it. Any other value is left, and the part list records
+the skip (mAId: `not mAId's`, `mAId names no default memory
+store`, `default memory store missing`, `claude not on PATH`). Uninstall
+removes only the part's own value. The store verbs never write the
+setting; when the default changes they print "run `just install` to
+apply to claude".
+
+The other base harnesses reach the store through the `memory` skill
+(write, recall, list): codex's own `memories` feature stays off (its
+default) and mAId writes no codex config; kiro-cli has no automatic memory,
+and loading the index at session start needs a `resources` entry in an
+agent config, which is the owning part's to add. `just memory-harvest
+[--to <store>]` copies Claude's per-project memories and codex's
+`memories/` registry (if any) into a store, never changing the originals;
+a rerun changes nothing, and a same-name different memory lands as
+`<stem>-N.md`, reported.
 
 ## Tech Stack
 
@@ -409,6 +467,10 @@ know is one entry it cannot check, not a refused file.
   - **`kaimux::*`** (operate on the kaimux crate):
     `just kaimux::build` (release + copy to `dist/`),
     `just kaimux::test`, `just kaimux::integration`.
+  - **Memory** at the root: `just memory-store <name> <path>
+    [--default]`, `just memory-store-remove <name>`, `just memory-harvest
+    [--to <name>]`; `just status` reports the stores. Each wraps a
+    `resources::*-memory*` verb over `build-tool memory`.
   - **Install** at the root: `just install [agent]`
     (profile, then skills and browser MCP), `just uninstall`,
     `just status` (`--whole`: every part's list against each
@@ -450,10 +512,13 @@ mAId/
 │   │   ├── src/deploy.rs   the Deploy trait: Plugins (claude, codex), Symlinks (kiro, agy), BringIns
 │   │   ├── src/part.rs     mAId's part list: the format and its one writer
 │   │   ├── src/whole.rs    whole-status: every part's list, checked against each harness
+│   │   ├── src/memory.rs   memory stores, Claude's autoMemoryDirectory, harvest
 │   │   ├── src/stages.rs   content → check → install → smoke
 │   │   ├── tests/integration.rs  cross-stage tests against the real repo
 │   │   ├── tests/plugins.rs  ignored: Plugins and BringIns against the real claude/codex CLIs in a temp HOME
-│   │   └── tests/no_cli.rs   install with no agent CLI on PATH keeps the old links
+│   │   ├── tests/no_cli.rs   install with no agent CLI on PATH keeps the old links
+│   │   ├── tests/memory.rs   the memory verbs through the binary, temp HOME
+│   │   └── tests/memory_install.rs  install's claude memory step and its part list
 │   ├── content/            the deployable skills (copied into the profile)
 │   │   ├── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
 │   │   ├── skills/kdevkit/  SKILL.md core + phases/, tiers/, setup.md, interviews.md
@@ -615,7 +680,7 @@ task a user phrases implicitly, so the cell has no natural test.
 **`activation` and `discovery` depend on a self-announce contract.** A
 skill that declares `You begin every response … with the literal line
 [<skill>] applies` (today: `browser`, `notes`, `writing-style`,
-`kreviewkit`, `kyodakit`) can be
+`kreviewkit`, `kyodakit`, `memory`) can be
 checked at the reply level, because the marker is text the agent can
 only know from the file. The announce line is there for the reader, not
 for ceremony — it attributes a reply to a written contract rather than
@@ -742,7 +807,14 @@ expect: <narrative the judge scores against>
 task: <the imperative task, phrased as a user would>
 expect: <narrative>          for prose skills with no artefact
 --- setup --- / --- assert --- optional; seed and inspect a workdir
+config_home: <dir>           optional; XDG_CONFIG_HOME=<workdir>/<dir> for every run
 ```
+
+A skill that reads user config (`memory`) gets a seeded one through
+`config_home:`: agents run with the real HOME, so without it a fixture would
+read the user's real stores. For such a fixture the runner also sends claude's own
+automatic memory to `<workdir>/claude-auto` (`--settings`), so a fixture
+never writes into the user's real store either.
 
 `--dry-run` on either stage constructs every prompt and checks it
 structurally **without calling an agent** — explicit prompts must carry
@@ -908,9 +980,10 @@ slice.
 Not a service — consumed locally.
 `just install` validates content, builds the mAId profile, installs
 the claude/codex plugin and links kiro and agy at it, registers the
-vendor marketplaces it brings in (Architecture, "Bring-ins"), and writes
-mAId's part list (see Architecture, "My harness"); `just uninstall`
-reverses it, removing the list, and removes the profile;
+vendor marketplaces it brings in (Architecture, "Bring-ins"), points
+Claude's automatic memory at mAId's default memory store (Architecture,
+"Memory"), and writes mAId's part list (see Architecture, "My harness");
+`just uninstall` reverses it, removing the list, and removes the profile;
 `just status` reports the generation, each plugin and
 each link, and `just status --whole` checks every part's list against
 each harness; `just rollback` returns every agent to the previous install

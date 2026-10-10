@@ -163,6 +163,8 @@ impl Kind {
 //   task: <the imperative task, phrased as a user would>
 //   expect: <narrative>          for prose skills with no artefact
 //   expect_substr: <string>      optional extra literal check
+//   config_home: <dir>           optional; the agent, setup and assert
+//                                run with XDG_CONFIG_HOME=<workdir>/<dir>
 //   --- setup ---                optional; seeds a scratch workdir
 //   <shell>
 //   --- assert ---               optional; inspects the workdir after
@@ -187,6 +189,9 @@ pub struct Fixture {
     pub enact: Option<Section>,
     pub setup: Option<String>,
     pub assert: Option<String>,
+    /// Workdir-relative `XDG_CONFIG_HOME` for every run of this fixture, so
+    /// a skill that reads user config meets a seeded one, never the real.
+    pub config_home: Option<String>,
 }
 
 impl Fixture {
@@ -220,6 +225,16 @@ impl Fixture {
             return Err(anyhow!("fixture {name} malformed (tools: lists no agents)"));
         }
 
+        let config_home = field(&header, "config_home");
+        if let Some(dir) = &config_home {
+            let p = Path::new(dir);
+            if p.is_absolute() || p.components().any(|c| c == std::path::Component::ParentDir) {
+                return Err(anyhow!(
+                    "fixture {name}: config_home must stay inside the workdir (got {dir:?})"
+                ));
+            }
+        }
+
         let setup = block(body, "setup").filter(|s| !s.trim().is_empty());
         let assert = block(body, "assert").filter(|s| !s.trim().is_empty());
 
@@ -239,6 +254,7 @@ impl Fixture {
             enact,
             setup,
             assert,
+            config_home,
         })
     }
 
@@ -881,6 +897,8 @@ pub struct Plan {
     pub assertion: Assertion,
     /// A control run: the same task and check, without the skill.
     pub control: bool,
+    /// The fixture's `config_home:`, workdir-relative.
+    pub config_home: Option<String>,
 }
 
 /// What a control run says in place of the skill's text.
@@ -976,6 +994,7 @@ pub fn plan_one(
         // 4. How the reply or the workdir will be judged.
         assertion: assertion_for(fixture, kind, announces(body, &fixture.skill)),
         control: false,
+        config_home: fixture.config_home.clone(),
     })
 }
 
@@ -1565,6 +1584,20 @@ mod tests {
     }
 
     // ── fixture parsing ──────────────────────────────────────────
+
+    #[test]
+    fn config_home_is_parsed_and_must_stay_in_the_workdir() {
+        let f =
+            fx("skill: notes\nconfig_home: cfg\n--- playback ---\ntask: t\nexpect: e\n").unwrap();
+        assert_eq!(f.config_home.as_deref(), Some("cfg"));
+        let plan = plan_one(&f, Kind::Playback, Agent::Claude, "body", None).unwrap();
+        assert_eq!(plan.config_home.as_deref(), Some("cfg"));
+        for bad in ["/etc", "../up", "a/../../b"] {
+            let body =
+                format!("skill: notes\nconfig_home: {bad}\n--- playback ---\ntask: t\nexpect: e\n");
+            assert!(fx(&body).is_err(), "{bad} accepted");
+        }
+    }
 
     fn fx(body: &str) -> Result<Fixture> {
         Fixture::parse("t", body)

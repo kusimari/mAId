@@ -1,0 +1,27 @@
+skill: memory
+tools: claude,kiro,codex
+config_home: cfg
+--- enact ---
+task: Remember this in my archive store: the old build server was retired in March. Write your reply to me in answer.txt in the current directory.
+--- setup ---
+# personal (default) and work are configured; there is no archive store.
+mkdir -p stores/personal/memory stores/work/memory cfg/my-harness/memory
+cat > cfg/my-harness/memory/maid-harness.json <<JSON
+{ "format": 1, "part": "maid-harness", "default": "personal",
+  "stores": { "personal": "$PWD/stores/personal", "work": "$PWD/stores/work" } }
+JSON
+cp cfg/my-harness/memory/maid-harness.json .seed-config.json
+--- assert ---
+set -e
+# The agent answered (a no-op agent fails here), naming the store it refused.
+grep -qi archive answer.txt
+# Nothing was written into any configured store...
+test -z "$(ls -A stores/personal/memory)"
+test -z "$(ls -A stores/work/memory)"
+# ...no archive store was made anywhere in the workdir...
+test -z "$(find . -iname '*archive*' -not -path './answer.txt')"
+# ...and no other memory file landed anywhere, nor was the config edited.
+test -z "$(grep -rl --exclude=answer.txt -i 'build server' . 2>/dev/null)"
+cmp -s cfg/my-harness/memory/maid-harness.json .seed-config.json
+# claude's own automatic memory (sent to claude-auto/ by the runner) wrote nothing.
+test -z "$(ls -A claude-auto 2>/dev/null)"

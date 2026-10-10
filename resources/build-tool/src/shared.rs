@@ -355,6 +355,25 @@ pub fn parts_dir() -> Result<PathBuf> {
         .ok_or_else(|| anyhow!("MY_HARNESS_PARTS must be an absolute path (got {raw:?})"))
 }
 
+/// Where every part of my harness keeps its memory config. The Justfile
+/// owns where it is and passes it in, as for the parts dir.
+pub fn memory_config_dir() -> Result<PathBuf> {
+    let raw = std::env::var("MY_HARNESS_MEMORY")
+        .context("MY_HARNESS_MEMORY not set — invoke via `just` (resources/Justfile sets it)")?;
+    let dir = PathBuf::from(&raw);
+    dir.is_absolute()
+        .then_some(dir)
+        .ok_or_else(|| anyhow!("MY_HARNESS_MEMORY must be an absolute path (got {raw:?})"))
+}
+
+/// codex's own home, where it keeps its memories when they are on.
+pub fn codex_home() -> Result<PathBuf> {
+    match std::env::var("CODEX_HOME") {
+        Ok(raw) if !raw.is_empty() => Ok(PathBuf::from(raw)),
+        _ => Ok(home_dir()?.join(".codex")),
+    }
+}
+
 /// Whether a program is on PATH. Scans PATH directly: `command -v` is a
 /// shell builtin, so spawning it always fails.
 pub fn on_path(program: &str) -> bool {
