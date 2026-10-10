@@ -17,9 +17,10 @@
 use anyhow::Result;
 use build_tool::deploy::{Deployment, NoDeploy, Plugins, Symlinks};
 use build_tool::harness::{Selection, Stage};
+use build_tool::part::What;
 use build_tool::shared::{
-    home_dir, profile_dir, repo_root, usage, validate_agent, validate_agents, UsageError,
-    CONTENT_DIR, PROFILE_CONTENT_DIR,
+    home_dir, parts_dir, profile_dir, repo_root, usage, validate_agent, validate_agents, Agent,
+    UsageError, CONTENT_DIR, PROFILE_CONTENT_DIR,
 };
 use build_tool::stages;
 use clap::{Parser, Subcommand};
@@ -105,6 +106,23 @@ enum Cmd {
     /// Both verification stages. Runs the second even when the first
     /// reports failures, so one sweep is one report.
     Verify(VerifyArgs),
+    /// Record, in mAId's part list, what a step outside install placed on
+    /// one agent: replaces that agent's entries of this kind and scope.
+    Record {
+        #[arg(long)]
+        agent: String,
+        /// skill|mcp|agent|plugin|marketplace|setting
+        #[arg(long)]
+        kind: String,
+        /// Where in the agent, when it has more than one place.
+        #[arg(long)]
+        scope: Option<String>,
+        /// The step meant to place these and did not, and why.
+        #[arg(long)]
+        skipped: Option<String>,
+        /// What was placed; none clears this kind and scope.
+        names: Vec<String>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -152,12 +170,14 @@ fn run(cli: Cli) -> Result<u8> {
         Cmd::Install(a) => stages::cmd_install(
             &deployment()?,
             &profile_dir()?.join(PROFILE_CONTENT_DIR),
+            &parts_dir()?,
             a.dry_run,
             a.force,
             validate_agent(a.agent.as_deref())?,
         ),
         Cmd::Uninstall(a) => stages::cmd_uninstall(
             &deployment()?,
+            &parts_dir()?,
             a.dry_run,
             a.force,
             validate_agent(a.agent.as_deref())?,
@@ -169,6 +189,20 @@ fn run(cli: Cli) -> Result<u8> {
             let smoke = verify(Stage::Smoke, args, &deployment()?, &root, true)?;
             Ok(check.max(smoke))
         }
+        Cmd::Record {
+            agent,
+            kind,
+            scope,
+            skipped,
+            names,
+        } => stages::cmd_record(
+            &parts_dir()?,
+            Agent::parse(&agent)?,
+            What::parse(&kind).map_err(|e| usage(e.to_string()))?,
+            scope.as_deref(),
+            skipped.as_deref(),
+            &names,
+        ),
     }
 }
 

@@ -11,6 +11,7 @@
 //! their skills dirs at the profile. `Deployment` routes each agent to
 //! one of the two, and nothing in `stages` knows which.
 
+use crate::part::{Item, What};
 use crate::shared::{
     marketplace_root, on_path, selected_entries, Agent, Entry, Kind, Link, LEGACY_LINKS,
     MARKETPLACE, PLUGIN_AGENTS, PLUGIN_ID, PROFILE_MARKETPLACE_DIR,
@@ -78,6 +79,25 @@ impl State {
     }
 }
 
+impl State {
+    /// Why a location was skipped, for the part list: short, and naming
+    /// no path, since the list outlives any checkout.
+    pub fn reason(&self) -> String {
+        match self {
+            State::Wrong { .. } => "points elsewhere".into(),
+            State::Occupied(what) => format!("a {what} is there"),
+            State::Theirs => "not mAId's".into(),
+            State::NoCli(cli) => format!("{cli} not on PATH"),
+            State::SourceMissing => "source missing".into(),
+            State::Missing => "missing".into(),
+            State::Unreadable(_) => "unreadable".into(),
+            State::Ok(_) | State::Current(_) | State::Legacy(_) => "in place".into(),
+            State::Stale { .. } => "stale".into(),
+            State::Disabled { .. } => "disabled".into(),
+        }
+    }
+}
+
 /// One deployment location and what is currently there.
 #[derive(Debug)]
 pub struct Report {
@@ -110,6 +130,10 @@ pub trait Deploy {
     /// Whether this agent's skills are deployed — the smoke stage's
     /// precondition, asked as a question rather than a path lookup.
     fn is_deployed(&self, agent: Agent) -> bool;
+
+    /// What of mAId's is on each selected agent now, and what install
+    /// would place but could not, with why: the part list's entries.
+    fn placed(&self, agent: Option<Agent>) -> Result<Vec<(Agent, Item)>>;
 }
 
 /// Deployment by symlink into `$HOME`, per the registry.
@@ -143,6 +167,41 @@ impl Deploy for Symlinks {
         let mut out = self.act(agent, |link, _| Ok((self.inspect(link), false)))?;
         out.extend(self.reap_unshipped(agent, true)?);
         out.extend(self.reap_legacy(agent, true)?);
+        Ok(out)
+    }
+
+    fn placed(&self, agent: Option<Agent>) -> Result<Vec<(Agent, Item)>> {
+        let mut out = Vec::new();
+        for entry in selected_entries(agent) {
+            let (.., kind, a) = entry;
+            for link in self.expand(entry)? {
+                // A Link row is one dir link carrying every skill.
+                let skills = match kind {
+                    Kind::Link => skill_names(&link.1)?,
+                    Kind::FanOut => link
+                        .1
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into())
+                        .into_iter()
+                        .collect(),
+                };
+                let skipped = match classify(kind, self.inspect(&link)) {
+                    State::Ok(_) if exists(&link.1) => None,
+                    State::Ok(_) | State::Missing | State::SourceMissing => continue,
+                    other => Some(other.reason()),
+                };
+                out.extend(skills.into_iter().map(|s| {
+                    let item = Item::placed(What::Skill, s);
+                    (
+                        a,
+                        Item {
+                            skipped: skipped.clone(),
+                            ..item
+                        },
+                    )
+                }));
+            }
+        }
         Ok(out)
     }
 
@@ -214,13 +273,7 @@ impl Symlinks {
         for entry in selected_entries(agent) {
             for link in self.expand(entry)? {
                 let (state, acted) = f(&link, entry.2)?;
-                let state = match (entry.2, state) {
-                    (Kind::FanOut, State::Wrong { found, .. }) if !ours(Kind::FanOut, &found) => {
-                        State::Theirs
-                    }
-                    (Kind::FanOut, State::Occupied(_)) => State::Theirs,
-                    (_, state) => state,
-                };
+                let state = classify(entry.2, state);
                 out.push(Report {
                     label: self.label(&link.0),
                     state,
@@ -364,6 +417,12 @@ impl Deploy for Deployment {
         Ok(out)
     }
 
+    fn placed(&self, agent: Option<Agent>) -> Result<Vec<(Agent, Item)>> {
+        let mut out = self.links.placed(agent)?;
+        out.extend(self.plugins.placed(agent)?);
+        Ok(out)
+    }
+
     fn is_deployed(&self, agent: Agent) -> bool {
         match agent.is_plugin() {
             true => self.plugins.is_deployed(agent),
@@ -476,6 +535,34 @@ impl Deploy for Plugins {
                         .unwrap_or_else(unreadable),
                     acted: false,
                 });
+            }
+        }
+        Ok(out)
+    }
+
+    /// Read back from each CLI's own listings.
+    fn placed(&self, agent: Option<Agent>) -> Result<Vec<(Agent, Item)>> {
+        let mut out = Vec::new();
+        for (a, ..) in plugin_agents(agent) {
+            if !on_path(a.cli()) {
+                let why = State::NoCli(a.cli()).reason();
+                out.push((
+                    a,
+                    Item::skipped(What::Marketplace, MARKETPLACE, why.clone()),
+                ));
+                out.push((a, Item::skipped(What::Plugin, PLUGIN_ID, why)));
+                continue;
+            }
+            match marketplace_state(self.recorded(a)?, &self.root()) {
+                State::Ok(_) => out.push((a, Item::placed(What::Marketplace, MARKETPLACE))),
+                State::Missing => {}
+                other => out.push((
+                    a,
+                    Item::skipped(What::Marketplace, MARKETPLACE, other.reason()),
+                )),
+            }
+            if self.state(a, None)? != State::Missing {
+                out.push((a, Item::placed(What::Plugin, PLUGIN_ID)));
             }
         }
         Ok(out)
@@ -716,6 +803,29 @@ fn reap(home: &Path, home_sub: &str, kind: Kind, dry_run: bool) -> Result<Vec<Re
     Ok(out)
 }
 
+/// What a managed location's state means for its row: in a FanOut dir,
+/// anything not mAId's is the user's.
+fn classify(kind: Kind, state: State) -> State {
+    match (kind, state) {
+        (Kind::FanOut, State::Wrong { found, .. }) if !ours(Kind::FanOut, &found) => State::Theirs,
+        (Kind::FanOut, State::Occupied(_)) => State::Theirs,
+        (_, state) => state,
+    }
+}
+
+/// The skills a profile skills dir ships, sorted.
+fn skill_names(dir: &Path) -> io::Result<Vec<String>> {
+    let mut names: Vec<String> = match fs::read_dir(dir) {
+        Ok(entries) => entries
+            .filter_map(|e| Some(e.ok()?.file_name().to_string_lossy().into_owned()))
+            .collect(),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => vec![],
+        Err(e) => return Err(e),
+    };
+    names.sort();
+    Ok(names)
+}
+
 /// `--force` reaches a Link row's one path, which is mAId's. A FanOut dir
 /// is the agent's, so a foreign entry there is kept even with `--force`.
 fn force_reaches(kind: Kind, force: bool) -> bool {
@@ -921,6 +1031,10 @@ impl Deploy for NoDeploy {
     fn is_deployed(&self, _: Agent) -> bool {
         false
     }
+
+    fn placed(&self, _: Option<Agent>) -> Result<Vec<(Agent, Item)>> {
+        Ok(vec![])
+    }
 }
 
 fn exists(p: &Path) -> bool {
@@ -1031,6 +1145,78 @@ mod tests {
         // Plugin agents get no links.
         assert!(!exists_at(&home.path().join(".claude/skills")));
         assert!(!exists_at(&home.path().join(".codex/skills")));
+    }
+
+    fn placed(home: &Path, profile: &Path) -> Vec<(Agent, Item)> {
+        sym(home, profile).placed(None).unwrap()
+    }
+
+    fn skill(name: &str) -> Item {
+        Item::placed(What::Skill, name)
+    }
+
+    #[test]
+    fn placed_lists_every_shipped_skill_for_each_link_agent() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        // The user's own skill, at a name mAId does not ship.
+        write(&home.path().join(".kiro/skills/mine/SKILL.md"), "mine");
+        install(home.path(), profile.path(), false, false, None);
+        let by = |(a, i): &(Agent, Item)| (a.cli(), i.clone());
+        let mut got = placed(home.path(), profile.path());
+        got.sort_by_key(by);
+        let want = [Agent::Kiro, Agent::Agy]
+            .into_iter()
+            .flat_map(|a| [(a, skill("kdevkit")), (a, skill("notes"))]);
+        let mut want: Vec<_> = want.collect();
+        want.sort_by_key(by);
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn a_location_install_left_alone_is_placed_as_skipped() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        write(&home.path().join(".kiro/skills/notes/SKILL.md"), "mine");
+        write(&home.path().join(".gemini/config/skills/x"), "mine");
+        install(home.path(), profile.path(), false, false, None);
+        let got = placed(home.path(), profile.path());
+        let skipped = |a, name: &str| {
+            got.iter()
+                .find(|(g, i)| *g == a && i.name == name)
+                .and_then(|(_, i)| i.skipped.clone())
+        };
+        assert_eq!(skipped(Agent::Kiro, "notes").as_deref(), Some("not mAId's"));
+        assert_eq!(skipped(Agent::Kiro, "kdevkit"), None);
+        for name in ["kdevkit", "notes"] {
+            assert_eq!(skipped(Agent::Agy, name).as_deref(), Some("a dir is there"));
+        }
+    }
+
+    #[test]
+    fn a_skip_past_a_foreign_link_names_no_path() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        let elsewhere = home.path().join("elsewhere");
+        fs::create_dir_all(&elsewhere).unwrap();
+        fs::create_dir_all(home.path().join(".gemini/config")).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, home.path().join(".gemini/config/skills")).unwrap();
+        install(home.path(), profile.path(), false, false, None);
+        let reasons: Vec<_> = placed(home.path(), profile.path())
+            .into_iter()
+            .filter(|(a, _)| *a == Agent::Agy)
+            .map(|(_, i)| i.skipped)
+            .collect();
+        assert_eq!(reasons, vec![Some("points elsewhere".to_string()); 2]);
+    }
+
+    #[test]
+    fn nothing_is_placed_after_uninstall() {
+        let profile = make_profile_with_skills();
+        let home = TempDir::new().unwrap();
+        install(home.path(), profile.path(), false, false, None);
+        uninstall(home.path(), profile.path(), false, false, None);
+        assert_eq!(placed(home.path(), profile.path()), vec![]);
     }
 
     #[test]

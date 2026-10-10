@@ -100,11 +100,16 @@ mcp_foreach() {
     for row in "${MCP_AGENTS[@]}"; do
         read -r agent cli scope style <<<"$row"
         [[ -n "$AGENT_FILTER" && "$AGENT_FILTER" != "$agent" ]] && continue
-        have "$cli" || { skip "$agent ($cli not on PATH)"; continue; }
+        if ! have "$cli"; then
+            skip "$agent ($cli not on PATH)"
+            record_skip "$op" "$agent" "$cli not on PATH"
+            continue
+        fi
         # A per-agent CLI (kiro) can't be targeted without a named
         # sub-agent — mAId never guesses which one to write into.
         if [[ "$scope" == per-agent && -z "${KIRO_AGENT:-}" ]]; then
             skip "$agent (no sub-agent named — pass '<agent> <sub-agent>' to target it)"
+            record_skip "$op" "$agent" "no sub-agent named"
             continue
         fi
         case "$op" in
@@ -113,6 +118,30 @@ mcp_foreach() {
             status)    op_status "$agent" ;;
         esac
     done
+}
+
+# Tell mAId's part list what is now registered on <agent>: the server's
+# name, `--skipped <why>` with it, or nothing to clear it. See project.md
+# "My harness".
+# A failure is reported and fails the run at the end, so the other agents
+# are still done.
+record() {
+    local agent="$1"
+    shift
+    local args=(record --agent "$agent" --kind mcp)
+    if [[ "$agent" == kiro && -n "${KIRO_AGENT:-}" ]]; then args+=(--scope "$KIRO_AGENT"); fi
+    cargo run -p build-tool --release --quiet -- "${args[@]}" "$@" || {
+        skip "$(label "$agent") (part list not updated)"
+        RECORD_FAILED=1
+    }
+}
+
+# A skip on install is recorded with its reason; on uninstall it clears.
+record_skip() {
+    case "$1" in
+        install)   record "$2" --skipped "$3" "$SERVER_NAME" ;;
+        uninstall) record "$2" ;;
+    esac
 }
 
 # A "; agent <name>" tail only for the per-agent CLI, so global
@@ -124,6 +153,15 @@ label() { printf '%-6s' "$1"; }
 
 op_install() {
     local agent="$1" style="$2" out
+    # An earlier install's registration is still there without Chrome.
+    if [[ -n "${NO_CHROME:-}" ]]; then
+        if mcp_get "$agent"; then
+            record "$agent" "$SERVER_NAME"
+        else
+            record "$agent" --skipped "no graphical Chrome" "$SERVER_NAME"
+        fi
+        return
+    fi
     # readd agents error on a duplicate name; clear it first so a
     # re-run refreshes rather than fails.
     if [[ "$style" == readd ]]; then
@@ -131,10 +169,13 @@ op_install() {
     fi
     if out="$(mcp_add "$agent" 2>&1)"; then
         ok "$(label "$agent") ($SERVER_NAME → $LAUNCHER)$(agent_note "$agent")"
+        record "$agent" "$SERVER_NAME"
     else
         # Surface the CLI's own first line (e.g. "Agent X does not
         # exist", "not logged in") so the skip is actionable.
-        skip "$(label "$agent") (mcp add failed: $(printf '%s' "$out" | head -n1))"
+        skip "$(label "$agent") (mcp add failed: $(printf '%s' "$out" | head -n1))" >&2
+        # The list stays path-free and byte-stable; the CLI's words are above.
+        record "$agent" --skipped "mcp add failed" "$SERVER_NAME"
     fi
 }
 
@@ -147,6 +188,7 @@ op_uninstall() {
     if [[ "$agent" == codex ]] && ! mcp_get "$agent"; then
         mcp_remove "$agent" >/dev/null 2>&1 || true
         info "$(label "$agent") ($SERVER_NAME not registered)"
+        record "$agent"
         return
     fi
     if mcp_remove "$agent" >/dev/null 2>&1; then
@@ -154,6 +196,8 @@ op_uninstall() {
     else
         info "$(label "$agent") ($SERVER_NAME not registered)$(agent_note "$agent")"
     fi
+    # A remove that failed for another reason leaves it registered.
+    if mcp_get "$agent"; then record "$agent" "$SERVER_NAME"; else record "$agent"; fi
 }
 
 op_status() {
@@ -219,7 +263,9 @@ cmd_install() {
 
     if ! chrome_present; then
         skip "install-browser-mcp (no graphical Chrome found — desktop only)"
-        return 0
+        NO_CHROME=1 mcp_foreach install
+        [[ -z "${RECORD_FAILED:-}" ]]
+        return
     fi
     mcp_foreach install
 
@@ -230,6 +276,7 @@ cmd_install() {
     printf '\nAllowlist (deny-by-default — add at least one site before use):\n'
     info "$ALLOWLIST"
     info "edit directly, or: just resources::browser-mcp-allow '<pattern>'"
+    [[ -z "${RECORD_FAILED:-}" ]]
 }
 
 cmd_uninstall() {
@@ -238,6 +285,7 @@ cmd_uninstall() {
     validate_agent_filter "$AGENT_FILTER"
     mcp_foreach uninstall
     info "allowlist left in place (user data): $ALLOWLIST"
+    [[ -z "${RECORD_FAILED:-}" ]]
 }
 
 cmd_status() {

@@ -2,6 +2,7 @@
 //! binary, because it empties PATH for the whole process.
 
 use build_tool::deploy::{Deploy, Plugins, State};
+use build_tool::part::{Item, What};
 use build_tool::shared::Agent;
 use std::fs;
 use tempfile::TempDir;
@@ -37,4 +38,16 @@ fn old_links_stay_when_the_agents_cli_is_missing() {
     }
     assert!(fs::symlink_metadata(h.join(".claude/skills")).is_ok());
     assert!(fs::symlink_metadata(h.join(".codex/skills/notes")).is_ok());
+
+    // The part list says what should be there and why it is not.
+    let placed = p.placed(None).unwrap();
+    for agent in [Agent::Claude, Agent::Codex] {
+        let why = format!("{} not on PATH", agent.cli());
+        for item in [
+            Item::skipped(What::Marketplace, "maid", &why),
+            Item::skipped(What::Plugin, "maid@maid", &why),
+        ] {
+            assert!(placed.contains(&(agent, item)), "{placed:?}");
+        }
+    }
 }

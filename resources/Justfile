@@ -11,6 +11,8 @@
 # another checkout and its generation takes over.
 
 export MAID_PROFILE := env("MAID_PROFILE", env("XDG_STATE_HOME", env("HOME") / ".local/state") / "maid/profile")
+# Every part of my harness keeps its part list here; mAId's is maid-harness.json.
+export MY_HARNESS_PARTS := env("MY_HARNESS_PARTS", env("XDG_STATE_HOME", env("HOME") / ".local/state") / "my-harness/parts")
 
 # Validate content and build this checkout into the mAId profile.
 # Nix sees tracked files only, so `git add` a new file first.

@@ -21,7 +21,7 @@ export MAID_PROFILE=$work/state/maid/profile
 export CARGO_HOME=${CARGO_HOME:-$HOME/.cargo} CARGO_TARGET_DIR=$here/target
 # nix keeps its settings and fetch cache under these; the agents do not.
 export XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config} XDG_CACHE_HOME=${XDG_CACHE_HOME:-$HOME/.cache}
-unset CODEX_HOME CLAUDE_CONFIG_DIR XDG_STATE_HOME
+unset CODEX_HOME CLAUDE_CONFIG_DIR XDG_STATE_HOME MY_HARNESS_PARTS
 
 fails=0
 check() {
@@ -43,6 +43,10 @@ codex_has_marker() { grep -rqs "$marker" "$th/.codex/plugins/cache"; }
 kiro_has_marker() { grep -qs "$marker" "$th/.kiro/skills/notes/SKILL.md"; }
 skills() { inhome just resources::install-skills >"$work/log" 2>&1 || { cat "$work/log"; return 1; }; }
 rollback() { inhome just rollback >"$work/out" 2>&1; }
+partlist=$th/.local/state/my-harness/parts/maid-harness.json
+# The entries one harness has in mAId's part list, one `kind name [skipped]` per line.
+entries() { jq -r --arg h "$1" '.harnesses[$h][]? | "\(.kind) \(.name)\(if .skipped then " skipped" else "" end)"' "$partlist" 2>/dev/null; }
+mcp_entry() { entries "$1" | grep -qx "mcp chrome-devtools\( skipped\)\?"; }
 
 # Three installs: one older than the plugin marketplace (C), this
 # checkout (A), and a clone with one skill line added (B).
@@ -63,6 +67,15 @@ nix build --profile "$MAID_PROFILE" "$A" && skills || exit 1
 nix build --profile "$MAID_PROFILE" "$B" && skills || exit 1
 check "second install is live in claude, codex and kiro" \
   eval 'both_at "$vB" && codex_has_marker && kiro_has_marker'
+
+inhome just resources::install-browser-mcp >"$work/log" 2>&1 || { cat "$work/log"; exit 1; }
+placed_on_all() {
+  for h in claude codex; do
+    entries $h | grep -qx "plugin maid@maid" && entries $h | grep -qx "marketplace maid" && mcp_entry $h || return 1
+  done
+  entries kiro-cli | grep -qx "skill notes"
+}
+check "the part list names what install placed on claude, codex and kiro" placed_on_all
 
 rollback
 rc=$?
@@ -127,7 +140,11 @@ rollback
 rc=$?
 check "rollback past a link mAId did not write still moves the agents" \
   eval '[ $rc != 0 ] && [ "$(gen)" = 3 ] && both_at "$vD" && [ "$(readlink "$th/.gemini/config/skills")" = "$work/elsewhere" ]'
+check "the part list names agy's skills as skipped past that link" \
+  eval 'entries agy | grep -qx "skill notes skipped"'
 
 inhome just resources::uninstall-skills >/dev/null 2>&1
+inhome just resources::uninstall-browser-mcp >/dev/null 2>&1
+check "uninstall removes the part list" eval '[ ! -e "$partlist" ]'
 [ "$fails" = 0 ] && echo "all rollback checks passed" || echo "$fails rollback check(s) failed"
 exit $((fails > 0))

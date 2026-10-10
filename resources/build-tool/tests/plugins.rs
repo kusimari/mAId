@@ -5,6 +5,7 @@
 //!   cargo test -p build-tool --test plugins -- --ignored
 
 use build_tool::deploy::{Deploy, Plugins, State};
+use build_tool::part::{Item, What};
 use build_tool::shared::{on_path, Agent};
 use std::fs;
 use std::path::Path;
@@ -130,6 +131,15 @@ fn plugins_install_update_disable_and_uninstall_with_the_real_clis() {
         );
     }
     assert!(p.is_deployed(Agent::Claude) && p.is_deployed(Agent::Codex));
+    let mut placed = p.placed(None).unwrap();
+    placed.sort_by_key(|(a, i)| (a.cli(), i.clone()));
+    let both = |a| {
+        [
+            (a, Item::placed(What::Plugin, "maid@maid")),
+            (a, Item::placed(What::Marketplace, "maid")),
+        ]
+    };
+    assert_eq!(placed, [both(Agent::Claude), both(Agent::Codex)].concat());
 
     // A new generation: both updated; codex's cache has the new text.
     switch(&profile, &b);
@@ -212,4 +222,5 @@ fn plugins_install_update_disable_and_uninstall_with_the_real_clis() {
         );
     }
     assert!(!root.exists());
+    assert_eq!(p.placed(None).unwrap(), vec![]);
 }

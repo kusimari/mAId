@@ -17,6 +17,7 @@ use crate::harness::{
     Assertion, Authority, Fixture, Kind as TestKind, Outcome, Plan, Reach, Selection, Skipped,
     Stage, Stress, Verdict, KIRO_READONLY_AGENT, KIRO_READONLY_NAME,
 };
+use crate::part::{self, Item, What};
 use crate::shared::{checkout_skill, usage, Agent};
 use anyhow::{anyhow, Context, Result};
 use std::fs;
@@ -96,6 +97,7 @@ pub fn cmd_validate(content_dir: &Path) -> Result<u8> {
 pub fn cmd_install(
     target: &impl Deploy,
     content_dir: &Path,
+    parts: &Path,
     dry_run: bool,
     force: bool,
     agent: Option<Agent>,
@@ -107,16 +109,95 @@ pub fn cmd_install(
         ));
     }
     cmd_validate(content_dir)?;
-    outcome(target.install(agent, dry_run, force)?, dry_run, false)
+    // Recorded even when install stops partway: the list says what is there.
+    let done = target.install(agent, dry_run, force);
+    let recorded = match dry_run {
+        true => Ok(()),
+        false => record_placed(target, parts, agent, |_| true),
+    };
+    let rc = outcome(
+        done.inspect_err(|_| warn_unrecorded(&recorded))?,
+        dry_run,
+        false,
+    )?;
+    recorded.map(|()| rc)
 }
 
 pub fn cmd_uninstall(
     target: &impl Deploy,
+    parts: &Path,
     dry_run: bool,
     force: bool,
     agent: Option<Agent>,
 ) -> Result<u8> {
-    outcome(target.uninstall(agent, dry_run, force)?, dry_run, true)
+    let done = target.uninstall(agent, dry_run, force);
+    // What uninstall did not reach is still there; a skip is not.
+    let recorded = match dry_run {
+        true => Ok(()),
+        false => record_placed(target, parts, agent, |i| i.skipped.is_none()),
+    };
+    let rc = outcome(
+        done.inspect_err(|_| warn_unrecorded(&recorded))?,
+        dry_run,
+        true,
+    )?;
+    recorded.map(|()| rc)
+}
+
+/// The step's own error is returned; a part-list failure beside it is
+/// still said.
+fn warn_unrecorded(recorded: &Result<()>) {
+    if let Err(e) = recorded {
+        eprintln!("build-tool: part list not updated: {e:#}");
+    }
+}
+
+/// What `Deploy` places; the browser MCP is recorded by its own script.
+const DEPLOYED_KINDS: &[What] = &[What::Skill, What::Plugin, What::Marketplace];
+
+/// Write what the target reports placed into the part list, for each
+/// selected agent.
+fn record_placed(
+    target: &impl Deploy,
+    parts: &Path,
+    agent: Option<Agent>,
+    keep: impl Fn(&Item) -> bool,
+) -> Result<()> {
+    let placed = target.placed(agent)?;
+    for &a in Agent::ALL
+        .iter()
+        .filter(|a| agent.is_none_or(|sel| sel == **a))
+    {
+        let items = placed
+            .iter()
+            .filter(|(g, i)| *g == a && keep(i))
+            .map(|(_, i)| i.clone())
+            .collect();
+        part::record(parts, a, DEPLOYED_KINDS, None, items)?;
+    }
+    Ok(())
+}
+
+/// Record one kind of entry on one agent in the part list, for a step
+/// outside `Deploy` (the browser MCP). No names clears that kind.
+pub fn cmd_record(
+    parts: &Path,
+    agent: Agent,
+    kind: What,
+    scope: Option<&str>,
+    skipped: Option<&str>,
+    names: &[String],
+) -> Result<u8> {
+    let items = names
+        .iter()
+        .map(|n| Item {
+            scope: scope.map(str::to_string),
+            skipped: skipped.map(str::to_string),
+            ..Item::placed(kind, n)
+        })
+        .collect();
+    part::record(parts, agent, &[kind], scope, items)?;
+    Ok(0)
 }
 
 pub fn cmd_status(target: &impl Deploy, agent: Option<Agent>) -> Result<u8> {
@@ -756,14 +837,127 @@ mod tests {
         assert_eq!(check_content(dir.path()).unwrap(), 1);
     }
 
+    /// A profile with one valid skill, its home, and a parts dir.
+    fn installable() -> (TempDir, crate::deploy::Symlinks, PathBuf) {
+        let dir = TempDir::new().unwrap();
+        write(
+            &dir.path().join("profile/share/maid/skills/notes/SKILL.md"),
+            "---\nname: notes\ndescription: d\n---\nbody.\n",
+        );
+        let target = crate::deploy::Symlinks {
+            home: dir.path().join("home"),
+            source: dir.path().join("profile"),
+        };
+        let parts = dir.path().join("parts");
+        (dir, target, parts)
+    }
+
+    fn content(dir: &TempDir) -> PathBuf {
+        dir.path().join("profile/share/maid")
+    }
+
+    #[test]
+    fn install_writes_the_part_list_and_uninstall_removes_it() {
+        let (dir, target, parts) = installable();
+        cmd_install(&target, &content(&dir), &parts, false, false, None).unwrap();
+        let text = fs::read_to_string(part::path(&parts)).unwrap();
+        for harness in ["kiro-cli", "agy"] {
+            assert!(text.contains(&format!("\"{harness}\"")), "{text}");
+        }
+        assert!(text.contains(r#""name": "notes""#), "{text}");
+        cmd_uninstall(&target, &parts, false, false, None).unwrap();
+        assert!(!part::path(&parts).exists());
+    }
+
+    /// Installs into kiro, then fails before the rest.
+    struct Partway;
+
+    impl Deploy for Partway {
+        fn install(
+            &self,
+            _: Option<Agent>,
+            _: bool,
+            _: bool,
+        ) -> Result<Vec<crate::deploy::Report>> {
+            Err(anyhow!("codex plugin install failed"))
+        }
+        fn uninstall(
+            &self,
+            _: Option<Agent>,
+            _: bool,
+            _: bool,
+        ) -> Result<Vec<crate::deploy::Report>> {
+            unreachable!()
+        }
+        fn status(&self, _: Option<Agent>) -> Result<Vec<crate::deploy::Report>> {
+            unreachable!()
+        }
+        fn is_deployed(&self, _: Agent) -> bool {
+            unreachable!()
+        }
+        fn placed(&self, _: Option<Agent>) -> Result<Vec<(Agent, Item)>> {
+            Ok(vec![(Agent::Kiro, Item::placed(What::Skill, "notes"))])
+        }
+    }
+
+    #[test]
+    fn an_install_that_stops_partway_records_what_it_placed() {
+        let (dir, _, parts) = installable();
+        let err = cmd_install(&Partway, &content(&dir), &parts, false, false, None).unwrap_err();
+        assert!(err.to_string().contains("codex"), "{err}");
+        let text = fs::read_to_string(part::path(&parts)).unwrap();
+        assert!(text.contains(r#""name": "notes""#), "{text}");
+    }
+
+    #[test]
+    fn a_dry_run_writes_no_part_list() {
+        let (dir, target, parts) = installable();
+        cmd_install(&target, &content(&dir), &parts, true, false, None).unwrap();
+        assert!(!parts.exists());
+    }
+
+    #[test]
+    fn uninstall_drops_a_skip_but_keeps_what_is_still_there() {
+        let (dir, target, parts) = installable();
+        cmd_record(
+            &parts,
+            Agent::Kiro,
+            What::Mcp,
+            Some("s"),
+            None,
+            &["m".into()],
+        )
+        .unwrap();
+        // agy's skills dir is the user's, so install skips it.
+        write(&dir.path().join("home/.gemini/config/skills/x"), "mine");
+        cmd_install(&target, &content(&dir), &parts, false, false, None).unwrap();
+        assert!(fs::read_to_string(part::path(&parts))
+            .unwrap()
+            .contains("skipped"));
+        cmd_uninstall(&target, &parts, false, false, None).unwrap();
+        let text = fs::read_to_string(part::path(&parts)).unwrap();
+        assert!(
+            !text.contains("skipped") && !text.contains("notes"),
+            "{text}"
+        );
+        assert!(text.contains(r#""name": "m""#), "{text}");
+    }
+
     /// A missing tree validates as zero files, so without the guard an
     /// install with no profile would link every agent at nothing.
     #[test]
     fn install_without_a_profile_names_the_fix() {
         let dir = TempDir::new().unwrap();
-        let err = cmd_install(&crate::deploy::NoDeploy, dir.path(), false, false, None)
-            .unwrap_err()
-            .to_string();
+        let err = cmd_install(
+            &crate::deploy::NoDeploy,
+            dir.path(),
+            dir.path(),
+            false,
+            false,
+            None,
+        )
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("just install"), "{err}");
     }
 

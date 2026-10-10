@@ -15,6 +15,7 @@
 //!   shared.rs   vocabulary every stage speaks (agents, registry, roots)
 //!   harness.rs  driving an agent and scoring the reply; used by the two
 //!               verification stages, owned by neither
+//!   part.rs     the part list: what mAId placed on each base harness
 //!   deploy.rs   HOW a skill reaches an agent — the one place that knows
 //!               about $HOME layout, behind a swappable trait
 //!   stages.rs   the pipeline: content, check, install, smoke. Declares
@@ -30,5 +31,6 @@
 
 pub mod deploy;
 pub mod harness;
+pub mod part;
 pub mod shared;
 pub mod stages;

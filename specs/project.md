@@ -75,7 +75,8 @@ Two halves at the top level:
      **`deploy.rs` hands over to the agent where it can.** The pipeline
      declares *what* it wants deployed; `deploy.rs` alone knows *how*,
      behind a `Deploy` trait (`install` / `uninstall` / `status` /
-     `is_deployed`, each returning a `Report`, never a path). `Plugins`
+     `is_deployed`, each returning a `Report`, never a path, and
+     `placed`, what the part list records). `Plugins`
      drives claude's and codex's own plugin CLIs; `Symlinks` (the
      $HOME-layout knowledge, `Link`/`FanOut` registry expansion,
      `--force` semantics) covers the agents with no such command (kiro,
@@ -211,6 +212,79 @@ re-auth. Its shape differs from skills in two ways:
   (re)connect, so edits apply next session without restarting
   Chrome.
 
+### My harness
+
+The terms mAId uses for what it installs:
+
+- **Agent**: the whole entity a session runs as: base harness, my
+  harness and my memory.
+- **Base harness**: a model plus a vendor coding agent (`claude`,
+  `codex`, `kiro-cli`, `agy`), run as the vendor ships it.
+- **My harness**: what parts add on top of the base harnesses
+  (skills, MCP servers, sub-agents, later more), through each base
+  harness's own extension points. It has no driver loop of its own.
+- **Part**: what one repo installs into the base harnesses. mAId's
+  part is `maid-harness`. Other parts may sit beside it; my harness is
+  the union.
+
+The rules every part follows, so that parts add up and never fight:
+
+1. No wrapper. The base harness binaries run as the vendor ships them:
+   no wrapper scripts, aliases or `PATH` shims.
+2. A part owns only what it wrote in each extension point, and
+   removes only that.
+3. A setting that holds one value is set only when it is empty or
+   already this part's.
+4. Each part writes a part list (below) on install and removes it on
+   uninstall.
+5. Setup is idempotent and assumes nothing about other parts.
+
+**The part list.** Each part keeps one file,
+`${XDG_STATE_HOME:-$HOME/.local/state}/my-harness/parts/<part>.json`,
+that says what it placed on each base harness. A part writes only its
+own file, and may keep a temporary dotfile beside it while it writes. A
+whole-status reads every `*.json` file in the dir that is not a dotfile.
+
+```json
+{
+  "format": 1,
+  "part": "maid-harness",
+  "harnesses": {
+    "claude": [
+      { "kind": "marketplace", "name": "maid" },
+      { "kind": "plugin", "name": "maid@maid" },
+      { "kind": "mcp", "name": "chrome-devtools", "skipped": "no graphical Chrome" }
+    ],
+    "kiro-cli": [
+      { "kind": "skill", "name": "notes" },
+      { "kind": "mcp", "name": "chrome-devtools", "scope": "my-agent" }
+    ]
+  }
+}
+```
+
+- `format`: 1. A reader refuses a format it does not know, and ignores
+  keys it does not know.
+- `part`: the part's name, the same as the file name.
+- `harnesses`: keyed by the base harness's command (`claude`, `codex`,
+  `kiro-cli`, `agy`), one list of entries each.
+- `kind`: `skill`, `mcp`, `agent`, `plugin`, `marketplace` or
+  `setting`. `name`: what the harness's own listing calls it.
+- `scope`, optional: where inside the harness, when it has more than
+  one place (kiro's MCP servers live per sub-agent).
+- `skipped`, optional: install meant to place this and did not, and
+  why. A reader reports such an entry and does not check it for
+  presence.
+- An entry without `skipped` is placed: the harness lists it, in
+  whatever state (a plugin the user disabled is still placed).
+
+The list says what is there after install, read back from each step,
+plus what install skipped. Uninstall leaves only what it could not
+remove, and deletes the file when nothing is left. In mAId, `part.rs`
+is the one writer: install and uninstall record what `Deploy::placed`
+reads back, and the browser-MCP script records its server through
+`build-tool record`.
+
 ## Tech Stack
 
 <!-- Languages, runtimes, frameworks, key libraries. Versions
@@ -303,6 +377,7 @@ mAId/
 │   │   ├── src/shared.rs   Agent, REGISTRY, roots — what every stage speaks
 │   │   ├── src/harness.rs  fixtures, the five kinds, prompts, invocation, verdicts
 │   │   ├── src/deploy.rs   the Deploy trait: Plugins (claude, codex) and Symlinks (kiro, agy)
+│   │   ├── src/part.rs     mAId's part list: the format and its one writer
 │   │   ├── src/stages.rs   content → check → install → smoke
 │   │   ├── tests/integration.rs  cross-stage tests against the real repo
 │   │   ├── tests/plugins.rs  ignored: Plugins against the real claude/codex CLIs in a temp HOME
@@ -366,9 +441,10 @@ temp HOME and a temp profile (free, under a minute): rollback, an
 install whose build fails keeping the generations it would drop,
 rollback after rollback-then-install, an earlier generation the agents
 cannot take, no earlier generation, the 30-day cleanup keeping the
-previous install (also after an unchanged install), and rollback past a
-link mAId did not write.
-Run it after any change to the profile recipes.
+previous install (also after an unchanged install), rollback past a
+link mAId did not write, and the part list install leaves (placed,
+skipped, gone after uninstall).
+Run it after any change to the profile recipes or the part list.
 
 **`just verify-install` is the installable Macro test**
 (`resources/tests/verify-install`), run on the real install: install
@@ -741,8 +817,9 @@ slice.
 
 Not a service — consumed locally.
 `just install` validates content, builds the mAId profile, installs
-the claude/codex plugin and links kiro and agy at it (see
-Architecture); `just uninstall` reverses it and removes the profile;
+the claude/codex plugin and links kiro and agy at it, and writes
+mAId's part list (see Architecture, "My harness"); `just uninstall`
+reverses it, removing the list, and removes the profile;
 `just status` reports the generation, each plugin and
 each link; `just rollback` returns every agent to the previous install
 (no selector: the profile is shared). `just resources::verify-skills` drives the
@@ -781,9 +858,9 @@ the experience is symmetric across resource kinds.
   ad-hoc edit.
 - **No global state mutation** on install beyond what mAId
   owns: the mAId profile, its marketplace dir, the registry's links,
-  the `maid@maid` plugin and `maid` marketplace registrations, and
-  the MCP registrations. Never the user's default nix profile (a
-  home-manager may own it). The rust toolchain and `just` come
+  the `maid@maid` plugin and `maid` marketplace registrations, the
+  MCP registrations, and its own part list. Never the user's default
+  nix profile (a home-manager may own it). The rust toolchain and `just` come
   from the dev shell; `build-tool` is invoked through `cargo run
   -p build-tool` (wrapped by Just) from the checkout — no shim
   under `~/.local/bin`, no `cargo install` anywhere in the
