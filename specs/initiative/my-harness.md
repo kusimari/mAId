@@ -57,7 +57,7 @@ Under a scratch HOME:
 
 | # | Feature | Ships | Needs | Status |
 |---|---|---|---|---|
-| M1 | harness-contract | Vocabulary, additivity rules, part-list format; install writes `parts/maid-harness.json` | - | running |
+| M1 | harness-contract | Vocabulary, additivity rules, part-list format; install writes `parts/maid-harness.json` | - | merged |
 | M5 | whole-status | `just status --whole` reads every part list and checks each harness | M1 | planned |
 | M3 | vendor-marketplaces | Vendor marketplaces as bring-ins (backlog `office-document-skills`) | M1 | planned |
 | M2 | memory | Memory skill, the way into the store per harness, `just memory-harvest` | M1 | planned |
