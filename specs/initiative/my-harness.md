@@ -61,6 +61,7 @@ Under a scratch HOME:
 | M5 | whole-status | `just status --whole` reads every part list and checks each harness | M1 | running |
 | M3 | vendor-marketplaces | Vendor marketplaces as bring-ins (backlog `office-document-skills`) | M1 | running |
 | M2 | memory | Memory skill, the way into the store per harness, `just memory-harvest` | M1 | running |
+| M6 | kiro-global-mcp | kiro gets mAId's MCP server from kiro's global MCP config, not a named sub-agent | M1 | running |
 | M4 | agy-verified | agy loads skills and the memory include | M2 | planned |
 
 ## Decision Log
@@ -88,3 +89,7 @@ Under a scratch HOME:
   project, so the store's memory is cross-project · why: verified against
   claude's settings schema; no per-project form exists · cost if wrong:
   a noisy index; keep it small
+- Ruling: new stream M6, kiro MCP through kiro's global config · why: a
+  server registered into a named agent is lost when another part
+  re-renders that agent; the global config is read by any agent that
+  includes it · cost if wrong: one more stream
