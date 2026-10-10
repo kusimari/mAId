@@ -73,3 +73,8 @@ Under a scratch HOME:
 - Ruling: part lists also record skipped steps (`"skipped": "<why>"`) ·
   why: whole-status shows expected vs present; silence on a skipped piece
   reads as nothing expected · cost if wrong: one optional field
+- Ruling: vendor document skills' runtime (python libs, office tools) is
+  an environment prerequisite, listed in project.md Dependencies; mAId
+  does not put it on a session's PATH · why: no base harness offers a
+  clean PATH extension point, and the user's PATH is the environment's ·
+  cost if wrong: the skills load but fail until the env provides them
