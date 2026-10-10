@@ -98,3 +98,7 @@ Under a scratch HOME:
   marketplace, and reaching them means copying proprietary vendor files
   into a skills path · cost if wrong: document skills missing in kiro
   and agy
+- Ruling: a part owns Claude's `autoMemoryDirectory` only when it equals
+  the value that part recorded setting; a hand-set value is left alone ·
+  why: rule 2, same fail-safe direction as bring-in ownership · cost if
+  wrong: a stray setting the user removes by hand
