@@ -78,3 +78,13 @@ Under a scratch HOME:
   does not put it on a session's PATH · why: no base harness offers a
   clean PATH extension point, and the user's PATH is the environment's ·
   cost if wrong: the skills load but fail until the env provides them
+- Ruling: the default memory store is named only by an explicit choice
+  (mAId's `memory-store --default`, or another part's own config);
+  Claude's `autoMemoryDirectory` follows the default store, and a part
+  removes its own value when it no longer owns the default · why: keeps
+  rule 3 order-independent across parts · cost if wrong: a machine with
+  no default until the user picks one
+- Ruling: Claude Code's `autoMemoryDirectory` is one dir for every
+  project, so the store's memory is cross-project · why: verified against
+  claude's settings schema; no per-project form exists · cost if wrong:
+  a noisy index; keep it small
