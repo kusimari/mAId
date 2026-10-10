@@ -70,3 +70,6 @@ Under a scratch HOME:
   · cost if wrong: Experience edits here
 - Ruling: part lists at `~/.local/state/my-harness/parts/<part>.json` ·
   why: XDG state, owned by no single part · cost if wrong: a path rename
+- Ruling: part lists also record skipped steps (`"skipped": "<why>"`) ·
+  why: whole-status shows expected vs present; silence on a skipped piece
+  reads as nothing expected · cost if wrong: one optional field
