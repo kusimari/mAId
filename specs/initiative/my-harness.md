@@ -63,7 +63,7 @@ Under a scratch HOME:
 | M2 | memory | Memory skill, the way into the store per harness, `just memory-harvest` | M1 | merged |
 | M6 | kiro-global-mcp | kiro gets mAId's MCP server from kiro's global MCP config, not a named sub-agent | M1 | merged |
 | M4 | agy-verified | agy loads skills and the memory include | M2 | parked: claude first |
-| M7 | claude-plugin-reads | A session reads every file of mAId's skills (kdevkit's modules) with no prompt, by a setting mAId installs and owns | M2 | running |
+| M7 | claude-plugin-reads | A session reads every file of mAId's skills (kdevkit's modules) with no prompt, by a setting mAId installs and owns | M2 | merged |
 | M8 | reader-rules | The whole-status reader's error rules written into the contract, so any reader implements them from text | M5 | merged |
 
 ## Next round
