@@ -63,6 +63,14 @@ Under a scratch HOME:
 | M2 | memory | Memory skill, the way into the store per harness, `just memory-harvest` | M1 | merged |
 | M6 | kiro-global-mcp | kiro gets mAId's MCP server from kiro's global MCP config, not a named sub-agent | M1 | merged |
 | M4 | agy-verified | agy loads skills and the memory include | M2 | parked: claude first |
+| M7 | claude-plugin-reads | A session reads every file of mAId's skills (kdevkit's modules) with no prompt, by a setting mAId installs and owns | M2 | running |
+| M8 | reader-rules | The whole-status reader's error rules written into the contract, so any reader implements them from text | M5 | running |
+
+## Next round
+
+After the user has tested the setup on Claude Code: streams that make the
+same resources and memory work in codex, kiro-cli and agy (G3 kiro-union
+is built and parked; M4 agy; codex end to end). Not started on its own.
 
 ## Decision Log
 
@@ -107,3 +115,9 @@ Under a scratch HOME:
   proves claude only · why: the user's need is one set of resources and
   one memory across agents, proven on one agent first · cost if wrong:
   kiro/codex gaps found later
+- Ruling (user): each repo's whole-status is a semantic mirror; the
+  reader error rules become contract text (M8); neither repo names the
+  other. Skills reach Claude only for now; other agents in Next round.
+- Ruling: M7 fixes the prompt on reading mAId's skill files in Claude,
+  in install, as a setting mAId owns · why: a by-hand settings edit is
+  not a fix · cost if wrong: prompts on skill-module reads
