@@ -325,15 +325,10 @@ reads back, and the browser-MCP script records its server through
 `build-tool record`.
 
 **Whole-status.** `just status --whole [agent]` reads every part's list
-(`whole.rs`) and reports each entry, per harness and part, as present
-(`present (disabled)` where the listing says the user turned it off;
-that does not fail the run), missing, skipped (with the part's reason), not checkable (no way to read
-that kind there, or the CLI is not on PATH) or unreadable. It refuses
-(and lists) a file that is not JSON, in another format, or whose `part`
-is not its file name, or an entry without a string `kind` and `name`,
-and exits non-zero when an entry is missing or
-unreadable or a file was refused.
-Presence is read from the harness's own listing or config:
+(`whole.rs`) and reports each entry, per harness and part, in one of six
+states: present, present (disabled) (the listing says the user turned it
+off), missing, skipped (with the part's reason), not checkable, or
+unreadable. Presence is read from the harness's own listing or config:
 
 | Harness | skill | agent | mcp | plugin | marketplace | setting |
 |---|---|---|---|---|---|---|
@@ -342,16 +337,124 @@ Presence is read from the harness's own listing or config:
 | `kiro-cli` | `~/.kiro/skills/<n>/SKILL.md` | `~/.kiro/agents/*.json` `name` (or file name) | the agent named by `scope`, its `mcpServers`; no scope: `~/.kiro/settings/mcp.json` | - | - | `~/.kiro/settings/cli.json` key |
 | `agy` | `~/.gemini/config/skills/<n>/SKILL.md` | - | - | - | - | - |
 
-`-` is not checkable, as is a `scope` where the harness has one place,
-and a claude plugin scope other than `user` (claude lists those per
-directory). A kiro MCP's sub-agent comes from each entry's `scope`, so
-`--whole` takes no sub-agent argument.
 claude's MCP is read from its config because `claude mcp list` and `get`
-start each server. agy is checked by path only. An agent file that does
-not parse is unreadable, by its file name, not missing.
+start each server. agy is checked by path only. A kiro MCP's sub-agent
+comes from each entry's `scope`, so `--whole` takes no sub-agent argument.
+
+**Reader rules.** Any whole-status reader, in any repo or language, follows
+these, and the conformance set below checks them. A rule is what changes a
+state or the exit code. The report's wording, layout, order and reasons
+are free.
+
+1. **Text.** Every file and every CLI's stdout is UTF-8, strictly. A
+   byte-order mark is not stripped, so a JSON file that starts with one is
+   not JSON. stderr is decoded leniently and only ever feeds a reason. In a
+   JSON object with a repeated key, the last one counts.
+2. **Which lists.** Every entry in the parts dir named `<stem>.json`, with
+   a stem that is not empty and does not start with `.`. No parts dir: no
+   lists, which passes. A parts dir that exists but cannot be listed
+   (permissions, not a dir) aborts: no report, exit 1. That is the only
+   abort. Every other failure stays with its list or its entry.
+3. **Refused lists.** A list is refused, reported by file name, and fails
+   the run when: it cannot be read (permissions, a dir), is not UTF-8,
+   JSON or an object; `format` is not a JSON number whose value, read as a
+   double, is 1 (`1.0` passes, `true` and `"1"` do not); `part` is not a string equal to the
+   stem, exactly; `harnesses` is not an object of arrays; an entry is not
+   an object; `kind` or `name` is not a string; or `scope` or `skipped` is
+   neither a string nor null. Other keys, and `value`, are not read,
+   whatever their type. No entry of a refused list is checked; the other
+   lists still are.
+4. **Absent and present.** A field that is null is absent. A field that is
+   a string is present, whatever it holds: `"skipped": ""` is skipped, and
+   `"scope": ""` is a scope.
+5. **Each entry**, in this order: with `skipped`, skipped, and nothing is
+   read. A harness key or kind not exactly one in the table: not
+   checkable. A `-` in the table: not checkable. Then its scope (rule 6),
+   then its source.
+6. **Scope.** Absent: the harness's one place. A claude plugin or MCP:
+   `"user"` is that place too, and any other scope is not checkable. A
+   kiro MCP: the scope names the kiro agent (`""` included) whose
+   `mcpServers` should hold it (no such agent: missing); with no scope,
+   `~/.kiro/settings/mcp.json`.
+   Any other kind with a scope: not checkable.
+7. **Names** compare exactly, case included, with the names a source
+   holds, and are never joined into a path: a skill `a/b` or `.` is
+   missing.
+8. **CLIs.** A CLI is on PATH when an absolute PATH dir, in order, holds
+   a regular file of that name with any execute bit. Empty and relative
+   entries are skipped, never read as the current dir: status runs what
+   it finds, and a `claude` planted in a checked-out repo must not run. Not on PATH: not checkable. It
+   runs with the reader's HOME. If it fails to start, exits non-zero, or
+   its stdout is not one JSON value (whitespace around it is fine, empty
+   is not) or not the listing's shape, every entry it would answer is
+   unreadable. With exit 0, stderr is ignored: stderr never decides a
+   state. Shapes: claude's `plugin list` is an array, items named by `id`,
+   counting only `"scope": "user"`; claude's marketplaces an array by
+   `name`; codex's `plugin list` an object whose `installed` array names by
+   `pluginId`; codex's marketplaces an object whose `marketplaces` array
+   names by `name`; codex's `mcp list` an array by `name`. An item that is
+   not an object or has no string name is ignored. An item with
+   `"enabled": false` (the JSON value; not `0`, not `"false"`) is present
+   (disabled).
+9. **Config files** (`~/.claude.json`, `~/.claude/settings.json`,
+   `~/.kiro/settings/*.json`). Absent: nothing listed. Only "does not
+   exist" is absent, here and for a dir in rule 10; any other failure, a
+   parent that is not a dir included, is unreadable. Cannot be read, not
+   UTF-8, not JSON, or not an object: unreadable. A key counts whatever its
+   value, null included. A member read for names (`mcpServers`) that is
+   absent or null lists nothing; of any other non-object type, unreadable.
+10. **Dirs.** An absent skills or agents dir lists nothing. One that
+    exists but cannot be listed (permissions, not a dir): every entry read
+    from it is unreadable. A skill is present when `<dir>/<name>/SKILL.md`
+    is a regular file after links; when that cannot be confirmed (absent,
+    not a file, its own dir without permission), missing.
+11. **Agent files** are every regular file, after links, named `<stem>.md`
+    (claude) or `<stem>.json` (kiro): stem not empty, dotfiles included,
+    extension exact. One that cannot be read or is not UTF-8 is unreadable
+    under its stem, which is the name an entry matches it by.
+    - kiro: a JSON object, named by its `name` when that is a string, else
+      by its stem. Not JSON or not an object: unreadable under its stem.
+      Its `mcpServers` reads as in rule 9.
+    - claude: lines split on LF, a trailing CR dropped. A first line that
+      starts with a byte-order mark: unreadable under its stem.
+      Frontmatter is the lines between a first line exactly `---` and the
+      next line exactly `---`. The name is on the first of those lines
+      that starts `name:` at column 0: the rest of that line, cut at its
+      first ` #`, trimmed of spaces and tabs, then one pair of matching surrounding quotes
+      (`"` or `'`) removed. No frontmatter, or no `name:` line: the file
+      names nothing.
+12. **One name, several sources** (listing items, agent files): the best
+    state wins, so order never matters: present, then present (disabled),
+    then unreadable, then missing. A kiro MCP whose agent name is in two
+    files is present if either lists it, else unreadable if one could not
+    be read or its `mcpServers` is not an object.
+13. **Exit.** 0, unless an entry is missing or unreadable or a list was
+    refused: then 1. An abort exits 1; a bad invocation 2. With one
+    harness selected, only its entries are checked and reported, and
+    refused lists still are reported and fail the run.
+
+**Conformance set.** `resources/build-tool/tests/conformance/<case>/`, plain
+data any reader's tests can copy (`tests/conformance.rs` runs `whole.rs`
+against it):
+
+- `parts/`: the parts dir (no `parts/`: no parts dir; a file: not a dir).
+- `home/`: HOME. Placeholder files keep dirs git would drop; a
+  `.gitattributes` of `* -text` keeps every byte as written.
+- `case.json`: `about`; optional `harness`, the one selected; optional
+  `clis`, per CLI, per exact argument string, `stdout` or `stdout_file`,
+  `stderr` or `stderr_file` (paths under the case), and `exit`. A CLI not
+  named is not on PATH; the PATH holds only the stubs' dir, which is also
+  the run's working dir, and arguments not listed exit 3. Optional `path`:
+  the PATH entries to use instead, as written. Optional `modes`, paths under the run dir (`parts/…`,
+  `home/…`, `bin/<cli>`) to octal modes, set before the run. Where they
+  do not bite (as root) the case cannot run; mAId's test then fails
+  unless `CONFORMANCE_ALLOW_SKIPS=1` is set. `expect`:
+  `exit`, `aborted` (when the report aborts), `entries` (`harness`,
+  `part`, `kind`, `name`, `scope` when the entry has one, and `state`, as
+  above) and `refused` (file names), compared in any order.
 
 A reader of part lists keeps its own lenient structs beside the writer's
-strict ones (`whole.rs` beside `part.rs`): a kind or harness it does not
+strict ones (`whole.rs` beside `part.rs`), so a kind or harness it does not
 know is one entry it cannot check, not a refused file.
 
 **Memory.** A memory store is a git checkout the user owns; its memories
@@ -518,7 +621,9 @@ mAId/
 │   │   ├── tests/plugins.rs  ignored: Plugins and BringIns against the real claude/codex CLIs in a temp HOME
 │   │   ├── tests/no_cli.rs   install with no agent CLI on PATH keeps the old links
 │   │   ├── tests/memory.rs   the memory verbs through the binary, temp HOME
-│   │   └── tests/memory_install.rs  install's claude memory step and its part list
+│   │   ├── tests/memory_install.rs  install's claude memory step and its part list
+│   │   ├── tests/conformance.rs  whole.rs against the conformance set
+│   │   └── tests/conformance/  the whole-status conformance set, one dir per case
 │   ├── content/            the deployable skills (copied into the profile)
 │   │   ├── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
 │   │   ├── skills/kdevkit/  SKILL.md core + phases/, tiers/, setup.md, interviews.md
@@ -567,7 +672,9 @@ detection — the tests most sensitive to a symlink-layout regression —
 and, for `Plugins`, reading each CLI's listing, the commands each
 plugin state leads to, and reaping the links an older install left.
 `whole.rs` checks each (harness, kind) against a temp HOME and stub CLIs
-on a PATH it is handed, never the real ones.
+on a PATH it is handed, never the real ones, and `tests/conformance.rs`
+runs it, and the binary for the exit code, against every case of the
+conformance set (see "My harness").
 
 `cargo test -p build-tool --test plugins -- --ignored` drives the real
 claude and codex CLIs in a temp HOME (install, update, a disabled

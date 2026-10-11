@@ -85,7 +85,9 @@ fn read_part(path: &Path) -> Result<Part, String> {
     let text = fs::read_to_string(path).map_err(|e| format!("cannot read: {e}"))?;
     let v: Value = serde_json::from_str(&text).map_err(|e| format!("not JSON: {e}"))?;
     match &v["format"] {
-        Value::Number(n) if n.as_u64() == Some(1) => {}
+        // 1.0 and 1e0 too: a reader with one number type cannot tell them
+        // from 1.
+        Value::Number(n) if n.as_f64() == Some(1.0) => {}
         Value::Null => return Err("no format".into()),
         other => return Err(format!("format {other} is not one this reader knows")),
     }
@@ -270,7 +272,7 @@ enum Source {
     JsonAgents(&'static str),
     /// The keys of a JSON file, or of one object in it.
     Keys(&'static str, Option<&'static str>),
-    /// The `mcpServers` keys of the kiro agent with this name.
+    /// The `mcpServers` keys of every kiro agent file with this name.
     KiroAgentMcp(String),
 }
 
@@ -353,12 +355,15 @@ impl Probe {
         };
         let mut seen = self.seen.borrow_mut();
         let names = seen.entry(src).or_insert_with_key(|src| self.names(src));
-        match names.as_ref().map(|n| n.get(&entry.name)) {
-            Ok(Some(Seen::On)) => Found::Present,
-            Ok(Some(Seen::Off)) => Found::Disabled,
-            Ok(Some(Seen::Broken(why))) => Found::Unreadable(why.clone()),
-            Ok(None) => Found::Missing,
-            Err(found) => found.clone(),
+        let listing = match names {
+            Ok(listing) => listing,
+            Err(found) => return found.clone(),
+        };
+        match (listing.names.get(&entry.name), &listing.unread) {
+            (Some(Seen::On), _) => Found::Present,
+            (Some(Seen::Off), _) => Found::Disabled,
+            (Some(Seen::Broken(why)), _) | (None, Some(why)) => Found::Unreadable(why.clone()),
+            (None, None) => Found::Missing,
         }
     }
 
@@ -395,9 +400,11 @@ impl Probe {
             Source::MarkdownAgents(dir) => Ok(self
                 .files(dir, "md")?
                 .iter()
-                .map(|p| match frontmatter_name(p) {
-                    Ok(name) => (name, Seen::On),
-                    Err(why) => (stem(p), Seen::Broken(format!("~/{dir}/{}: {why}", file(p)))),
+                .filter_map(|p| match frontmatter_name(p) {
+                    Ok(name) => name.map(|n| (n, Seen::On)),
+                    Err(why) => {
+                        Some((stem(p), Seen::Broken(format!("~/{dir}/{}: {why}", file(p)))))
+                    }
                 })
                 .collect()),
             Source::JsonAgents(dir) => Ok(self
@@ -412,28 +419,37 @@ impl Probe {
                 let v = match fs::read_to_string(self.home.join(file)) {
                     Ok(text) => serde_json::from_str::<Value>(&text)
                         .map_err(|e| unreadable(format!("~/{file}: not JSON: {e}")))?,
-                    Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Listing::new()),
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Listing::default()),
                     Err(e) => return Err(unreadable(format!("~/{file}: {e}"))),
                 };
-                match object.map_or(&v, |o| &v[o]) {
-                    Value::Null => Ok(Listing::new()),
-                    Value::Object(o) => Ok(on(o.keys().cloned())),
-                    _ => Err(unreadable(format!(
-                        "~/{file}: {} is not an object",
-                        object.unwrap_or("the file")
-                    ))),
+                let Value::Object(top) = &v else {
+                    return Err(unreadable(format!("~/{file}: not a JSON object")));
+                };
+                match object {
+                    None => Ok(on(top.keys().cloned())),
+                    Some(o) => {
+                        members(top, o).map_err(|why| unreadable(format!("~/{file}: {why}")))
+                    }
                 }
             }
+            // Every agent file of that name counts, and one that cannot be
+            // read could hold any server.
             Source::KiroAgentMcp(agent) => {
-                match self
-                    .json_agents(KIRO_AGENTS)?
-                    .into_iter()
-                    .find(|(name, _)| name == agent)
-                {
-                    Some((_, Ok(v))) => Ok(on(keys_of(&v["mcpServers"]))),
-                    Some((_, Err(why))) => Err(unreadable(why)),
-                    None => Ok(Listing::new()),
+                let mut listing = Listing::default();
+                for (name, parsed) in self.json_agents(KIRO_AGENTS)? {
+                    if name != *agent {
+                        continue;
+                    }
+                    let servers = parsed.and_then(|o| {
+                        members(&o, "mcpServers")
+                            .map_err(|why| format!("~/{KIRO_AGENTS}/{name}: {why}"))
+                    });
+                    match servers {
+                        Ok(servers) => listing.extend(servers.names),
+                        Err(why) => listing.unread = Some(why),
+                    }
                 }
+                Ok(listing)
             }
         }
     }
@@ -478,7 +494,7 @@ impl Probe {
     }
 
     /// Each `*.json` agent in a dir, by its `name` or, with none, its
-    /// file's; one that does not parse goes by its file's name.
+    /// stem; one that is not a JSON object goes by its stem.
     fn json_agents(&self, dir: &str) -> Result<Vec<(String, Parsed)>, Found> {
         let agent = |p: PathBuf| {
             let parsed = fs::read_to_string(&p)
@@ -486,9 +502,13 @@ impl Probe {
                 .and_then(|t| {
                     serde_json::from_str::<Value>(&t).map_err(|e| format!("not JSON: {e}"))
                 })
+                .and_then(|v| match v {
+                    Value::Object(o) => Ok(o),
+                    _ => Err("not a JSON object".into()),
+                })
                 .map_err(|why| format!("~/{dir}/{}: {why}", file(&p)));
             let name = match &parsed {
-                Ok(v) => v["name"].as_str().map(str::to_string),
+                Ok(o) => o.get("name").and_then(Value::as_str).map(str::to_string),
                 Err(_) => None,
             };
             (name.unwrap_or_else(|| stem(&p)), parsed)
@@ -498,21 +518,57 @@ impl Probe {
 }
 
 /// An agent file's JSON, or why it would not parse.
-type Parsed = Result<Value, String>;
+type Parsed = Result<serde_json::Map<String, Value>, String>;
 
-/// What a source lists, by name.
-type Listing = BTreeMap<String, Seen>;
+/// What a source lists, by name. Where several items or files give one
+/// name, the best state wins, so the result never depends on their order.
+#[derive(Default)]
+struct Listing {
+    names: BTreeMap<String, Seen>,
+    /// A file that could name more could not be read: a name not listed is
+    /// unreadable, not missing.
+    unread: Option<String>,
+}
 
-#[derive(Debug, Clone, PartialEq)]
+impl Extend<(String, Seen)> for Listing {
+    fn extend<I: IntoIterator<Item = (String, Seen)>>(&mut self, items: I) {
+        for (name, seen) in items {
+            let held = self.names.entry(name).or_insert_with(|| seen.clone());
+            if seen < *held {
+                *held = seen;
+            }
+        }
+    }
+}
+
+impl FromIterator<(String, Seen)> for Listing {
+    fn from_iter<I: IntoIterator<Item = (String, Seen)>>(items: I) -> Listing {
+        let mut listing = Listing::default();
+        listing.extend(items);
+        listing
+    }
+}
+
+/// Best first: the order `Ord` derives from.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Seen {
     On,
     Off,
-    /// A file that should name one could not be read; keyed by its file name.
+    /// A file that should name one could not be read; keyed by its stem.
     Broken(String),
 }
 
 fn on(names: impl IntoIterator<Item = String>) -> Listing {
     names.into_iter().map(|n| (n, Seen::On)).collect()
+}
+
+/// The keys of `object[key]`: none when it is absent or null.
+fn members(object: &serde_json::Map<String, Value>, key: &str) -> Result<Listing, String> {
+    match object.get(key) {
+        None | Some(Value::Null) => Ok(Listing::default()),
+        Some(Value::Object(o)) => Ok(on(o.keys().cloned())),
+        Some(_) => Err(format!("{key} is not an object")),
+    }
 }
 
 /// Entries named by `key`; one with `"enabled": false` is off.
@@ -537,24 +593,38 @@ fn file(p: &Path) -> String {
     p.file_name().unwrap_or_default().to_string_lossy().into()
 }
 
-fn keys_of(v: &Value) -> BTreeSet<String> {
-    v.as_object()
-        .map(|o| o.keys().cloned().collect())
-        .unwrap_or_default()
-}
-
-fn frontmatter_name(path: &Path) -> Result<String, String> {
-    #[derive(Deserialize)]
-    struct Named {
-        name: String,
-    }
+/// A claude agent's name, read as text so any reader can do the same (see
+/// project.md "My harness"). `Ok(None)`: the file names nothing.
+fn frontmatter_name(path: &Path) -> Result<Option<String>, String> {
     let text = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    gray_matter::Matter::<gray_matter::engine::YAML>::new()
-        .parse::<Named>(&text)
-        .map_err(|e| e.to_string())?
-        .data
-        .map(|n| n.name)
-        .ok_or_else(|| "no frontmatter with a name".into())
+    if text.starts_with('\u{feff}') {
+        return Err("starts with a byte-order mark".into());
+    }
+    let lines: Vec<&str> = text
+        .split('\n')
+        .map(|l| l.strip_suffix('\r').unwrap_or(l))
+        .collect();
+    let Some((&"---", rest)) = lines.split_first() else {
+        return Ok(None);
+    };
+    let Some(end) = rest.iter().position(|l| *l == "---") else {
+        return Ok(None);
+    };
+    Ok(rest[..end]
+        .iter()
+        .find_map(|l| l.strip_prefix("name:"))
+        .map(|v| {
+            let v = v
+                .split(" #")
+                .next()
+                .unwrap_or_default()
+                .trim_matches([' ', '\t']);
+            ['"', '\'']
+                .iter()
+                .find_map(|q| v.strip_prefix(*q).and_then(|v| v.strip_suffix(*q)))
+                .unwrap_or(v)
+                .to_string()
+        }))
 }
 
 #[cfg(test)]
@@ -861,7 +931,10 @@ mod tests {
         let w = World::new();
         w.file(".kiro/agents/broken.json", "{ half");
         w.file(".kiro/agents/fine.json", r#"{"name":"fine"}"#);
-        w.file(".claude/agents/broken.md", "no frontmatter\n");
+        w.file(
+            ".claude/agents/broken.md",
+            "\u{feff}---\nname: broken\n---\n",
+        );
         w.part(
             "p.json",
             r#"{"format":1,"part":"p","harnesses":{

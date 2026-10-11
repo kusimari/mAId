@@ -1,0 +1,46 @@
+{
+  "about": "present, present (disabled), skipped and not checkable all pass",
+  "clis": {
+    "codex": {
+      "mcp list --json": {
+        "stdout": "[{\"name\":\"on\",\"enabled\":true},{\"name\":\"off\",\"enabled\":false}]",
+        "stderr": "",
+        "exit": 0
+      }
+    }
+  },
+  "expect": {
+    "exit": 0,
+    "entries": [
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "mcp",
+        "name": "on",
+        "state": "present"
+      },
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "mcp",
+        "name": "off",
+        "state": "present (disabled)"
+      },
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "plugin",
+        "name": "p",
+        "state": "skipped"
+      },
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "agent",
+        "name": "a",
+        "state": "not checkable"
+      }
+    ],
+    "refused": []
+  }
+}

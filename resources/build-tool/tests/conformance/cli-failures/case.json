@@ -1,0 +1,74 @@
+{
+  "about": "non-zero exit (even with good JSON), empty stdout, stdout not JSON or not UTF-8, and the wrong shape are unreadable",
+  "clis": {
+    "claude": {
+      "plugin list --json": {
+        "stdout": "",
+        "stderr": "",
+        "exit": 0
+      },
+      "plugin marketplace list --json": {
+        "stdout_file": "out/bad-utf8",
+        "exit": 0
+      }
+    },
+    "codex": {
+      "mcp list --json": {
+        "stdout": "[{\"name\":\"m\"}]",
+        "stderr": "",
+        "exit": 1
+      },
+      "plugin list --json": {
+        "stdout": "[{\"pluginId\":\"p\"}]",
+        "stderr": "",
+        "exit": 0
+      },
+      "plugin marketplace list --json": {
+        "stdout": "not json",
+        "stderr": "",
+        "exit": 0
+      }
+    }
+  },
+  "expect": {
+    "exit": 1,
+    "entries": [
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "plugin",
+        "name": "p",
+        "state": "unreadable"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "marketplace",
+        "name": "m",
+        "state": "unreadable"
+      },
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "mcp",
+        "name": "m",
+        "state": "unreadable"
+      },
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "plugin",
+        "name": "p",
+        "state": "unreadable"
+      },
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "marketplace",
+        "name": "m",
+        "state": "unreadable"
+      }
+    ],
+    "refused": []
+  }
+}

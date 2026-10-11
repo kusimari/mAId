@@ -1,0 +1,16 @@
+{
+  "about": "one missing entry fails the run",
+  "expect": {
+    "exit": 1,
+    "entries": [
+      {
+        "harness": "agy",
+        "part": "p",
+        "kind": "skill",
+        "name": "gone",
+        "state": "missing"
+      }
+    ],
+    "refused": []
+  }
+}

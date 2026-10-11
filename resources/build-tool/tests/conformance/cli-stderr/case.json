@@ -1,0 +1,49 @@
+{
+  "about": "stderr never decides a state, even when it is not UTF-8; whitespace around stdout's JSON is fine",
+  "clis": {
+    "codex": {
+      "mcp list --json": {
+        "stdout": "\n  [{\"name\":\"m\"}]  \n",
+        "stderr": "error: this is only a warning",
+        "exit": 0
+      },
+      "plugin list --json": {
+        "stdout": "{\"installed\":[{\"pluginId\":\"p\"}]}",
+        "stderr_file": "out/bad-utf8",
+        "exit": 0
+      },
+      "plugin marketplace list --json": {
+        "stdout": "{\"marketplaces\":[{\"name\":\"k\"}]}",
+        "stderr": "",
+        "exit": 0
+      }
+    }
+  },
+  "expect": {
+    "exit": 0,
+    "entries": [
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "mcp",
+        "name": "m",
+        "state": "present"
+      },
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "plugin",
+        "name": "p",
+        "state": "present"
+      },
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "marketplace",
+        "name": "k",
+        "state": "present"
+      }
+    ],
+    "refused": []
+  }
+}

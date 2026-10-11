@@ -380,11 +380,19 @@ pub fn on_path(program: &str) -> bool {
     find_on(std::env::var_os("PATH").as_deref(), program).is_some()
 }
 
-/// Where `program` is in a PATH value.
+/// Where `program` is in a PATH value: the first regular file with any
+/// execute bit in an absolute entry. Empty and relative entries are
+/// skipped: what is found gets run, and a `claude` planted in a checked-out
+/// repo must not be.
 pub fn find_on(path: Option<&std::ffi::OsStr>, program: &str) -> Option<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
     std::env::split_paths(path?)
+        .filter(|dir| dir.is_absolute())
         .map(|dir| dir.join(program))
-        .find(|p| p.is_file())
+        .find(|p| {
+            p.metadata()
+                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        })
 }
 
 pub fn home_dir() -> Result<PathBuf> {
@@ -402,6 +410,44 @@ pub fn home_dir() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── PATH lookup ──────────────────────────────────────────────
+
+    #[test]
+    fn find_on_takes_the_first_executable_file_in_path_order() {
+        use std::os::unix::fs::PermissionsExt;
+        let dirs: Vec<_> = (0..3).map(|_| tempfile::TempDir::new().unwrap()).collect();
+        let put = |i: usize, mode: u32| {
+            let at = dirs[i].path().join("tool");
+            std::fs::write(&at, "").unwrap();
+            std::fs::set_permissions(&at, std::fs::Permissions::from_mode(mode)).unwrap();
+            at
+        };
+        put(0, 0o644);
+        std::fs::create_dir(dirs[1].path().join("tool")).unwrap();
+        let later = put(2, 0o755);
+        let path = std::env::join_paths(dirs.iter().map(|d| d.path())).unwrap();
+        assert_eq!(find_on(Some(&path), "tool"), Some(later));
+        assert_eq!(find_on(None, "tool"), None);
+    }
+
+    #[test]
+    fn empty_and_relative_path_entries_are_skipped() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let at = dir.path().join("tool");
+        std::fs::write(&at, "").unwrap();
+        std::fs::set_permissions(&at, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // The same dir, spelled relative to this process's current dir.
+        let cwd = std::env::current_dir().unwrap();
+        let up = "../".repeat(cwd.components().count() - 1);
+        let relative = format!("{up}{}", dir.path().strip_prefix("/").unwrap().display());
+        assert!(PathBuf::from(&relative).join("tool").is_file());
+        for path in ["", ":", &relative, &format!(":{relative}:")] {
+            assert_eq!(find_on(Some(path.as_ref()), "tool"), None, "{path:?}");
+        }
+        assert_eq!(find_on(Some(dir.path().as_os_str()), "tool"), Some(at));
+    }
 
     // ── agent selector (--agent) ─────────────────────────────────
 

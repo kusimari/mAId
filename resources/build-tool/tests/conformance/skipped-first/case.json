@@ -1,0 +1,37 @@
+{
+  "about": "skipped wins over everything, and an empty reason is still skipped",
+  "expect": {
+    "exit": 0,
+    "entries": [
+      {
+        "harness": "other-cli",
+        "part": "p",
+        "kind": "skill",
+        "name": "a",
+        "state": "skipped"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "hook",
+        "name": "b",
+        "state": "skipped"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "plugin",
+        "name": "c",
+        "state": "skipped"
+      },
+      {
+        "harness": "agy",
+        "part": "p",
+        "kind": "skill",
+        "name": "d",
+        "state": "skipped"
+      }
+    ],
+    "refused": []
+  }
+}

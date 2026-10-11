@@ -1,0 +1,102 @@
+{
+  "about": "only enabled: false turns an item off; items without a string name are ignored; the best state of a repeated name wins; claude plugins count only at scope \"user\"",
+  "clis": {
+    "codex": {
+      "mcp list --json": {
+        "stdout": "[{\"name\": \"on\"}, {\"name\": \"zero\", \"enabled\": 0}, {\"name\": \"str\", \"enabled\": \"false\"}, {\"name\": \"off\", \"enabled\": false}, {\"name\": \"dup\"}, {\"name\": \"dup\", \"enabled\": false}, {\"name\": 5}, \"text\", {\"id\": \"noname\"}]",
+        "stderr": "",
+        "exit": 0
+      }
+    },
+    "claude": {
+      "plugin list --json": {
+        "stdout": "[{\"id\": \"u\", \"scope\": \"user\"}, {\"id\": \"n\"}, {\"id\": \"nul\", \"scope\": null}, {\"id\": \"U\", \"scope\": \"User\"}]",
+        "stderr": "",
+        "exit": 0
+      }
+    }
+  },
+  "expect": {
+    "exit": 1,
+    "entries": [
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "mcp",
+        "name": "on",
+        "state": "present"
+      },
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "mcp",
+        "name": "zero",
+        "state": "present"
+      },
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "mcp",
+        "name": "str",
+        "state": "present"
+      },
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "mcp",
+        "name": "off",
+        "state": "present (disabled)"
+      },
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "mcp",
+        "name": "dup",
+        "state": "present"
+      },
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "mcp",
+        "name": "5",
+        "state": "missing"
+      },
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "mcp",
+        "name": "noname",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "plugin",
+        "name": "u",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "plugin",
+        "name": "n",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "plugin",
+        "name": "nul",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "plugin",
+        "name": "U",
+        "state": "missing"
+      }
+    ],
+    "refused": []
+  }
+}
