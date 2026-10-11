@@ -62,6 +62,7 @@ Under a scratch HOME:
 | M3 | vendor-marketplaces | Vendor marketplaces as bring-ins (backlog `office-document-skills`) | M1 | merged |
 | M2 | memory | Memory skill, the way into the store per harness, `just memory-harvest` | M1 | merged |
 | M6 | kiro-global-mcp | kiro gets mAId's MCP server from kiro's global MCP config, not a named sub-agent | M1 | merged |
+| M9 | reader-rules-values | Rule 14 says how a setting's value compares (string-only) and that a dotted name is tried first as a top-level key; cases added | M7, M8 | running |
 | M4 | agy-verified | agy loads skills and the memory include | M2 | parked: claude first |
 | M7 | claude-plugin-reads | A session reads every file of mAId's skills (kdevkit's modules) with no prompt, by a setting mAId installs and owns | M2 | merged |
 | M8 | reader-rules | The whole-status reader's error rules written into the contract, so any reader implements them from text | M5 | merged |
@@ -127,3 +128,7 @@ is built and parked; M4 agy; codex end to end). Not started on its own.
   already present, removed on uninstall like one mAId wrote · why: the
   user's call · cost if wrong: uninstall removes a rule another session
   added
+- Ruling: M9 clarifies rule 14 in the shared text (setting values compare
+  only as strings; a dotted name is first a top-level key) · why: G4's
+  review found two readings readers could differ on · cost if wrong: a
+  non-string setting value is reported not checkable
