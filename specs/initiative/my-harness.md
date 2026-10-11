@@ -121,3 +121,9 @@ is built and parked; M4 agy; codex end to end). Not started on its own.
 - Ruling: M7 fixes the prompt on reading mAId's skill files in Claude,
   in install, as a setting mAId owns · why: a by-hand settings edit is
   not a fix · cost if wrong: prompts on skill-module reads
+- Ruling (user, 2026-10-11): the hand-added plugin-read rule in the user's
+  Claude settings stays (other sessions rely on it). An element identical
+  to what mAId would write is adopted: recorded as mAId's, reported as
+  already present, removed on uninstall like one mAId wrote · why: the
+  user's call · cost if wrong: uninstall removes a rule another session
+  added
