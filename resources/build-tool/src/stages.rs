@@ -19,6 +19,7 @@ use crate::harness::{
 };
 use crate::memory;
 use crate::part::{self, Item, What};
+use crate::reads;
 use crate::shared::{checkout_skill, on_path, usage, Agent};
 use anyhow::{anyhow, Context, Result};
 use std::fs;
@@ -189,6 +190,10 @@ pub fn cmd_record(
     skipped: Option<&str>,
     names: &[String],
 ) -> Result<u8> {
+    // Each setting is owned by the step that writes it, with its value.
+    if kind == What::Setting {
+        return Err(usage("a setting is recorded by the step that sets it"));
+    }
     let items = names
         .iter()
         .map(|n| Item {
@@ -222,20 +227,14 @@ pub fn cmd_install_memory(
     let out = memory::install_claude(home, &config, &own, on_path(Agent::Claude.cli()), dry_run)?;
     println!("{}", out.line);
     if !dry_run {
-        part::record(
-            parts,
-            Agent::Claude,
-            &[What::Setting],
-            None,
-            out.item.into_iter().collect(),
-        )
-        // mAId owns only what it recorded, so an unrecorded value is the user's to remove.
-        .with_context(|| {
-            format!(
-                "claude {} may be set but is not recorded; check it by hand",
-                memory::SETTING
-            )
-        })?;
+        part::record_setting(parts, Agent::Claude, memory::SETTING, out.item)
+            // mAId owns only what it recorded, so an unrecorded value is the user's to remove.
+            .with_context(|| {
+                format!(
+                    "claude {} may be set but is not recorded; check it by hand",
+                    memory::SETTING
+                )
+            })?;
     }
     Ok(0)
 }
@@ -252,18 +251,76 @@ pub fn cmd_uninstall_memory(
     let out = memory::uninstall_claude(home, &ownership(parts)?, dry_run)?;
     println!("{}", out.line);
     if !dry_run {
-        part::record(parts, Agent::Claude, &[What::Setting], None, vec![])?;
+        part::record_setting(parts, Agent::Claude, memory::SETTING, None)?;
     }
     Ok(0)
+}
+
+/// Install's claude step for reading mAId's skill files: add mAId's
+/// plugin dir to Claude's additional directories, and record it.
+pub fn cmd_install_reads(
+    home: &Path,
+    profile: &Path,
+    parts: &Path,
+    dry_run: bool,
+    agent: Option<Agent>,
+) -> Result<u8> {
+    if agent.is_some_and(|a| a != Agent::Claude) {
+        return Ok(0);
+    }
+    let own = recorded_setting(parts, reads::SETTING)?;
+    let out = reads::install_claude(
+        home,
+        profile,
+        own.as_ref(),
+        on_path(Agent::Claude.cli()),
+        dry_run,
+    )?;
+    println!("{}", out.line);
+    if !dry_run {
+        part::record_setting(parts, Agent::Claude, reads::SETTING, out.item).with_context(
+            || {
+                format!(
+                    "claude {} may hold mAId's element but it is not recorded; check it by hand",
+                    reads::SETTING
+                )
+            },
+        )?;
+    }
+    Ok(0)
+}
+
+/// Uninstall's claude step for skill reads: remove mAId's recorded element
+/// only.
+pub fn cmd_uninstall_reads(
+    home: &Path,
+    parts: &Path,
+    dry_run: bool,
+    agent: Option<Agent>,
+) -> Result<u8> {
+    if agent.is_some_and(|a| a != Agent::Claude) {
+        return Ok(0);
+    }
+    let own = recorded_setting(parts, reads::SETTING)?;
+    let out = reads::uninstall_claude(home, own.as_ref(), dry_run)?;
+    println!("{}", out.line);
+    if !dry_run {
+        part::record_setting(parts, Agent::Claude, reads::SETTING, None)?;
+    }
+    Ok(0)
+}
+
+/// The setting `name` as mAId's part list records it placed on claude.
+fn recorded_setting(parts: &Path, name: &str) -> Result<Option<Item>> {
+    Ok(part::placed(parts, Agent::Claude)?
+        .into_iter()
+        .find(|i| i.kind == What::Setting && i.name == name))
 }
 
 /// What mAId owns of claude's memory setting: what its part list says it
 /// set.
 fn ownership(parts: &Path) -> Result<memory::Ownership> {
-    let recorded = part::placed(parts, Agent::Claude)?
-        .into_iter()
-        .find(|i| i.kind == What::Setting && i.name == memory::SETTING)
-        .and_then(|i| i.value);
+    let recorded = recorded_setting(parts, memory::SETTING)?.and_then(|i| i.value);
     Ok(memory::Ownership { recorded })
 }
 
@@ -1071,6 +1128,26 @@ mod tests {
     fn a_dry_run_writes_no_part_list() {
         let (dir, target, parts) = installable();
         cmd_install(&target, &content(&dir), &parts, true, false, None).unwrap();
+        assert!(!parts.exists());
+    }
+
+    #[test]
+    fn record_refuses_a_setting_and_writes_nothing() {
+        let dir = TempDir::new().unwrap();
+        let parts = dir.path().join("parts");
+        let err = cmd_record(
+            &parts,
+            Agent::Claude,
+            What::Setting,
+            None,
+            None,
+            &["k".into()],
+        )
+        .unwrap_err();
+        assert!(
+            err.downcast_ref::<crate::shared::UsageError>().is_some(),
+            "{err}"
+        );
         assert!(!parts.exists());
     }
 

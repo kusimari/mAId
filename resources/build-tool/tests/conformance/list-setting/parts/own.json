@@ -1,0 +1,1 @@
+{"format": 1, "part": "own", "harnesses": {"claude": [{"kind": "setting", "name": "permissions.additionalDirectories", "value": "/s/marketplace/plugins/maid"}]}}

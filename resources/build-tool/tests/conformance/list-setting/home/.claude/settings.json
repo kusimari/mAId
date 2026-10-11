@@ -1,0 +1,1 @@
+{"permissions": {"defaultMode": "auto", "additionalDirectories": ["/s/marketplace/plugins/maid", "/other"], "allow": "Read(//x/**)"}, "a.b": 1, "n": [1, 2], "x.y": ["/a"], "x": {"y": ["/b"]}}

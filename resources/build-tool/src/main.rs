@@ -228,7 +228,14 @@ fn run(cli: Cli) -> Result<u8> {
                 a.dry_run,
                 agent,
             )?;
-            Ok(rc.max(memory))
+            let reads = stages::cmd_install_reads(
+                &home_dir()?,
+                &profile_dir()?,
+                &parts_dir()?,
+                a.dry_run,
+                agent,
+            )?;
+            Ok(rc.max(memory).max(reads))
         }
         Cmd::Uninstall(a) => {
             let agent = validate_agent(a.agent.as_deref())?;
@@ -241,7 +248,8 @@ fn run(cli: Cli) -> Result<u8> {
             )?;
             let memory =
                 stages::cmd_uninstall_memory(&home_dir()?, &parts_dir()?, a.dry_run, agent)?;
-            Ok(rc.max(memory))
+            let reads = stages::cmd_uninstall_reads(&home_dir()?, &parts_dir()?, a.dry_run, agent)?;
+            Ok(rc.max(memory).max(reads))
         }
         Cmd::Status(a) => stages::cmd_status(&deployment()?, validate_agent(a.agent.as_deref())?),
         Cmd::Whole { agent } => build_tool::whole::cmd_whole(

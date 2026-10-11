@@ -78,6 +78,10 @@ placed_on_all() {
   entries kiro-cli | grep -qx "skill notes" && mcp_entry kiro-cli
 }
 check "the part list names what install placed on claude, codex and kiro" placed_on_all
+grant=$(dirname "$MAID_PROFILE")/marketplace/plugins/maid
+granted() { jq -e --arg d "$grant" '.permissions.additionalDirectories | index($d)' "$th/.claude/settings.json" >/dev/null 2>&1; }
+check "install lets claude read mAId's plugin dir, and records it" \
+  eval 'granted && entries claude | grep -qx "setting permissions.additionalDirectories"'
 vendor=anthropic-agent-skills
 brought_in() {
   for h in claude codex; do
@@ -183,6 +187,7 @@ check "the part list names agy's skills as skipped past that link" \
 inhome just resources::uninstall-skills >/dev/null 2>&1
 inhome just resources::uninstall-browser-mcp >/dev/null 2>&1
 check "uninstall removes the part list" eval '[ ! -e "$partlist" ]'
+check "uninstall takes the plugin-dir grant away" eval '! granted'
 # A listing that is not JSON must not pass as "removed".
 vendor_gone() {
   local cli m

@@ -393,7 +393,7 @@ pub struct Outcome {
     pub item: Option<Item>,
 }
 
-fn read_settings(at: &Path) -> Result<serde_json::Map<String, serde_json::Value>> {
+pub(crate) fn read_settings(at: &Path) -> Result<serde_json::Map<String, serde_json::Value>> {
     match fs::read_to_string(at) {
         Ok(text) if text.trim().is_empty() => Ok(Default::default()),
         Ok(text) => match serde_json::from_str(&text)
@@ -505,7 +505,10 @@ pub fn uninstall_claude(home: &Path, own: &Ownership, dry_run: bool) -> Result<O
 
 /// Values are re-serialised: key order is kept, but a number or escape may
 /// come back in another text form.
-fn write_settings(at: &Path, map: &serde_json::Map<String, serde_json::Value>) -> Result<()> {
+pub(crate) fn write_settings(
+    at: &Path,
+    map: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
     let text = serde_json::to_string_pretty(map)?;
     write_atomic(at, format!("{text}\n").as_bytes())
 }

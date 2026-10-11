@@ -17,6 +17,7 @@
 //!               verification stages, owned by neither
 //!   part.rs     the part list: what mAId placed on each base harness
 //!   memory.rs   memory stores, Claude's memory setting, and harvest
+//!   reads.rs    Claude's setting that lets it read mAId's skill files
 //!   deploy.rs   HOW a skill reaches an agent — the one place that knows
 //!               about $HOME layout, behind a swappable trait
 //!   stages.rs   the pipeline: content, check, install, smoke. Declares
@@ -36,6 +37,7 @@ pub mod deploy;
 pub mod harness;
 pub mod memory;
 pub mod part;
+pub mod reads;
 pub mod shared;
 pub mod stages;
 pub mod whole;

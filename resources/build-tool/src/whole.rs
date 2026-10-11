@@ -29,6 +29,8 @@ pub struct Entry {
     pub scope: Option<String>,
     #[serde(default)]
     pub skipped: Option<String>,
+    #[serde(default)]
+    pub value: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -270,8 +272,10 @@ enum Source {
     MarkdownAgents(&'static str),
     /// The `name` (or file name) of each `*.json` in this dir.
     JsonAgents(&'static str),
-    /// The keys of a JSON file, or of one object in it.
-    Keys(&'static str, Option<&'static str>),
+    /// The keys of one object in a JSON file.
+    Keys(&'static str, &'static str),
+    /// A settings file, read per entry (rule 14).
+    Settings(&'static str),
     /// The `mcpServers` keys of every kiro agent file with this name.
     KiroAgentMcp(String),
 }
@@ -297,11 +301,11 @@ fn source(agent: Agent, kind: What, scope: Option<&str>) -> Result<Source, Strin
         )),
         // `claude mcp list` and `get` start each server to health-check it.
         (Claude, Mcp) if matches!(scope, None | Some("user")) => {
-            Ok(Source::Keys(".claude.json", Some("mcpServers")))
+            Ok(Source::Keys(".claude.json", "mcpServers"))
         }
         (Kiro, Mcp) => Ok(match scope {
             Some(s) => Source::KiroAgentMcp(s.into()),
-            None => Source::Keys(".kiro/settings/mcp.json", Some("mcpServers")),
+            None => Source::Keys(".kiro/settings/mcp.json", "mcpServers"),
         }),
         (_, Skill) => one_place(Source::Skills(agent.user_skills_dir())),
         (Claude, Marketplace) | (Codex, Marketplace) => one_place(Source::Marketplaces(agent)),
@@ -309,8 +313,8 @@ fn source(agent: Agent, kind: What, scope: Option<&str>) -> Result<Source, Strin
         (Codex, Mcp) => one_place(Source::CodexMcp),
         (Claude, What::Agent) => one_place(Source::MarkdownAgents(".claude/agents")),
         (Kiro, What::Agent) => one_place(Source::JsonAgents(KIRO_AGENTS)),
-        (Claude, Setting) => one_place(Source::Keys(".claude/settings.json", None)),
-        (Kiro, Setting) => one_place(Source::Keys(".kiro/settings/cli.json", None)),
+        (Claude, Setting) => one_place(Source::Settings(".claude/settings.json")),
+        (Kiro, Setting) => one_place(Source::Settings(".kiro/settings/cli.json")),
         _ => Err(match scope {
             Some(s) if agent == Claude && kind == Mcp => {
                 format!("claude {s} MCP servers are not read")
@@ -353,6 +357,9 @@ impl Probe {
             Ok(src) => src,
             Err(why) => return Found::NotCheckable(why),
         };
+        if let Source::Settings(file) = &src {
+            return self.setting(file, entry);
+        }
         let mut seen = self.seen.borrow_mut();
         let names = seen.entry(src).or_insert_with_key(|src| self.names(src));
         let listing = match names {
@@ -425,13 +432,9 @@ impl Probe {
                 let Value::Object(top) = &v else {
                     return Err(unreadable(format!("~/{file}: not a JSON object")));
                 };
-                match object {
-                    None => Ok(on(top.keys().cloned())),
-                    Some(o) => {
-                        members(top, o).map_err(|why| unreadable(format!("~/{file}: {why}")))
-                    }
-                }
+                members(top, object).map_err(|why| unreadable(format!("~/{file}: {why}")))
             }
+            Source::Settings(_) => unreachable!("a setting is read per entry, by setting()"),
             // Every agent file of that name counts, and one that cannot be
             // read could hold any server.
             Source::KiroAgentMcp(agent) => {
@@ -451,6 +454,34 @@ impl Probe {
                 }
                 Ok(listing)
             }
+        }
+    }
+
+    /// A setting: `name` is its key, or, with no such key, a dotted path to a
+    /// nested one (kiro's own keys hold dots). A key that holds a list is the
+    /// entry's only when the list holds its `value`.
+    fn setting(&self, file: &str, entry: &Entry) -> Found {
+        let v = match fs::read_to_string(self.home.join(file)) {
+            Ok(text) => match serde_json::from_str::<Value>(&text) {
+                Ok(v) => v,
+                Err(e) => return Found::Unreadable(format!("~/{file}: not JSON: {e}")),
+            },
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Found::Missing,
+            Err(e) => return Found::Unreadable(format!("~/{file}: {e}")),
+        };
+        let Some(top) = v.as_object() else {
+            return Found::Unreadable(format!("~/{file}: not an object"));
+        };
+        let at = top.get(&entry.name).or_else(|| {
+            entry
+                .name
+                .split('.')
+                .try_fold(&v, |v, key| v.as_object().and_then(|o| o.get(key)))
+        });
+        match (at, &entry.value) {
+            (Some(Value::Array(list)), Some(want)) if !list.contains(want) => Found::Missing,
+            (Some(_), _) => Found::Present,
+            (None, _) => Found::Missing,
         }
     }
 
@@ -905,6 +936,43 @@ mod tests {
         present_and_missing(&w, "claude", "mcp");
         w.file(".claude/settings.json", r#"{"here":"x","env":{"gone":1}}"#);
         present_and_missing(&w, "claude", "setting");
+    }
+
+    #[test]
+    fn a_dotted_setting_reads_a_nested_key_and_a_list_its_element() {
+        let w = World::new();
+        w.file(
+            ".claude/settings.json",
+            r#"{"permissions":{"defaultMode":"auto","additionalDirectories":["/a","/b"]}}"#,
+        );
+        w.entries(
+            "claude",
+            r#"{"kind":"setting","name":"permissions.defaultMode"},
+               {"kind":"setting","name":"permissions.gone"},
+               {"kind":"setting","name":"permissions.defaultMode.x"},
+               {"kind":"setting","name":"permissions.additionalDirectories","value":"/b"},
+               {"kind":"setting","name":"permissions.additionalDirectories","value":"/c","adopted":true}"#,
+        );
+        let found: Vec<Found> = w.found().into_iter().map(|(_, f)| f).collect();
+        use Found::{Missing, Present};
+        assert_eq!(found, [Present, Missing, Missing, Present, Missing]);
+    }
+
+    #[test]
+    fn a_literal_key_with_dots_wins_over_a_nested_path() {
+        let w = World::new();
+        w.file(
+            ".kiro/settings/cli.json",
+            r#"{"chat.defaultAgent":"a","chat":{"other":1,"defaultAgent":["b"]}}"#,
+        );
+        w.entries(
+            "kiro-cli",
+            r#"{"kind":"setting","name":"chat.defaultAgent","value":"a"},{"kind":"setting","name":"chat.other"}"#,
+        );
+        let found: Vec<Found> = w.found().into_iter().map(|(_, f)| f).collect();
+        assert_eq!(found, [Found::Present, Found::Present]);
+        w.file(".kiro/settings/cli.json", "[]");
+        assert!(matches!(w.found()[0].1, Found::Unreadable(_)));
     }
 
     #[test]

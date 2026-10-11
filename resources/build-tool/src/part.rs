@@ -48,6 +48,10 @@ pub struct Item {
     /// from another part's later.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
+    /// The part found this exact value already there and took it over: it
+    /// owns it as if it had written it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub adopted: bool,
 }
 
 impl Item {
@@ -58,6 +62,7 @@ impl Item {
             scope: None,
             skipped: None,
             value: None,
+            adopted: false,
         }
     }
 
@@ -123,6 +128,30 @@ pub fn record(
     scope: Option<&str>,
     items: Vec<Item>,
 ) -> Result<()> {
+    let replaced = |i: &Item| {
+        kinds.contains(&i.kind)
+            && match (i.scope.as_deref(), scope) {
+                (found, want) if found == want => true,
+                (None, Some(_)) => i.skipped.is_some(),
+                _ => false,
+            }
+    };
+    rewrite(dir, agent, replaced, items)
+}
+
+/// Replace `agent`'s entry for the setting `name` with `item` (none clears
+/// it), keeping every other setting: each step owns its own setting.
+pub fn record_setting(dir: &Path, agent: Agent, name: &str, item: Option<Item>) -> Result<()> {
+    let replaced = |i: &Item| i.kind == What::Setting && i.name == name;
+    rewrite(dir, agent, replaced, item.into_iter().collect())
+}
+
+fn rewrite(
+    dir: &Path,
+    agent: Agent,
+    replaced: impl Fn(&Item) -> bool,
+    items: Vec<Item>,
+) -> Result<()> {
     let at = path(dir);
     let mut list = read(dir)?.unwrap_or_else(|| PartList {
         format: FORMAT,
@@ -130,12 +159,7 @@ pub fn record(
         harnesses: BTreeMap::new(),
     });
     let entries = list.harnesses.entry(agent.cli().into()).or_default();
-    let replaced = |i: &Item| match (i.scope.as_deref(), scope) {
-        (found, want) if found == want => true,
-        (None, Some(_)) => i.skipped.is_some(),
-        _ => false,
-    };
-    entries.retain(|i| !(kinds.contains(&i.kind) && replaced(i)));
+    entries.retain(|i| !replaced(i));
     entries.extend(items);
     entries.sort();
     entries.dedup();
@@ -357,6 +381,36 @@ mod tests {
         let text = r#"{"format":2,"part":"maid-harness","harnesses":{"claude":[{"kind":"plugin","name":"p"}]}}"#;
         fs::write(path(dir.path()), text).unwrap();
         assert!(placed(dir.path(), Agent::Claude).is_err());
+    }
+
+    #[test]
+    fn each_setting_is_recorded_by_name_and_keeps_the_others() {
+        let dir = TempDir::new().unwrap();
+        let setting = |name: &str| Item {
+            value: Some("v".into()),
+            ..Item::placed(What::Setting, name)
+        };
+        let (a, b) = (setting("a"), setting("b.c"));
+        record_setting(dir.path(), Agent::Claude, "a", Some(a.clone())).unwrap();
+        record_setting(dir.path(), Agent::Claude, "b.c", Some(b.clone())).unwrap();
+        assert_eq!(entries(dir.path(), Agent::Claude), vec![a.clone(), b]);
+        record_setting(dir.path(), Agent::Claude, "b.c", None).unwrap();
+        assert_eq!(entries(dir.path(), Agent::Claude), vec![a]);
+    }
+
+    #[test]
+    fn adopted_is_written_only_when_set_and_read_back() {
+        let dir = TempDir::new().unwrap();
+        let mine = Item::placed(What::Setting, "a");
+        let found = Item {
+            adopted: true,
+            ..Item::placed(What::Setting, "b")
+        };
+        record_setting(dir.path(), Agent::Claude, "a", Some(mine)).unwrap();
+        record_setting(dir.path(), Agent::Claude, "b", Some(found.clone())).unwrap();
+        let text = fs::read_to_string(path(dir.path())).unwrap();
+        assert_eq!(text.matches("adopted").count(), 1, "{text}");
+        assert!(placed(dir.path(), Agent::Claude).unwrap().contains(&found));
     }
 
     #[test]

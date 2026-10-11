@@ -1,0 +1,93 @@
+{
+  "about": "rule 14: a setting's name is a top-level key, else a dotted path; a key holding a list is present only when it holds the entry's value (any JSON, adopted or not); a null value, or a key that is not a list, needs only the key",
+  "expect": {
+    "exit": 1,
+    "entries": [
+      {
+        "harness": "claude",
+        "part": "own",
+        "kind": "setting",
+        "name": "permissions.additionalDirectories",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "gone",
+        "kind": "setting",
+        "name": "permissions.additionalDirectories",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "other",
+        "kind": "setting",
+        "name": "permissions.additionalDirectories",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "nullvalue",
+        "kind": "setting",
+        "name": "permissions.additionalDirectories",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "number",
+        "kind": "setting",
+        "name": "n",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "literal",
+        "kind": "setting",
+        "name": "x.y",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "setting",
+        "name": "permissions.allow",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "setting",
+        "name": "permissions.missing",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "setting",
+        "name": "permissions.defaultMode.x",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "setting",
+        "name": "a.b",
+        "state": "present"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "setting",
+        "name": "chat.defaultAgent",
+        "state": "present"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "setting",
+        "name": "chat.other",
+        "state": "present"
+      }
+    ],
+    "refused": []
+  }
+}
