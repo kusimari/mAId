@@ -62,7 +62,7 @@ Under a scratch HOME:
 | M3 | vendor-marketplaces | Vendor marketplaces as bring-ins (backlog `office-document-skills`) | M1 | merged |
 | M2 | memory | Memory skill, the way into the store per harness, `just memory-harvest` | M1 | merged |
 | M6 | kiro-global-mcp | kiro gets mAId's MCP server from kiro's global MCP config, not a named sub-agent | M1 | merged |
-| M4 | agy-verified | agy loads skills and the memory include | M2 | planned |
+| M4 | agy-verified | agy loads skills and the memory include | M2 | parked: claude first |
 
 ## Decision Log
 
@@ -102,3 +102,8 @@ Under a scratch HOME:
   the value that part recorded setting; a hand-set value is left alone ·
   why: rule 2, same fail-safe direction as bring-in ownership · cost if
   wrong: a stray setting the user removes by hand
+- Ruling (user, 2026-10-11): Claude Code first; kiro, codex and agy follow
+  later. Parked: G3 kiro-union (built, branch kept), M4 agy. Macro test
+  proves claude only · why: the user's need is one set of resources and
+  one memory across agents, proven on one agent first · cost if wrong:
+  kiro/codex gaps found later
