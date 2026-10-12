@@ -194,3 +194,6 @@ is built and parked; M4 agy; codex end to end). Not started on its own.
 - Macro test run 1 (Claude only, scratch HOME): this part's install,
   personal-memory, memory-off setting, routing, recall and uninstall PASS.
   The other part's registration failed and is being fixed there.
+- Macro test (Claude only, scratch HOME, two runs): union, status, this
+  part's server and setting, routing, recall and uninstall PASS. The
+  remaining checks need the user's real install.
