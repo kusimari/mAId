@@ -1,0 +1,1 @@
+{"s": "/a", "list": ["/a", 1, true, null, {"x": "/b"}, ["/c"]], "num": 100, "flag": true, "esc": "\u00e9", "nfd": "é", "x.y": "top", "x": {"y": "nested"}, "m": {"n.o": "deep"}, "a.b": {"c": "x"}}

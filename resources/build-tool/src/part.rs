@@ -3,18 +3,20 @@
 //! repos' parts and the whole-status that reads them all; see project.md
 //! "My harness".
 //!
-//! This module is the only writer. It touches its own file and nothing
-//! else in the parts dir.
+//! This module is the only writer. It writes its own file and nothing
+//! else in the parts dir; it reads the others only for what they claim.
 
 use crate::shared::Agent;
 use anyhow::{anyhow, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 pub const PART: &str = "maid-harness";
+/// Why a value is not adopted: another part's list records it.
+pub const ANOTHER_PART: &str = "another part's";
 const FORMAT: u32 = 1;
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -115,6 +117,34 @@ pub fn placed(dir: &Path, agent: Agent) -> Result<Vec<Item>> {
     let mut items = list.harnesses.remove(agent.cli()).unwrap_or_default();
     items.retain(|i| i.skipped.is_none());
     Ok(items)
+}
+
+/// The values of setting `name` on `agent` that another part's list
+/// records as placed: theirs, so never adopted or written (rule 2). A list
+/// that cannot be read, or of a format other than 1, claims nothing.
+pub fn claimed_by_others(dir: &Path, agent: Agent, name: &str) -> BTreeSet<String> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return BTreeSet::new();
+    };
+    let own = format!("{PART}.json");
+    let lists = entries.flatten().filter_map(|e| {
+        let file = e.file_name().into_string().ok()?;
+        let stem = file.strip_suffix(".json")?;
+        if stem.is_empty() || stem.starts_with('.') || file == own {
+            return None;
+        }
+        serde_json::from_str::<serde_json::Value>(&fs::read_to_string(e.path()).ok()?)
+            .ok()
+            .filter(|l| l["format"].as_f64() == Some(1.0))
+    });
+    lists
+        .flat_map(|list| match &list["harnesses"][agent.cli()] {
+            serde_json::Value::Array(items) => items.clone(),
+            _ => vec![],
+        })
+        .filter(|i| i["kind"] == "setting" && i["name"] == name && i["skipped"].is_null())
+        .filter_map(|i| i["value"].as_str().map(str::to_string))
+        .collect()
 }
 
 /// Replace `agent`'s entries of `kinds` in `scope` with `items`, keeping
@@ -350,6 +380,40 @@ mod tests {
         )
         .unwrap();
         assert_eq!(placed(dir.path(), Agent::Claude).unwrap(), vec![item]);
+    }
+
+    #[test]
+    fn other_parts_claim_only_their_placed_values_of_that_setting() {
+        let dir = TempDir::new().unwrap();
+        let write = |file: &str, text: &str| fs::write(dir.path().join(file), text).unwrap();
+        write(
+            "other.json",
+            r#"{"format":1,"part":"other","harnesses":{"claude":[
+                {"kind":"setting","name":"s","value":"/theirs"},
+                {"kind":"setting","name":"s","value":"/skipped","skipped":"why"},
+                {"kind":"setting","name":"t","value":"/t"},
+                {"kind":"new-kind","name":"s","value":"/kind"}],
+              "codex":[{"kind":"setting","name":"s","value":"/codex"}]}}"#,
+        );
+        write(
+            ".hidden.json",
+            r#"{"format":1,"harnesses":{"claude":[{"kind":"setting","name":"s","value":"/dot"}]}}"#,
+        );
+        write("broken.json", "not json");
+        write(
+            "future.json",
+            r#"{"format":2,"harnesses":{"claude":[{"kind":"setting","name":"s","value":"/future"}]}}"#,
+        );
+        let mine = Item {
+            value: Some("/mine".into()),
+            ..Item::placed(What::Setting, "s")
+        };
+        record_setting(dir.path(), Agent::Claude, "s", Some(mine)).unwrap();
+        assert_eq!(
+            claimed_by_others(dir.path(), Agent::Claude, "s"),
+            BTreeSet::from(["/theirs".to_string()])
+        );
+        assert!(claimed_by_others(&dir.path().join("none"), Agent::Claude, "s").is_empty());
     }
 
     #[test]

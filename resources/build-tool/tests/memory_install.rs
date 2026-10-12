@@ -144,4 +144,49 @@ fn install_points_claude_at_the_default_store_and_records_it() {
         .contains("/x/memory"));
     let list = fs::read_to_string(parts.join("maid-harness.json")).unwrap();
     assert!(list.contains("\"skipped\": \"not mAId's\""), "{list}");
+
+    // The exact value install would write, set by hand: adopted through the
+    // real part list, kept adopted on reinstall, removed on uninstall.
+    e.ok(&[
+        "memory",
+        "add-store",
+        "personal",
+        e.at("stores/personal").to_str().unwrap(),
+        "--default",
+    ]);
+    fs::write(
+        home.join(".claude/settings.json"),
+        format!("{{\"autoMemoryDirectory\": \"{}\"}}", want.display()),
+    )
+    .unwrap();
+    for _ in 0..2 {
+        cmd_install_memory(&home, &config, &parts, false, None).unwrap();
+        let list = fs::read_to_string(parts.join("maid-harness.json")).unwrap();
+        assert!(list.contains("\"adopted\": true"), "{list}");
+    }
+    cmd_uninstall_memory(&home, &parts, false, None).unwrap();
+    let settings = fs::read_to_string(home.join(".claude/settings.json")).unwrap();
+    assert!(!settings.contains("autoMemoryDirectory"), "{settings}");
+
+    // The same value recorded in another part's list: not adopted, so only
+    // one list claims it, and uninstall leaves it.
+    let theirs = format!("{{\"autoMemoryDirectory\": \"{}\"}}", want.display());
+    fs::write(home.join(".claude/settings.json"), &theirs).unwrap();
+    fs::write(
+        parts.join("other.json"),
+        format!(
+            r#"{{"format": 1, "part": "other", "harnesses": {{"claude": [{{"kind": "setting", "name": "autoMemoryDirectory", "value": "{}"}}]}}}}"#,
+            want.display()
+        ),
+    )
+    .unwrap();
+    cmd_install_memory(&home, &config, &parts, false, None).unwrap();
+    let list = fs::read_to_string(parts.join("maid-harness.json")).unwrap();
+    assert!(list.contains("\"skipped\": \"another part's\""), "{list}");
+    assert!(!list.contains("adopted"), "{list}");
+    cmd_uninstall_memory(&home, &parts, false, None).unwrap();
+    assert_eq!(
+        fs::read_to_string(home.join(".claude/settings.json")).unwrap(),
+        theirs
+    );
 }

@@ -7,10 +7,11 @@
 //! there (adopted); any other element is left alone.
 
 use crate::memory::{claude_settings, read_settings, write_settings, Outcome, NO_CLI};
-use crate::part::{Item, What};
+use crate::part::{Item, What, ANOTHER_PART};
 use crate::shared::{marketplace_root, PLUGIN_ID};
 use anyhow::Result;
 use serde_json::{Map, Value};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 pub const SETTING: &str = "permissions.additionalDirectories";
@@ -77,12 +78,14 @@ fn holds(list: &[Value], dir: &str) -> bool {
     list.iter().any(|v| v.as_str() == Some(dir))
 }
 
-/// Install: add mAId's element, or adopt the identical one already there.
-/// `own` is what mAId's part list recorded for this setting.
+/// Install: add mAId's element, or adopt the identical one already there
+/// unless another part's list records it (`claimed`). `own` is what mAId's
+/// part list recorded for this setting.
 pub fn install_claude(
     home: &Path,
     profile: &Path,
     own: Option<&Item>,
+    claimed: &BTreeSet<String>,
     cli_present: bool,
     dry_run: bool,
 ) -> Result<Outcome> {
@@ -134,9 +137,18 @@ pub fn install_claude(
             format!("{tag}done          claude {SETTING} {want}"),
             placed(own.is_some_and(|i| i.adopted)),
         ),
+        (true, false) if claimed.contains(&want) => (
+            format!("{tag}skip          claude {SETTING} {want} ({ANOTHER_PART})"),
+            Item::skipped(What::Setting, SETTING, ANOTHER_PART),
+        ),
         (true, false) => (
             format!("{tag}adopted       claude {SETTING} {want} (already present, adopted)"),
             placed(true),
+        ),
+        // Never newly claim what another part's list records (rule 2).
+        (false, _) if claimed.contains(&want) && recorded != Some(want.as_str()) => (
+            format!("{tag}skip          claude {SETTING} {want} ({ANOTHER_PART})"),
+            Item::skipped(What::Setting, SETTING, ANOTHER_PART),
         ),
         (false, _) => {
             list.push(Value::String(want.clone()));
@@ -212,7 +224,7 @@ mod tests {
     }
 
     fn install(e: &Env, own: Option<&Item>) -> Outcome {
-        install_claude(&e.home, &e.profile, own, true, false).unwrap()
+        install_claude(&e.home, &e.profile, own, &BTreeSet::new(), true, false).unwrap()
     }
 
     #[test]
@@ -280,6 +292,36 @@ mod tests {
         assert!(install(&e, Some(&item)).item.unwrap().adopted);
         uninstall_claude(&e.home, Some(&item), false).unwrap();
         assert_eq!(settings(&e), serde_json::json!({}));
+    }
+
+    #[test]
+    fn an_identical_element_another_part_records_is_not_adopted() {
+        let e = env();
+        seed(&e, serde_json::json!({"permissions": {DIRS: [mine(&e)]}}));
+        let theirs = BTreeSet::from([mine(&e)]);
+        let out = install_claude(&e.home, &e.profile, None, &theirs, true, false).unwrap();
+        let item = out.item.unwrap();
+        assert_eq!(
+            (item.skipped.as_deref(), item.adopted),
+            (Some(ANOTHER_PART), false)
+        );
+        uninstall_claude(&e.home, Some(&item), false).unwrap();
+        assert_eq!(
+            settings(&e),
+            serde_json::json!({"permissions": {DIRS: [mine(&e)]}})
+        );
+    }
+
+    #[test]
+    fn an_element_another_part_records_is_never_added_and_maids_own_stays() {
+        let e = env();
+        let theirs = BTreeSet::from([mine(&e)]);
+        let out = install_claude(&e.home, &e.profile, None, &theirs, true, false).unwrap();
+        assert_eq!(out.item.unwrap().skipped.as_deref(), Some(ANOTHER_PART));
+        assert!(!claude_settings(&e.home).exists());
+        let item = install(&e, None).item.unwrap();
+        let again = install_claude(&e.home, &e.profile, Some(&item), &theirs, true, false).unwrap();
+        assert_eq!(again.item, Some(item));
     }
 
     #[test]
@@ -386,7 +428,15 @@ mod tests {
         let e = env();
         let item = install(&e, None).item.unwrap();
         seed(&e, serde_json::json!({}));
-        let out = install_claude(&e.home, &e.profile, Some(&item), false, false).unwrap();
+        let out = install_claude(
+            &e.home,
+            &e.profile,
+            Some(&item),
+            &BTreeSet::new(),
+            false,
+            false,
+        )
+        .unwrap();
         assert_eq!(out.item.unwrap().skipped.as_deref(), Some(NO_CLI));
     }
 
@@ -426,12 +476,21 @@ mod tests {
     #[test]
     fn without_claude_nothing_is_written_and_a_placed_element_stays_recorded() {
         let e = env();
-        let none = install_claude(&e.home, &e.profile, None, false, false).unwrap();
+        let none =
+            install_claude(&e.home, &e.profile, None, &BTreeSet::new(), false, false).unwrap();
         assert_eq!(none.item.unwrap().skipped.as_deref(), Some(NO_CLI));
         assert!(!claude_settings(&e.home).exists());
         let item = install(&e, None).item.unwrap();
         let bytes = fs::read(claude_settings(&e.home)).unwrap();
-        let out = install_claude(&e.home, &e.profile, Some(&item), false, false).unwrap();
+        let out = install_claude(
+            &e.home,
+            &e.profile,
+            Some(&item),
+            &BTreeSet::new(),
+            false,
+            false,
+        )
+        .unwrap();
         assert_eq!(out.item, Some(item));
         assert_eq!(fs::read(claude_settings(&e.home)).unwrap(), bytes);
     }
@@ -439,7 +498,7 @@ mod tests {
     #[test]
     fn dry_run_writes_nothing() {
         let e = env();
-        install_claude(&e.home, &e.profile, None, true, true).unwrap();
+        install_claude(&e.home, &e.profile, None, &BTreeSet::new(), true, true).unwrap();
         assert!(!claude_settings(&e.home).exists());
         let item = install(&e, None).item.unwrap();
         let bytes = fs::read(claude_settings(&e.home)).unwrap();

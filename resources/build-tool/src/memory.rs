@@ -340,8 +340,8 @@ pub fn remove_store(dir: &Path, name: &str) -> Result<String> {
 // Claude Code — `autoMemoryDirectory` in user settings.
 //
 // One value: mAId sets it only when mAId's own file names the default and
-// the key is empty or already mAId's, and removes its own value when it no
-// longer has a default to point at.
+// the key is empty or already mAId's, adopts an identical value it finds,
+// and removes its own value when it no longer has a default to point at.
 // ─────────────────────────────────────────────────────────────────
 
 /// Why install did not place the setting. Fixed phrases, no paths.
@@ -355,11 +355,14 @@ pub fn claude_settings(home: &Path) -> PathBuf {
 }
 
 /// mAId owns the `autoMemoryDirectory` value only when it is exactly the
-/// value its part list records having set (rule 2: a part owns what it
-/// wrote). A hand-set value is another's, even one naming a mAId store.
+/// value its part list records, set or adopted (rule 2). Any other hand-set
+/// value is another's, even one naming a mAId store.
 #[derive(Debug, Default)]
 pub struct Ownership {
     pub recorded: Option<String>,
+    pub adopted: bool,
+    /// Values other parts' lists record as placed: never adopted.
+    pub claimed: std::collections::BTreeSet<String>,
 }
 
 impl Ownership {
@@ -432,8 +435,18 @@ pub fn install_claude(
             None => skipped(NO_CLI),
             Some(v) if is_ours(own, v) => Item {
                 value: v.as_str().map(str::to_string),
+                adopted: own.adopted,
                 ..Item::placed(What::Setting, SETTING)
             },
+            Some(v) if v.as_str().is_some_and(|s| own.claimed.contains(s)) => {
+                skipped(crate::part::ANOTHER_PART)
+            }
+            // What install would adopt with claude there is not another's.
+            Some(v)
+                if wanted(config).is_ok_and(|d| v.as_str() == Some(&d.display().to_string())) =>
+            {
+                skipped(NO_CLI)
+            }
             Some(_) => skipped(OTHER_VALUE),
         };
         return Ok(Outcome {
@@ -443,9 +456,39 @@ pub fn install_claude(
     }
     let mut map = read_settings(&at)?;
     let current = current_value(&map).cloned();
-    let ours = current.as_ref().is_none_or(|v| is_ours(own, v));
-    let want = wanted(config);
+    // A value another part's list records is never newly claimed (rule 2).
+    let want = wanted(config).and_then(|d| {
+        let s = d.display().to_string();
+        match own.claimed.contains(&s) && own.recorded.as_deref() != Some(s.as_str()) {
+            true => Err(crate::part::ANOTHER_PART),
+            false => Ok(d),
+        }
+    });
+    let want_value = want
+        .as_ref()
+        .ok()
+        .map(|d| serde_json::Value::String(d.display().to_string()));
+    // Rule 2: the value mAId would write, found there, is adopted, unless
+    // another part's list records it.
+    let theirs = current
+        .as_ref()
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| own.claimed.contains(s))
+        && !current.as_ref().is_some_and(|v| is_ours(own, v));
+    let adopted = match &current {
+        Some(v) if Some(v) == want_value.as_ref() && !theirs => !is_ours(own, v) || own.adopted,
+        _ => false,
+    };
+    let newly_adopted = adopted && current.as_ref().is_some_and(|v| !is_ours(own, v));
+    let ours = newly_adopted || current.as_ref().is_none_or(|v| is_ours(own, v));
     let (line, item) = match (ours, &want) {
+        (false, _) if theirs => (
+            format!(
+                "{tag}skip          claude {SETTING} ({})",
+                crate::part::ANOTHER_PART
+            ),
+            Some(skipped(crate::part::ANOTHER_PART)),
+        ),
         // Another's value is the reason, whatever else also applies.
         (false, _) => (
             format!("{tag}skip          claude {SETTING} ({OTHER_VALUE})"),
@@ -459,10 +502,18 @@ pub fn install_claude(
                     write_settings(&at, &map)?;
                 }
             }
+            let line = match newly_adopted {
+                true => format!(
+                    "{tag}adopted       claude {SETTING} -> {} (already present, adopted)",
+                    dir.display()
+                ),
+                false => format!("{tag}done          claude {SETTING} -> {}", dir.display()),
+            };
             (
-                format!("{tag}done          claude {SETTING} -> {}", dir.display()),
+                line,
                 Some(Item {
                     value: Some(dir.display().to_string()),
+                    adopted,
                     ..Item::placed(What::Setting, SETTING)
                 }),
             )
@@ -832,6 +883,7 @@ mod tests {
     fn own(_: &Env, recorded: Option<&str>) -> Ownership {
         Ownership {
             recorded: recorded.map(Into::into),
+            ..Default::default()
         }
     }
 
@@ -1263,6 +1315,94 @@ mod tests {
         assert_eq!(out.item.unwrap().skipped.as_deref(), Some(OTHER_VALUE));
         uninstall_claude(&e.home, &own(&e, None), false).unwrap();
         assert_eq!(settings(&e), hand);
+    }
+
+    #[test]
+    fn an_identical_hand_set_value_is_adopted_and_uninstall_removes_it() {
+        let e = env();
+        add_store(&e.config, "personal", &e.stores.join("personal"), true).unwrap();
+        let mine = e.stores.join("personal/memory").display().to_string();
+        let hand = format!(r#"{{"autoMemoryDirectory": "{mine}"}}"#);
+        seed_settings(&e, &hand);
+        // Without claude nothing is adopted, and the value is not another's.
+        let out = install_claude(&e.home, &cfg(&e), &own(&e, None), false, false).unwrap();
+        assert_eq!(out.item.unwrap().skipped.as_deref(), Some(NO_CLI));
+        let out = install_claude(&e.home, &cfg(&e), &own(&e, None), true, false).unwrap();
+        assert!(
+            out.line.contains("already present, adopted"),
+            "{}",
+            out.line
+        );
+        let item = out.item.unwrap();
+        assert_eq!(
+            (item.skipped, item.value.as_deref(), item.adopted),
+            (None, Some(mine.as_str()), true)
+        );
+        assert_eq!(settings(&e), hand);
+        // Stays adopted on the next install, with or without claude.
+        let held = Ownership {
+            recorded: Some(mine.clone()),
+            adopted: true,
+            ..Default::default()
+        };
+        for cli in [true, false] {
+            let again = install_claude(&e.home, &cfg(&e), &held, cli, false).unwrap();
+            assert!(again.item.unwrap().adopted, "cli {cli}");
+        }
+        uninstall_claude(&e.home, &held, false).unwrap();
+        assert!(!settings(&e).contains(SETTING));
+    }
+
+    #[test]
+    fn an_identical_value_another_part_records_is_not_adopted() {
+        let e = env();
+        add_store(&e.config, "personal", &e.stores.join("personal"), true).unwrap();
+        let mine = e.stores.join("personal/memory").display().to_string();
+        let hand = format!(r#"{{"autoMemoryDirectory": "{mine}"}}"#);
+        seed_settings(&e, &hand);
+        let theirs = Ownership {
+            claimed: [mine.clone()].into(),
+            ..Default::default()
+        };
+        for cli in [true, false] {
+            let out = install_claude(&e.home, &cfg(&e), &theirs, cli, false).unwrap();
+            let item = out.item.unwrap();
+            assert_eq!(
+                (item.skipped.as_deref(), item.adopted),
+                (Some(crate::part::ANOTHER_PART), false),
+                "cli {cli}"
+            );
+        }
+        uninstall_claude(&e.home, &theirs, false).unwrap();
+        assert_eq!(settings(&e), hand);
+    }
+
+    #[test]
+    fn a_value_another_part_records_is_never_written_and_maids_own_stays() {
+        let e = env();
+        add_store(&e.config, "personal", &e.stores.join("personal"), true).unwrap();
+        let mine = e.stores.join("personal/memory").display().to_string();
+        let claimed = Ownership {
+            claimed: [mine.clone()].into(),
+            ..Default::default()
+        };
+        let out = install_claude(&e.home, &cfg(&e), &claimed, true, false).unwrap();
+        assert_eq!(
+            out.item.unwrap().skipped.as_deref(),
+            Some(crate::part::ANOTHER_PART)
+        );
+        assert!(!claude_settings(&e.home).exists());
+        // A value mAId already holds stays mAId's.
+        seed_settings(&e, &format!(r#"{{"autoMemoryDirectory": "{mine}"}}"#));
+        let held = Ownership {
+            recorded: Some(mine.clone()),
+            ..claimed
+        };
+        let item = install_claude(&e.home, &cfg(&e), &held, true, false)
+            .unwrap()
+            .item
+            .unwrap();
+        assert_eq!((item.skipped, item.value), (None, Some(mine)));
     }
 
     #[test]

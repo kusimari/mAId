@@ -183,9 +183,8 @@ store path) to `permissions.additionalDirectories` in
 asking. This widens Claude's working directories only to a read-only tree,
 so the edit half of a working directory grants nothing there. It is one
 element of a list the user and other parts also write: mAId owns the element
-its part list records, and adopts an identical one it finds (says
-`already present, adopted`, records `adopted`), removing either on
-uninstall; any other element is left alone, and a recorded value not of
+its part list records, and adopts an identical one it finds (rule 2),
+removing either on uninstall; any other element is left alone, and a recorded value not of
 that shape is not mAId's. claude not on PATH, or no plugin in the profile,
 writes nothing; a value that is not a list is left and recorded skipped.
 
@@ -287,7 +286,15 @@ The rules every part follows, so that parts add up and never fight:
 1. No wrapper. The base harness binaries run as the vendor ships them:
    no wrapper scripts, aliases or `PATH` shims.
 2. A part owns only what it wrote in each extension point, and
-   removes only that.
+   removes only that. A setting's value (for a list, one element) that is
+   exactly what the part would write is adopted: the part records it with
+   `adopted`, reports it `already present, adopted`, and owns and removes
+   it as if it had written it. Before adopting or writing a value it does
+   not already hold, it reads the other part lists: when any of format 1
+   records that setting with that value and no `skipped`, the value is that
+   part's, so the part neither adopts nor writes it and records `skipped:
+   "another part's"`. Two lists never both claim one value. Any other value
+   it did not write is another's.
 3. A setting that holds one value is set only when it is empty or
    already this part's.
 4. Each part writes a part list (below) on install and removes it on
@@ -326,8 +333,8 @@ whole-status reads every `*.json` file in the dir that is not a dotfile.
 - `kind`: `skill`, `mcp`, `agent`, `plugin`, `marketplace` or
   `setting`. `name`: what the harness's own listing calls it; for a
   `setting`, its key, or a dotted path to a nested one
-  (`permissions.additionalDirectories`); a key that holds the dots itself
-  wins.
+  (`permissions.additionalDirectories`); a top-level key that holds the
+  dots itself wins (rule 14).
 - `scope`, optional: where inside the harness, for a part that places
   something in one of several places. mAId places everything in one
   place per harness and writes none.
@@ -337,6 +344,7 @@ whole-status reads every `*.json` file in the dir that is not a dotfile.
 - `value`, optional: for a `setting`, the value the part set, so a later
   install can tell its own value from another part's. For a setting that
   holds a list, the entry is one element of it and `value` is that element.
+  Writers write a string; a reader checks no other type (rule 14).
 - `adopted`, optional: `true` when the part found this exact value already
   there and took it over; it owns it as if it had written it.
 - An entry without `skipped` is placed: the harness lists it, in
@@ -387,7 +395,8 @@ are free.
    stem, exactly; `harnesses` is not an object of arrays; an entry is not
    an object; `kind` or `name` is not a string; or `scope` or `skipped` is
    neither a string nor null. Other keys are not read, and `value` and
-   `adopted` are taken whatever their type (rule 14 reads `value`). No entry of a refused list is checked; the other
+   `adopted` are taken whatever their type (rule 14 reads a setting's
+   `value`; one that is not a string makes that entry not checkable). No entry of a refused list is checked; the other
    lists still are.
 4. **Absent and present.** A field that is null is absent. A field that is
    a string is present, whatever it holds: `"skipped": ""` is skipped, and
@@ -457,14 +466,19 @@ are free.
     refused: then 1. An abort exits 1; a bad invocation 2. With one
     harness selected, only its entries are checked and reported, and
     refused lists still are reported and fail the run.
-14. **Settings.** A setting's `name` is a key of the config file's
-    top-level object; when there is no such key, a dotted path, each part
-    a key of the object one level down (`permissions.additionalDirectories`).
-    Neither found: missing, as is a path through a value that is not an
-    object. When the key found holds an array and the entry has a `value`
-    (any JSON), the entry is present only when the array holds an element
-    equal to it, else missing; otherwise present. `adopted` changes no
-    state.
+14. **Settings.** A setting's `name` is first a key of the config file's
+    top-level object equal to the whole name, dots included; only when
+    there is no such key, a dotted path split at every `.`, each part a key
+    of the object one level down (`permissions.additionalDirectories`). A
+    key with dots below the top level is never found as one key. Neither
+    found: missing, as is a path through a value that is not an object. A `value` compares only
+    as a string: one that is neither null nor a string makes the entry not
+    checkable, decided before the file is read. With a string `value`, the
+    entry is present only when the setting, or when the setting is an
+    array one element of it, is a JSON string equal to `value` code point
+    for code point (escapes decoded, no normalisation), else missing; a
+    setting or element that is not a string never matches. With no `value`
+    or a null one, a found key is present. `adopted` changes no state.
 
 **Conformance set.** `resources/build-tool/tests/conformance/<case>/`, plain
 data any reader's tests can copy (`tests/conformance.rs` runs `whole.rs`
@@ -522,9 +536,10 @@ Stores are configured per part, one file each in
 settings (`~/.claude/settings.json`) it replaces every project's memory dir
 with one shared dir, so the store's `MEMORY.md` is cross-project and must
 stay small: Claude loads its first 200 lines or 25 KB. Its value is a
-part's only when it equals the `value` the part's list records having set
-(rule 2: a part owns what it wrote). A value set by hand is another's, even
-one naming the part's own store, and is left alone.
+part's only when it equals the `value` the part's list records, set or
+adopted. A value found there that is exactly what install would set is
+adopted (rule 2); any other value set by hand is another's, even one naming
+another of the part's stores, and is left alone.
 A part's install sets it to its default store's `memory/` dir only when its
 own file names the default, that store exists, and the key is empty or
 already the part's; when its own file no longer names a usable default and

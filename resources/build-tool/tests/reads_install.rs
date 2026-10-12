@@ -86,4 +86,23 @@ fn install_adds_the_plugin_dir_keeps_the_rest_and_uninstall_puts_it_back() {
     cmd_uninstall_memory(&home, &parts, false, None).unwrap();
     assert_eq!(fs::read_to_string(&at).unwrap(), before);
     assert!(!parts.join("maid-harness.json").exists());
+
+    // The same element, set by hand and recorded in another part's list: not
+    // adopted, so only one list claims it, and uninstall leaves it.
+    let dir = mine.display().to_string();
+    let theirs = serde_json::json!({"permissions": {"additionalDirectories": [dir]}}).to_string();
+    fs::write(&at, &theirs).unwrap();
+    fs::write(
+        parts.join("other.json"),
+        serde_json::json!({"format": 1, "part": "other", "harnesses": {"claude": [
+            {"kind": "setting", "name": "permissions.additionalDirectories", "value": dir}]}})
+        .to_string(),
+    )
+    .unwrap();
+    cmd_install_reads(&home, &profile, &parts, false, None).unwrap();
+    let list = fs::read_to_string(parts.join("maid-harness.json")).unwrap();
+    assert!(list.contains("\"skipped\": \"another part's\""), "{list}");
+    assert!(!list.contains("adopted"), "{list}");
+    cmd_uninstall_reads(&home, &parts, false, None).unwrap();
+    assert_eq!(fs::read_to_string(&at).unwrap(), theirs);
 }

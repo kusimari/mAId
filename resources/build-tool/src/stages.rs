@@ -273,6 +273,7 @@ pub fn cmd_install_reads(
         home,
         profile,
         own.as_ref(),
+        &part::claimed_by_others(parts, Agent::Claude, reads::SETTING),
         on_path(Agent::Claude.cli()),
         dry_run,
     )?;
@@ -318,10 +319,14 @@ fn recorded_setting(parts: &Path, name: &str) -> Result<Option<Item>> {
 }
 
 /// What mAId owns of claude's memory setting: what its part list says it
-/// set.
+/// set or adopted.
 fn ownership(parts: &Path) -> Result<memory::Ownership> {
-    let recorded = recorded_setting(parts, memory::SETTING)?.and_then(|i| i.value);
-    Ok(memory::Ownership { recorded })
+    let item = recorded_setting(parts, memory::SETTING)?;
+    Ok(memory::Ownership {
+        adopted: item.as_ref().is_some_and(|i| i.adopted),
+        recorded: item.and_then(|i| i.value),
+        claimed: part::claimed_by_others(parts, Agent::Claude, memory::SETTING),
+    })
 }
 
 pub fn cmd_memory_status(home: &Path, config_dir: &Path, parts: &Path) -> Result<u8> {

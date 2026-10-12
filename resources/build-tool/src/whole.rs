@@ -457,10 +457,16 @@ impl Probe {
         }
     }
 
-    /// A setting: `name` is its key, or, with no such key, a dotted path to a
-    /// nested one (kiro's own keys hold dots). A key that holds a list is the
-    /// entry's only when the list holds its `value`.
+    /// A setting: `name` is a top-level key, or, with no such key, a dotted
+    /// path to a nested one (kiro's own keys hold dots). With a `value`, the
+    /// setting, or one element of a list setting, must be that string.
     fn setting(&self, file: &str, entry: &Entry) -> Found {
+        // Strings only: readers in other languages disagree on numbers.
+        let want = match &entry.value {
+            None => None,
+            Some(Value::String(s)) => Some(s.as_str()),
+            Some(_) => return Found::NotCheckable("a setting's value is not a string".into()),
+        };
         let v = match fs::read_to_string(self.home.join(file)) {
             Ok(text) => match serde_json::from_str::<Value>(&text) {
                 Ok(v) => v,
@@ -478,10 +484,17 @@ impl Probe {
                 .split('.')
                 .try_fold(&v, |v, key| v.as_object().and_then(|o| o.get(key)))
         });
-        match (at, &entry.value) {
-            (Some(Value::Array(list)), Some(want)) if !list.contains(want) => Found::Missing,
-            (Some(_), _) => Found::Present,
-            (None, _) => Found::Missing,
+        let is_want = |v: &Value| v.as_str() == want;
+        let found = match (at, want) {
+            (None, _) => false,
+            (Some(_), None) => true,
+            (Some(Value::Array(list)), Some(_)) => list.iter().any(is_want),
+            (Some(v), Some(_)) => is_want(v),
+        };
+        if found {
+            Found::Present
+        } else {
+            Found::Missing
         }
     }
 
