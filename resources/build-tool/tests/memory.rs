@@ -1,5 +1,5 @@
 //! Memory from outside: the `memory` verbs through the binary, under a
-//! temp HOME and temp config and state dirs.
+//! temp HOME, store file and state dir.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -25,7 +25,8 @@ impl Env {
         Command::new(env!("CARGO_BIN_EXE_build-tool"))
             .args(args)
             .env("HOME", self.at("home"))
-            .env("MY_HARNESS_MEMORY", self.at("config"))
+            .env("MAID_MEMORY_STORE", self.at("config/memory-store"))
+            .env("MAID_PROFILE", self.at("profile"))
             .env("MY_HARNESS_PARTS", self.at("state"))
             .env_remove("CODEX_HOME")
             .output()
@@ -60,64 +61,73 @@ fn tree(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
 }
 
 #[test]
-fn store_verbs_status_and_harvest_through_the_binary() {
+fn set_store_status_and_harvest_through_the_binary() {
     let e = Env::new();
     let personal = e.at("stores/personal");
-    e.ok(&[
-        "memory",
-        "add-store",
-        "personal",
-        personal.to_str().unwrap(),
-        "--default",
-    ]);
-    e.ok(&[
-        "memory",
-        "add-store",
-        "work",
-        e.at("stores/work").to_str().unwrap(),
-    ]);
+
+    // No store set: said so.
+    let status = e.ok(&["memory", "status"]);
+    assert!(status.contains("no personal store set"), "{status}");
+
+    let missing = e.run(&["memory", "set-store", e.at("nope").to_str().unwrap()]);
+    assert!(!missing.status.success());
+    assert!(!e.at("config/memory-store").exists());
+
+    let set = e.ok(&["memory", "set-store", personal.to_str().unwrap()]);
+    assert!(set.contains("run `just install`"), "{set}");
     let status = e.ok(&["memory", "status"]);
     assert!(
-        status.contains("store personal") && status.contains("(default, maid-harness)"),
+        status.contains(&format!("memory   store {}\n", personal.display())),
+        "{status}"
+    );
+    assert!(
+        status.contains("personal-memory not registered"),
         "{status}"
     );
 
-    let missing = e.run(&["memory", "add-store", "x", e.at("nope").to_str().unwrap()]);
-    assert!(!missing.status.success());
-
-    let mem = e.at("home/.claude/projects/-proj/memory");
-    fs::create_dir_all(&mem).unwrap();
-    fs::write(
-        mem.join("a.md"),
-        "---\nname: a\ndescription: d\nmetadata:\n  type: user\n---\nA\n",
-    )
-    .unwrap();
-    fs::write(mem.join("MEMORY.md"), "- [a](a.md) - d\n").unwrap();
+    for (project, name) in [("-work-api", "a"), ("-home-garden", "b")] {
+        let mem = e.at(&format!("home/.claude/projects/{project}/memory"));
+        fs::create_dir_all(&mem).unwrap();
+        fs::write(
+            mem.join(format!("{name}.md")),
+            format!("---\nname: {name}\ndescription: d\nmetadata:\n  type: user\n---\nA\n"),
+        )
+        .unwrap();
+    }
     let originals = tree(&e.at("home"));
 
-    // Not configured: refused, nothing written anywhere.
-    let refused = e.run(&["memory", "harvest", "--to", "elsewhere"]);
+    // A dir that is not there: refused, nothing written anywhere.
+    let refused = e.run(&[
+        "memory",
+        "harvest",
+        "--to",
+        e.at("elsewhere").to_str().unwrap(),
+    ]);
     assert_eq!(refused.status.code(), Some(2));
-    assert!(tree(&e.at("stores")).is_empty());
+    assert!(!e.at("elsewhere").exists());
 
-    let first = e.ok(&["memory", "harvest"]);
-    assert!(first.contains("copied"), "{first}");
-    assert!(personal.join("memory/a.md").is_file());
-    assert!(!e.at("stores/work/memory").exists());
+    let work = e.at("stores/work");
+    let first = e.ok(&[
+        "memory",
+        "harvest",
+        "--to",
+        work.to_str().unwrap(),
+        "--project",
+        "/work",
+    ]);
+    assert!(first.contains("project  -work-api"), "{first}");
+    assert!(work.join("memory/a.md").is_file());
+    assert!(!work.join("memory/b.md").exists());
     let after = tree(&e.at("stores"));
-    let second = e.ok(&["memory", "harvest"]);
+    let second = e.ok(&[
+        "memory",
+        "harvest",
+        "--to",
+        work.to_str().unwrap(),
+        "--project",
+        "/work",
+    ]);
     assert!(second.contains("nothing new to harvest"), "{second}");
     assert_eq!(tree(&e.at("stores")), after);
     assert_eq!(tree(&e.at("home")), originals);
-
-    // A store whose checkout is gone is refused, not recreated.
-    fs::remove_dir_all(e.at("stores/work")).unwrap();
-    assert!(!e
-        .run(&["memory", "harvest", "--to", "work"])
-        .status
-        .success());
-    assert!(!e.at("stores/work").exists());
-
-    e.ok(&["memory", "remove-store", "personal"]);
-    assert!(e.ok(&["memory", "status"]).contains("store work"));
 }

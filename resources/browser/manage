@@ -127,7 +127,7 @@ mcp_foreach() {
 record() {
     local agent="$1"
     shift
-    local args=(record --agent "$agent" --kind mcp)
+    local args=(record --agent "$agent" --kind mcp --only "$SERVER_NAME")
     cargo run -p build-tool --release --quiet -- "${args[@]}" "$@" || {
         skip "$(label "$agent") (part list not updated)"
         RECORD_FAILED=1

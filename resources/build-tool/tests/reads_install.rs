@@ -37,7 +37,15 @@ fn install_adds_the_plugin_dir_keeps_the_rest_and_uninstall_puts_it_back() {
     );
     fs::write(&at, &before).unwrap();
 
-    cmd_install_memory(&home, &config, &parts, false, None).unwrap();
+    cmd_install_memory(
+        &home,
+        &config.join("memory-store"),
+        &profile,
+        &parts,
+        false,
+        None,
+    )
+    .unwrap();
     cmd_install_reads(&home, &profile, &parts, false, None).unwrap();
     let mine = root.join("xdg/maid/marketplace/plugins/maid");
     let settings: serde_json::Value =
@@ -53,7 +61,10 @@ fn install_adds_the_plugin_dir_keeps_the_rest_and_uninstall_puts_it_back() {
 
     // Both claude settings are in the part list; neither step erased the other.
     let list = fs::read_to_string(parts.join("maid-harness.json")).unwrap();
-    assert!(list.contains("\"name\": \"autoMemoryDirectory\""), "{list}");
+    assert!(
+        list.contains("\"name\": \"env.CLAUDE_CODE_DISABLE_AUTO_MEMORY\""),
+        "{list}"
+    );
     assert!(
         list.contains("\"name\": \"permissions.additionalDirectories\"")
             && list.contains(&format!("\"value\": \"{}\"", mine.display())),
@@ -83,7 +94,7 @@ fn install_adds_the_plugin_dir_keeps_the_rest_and_uninstall_puts_it_back() {
     cmd_install_reads(&home, &profile, &parts, false, None).unwrap();
 
     cmd_uninstall_reads(&home, &parts, false, None).unwrap();
-    cmd_uninstall_memory(&home, &parts, false, None).unwrap();
+    cmd_uninstall_memory(&home, &profile, &parts, false, None).unwrap();
     assert_eq!(fs::read_to_string(&at).unwrap(), before);
     assert!(!parts.join("maid-harness.json").exists());
 

@@ -504,62 +504,49 @@ A reader of part lists keeps its own lenient structs beside the writer's
 strict ones (`whole.rs` beside `part.rs`), so a kind or harness it does not
 know is one entry it cannot check, not a refused file.
 
-**Memory.** A memory store is a git checkout the user owns; its memories
-are `<store>/memory/`, in Claude Code's own auto-memory format: an index
-`MEMORY.md` (one line per memory, `- [name](file.md) - hook`) and one file
-per memory with frontmatter `name`, `description` and `metadata.type`
-(`user`, `feedback`, `project` or `reference`). Syncing a store (pull,
-commit, push) is the user's.
+**Memory.** Memory is served by MCP servers, one per persona, each bound
+to one store: a git checkout the user owns. Each part registers its own
+server on its own store; parts share no store config. The server is
+`pensieve` (its own public repo, pinned as a flake input, in the profile
+as `bin/pensieve`): it owns the store format (Claude Code's auto-memory
+format under `<store>/memory/`), its tools, and its instructions, which it
+builds from the store's `about.md` (what belongs here and what does not,
+then a short profile). That file is the user's; no part writes it or
+anything else in a store. Syncing a store (pull, commit, push) is the
+user's.
 
-Stores are configured per part, one file each in
-`${XDG_CONFIG_HOME:-$HOME/.config}/my-harness/memory/<part>.json`:
+mAId's server is `personal-memory` on the personal store, whose path is in
+`${XDG_CONFIG_HOME:-$HOME/.config}/maid/memory-store` (`just memory-store
+<path>` sets it). With none set, install reports "no personal store set"
+and registers nothing. Install
+registers it on claude with `claude mcp add -s user personal-memory --
+<profile>/bin/pensieve --store <path>` and records it as `mcp`. The entry
+is mAId's while its command is the profile's `bin/pensieve`; install
+re-registers it when the store path changes and leaves any other
+same-named entry, or one another part's list records as placed, alone. A
+store that is not there is reported and skipped, never created, and mAId's
+earlier entry is removed. An unreadable `~/.claude.json` fails install.
 
-```json
-{ "format": 1, "part": "maid-harness",
-  "default": "personal",
-  "stores": { "personal": "/home/me/stores/personal" } }
-```
+**Claude's own automatic memory is off** while memory servers are in use,
+so saves go to a server and not to Claude's memory dir: user settings
+`env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1"` (Claude applies user-settings
+`env` at startup). A part sets it only while its own server is registered
+after install, so whenever any part's server is there, some part has set
+it. Under rules 2 and 3 it is set when empty, adopted when identical and no
+other part's list records it, otherwise left and recorded skipped. A part
+with no server of its own leaves the setting alone, or removes its own
+value if it holds one. The `autoMemoryDirectory` value an
+older mAId set is removed when it is still the recorded value.
 
-- Readers take the union of every non-dotfile `*.json`. A file of an
-  unknown format is reported and ignored. A store name in two files is
-  unusable, and two files setting `default` leave no default: nothing is
-  routed by guess.
-- A part writes only its own file. The default is a one-value setting
-  (rule 3): a part sets `default` only when no other file holds one or its
-  own already does, and only when the user asks (mAId: `just memory-store
-  <name> <path> --default`); install never names one.
-- Automatic memory goes only to the default store. Another store gets only
-  what the user names it for in that request. Nothing is written to a
-  store that is not configured, or whose path is gone; that is reported.
+`just memory-harvest --to <dir> [--project <path-prefix>]` copies Claude's
+per-project memories (and, with no `--project`, codex's `memories/`
+registry) into `<dir>/memory/`, never changing the originals. `<dir>` must
+exist. A prefix matches the way Claude names project dirs (every character
+that is not a letter or digit as `-`), so it may take a sibling; each
+project taken is printed. A rerun changes nothing, and a same-name
+different memory lands as `<stem>-N.md`, reported.
 
-**Claude's `autoMemoryDirectory` follows the default store.** In user
-settings (`~/.claude/settings.json`) it replaces every project's memory dir
-with one shared dir, so the store's `MEMORY.md` is cross-project and must
-stay small: Claude loads its first 200 lines or 25 KB. Its value is a
-part's only when it equals the `value` the part's list records, set or
-adopted. A value found there that is exactly what install would set is
-adopted (rule 2); any other value set by hand is another's, even one naming
-another of the part's stores, and is left alone.
-A part's install sets it to its default store's `memory/` dir only when its
-own file names the default, that store exists, and the key is empty or
-already the part's; when its own file no longer names a usable default and
-the key is still the part's, install removes it, so the part now owning the
-default can claim it. Any other value is left, and the part list records
-the skip (mAId: `not mAId's`, `mAId names no default memory
-store`, `default memory store missing`, `claude not on PATH`). Uninstall
-removes only the part's own value. The store verbs never write the
-setting; when the default changes they print "run `just install` to
-apply to claude".
-
-The other base harnesses reach the store through the `memory` skill
-(write, recall, list): codex's own `memories` feature stays off (its
-default) and mAId writes no codex config; kiro-cli has no automatic memory,
-and loading the index at session start needs a `resources` entry in an
-agent config, which is the owning part's to add. `just memory-harvest
-[--to <store>]` copies Claude's per-project memories and codex's
-`memories/` registry (if any) into a store, never changing the originals;
-a rerun changes nothing, and a same-name different memory lands as
-`<stem>-N.md`, reported.
+codex, kiro-cli and agy reach the same servers by registration, later.
 
 ## Tech Stack
 
@@ -577,7 +564,8 @@ a rerun changes nothing, and a same-name different memory lands as
   config with it). `packages.default` is
   the installable: the skills plus `chrome-devtools-mcp`
   (packaged from its npm tarball, which has no dependencies)
-  wrapped with `nodejs_22`.
+  wrapped with `nodejs_22`, and `pensieve`, the memory server, from its
+  own flake (a pinned input).
 - **Dependencies.** mAId does not care how a prerequisite got
   onto PATH (host package, home-manager, nix profile), and does
   not check for it; a missing one fails in the step that needs it.
@@ -585,7 +573,7 @@ a rerun changes nothing, and a same-name different memory lands as
   | Kind | What | Provided by |
   |---|---|---|
   | Runtime prerequisites | coding-agent CLIs, `git`, a graphical Chrome (browser only) | the environment |
-  | Runtime-provided | skills, node, chrome-devtools-mcp | the mAId profile |
+  | Runtime-provided | skills, node, chrome-devtools-mcp, pensieve | the mAId profile |
   | What the vendor document skills run | `python` with openpyxl, pandas, pypdf, pdfplumber, reportlab, pypdfium2, pdf2image, Pillow, lxml, defusedxml, python-pptx, markitdown; `node` with the `docx` and `pptxgenjs` packages; LibreOffice (`soffice`), `pandoc`, `markitdown`, `qpdf`, poppler (`pdftotext`, `pdftoppm`, `pdfimages`), ImageMagick (`magick`) | the environment; `just status` names each missing command |
   | Install and dev prerequisites | `nix` with flakes; `direnv` optional | the developer |
 - **Entrypoints:** Justfile organised as a root file with
@@ -618,9 +606,9 @@ a rerun changes nothing, and a same-name different memory lands as
   - **`kaimux::*`** (operate on the kaimux crate):
     `just kaimux::build` (release + copy to `dist/`),
     `just kaimux::test`, `just kaimux::integration`.
-  - **Memory** at the root: `just memory-store <name> <path>
-    [--default]`, `just memory-store-remove <name>`, `just memory-harvest
-    [--to <name>]`; `just status` reports the stores. Each wraps a
+  - **Memory** at the root: `just memory-store <path>`, `just
+    memory-harvest --to <dir> [--project <path-prefix>]`; `just status`
+    reports the store, its server and Claude's own memory. Each wraps a
     `resources::*-memory*` verb over `build-tool memory`.
   - **Install** at the root: `just install [agent]`
     (profile, then skills and browser MCP), `just uninstall`,
@@ -663,14 +651,16 @@ mAId/
 │   │   ├── src/deploy.rs   the Deploy trait: Plugins (claude, codex), Symlinks (kiro, agy), BringIns
 │   │   ├── src/part.rs     mAId's part list: the format and its one writer
 │   │   ├── src/whole.rs    whole-status: every part's list, checked against each harness
-│   │   ├── src/memory.rs   memory stores, Claude's autoMemoryDirectory, harvest
+│   │   ├── src/memory.rs   the personal store, personal-memory on claude, Claude's memory off
+│   │   ├── src/harvest.rs  copying each harness's own memory into a store dir
+│   │   ├── src/settings.rs Claude's user settings file, kept key for key
 │   │   ├── src/reads.rs    Claude's additionalDirectories element for mAId's skill files
 │   │   ├── src/stages.rs   content → check → install → smoke
 │   │   ├── tests/integration.rs  cross-stage tests against the real repo
 │   │   ├── tests/plugins.rs  ignored: Plugins and BringIns against the real claude/codex CLIs in a temp HOME
 │   │   ├── tests/no_cli.rs   install with no agent CLI on PATH keeps the old links
 │   │   ├── tests/memory.rs   the memory verbs through the binary, temp HOME
-│   │   ├── tests/memory_install.rs  install's claude memory step and its part list
+│   │   ├── tests/memory_install.rs  install's claude memory step, a stub claude, its part list
 │   │   ├── tests/conformance.rs  whole.rs against the conformance set
 │   │   ├── tests/conformance/  the whole-status conformance set, one dir per case
 │   │   └── tests/reads_install.rs   install's claude skill-reads step beside memory's
@@ -839,7 +829,7 @@ task a user phrases implicitly, so the cell has no natural test.
 **`activation` and `discovery` depend on a self-announce contract.** A
 skill that declares `You begin every response … with the literal line
 [<skill>] applies` (today: `browser`, `notes`, `writing-style`,
-`kreviewkit`, `kyodakit`, `memory`) can be
+`kreviewkit`, `kyodakit`) can be
 checked at the reply level, because the marker is text the agent can
 only know from the file. The announce line is there for the reader, not
 for ceremony — it attributes a reply to a written contract rather than
@@ -969,11 +959,11 @@ expect: <narrative>          for prose skills with no artefact
 config_home: <dir>           optional; XDG_CONFIG_HOME=<workdir>/<dir> for every run
 ```
 
-A skill that reads user config (`memory`) gets a seeded one through
-`config_home:`: agents run with the real HOME, so without it a fixture would
-read the user's real stores. For such a fixture the runner also sends claude's own
+A skill that reads user config gets a seeded one through `config_home:`:
+agents run with the real HOME, so without it a fixture would read the
+user's real config. For such a fixture the runner also sends claude's own
 automatic memory to `<workdir>/claude-auto` (`--settings`), so a fixture
-never writes into the user's real store either.
+never writes into the user's memory either.
 
 `--dry-run` on either stage constructs every prompt and checks it
 structurally **without calling an agent** — explicit prompts must carry
@@ -1140,8 +1130,8 @@ Not a service — consumed locally.
 `just install` validates content, builds the mAId profile, installs
 the claude/codex plugin and links kiro and agy at it, registers the
 vendor marketplaces it brings in (Architecture, "Bring-ins"), points
-Claude's automatic memory at mAId's default memory store (Architecture,
-"Memory"), lets Claude read mAId's skill files (Architecture, "Skill
+`personal-memory` on the personal store and turns Claude's own automatic
+memory off (Architecture, "Memory"), lets Claude read mAId's skill files (Architecture, "Skill
 reads"), and writes mAId's part list (see Architecture, "My harness");
 `just uninstall` reverses it, removing the list, and removes the profile;
 `just status` reports the generation, each plugin and
@@ -1185,7 +1175,7 @@ the experience is symmetric across resource kinds.
   owns: the mAId profile, its marketplace dir, the registry's links,
   the `maid@maid` plugin and `maid` marketplace registrations, the
   bring-in marketplaces and plugins it added, the MCP registrations, its
-  elements of Claude's settings (`autoMemoryDirectory`, its
+  elements of Claude's settings (`env.CLAUDE_CODE_DISABLE_AUTO_MEMORY`, its
   `additionalDirectories` element), and its own part list. Never the user's default
   nix profile (a home-manager may own it). The rust toolchain and `just` come
   from the dev shell; `build-tool` is invoked through `cargo run

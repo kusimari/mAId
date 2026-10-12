@@ -16,7 +16,10 @@
 //!   harness.rs  driving an agent and scoring the reply; used by the two
 //!               verification stages, owned by neither
 //!   part.rs     the part list: what mAId placed on each base harness
-//!   memory.rs   memory stores, Claude's memory setting, and harvest
+//!   memory.rs   the personal store, its memory server on claude, and
+//!               Claude's own automatic memory turned off
+//!   harvest.rs  copying each harness's own memory into a store
+//!   settings.rs Claude's user settings file, kept key for key
 //!   reads.rs    Claude's setting that lets it read mAId's skill files
 //!   deploy.rs   HOW a skill reaches an agent — the one place that knows
 //!               about $HOME layout, behind a swappable trait
@@ -35,9 +38,11 @@
 
 pub mod deploy;
 pub mod harness;
+pub mod harvest;
 pub mod memory;
 pub mod part;
 pub mod reads;
+pub mod settings;
 pub mod shared;
 pub mod stages;
 pub mod whole;

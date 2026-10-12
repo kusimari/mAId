@@ -355,15 +355,15 @@ pub fn parts_dir() -> Result<PathBuf> {
         .ok_or_else(|| anyhow!("MY_HARNESS_PARTS must be an absolute path (got {raw:?})"))
 }
 
-/// Where every part of my harness keeps its memory config. The Justfile
-/// owns where it is and passes it in, as for the parts dir.
-pub fn memory_config_dir() -> Result<PathBuf> {
-    let raw = std::env::var("MY_HARNESS_MEMORY")
-        .context("MY_HARNESS_MEMORY not set — invoke via `just` (resources/Justfile sets it)")?;
-    let dir = PathBuf::from(&raw);
-    dir.is_absolute()
-        .then_some(dir)
-        .ok_or_else(|| anyhow!("MY_HARNESS_MEMORY must be an absolute path (got {raw:?})"))
+/// The file naming mAId's personal memory store. The Justfile owns where
+/// it is and passes it in, as for the parts dir.
+pub fn memory_store_file() -> Result<PathBuf> {
+    let raw = std::env::var("MAID_MEMORY_STORE")
+        .context("MAID_MEMORY_STORE not set — invoke via `just` (resources/Justfile sets it)")?;
+    let file = PathBuf::from(&raw);
+    file.is_absolute()
+        .then_some(file)
+        .ok_or_else(|| anyhow!("MAID_MEMORY_STORE must be an absolute path (got {raw:?})"))
 }
 
 /// codex's own home, where it keeps its memories when they are on.

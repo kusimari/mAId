@@ -44,7 +44,7 @@ uninstall agent="":
     exit $rc
 
 # A step that fails stops the report and fails the run.
-# Report the profile, plugins, links, MCP and memory stores; `--whole`: check every part's list on each harness.
+# Report the profile, plugins, links, MCP and the memory store; `--whole`: check every part's list on each harness.
 # `--whole` goes in either place: `just status --whole [agent]` or `just status <agent> --whole`.
 status agent="" whole="":
     #!/usr/bin/env bash
@@ -58,18 +58,14 @@ status agent="" whole="":
     just resources::status-memory
 
 # ── memory ───────────────────────────────────────────────────────
-# Stores are checkouts you own; see `just resources::status-memory`.
+# Your personal store is a checkout you own; see `just resources::status-memory`.
 
-# Add or update a memory store; --default makes it where automatic memory goes.
+# Set your personal memory store (an existing checkout); `just install` registers its server.
 # A relative path is taken from where you ran just, not the checkout.
-memory-store name path *FLAGS:
-    just resources::add-memory-store {{ quote(name) }} {{ quote(if path =~ '^/' { path } else { invocation_directory() / path }) }} {{ FLAGS }}
+memory-store path:
+    just resources::set-memory-store {{ quote(if path =~ '^/' { path } else { invocation_directory() / path }) }}
 
-# Remove a memory store from mAId's config (the checkout is left alone).
-memory-store-remove name:
-    just resources::remove-memory-store {{ quote(name) }}
-
-# Copy each agent's own memory into a store, leaving the originals.
+# Copy each agent's own memory into a store dir, leaving the originals: --to <dir> [--project <path-prefix>].
 memory-harvest *FLAGS:
     just resources::harvest-memory {{ FLAGS }}
 

@@ -119,25 +119,22 @@ pub fn placed(dir: &Path, agent: Agent) -> Result<Vec<Item>> {
     Ok(items)
 }
 
+/// mAId's entry of `kind` named `name` on `agent`, placed or skipped.
+pub fn recorded(dir: &Path, agent: Agent, kind: What, name: &str) -> Result<Option<Item>> {
+    Ok(read(dir)?.and_then(|mut list| {
+        list.harnesses
+            .remove(agent.cli())
+            .unwrap_or_default()
+            .into_iter()
+            .find(|i| i.kind == kind && i.name == name)
+    }))
+}
+
 /// The values of setting `name` on `agent` that another part's list
 /// records as placed: theirs, so never adopted or written (rule 2). A list
 /// that cannot be read, or of a format other than 1, claims nothing.
 pub fn claimed_by_others(dir: &Path, agent: Agent, name: &str) -> BTreeSet<String> {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return BTreeSet::new();
-    };
-    let own = format!("{PART}.json");
-    let lists = entries.flatten().filter_map(|e| {
-        let file = e.file_name().into_string().ok()?;
-        let stem = file.strip_suffix(".json")?;
-        if stem.is_empty() || stem.starts_with('.') || file == own {
-            return None;
-        }
-        serde_json::from_str::<serde_json::Value>(&fs::read_to_string(e.path()).ok()?)
-            .ok()
-            .filter(|l| l["format"].as_f64() == Some(1.0))
-    });
-    lists
+    other_lists(dir)
         .flat_map(|list| match &list["harnesses"][agent.cli()] {
             serde_json::Value::Array(items) => items.clone(),
             _ => vec![],
@@ -145,6 +142,38 @@ pub fn claimed_by_others(dir: &Path, agent: Agent, name: &str) -> BTreeSet<Strin
         .filter(|i| i["kind"] == "setting" && i["name"] == name && i["skipped"].is_null())
         .filter_map(|i| i["value"].as_str().map(str::to_string))
         .collect()
+}
+
+/// Whether another part's list records an entry of `kind` named `name` on
+/// `agent` as placed: theirs, so never taken over (rule 2). A list that
+/// cannot be read, or of a format other than 1, records nothing.
+pub fn placed_by_others(dir: &Path, agent: Agent, kind: What, name: &str) -> bool {
+    let kind = serde_json::to_value(kind).unwrap_or_default();
+    other_lists(dir)
+        .flat_map(|list| match &list["harnesses"][agent.cli()] {
+            serde_json::Value::Array(items) => items.clone(),
+            _ => vec![],
+        })
+        .any(|i| i["kind"] == kind && i["name"] == name && i["skipped"].is_null())
+}
+
+/// Every other part's list of format 1, as JSON.
+fn other_lists(dir: &Path) -> impl Iterator<Item = serde_json::Value> {
+    let own = format!("{PART}.json");
+    fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(move |e| {
+            let file = e.file_name().into_string().ok()?;
+            let stem = file.strip_suffix(".json")?;
+            if stem.is_empty() || stem.starts_with('.') || file == own {
+                return None;
+            }
+            serde_json::from_str::<serde_json::Value>(&fs::read_to_string(e.path()).ok()?)
+                .ok()
+                .filter(|l| l["format"].as_f64() == Some(1.0))
+        })
 }
 
 /// Replace `agent`'s entries of `kinds` in `scope` with `items`, keeping
@@ -169,11 +198,32 @@ pub fn record(
     rewrite(dir, agent, replaced, items)
 }
 
+/// Replace `agent`'s entries of `kind` named `name` in `scope` with
+/// `items`, keeping every other entry of that kind: each step owns its own
+/// MCP server or setting.
+pub fn record_named(
+    dir: &Path,
+    agent: Agent,
+    kind: What,
+    scope: Option<&str>,
+    name: &str,
+    items: Vec<Item>,
+) -> Result<()> {
+    let replaced = |i: &Item| i.kind == kind && i.name == name && i.scope.as_deref() == scope;
+    rewrite(dir, agent, replaced, items)
+}
+
 /// Replace `agent`'s entry for the setting `name` with `item` (none clears
 /// it), keeping every other setting: each step owns its own setting.
 pub fn record_setting(dir: &Path, agent: Agent, name: &str, item: Option<Item>) -> Result<()> {
-    let replaced = |i: &Item| i.kind == What::Setting && i.name == name;
-    rewrite(dir, agent, replaced, item.into_iter().collect())
+    record_named(
+        dir,
+        agent,
+        What::Setting,
+        None,
+        name,
+        item.into_iter().collect(),
+    )
 }
 
 fn rewrite(
@@ -380,6 +430,30 @@ mod tests {
         )
         .unwrap();
         assert_eq!(placed(dir.path(), Agent::Claude).unwrap(), vec![item]);
+    }
+
+    #[test]
+    fn another_parts_placed_server_is_theirs_and_a_skipped_one_is_not() {
+        let dir = TempDir::new().unwrap();
+        let other = |items: serde_json::Value| {
+            fs::write(
+                dir.path().join("other.json"),
+                serde_json::json!({"format": 1, "part": "other", "harnesses": {"claude": items}})
+                    .to_string(),
+            )
+            .unwrap()
+        };
+        other(serde_json::json!([{"kind": "mcp", "name": "s", "skipped": "x"}]));
+        assert!(!placed_by_others(dir.path(), Agent::Claude, What::Mcp, "s"));
+        other(serde_json::json!([{"kind": "mcp", "name": "s"}]));
+        assert!(placed_by_others(dir.path(), Agent::Claude, What::Mcp, "s"));
+        assert!(!placed_by_others(
+            dir.path(),
+            Agent::Claude,
+            What::Setting,
+            "s"
+        ));
+        assert!(!placed_by_others(dir.path(), Agent::Codex, What::Mcp, "s"));
     }
 
     #[test]

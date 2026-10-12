@@ -21,7 +21,7 @@ use build_tool::harness::{Selection, Stage};
 use build_tool::memory;
 use build_tool::part::What;
 use build_tool::shared::{
-    codex_home, home_dir, memory_config_dir, parts_dir, profile_dir, repo_root, usage,
+    codex_home, home_dir, memory_store_file, parts_dir, profile_dir, repo_root, usage,
     validate_agent, validate_agents, Agent, UsageError, BRING_INS, CONTENT_DIR,
     PROFILE_CONTENT_DIR,
 };
@@ -131,33 +131,31 @@ enum Cmd {
         /// The step meant to place these and did not, and why.
         #[arg(long)]
         skipped: Option<String>,
+        /// Replace only the entries with this name, keeping the kind's others.
+        #[arg(long)]
+        only: Option<String>,
         /// What was placed; none clears this kind and scope.
         names: Vec<String>,
     },
-    /// Memory stores: configure them, report them, harvest into one.
+    /// The personal memory store: set it, report it, harvest into a store.
     #[command(subcommand)]
     Memory(MemoryCmd),
 }
 
 #[derive(Subcommand)]
 enum MemoryCmd {
-    /// Add or update one of mAId's stores (an existing checkout).
-    AddStore {
-        name: String,
-        path: std::path::PathBuf,
-        /// Also make it the default store, unless another part names one.
-        #[arg(long)]
-        default: bool,
-    },
-    /// Remove one of mAId's stores.
-    RemoveStore { name: String },
-    /// Report every configured store and where Claude's memory goes.
+    /// Set the personal store (an existing checkout).
+    SetStore { path: std::path::PathBuf },
+    /// Report the store, its server on claude, and Claude's own memory.
     Status,
-    /// Copy each harness's own memory into a store, leaving the originals.
+    /// Copy each harness's own memory into a store dir, leaving the originals.
     Harvest {
-        /// A configured store; default the default store.
+        /// The store dir; memories land in its `memory/`.
         #[arg(long)]
-        to: Option<String>,
+        to: std::path::PathBuf,
+        /// Only Claude's projects whose working directory starts with this.
+        #[arg(long)]
+        project: Option<String>,
     },
 }
 
@@ -223,7 +221,8 @@ fn run(cli: Cli) -> Result<u8> {
             )?;
             let memory = stages::cmd_install_memory(
                 &home_dir()?,
-                &memory_config_dir()?,
+                &memory_store_file()?,
+                &profile_dir()?,
                 &parts_dir()?,
                 a.dry_run,
                 agent,
@@ -246,8 +245,13 @@ fn run(cli: Cli) -> Result<u8> {
                 a.force,
                 agent,
             )?;
-            let memory =
-                stages::cmd_uninstall_memory(&home_dir()?, &parts_dir()?, a.dry_run, agent)?;
+            let memory = stages::cmd_uninstall_memory(
+                &home_dir()?,
+                &profile_dir()?,
+                &parts_dir()?,
+                a.dry_run,
+                agent,
+            )?;
             let reads = stages::cmd_uninstall_reads(&home_dir()?, &parts_dir()?, a.dry_run, agent)?;
             Ok(rc.max(memory).max(reads))
         }
@@ -268,6 +272,7 @@ fn run(cli: Cli) -> Result<u8> {
             kind,
             scope,
             skipped,
+            only,
             names,
         } => stages::cmd_record(
             &parts_dir()?,
@@ -275,31 +280,24 @@ fn run(cli: Cli) -> Result<u8> {
             What::parse(&kind).map_err(|e| usage(e.to_string()))?,
             scope.as_deref(),
             skipped.as_deref(),
+            only.as_deref(),
             &names,
         ),
-        Cmd::Memory(m) => {
-            let config = memory_config_dir()?;
-            match m {
-                MemoryCmd::AddStore {
-                    name,
-                    path,
-                    default,
-                } => {
-                    println!("{}", memory::add_store(&config, &name, &path, default)?);
-                    Ok(0)
-                }
-                MemoryCmd::RemoveStore { name } => {
-                    println!("{}", memory::remove_store(&config, &name)?);
-                    Ok(0)
-                }
-                MemoryCmd::Status => {
-                    stages::cmd_memory_status(&home_dir()?, &config, &parts_dir()?)
-                }
-                MemoryCmd::Harvest { to } => {
-                    stages::cmd_harvest(&home_dir()?, &codex_home()?, &config, to.as_deref())
-                }
+        Cmd::Memory(m) => match m {
+            MemoryCmd::SetStore { path } => {
+                println!("{}", memory::set_store(&memory_store_file()?, &path)?);
+                Ok(0)
             }
-        }
+            MemoryCmd::Status => stages::cmd_memory_status(
+                &home_dir()?,
+                &memory_store_file()?,
+                &profile_dir()?,
+                &parts_dir()?,
+            ),
+            MemoryCmd::Harvest { to, project } => {
+                stages::cmd_harvest(&home_dir()?, &codex_home()?, &to, project.as_deref())
+            }
+        },
     }
 }
 

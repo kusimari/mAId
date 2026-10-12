@@ -6,8 +6,8 @@
 //! the element its part list records, and an identical element it found
 //! there (adopted); any other element is left alone.
 
-use crate::memory::{claude_settings, read_settings, write_settings, Outcome, NO_CLI};
 use crate::part::{Item, What, ANOTHER_PART};
+use crate::settings::{claude_settings, read_settings, write_settings, Outcome, NO_CLI};
 use crate::shared::{marketplace_root, PLUGIN_ID};
 use anyhow::Result;
 use serde_json::{Map, Value};

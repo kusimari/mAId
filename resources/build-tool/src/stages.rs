@@ -17,6 +17,7 @@ use crate::harness::{
     Assertion, Authority, Fixture, Kind as TestKind, Outcome, Plan, Reach, Selection, Skipped,
     Stage, Stress, Verdict, KIRO_READONLY_AGENT, KIRO_READONLY_NAME,
 };
+use crate::harvest;
 use crate::memory;
 use crate::part::{self, Item, What};
 use crate::reads;
@@ -188,6 +189,7 @@ pub fn cmd_record(
     kind: What,
     scope: Option<&str>,
     skipped: Option<&str>,
+    only: Option<&str>,
     names: &[String],
 ) -> Result<u8> {
     // Each setting is owned by the step that writes it, with its value.
@@ -202,19 +204,32 @@ pub fn cmd_record(
             ..Item::placed(kind, n)
         })
         .collect();
-    part::record(parts, agent, &[kind], scope, items)?;
+    match only {
+        Some(name) if names.iter().any(|n| n != name) => {
+            return Err(usage(format!("--only {name} records that name only")))
+        }
+        Some(name) => part::record_named(parts, agent, kind, scope, name, items)?,
+        None => part::record(parts, agent, &[kind], scope, items)?,
+    }
     Ok(0)
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Memory — the stores, Claude's memory setting, harvest.
+// Memory — the personal store's server, Claude's own memory, harvest.
 // ─────────────────────────────────────────────────────────────────
 
-/// Install's claude step: point its automatic memory at mAId's default
-/// store (or take mAId's value away), and record it in the part list.
+/// The profile's memory server.
+fn launcher(profile: &Path) -> PathBuf {
+    profile.join("bin/pensieve")
+}
+
+/// Install's claude memory step: register `personal-memory` on the
+/// personal store, turn Claude's own automatic memory off, and take away
+/// the memory dir an older mAId set. Each is recorded in the part list.
 pub fn cmd_install_memory(
     home: &Path,
-    config_dir: &Path,
+    store_file: &Path,
+    profile: &Path,
     parts: &Path,
     dry_run: bool,
     agent: Option<Agent>,
@@ -222,25 +237,49 @@ pub fn cmd_install_memory(
     if agent.is_some_and(|a| a != Agent::Claude) {
         return Ok(0);
     }
-    let config = memory::Config::read(config_dir)?;
-    let own = ownership(parts)?;
-    let out = memory::install_claude(home, &config, &own, on_path(Agent::Claude.cli()), dry_run)?;
-    println!("{}", out.line);
+    let cli_present = on_path(Agent::Claude.cli());
+    let store = memory::store(store_file)?;
+    let launcher = launcher(profile);
+    let plan = memory::ServerPlan {
+        launcher: &launcher,
+        store: store.as_deref(),
+        claimed: part::placed_by_others(parts, Agent::Claude, What::Mcp, memory::SERVER),
+        cli_present,
+    };
+    let memory::ServerOutcome {
+        out: server,
+        failed,
+    } = memory::install_server(home, &plan, dry_run)?;
+    println!("{}", server.line);
+    let registered = server.item.as_ref().is_some_and(|i| i.skipped.is_none());
+    let off = memory::install_off(home, &ownership(parts)?, registered, cli_present, dry_run)?;
+    println!("{}", off.line);
+    let legacy = legacy_setting(home, parts, dry_run)?;
     if !dry_run {
-        part::record_setting(parts, Agent::Claude, memory::SETTING, out.item)
-            // mAId owns only what it recorded, so an unrecorded value is the user's to remove.
-            .with_context(|| {
-                format!(
-                    "claude {} may be set but is not recorded; check it by hand",
-                    memory::SETTING
-                )
-            })?;
+        // mAId owns only what it recorded, so an unrecorded change is the user's to undo.
+        let unrecorded =
+            |what: &str| format!("claude {what} may be set but is not recorded; check it by hand");
+        part::record_named(
+            parts,
+            Agent::Claude,
+            What::Mcp,
+            None,
+            memory::SERVER,
+            server.item.into_iter().collect(),
+        )
+        .with_context(|| unrecorded(memory::SERVER))?;
+        part::record_setting(parts, Agent::Claude, memory::SETTING, off.item)
+            .with_context(|| unrecorded(memory::SETTING))?;
+        if legacy {
+            part::record_setting(parts, Agent::Claude, memory::LEGACY_SETTING, None)?;
+        }
     }
-    Ok(0)
+    Ok(u8::from(failed))
 }
 
 pub fn cmd_uninstall_memory(
     home: &Path,
+    profile: &Path,
     parts: &Path,
     dry_run: bool,
     agent: Option<Agent>,
@@ -248,12 +287,49 @@ pub fn cmd_uninstall_memory(
     if agent.is_some_and(|a| a != Agent::Claude) {
         return Ok(0);
     }
-    let out = memory::uninstall_claude(home, &ownership(parts)?, dry_run)?;
-    println!("{}", out.line);
+    let memory::ServerOutcome {
+        out: server,
+        failed,
+    } = memory::uninstall_server(
+        home,
+        &launcher(profile),
+        part::placed_by_others(parts, Agent::Claude, What::Mcp, memory::SERVER),
+        on_path(Agent::Claude.cli()),
+        dry_run,
+    )?;
+    println!("{}", server.line);
+    let off = memory::uninstall_off(home, &ownership(parts)?, dry_run)?;
+    println!("{}", off.line);
+    let legacy = legacy_setting(home, parts, dry_run)?;
     if !dry_run {
+        part::record_named(
+            parts,
+            Agent::Claude,
+            What::Mcp,
+            None,
+            memory::SERVER,
+            server.item.into_iter().collect(),
+        )?;
         part::record_setting(parts, Agent::Claude, memory::SETTING, None)?;
+        if legacy {
+            part::record_setting(parts, Agent::Claude, memory::LEGACY_SETTING, None)?;
+        }
     }
-    Ok(0)
+    Ok(u8::from(failed))
+}
+
+/// Remove the memory dir an older mAId set, while it is the value mAId
+/// recorded. Whether the part list holds an entry for it to clear: one
+/// recorded as skipped has no value and nothing to remove, but still goes.
+fn legacy_setting(home: &Path, parts: &Path, dry_run: bool) -> Result<bool> {
+    let Some(item) = part::recorded(parts, Agent::Claude, What::Setting, memory::LEGACY_SETTING)?
+    else {
+        return Ok(false);
+    };
+    if let Some(line) = memory::remove_legacy(home, item.value.as_deref(), dry_run)? {
+        println!("{line}");
+    }
+    Ok(true)
 }
 
 /// Install's claude step for reading mAId's skill files: add mAId's
@@ -318,8 +394,8 @@ fn recorded_setting(parts: &Path, name: &str) -> Result<Option<Item>> {
         .find(|i| i.kind == What::Setting && i.name == name))
 }
 
-/// What mAId owns of claude's memory setting: what its part list says it
-/// set or adopted.
+/// What mAId owns of Claude's automatic-memory setting: what its part list
+/// says it set or adopted.
 fn ownership(parts: &Path) -> Result<memory::Ownership> {
     let item = recorded_setting(parts, memory::SETTING)?;
     Ok(memory::Ownership {
@@ -329,30 +405,35 @@ fn ownership(parts: &Path) -> Result<memory::Ownership> {
     })
 }
 
-pub fn cmd_memory_status(home: &Path, config_dir: &Path, parts: &Path) -> Result<u8> {
-    let config = memory::Config::read(config_dir)?;
-    memory::status(home, &config, &ownership(parts)?)?
-        .iter()
-        .for_each(|l| println!("{l}"));
+pub fn cmd_memory_status(
+    home: &Path,
+    store_file: &Path,
+    profile: &Path,
+    parts: &Path,
+) -> Result<u8> {
+    let store = memory::store(store_file)?;
+    memory::status(
+        home,
+        store.as_deref(),
+        &launcher(profile),
+        &ownership(parts)?,
+    )?
+    .iter()
+    .for_each(|l| println!("{l}"));
     Ok(0)
 }
 
-/// Copy each harness's native memory into a configured store. Refuses,
-/// before writing anything, a store that is not configured or is gone.
-pub fn cmd_harvest(
-    home: &Path,
-    codex_home: &Path,
-    config_dir: &Path,
-    to: Option<&str>,
-) -> Result<u8> {
-    let config = memory::Config::read(config_dir)?;
-    let store = config.resolve(to).map_err(|e| usage(e.to_string()))?;
-    println!(
-        "harvest  into store {} ({})",
-        store.name,
-        store.memory_dir().display()
-    );
-    memory::harvest(home, codex_home, store)?
+/// Copy each harness's native memory into `<to>/memory/`. Refuses, before
+/// writing anything, a `to` that is not a directory.
+pub fn cmd_harvest(home: &Path, codex_home: &Path, to: &Path, project: Option<&str>) -> Result<u8> {
+    if !to.is_dir() {
+        return Err(usage(format!(
+            "{} is not a directory; clone the store first",
+            to.display()
+        )));
+    }
+    println!("harvest  into {}", to.join("memory").display());
+    harvest::harvest(home, codex_home, to, project)?
         .lines()
         .iter()
         .for_each(|l| println!("{l}"));
@@ -1146,6 +1227,7 @@ mod tests {
             What::Setting,
             None,
             None,
+            None,
             &["k".into()],
         )
         .unwrap_err();
@@ -1157,6 +1239,26 @@ mod tests {
     }
 
     #[test]
+    fn record_only_replaces_that_name_and_keeps_the_kinds_others() {
+        let dir = TempDir::new().unwrap();
+        let parts = dir.path().join("parts");
+        let rec = |only, names: &[&str]| {
+            let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+            cmd_record(&parts, Agent::Claude, What::Mcp, None, None, only, &names)
+        };
+        rec(Some("personal-memory"), &["personal-memory"]).unwrap();
+        rec(Some("chrome-devtools"), &["chrome-devtools"]).unwrap();
+        rec(Some("chrome-devtools"), &[]).unwrap();
+        let names: Vec<_> = part::placed(&parts, Agent::Claude)
+            .unwrap()
+            .into_iter()
+            .map(|i| i.name)
+            .collect();
+        assert_eq!(names, ["personal-memory"]);
+        assert!(rec(Some("a"), &["b"]).is_err());
+    }
+
+    #[test]
     fn uninstall_drops_a_skip_but_keeps_what_is_still_there() {
         let (dir, target, parts) = installable();
         cmd_record(
@@ -1164,6 +1266,7 @@ mod tests {
             Agent::Kiro,
             What::Mcp,
             Some("s"),
+            None,
             None,
             &["m".into()],
         )

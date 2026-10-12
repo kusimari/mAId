@@ -50,22 +50,28 @@ Feature specs: [`specs/feature/`](./specs/feature/).
 every coding agent or one (`claude|kiro|codex|agy`):
 
 ```
-just install [agent]                # build the profile, point the agents at it (plugin or links), and claude's memory at the default store
+just install [agent]                # build the profile, point the agents at it (plugin or links), register your memory server with claude
 just uninstall [agent]              # remove the plugin, the links, the MCP registration, and (no agent) the profile
-just status [agent]                 # profile generation, plugins, links, MCP registration, memory stores
+just status [agent]                 # profile generation, plugins, links, MCP registration, the memory store
 just status --whole [agent]         # what every part's list says it placed, checked on each harness
 just rollback                       # every agent back on the install before this one
 just verify-install                 # the end-to-end install test on this machine (free)
 just verify-install-paid            # the same, also asking each agent (9 model calls)
 ```
 
-**Memory** (root) - stores are git checkouts you own; memories live in
-`<store>/memory/` in Claude Code's own format:
+**Memory** (root) - your personal store is a git checkout you own.
+`just install` registers the memory server
+([pensieve](https://github.com/kusimari/pensieve)) with claude as
+`personal-memory`, bound to that store, and turns Claude's own automatic
+memory off so saves go to the server. With no store set, install says so
+and registers nothing (Claude's own memory stays as it was). Install never
+creates the store or writes into it. Put an `about.md` at its root: what belongs in this store
+and what does not, then a short profile. The server sends it to the agent
+as standing instructions; pensieve's README has the format.
 
 ```
-just memory-store <name> <path> [--default]   # add or update a store (an existing checkout); --default: automatic memory goes there
-just memory-store-remove <name>               # forget a store (the checkout is left alone)
-just memory-harvest [--to <name>]             # copy each agent's own memory into a store, leaving the originals
+just memory-store <path>                                 # set your personal store (an existing checkout); then `just install`
+just memory-harvest --to <dir> [--project <path-prefix>] # copy Claude's own memories (only those projects) into <dir>/memory/, leaving the originals
 ```
 
 Three more groups, namespaced by what they touch:
@@ -92,10 +98,9 @@ just resources::status-browser-mcp [agent]                # report registration 
 just resources::browser-mcp-allow <pattern>               # append a site pattern to the allowlist
 just resources::verify-browser-mcp [claude|kiro|codex] [kiro-agent]   # ATTENDED: drives real Chrome (run by hand)
 
-just resources::add-memory-store <name> <path> [--default]  # what `just memory-store` wraps
-just resources::remove-memory-store <name>                  # what `just memory-store-remove` wraps
-just resources::status-memory                               # every configured store, and where claude's memory goes
-just resources::harvest-memory [--to <name>]                # what `just memory-harvest` wraps
+just resources::set-memory-store <path>                     # what `just memory-store` wraps
+just resources::status-memory                               # the store, its server on claude, and Claude's own memory
+just resources::harvest-memory --to <dir> [--project <p>]   # what `just memory-harvest` wraps
 ```
 
 **`kaimux::*`** — operate on the kaimux crate:

@@ -34,10 +34,32 @@
         "type": "github"
       }
     },
+    "pensieve": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1791798019,
+        "narHash": "sha256-Ysl/+P6+IOszqJD9zKdbfSKhxd+wew7YQA3gKK2VQGM=",
+        "ref": "refs/heads/feat/pensieve",
+        "rev": "146f867d5ca93664faa795851a37ac9aeea07803",
+        "revCount": 12,
+        "type": "git",
+        "url": "file:///local/home/gorantls/tool-workplace/ai-workspace/pensieve"
+      },
+      "original": {
+        "rev": "146f867d5ca93664faa795851a37ac9aeea07803",
+        "type": "git",
+        "url": "file:///local/home/gorantls/tool-workplace/ai-workspace/pensieve"
+      }
+    },
     "root": {
       "inputs": {
         "flake-utils": "flake-utils",
         "nixpkgs": "nixpkgs",
+        "pensieve": "pensieve",
         "rust-overlay": "rust-overlay"
       }
     },

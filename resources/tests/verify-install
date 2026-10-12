@@ -159,7 +159,7 @@ else
 fi
 
 # ── 3 ────────────────────────────────────────────────────────────
-step "3. the browser server answers MCP initialize with only HOME set"
+step "3. the browser and memory servers answer MCP initialize with only HOME set"
 browser_home=$HOME
 if ! grep -qsv '^[[:space:]]*\(#\|$\)' "$HOME/.config/maid/browser-allowlist"; then
   # No site on the user's list, so the launcher would refuse to start.
@@ -174,6 +174,13 @@ server=$(jq -r 'select(.id == 1) | .result.serverInfo.name // empty' <<<"$reply"
 check "$profile/bin/maid-browser-mcp answers initialize${server:+ (server: $server)}" test -n "$server"
 [ -n "$server" ] || sed 's/^/  /' "$work/mcp.err"
 
+# The memory server, on a temp store: its instructions carry the store's about.md.
+mkdir -p "$work/store/memory"
+echo "Belongs here: verify-install's test memories." >"$work/store/about.md"
+reply=$({ echo "$init"; sleep 2; } | timeout 10 env -i HOME="$work" "$profile/bin/pensieve" --store "$work/store" 2>"$work/pensieve.err" | head -n 1)
+check "$profile/bin/pensieve answers initialize with the store's about.md" \
+  grep -q "verify-install's test memories" <<<"$(jq -r '.result.instructions // empty' <<<"$reply" 2>/dev/null)"
+
 # ── 4 ────────────────────────────────────────────────────────────
 step "4. nothing mAId installed names a checkout"
 {
@@ -182,6 +189,7 @@ step "4. nothing mAId installed names a checkout"
   codex plugin marketplace list --json 2>/dev/null | jq -c '.marketplaces[]? | select(.name == "maid")'
   codex_plugin
   claude mcp get chrome-devtools 2>/dev/null
+  claude mcp get personal-memory 2>/dev/null
   codex mcp get chrome-devtools 2>/dev/null
   # Only mAId's names: the rest of kiro's dir is the user's.
   for link in $(printf "$kiro_dir/%s " $shipped) "$HOME/.gemini/config/skills" "$marketplace"/* "$marketplace"/.[!.]*; do
