@@ -1,7 +1,8 @@
 # Initiative: my-harness
 
 - Branch: `initiative/my-harness` (cut from `main` at d34934a)
-- Status: running (ringmaster). This is the generic half of a two-repo
+- Status: closed for Claude Code (2026-10-12); every stream merged except
+  M4 (agy, parked for the Next round). This is the generic half of a two-repo
   initiative; the other half lives in a private repo that installs a work
   part beside mAId's. Nothing here depends on that repo.
 
@@ -204,3 +205,7 @@ is built and parked; M4 agy; codex end to end). Not started on its own.
   making the contract sentence true, not by a hand-over mechanism, as in
   the other part · why: least code; reinstall is the repair · cost if
   wrong: Claude's own memory on until the other part reinstalls
+- Close: Macro test passed for Claude in a scratch HOME (two runs); the
+  initiative review briefing came back clean after M12. Open for the user:
+  publish pensieve and re-pin the flake from the local path (backlog
+  repin-pensieve-published) before any PR; the real-install checks.
