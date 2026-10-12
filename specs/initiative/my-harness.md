@@ -157,3 +157,12 @@ is built and parked; M4 agy; codex end to end). Not started on its own.
   setting-based memory are redesigned after it · why: least coupling to
   any coding agent's internals; on-demand recall scales · cost if wrong:
   a server process per persona
+- Ruling (user, 2026-10-12): memory server is one standalone public
+  package both parts depend on (like the browser MCP), not one per repo.
+  Python, standard library only, single file: no build, no binary per
+  platform, runs on the python3 both parts already have. A last search for
+  an existing simple server comes first; building our own is accepted.
+  Each store has an about.md (what belongs here); Claude's own automatic
+  memory is turned off; memory-harvest picks projects by path prefix ·
+  why: one small implementation to maintain · cost if wrong: a third repo
+  to publish and pin
