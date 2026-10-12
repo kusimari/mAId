@@ -64,7 +64,7 @@ Under a scratch HOME:
 | M2 | memory | Memory skill, the way into the store per harness, `just memory-harvest` | M1 | merged |
 | M6 | kiro-global-mcp | kiro gets mAId's MCP server from kiro's global MCP config, not a named sub-agent | M1 | merged |
 | M9 | reader-rules-values | Rule 14 says how a setting's value compares (string-only) and that a dotted name is tried first as a top-level key; cases added | M7, M8 | merged |
-| M10 | memory-mcp | Register pensieve as personal-memory; Claude's own memory off; old memory skill and config removed; harvest by project prefix | M9 | running |
+| M10 | memory-mcp | Register pensieve as personal-memory; Claude's own memory off; old memory skill and config removed; harvest by project prefix | M9 | merged |
 | M11 | conformance-generic | Shared conformance data names no part: list-setting's plugin paths become generic | M8 | merged |
 | M4 | agy-verified | agy loads skills and the memory include | M2 | parked: claude first |
 | M7 | claude-plugin-reads | A session reads every file of mAId's skills (kdevkit's modules) with no prompt, by a setting mAId installs and owns | M2 | merged |
@@ -186,3 +186,8 @@ is built and parked; M4 agy; codex end to end). Not started on its own.
   parts installed, a Claude session has personal-memory and work-memory;
   a work fact lands in the work store and a personal fact in the personal
   store; a fresh session recalls each; Claude's own memory dir stays empty
+- Ruling: no default personal store in code; the user sets it once with
+  `just memory-store <path>`; Claude's own memory goes off only while a
+  part's own memory server is registered · why: no personal names in a
+  public repo; never leave a machine with no memory · cost if wrong: one
+  setup command
