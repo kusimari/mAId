@@ -64,7 +64,7 @@ Under a scratch HOME:
 | M2 | memory | Memory skill, the way into the store per harness, `just memory-harvest` | M1 | merged |
 | M6 | kiro-global-mcp | kiro gets mAId's MCP server from kiro's global MCP config, not a named sub-agent | M1 | merged |
 | M9 | reader-rules-values | Rule 14 says how a setting's value compares (string-only) and that a dotted name is tried first as a top-level key; cases added | M7, M8 | merged |
-| M10 | memory-mcp | Research then plan: memory as MCP servers, one per persona, bound to its store; on-demand recall in the agent loop | M9 | running (research) |
+| M10 | memory-mcp | Register pensieve as personal-memory; Claude's own memory off; old memory skill and config removed; harvest by project prefix | M9 | running |
 | M11 | conformance-generic | Shared conformance data names no part: list-setting's plugin paths become generic | M8 | merged |
 | M4 | agy-verified | agy loads skills and the memory include | M2 | parked: claude first |
 | M7 | claude-plugin-reads | A session reads every file of mAId's skills (kdevkit's modules) with no prompt, by a setting mAId installs and owns | M2 | merged |
@@ -173,3 +173,8 @@ is built and parked; M4 agy; codex end to end). Not started on its own.
   tool command set plus search; files follow Claude Code's memory format;
   per-store standing text from the store's about.md · why: no existing
   server sends per-store instructions · cost if wrong: one small repo
+- Ruling: pensieve built (local repo, branch feat/pensieve at 146f867,
+  unpublished; merge to its main and publishing are the user's). M10 and
+  G5 pin that commit from the local repo for testing; both re-pin to the
+  published GitHub commit before any CR/PR · why: a local path must not
+  reach a published lock file · cost if wrong: a re-pin commit per repo
