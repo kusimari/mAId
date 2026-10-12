@@ -178,3 +178,11 @@ is built and parked; M4 agy; codex end to end). Not started on its own.
   G5 pin that commit from the local repo for testing; both re-pin to the
   published GitHub commit before any CR/PR · why: a local path must not
   reach a published lock file · cost if wrong: a re-pin commit per repo
+- Ruling: Claude's own automatic memory is turned off by the setting
+  `env.CLAUDE_CODE_DISABLE_AUTO_MEMORY` = "1" (a string, so the readers
+  need no rule change), verified before building · why: least change to
+  two readers · cost if wrong: fall back to a boolean rule
+- Ruling: Macro test step for memory is now: in a scratch HOME with both
+  parts installed, a Claude session has personal-memory and work-memory;
+  a work fact lands in the work store and a personal fact in the personal
+  store; a fresh session recalls each; Claude's own memory dir stays empty
