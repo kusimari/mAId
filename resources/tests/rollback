@@ -184,6 +184,24 @@ check "rollback past a link mAId did not write still moves the agents" \
 check "the part list names agy's skills as skipped past that link" \
   eval 'entries agy | grep -qx "skill notes skipped"'
 
+# With claude and codex off PATH, install and uninstall cannot list the
+# bring-ins, so the part list keeps them as mAId's; the uninstall below,
+# with the CLIs back, still removes them.
+nocli=$(tr ':' '\n' <<<"$PATH" | while read -r d; do
+  [ -x "$d/claude" ] || [ -x "$d/codex" ] || printf '%s:' "$d"
+done)
+# The run saw no CLI (mAId's own plugin is skipped), yet the bring-ins stay placed.
+kept_without_cli() {
+  for h in claude codex; do
+    entries $h | grep -qx "marketplace $vendor" && entries $h | grep -qx "plugin document-skills@$vendor" || return 1
+  done
+}
+PATH=${nocli%:} inhome just resources::install-skills >/dev/null 2>&1
+check "install with no claude or codex on PATH keeps the vendor marketplace mAId's" \
+  eval 'entries claude | grep -qx "plugin maid@maid skipped" && kept_without_cli'
+PATH=${nocli%:} inhome just resources::uninstall-skills >/dev/null 2>&1
+check "uninstall with no claude or codex on PATH keeps the vendor marketplace mAId's" kept_without_cli
+
 inhome just resources::uninstall-skills >/dev/null 2>&1
 inhome just resources::uninstall-browser-mcp >/dev/null 2>&1
 check "uninstall removes the part list" eval '[ ! -e "$partlist" ]'

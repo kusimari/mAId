@@ -79,3 +79,36 @@ fn bring_ins_are_skipped_naming_the_missing_cli() {
         }
     }
 }
+
+/// What mAId brought in stays its own with no CLI to list it, so a later
+/// run with the CLI back still removes it; the rest is skipped as before.
+#[test]
+fn bring_ins_maid_placed_stay_its_own_with_no_cli() {
+    use build_tool::deploy::BringIns;
+    use build_tool::part;
+    use build_tool::shared::BRING_INS;
+    let home = TempDir::new().unwrap();
+    let parts = home.path().join("parts");
+    let b = &BRING_INS[0];
+    let ours = [
+        Item::placed(What::Marketplace, b.marketplace),
+        Item::placed(What::Plugin, b.plugin_id(b.plugins[0])),
+    ];
+    let kinds = &[What::Marketplace, What::Plugin];
+    part::record(&parts, Agent::Claude, kinds, None, ours.to_vec()).unwrap();
+    let empty = TempDir::new().unwrap();
+    std::env::set_var("PATH", empty.path());
+    let target = BringIns::new(home.path().to_path_buf(), BRING_INS, &parts).unwrap();
+    let placed = target.placed(None).unwrap();
+    for item in ours {
+        assert!(placed.contains(&(Agent::Claude, item)), "{placed:?}");
+    }
+    let why = "codex not on PATH";
+    assert!(
+        placed.contains(&(
+            Agent::Codex,
+            Item::skipped(What::Marketplace, b.marketplace, why)
+        )),
+        "{placed:?}"
+    );
+}

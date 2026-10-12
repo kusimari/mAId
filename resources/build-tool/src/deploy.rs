@@ -1012,27 +1012,27 @@ impl Deploy for BringIns {
                     std::iter::once((What::Marketplace, b.marketplace.to_string()))
                         .chain(b.plugins.iter().map(|p| (What::Plugin, b.plugin_id(p))))
                 };
-                let skip_all = |why: String| {
+                let unlisted = |why: String| {
                     items()
-                        .map(|(kind, name)| (a, Item::skipped(kind, name, why.clone())))
+                        .map(|(kind, name)| {
+                            let ours = self.ours(a, kind, &name);
+                            (a, unlisted_item(kind, &name, ours, why.clone()))
+                        })
                         .collect::<Vec<_>>()
                 };
                 if !a.is_plugin() {
-                    out.extend(skip_all(NO_MARKETPLACE.into()));
+                    out.extend(unlisted(NO_MARKETPLACE.into()));
                     continue;
                 }
                 if !on_path(a.cli()) {
-                    out.extend(skip_all(State::NoCli(a.cli()).reason()));
+                    out.extend(unlisted(State::NoCli(a.cli()).reason()));
                     continue;
                 }
                 // One vendor's listing must not stop the whole part list.
                 let seen = match self.seen(a, b) {
                     Ok(seen) => seen,
                     Err(_) => {
-                        out.extend(items().map(|(kind, name)| {
-                            let ours = self.ours(a, kind, &name);
-                            (a, unread_item(kind, &name, ours))
-                        }));
+                        out.extend(unlisted(State::Unreadable(String::new()).reason()));
                         continue;
                     }
                 };
@@ -1200,12 +1200,13 @@ fn placed_item(kind: What, name: &str, held: Held, failed: bool) -> Option<Item>
     }
 }
 
-/// The part-list entry for an item whose listing could not be read: what
-/// mAId placed stays its own, so a later run can still remove it.
-fn unread_item(kind: What, name: &str, ours: bool) -> Item {
+/// The part-list entry for an item whose listing was not seen (no CLI, or
+/// a listing that cannot be read): what mAId placed stays its own, so a
+/// later run can still remove it.
+fn unlisted_item(kind: What, name: &str, ours: bool, why: String) -> Item {
     match ours {
         true => Item::placed(kind, name),
-        false => Item::skipped(kind, name, State::Unreadable(String::new()).reason()),
+        false => Item::skipped(kind, name, why),
     }
 }
 
@@ -2335,14 +2336,18 @@ mod tests {
         );
     }
 
-    /// A listing that fails once must not turn what mAId placed into
+    /// A listing not seen once must not turn what mAId placed into
     /// something it no longer owns.
     #[test]
-    fn an_unreadable_listing_keeps_what_maid_placed_as_its_own() {
+    fn an_unlisted_item_keeps_what_maid_placed_as_its_own() {
         let m = What::Marketplace;
-        assert_eq!(unread_item(m, "vend", true), Item::placed(m, "vend"));
+        let why = || "unreadable".to_string();
         assert_eq!(
-            unread_item(m, "vend", false),
+            unlisted_item(m, "vend", true, why()),
+            Item::placed(m, "vend")
+        );
+        assert_eq!(
+            unlisted_item(m, "vend", false, why()),
             Item::skipped(m, "vend", "unreadable")
         );
     }

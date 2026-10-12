@@ -1,5 +1,9 @@
 # Feature: memory
 
+> Superseded by [[memory-mcp]]: the memory skill, the shared store config
+> and its default, and `autoMemoryDirectory` are gone. This spec is the
+> record of what M2 shipped.
+
 ## Git Setup
 
 - Branch: `feat/memory/work`

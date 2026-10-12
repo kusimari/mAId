@@ -322,7 +322,9 @@ fn set_var(map: &mut Map<String, Value>, value: Option<Value>) {
 
 /// Install: turn Claude's own memory off, only while mAId's own server is
 /// registered (`server`); otherwise give back mAId's value if it holds one.
-/// A part with its own server sets the same value, so one always does.
+/// With no claude on PATH nothing is written, and mAId's value stays its.
+/// A part with a server that follows the same rules takes the value on at
+/// its next install.
 pub fn install_off(
     home: &Path,
     own: &Ownership,

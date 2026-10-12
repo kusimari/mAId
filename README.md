@@ -63,8 +63,10 @@ just verify-install-paid            # the same, also asking each agent (9 model 
 `just install` registers the memory server
 ([pensieve](https://github.com/kusimari/pensieve)) with claude as
 `personal-memory`, bound to that store, and turns Claude's own automatic
-memory off so saves go to the server. With no store set, install says so
-and registers nothing (Claude's own memory stays as it was). Install never
+memory off so saves go to the server. With no store set, install says so,
+registers nothing, and, with claude on PATH, removes the memory-off value an
+earlier install set (Claude's own memory is then on, unless another part
+turned it off). Install never
 creates the store or writes into it. Put an `about.md` at its root: what belongs in this store
 and what does not, then a short profile. The server sends it to the agent
 as standing instructions; pensieve's README has the format.

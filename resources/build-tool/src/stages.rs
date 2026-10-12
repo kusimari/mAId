@@ -838,19 +838,12 @@ fn run_reply(
     let Ok(scratch) = tempfile::TempDir::new() else {
         return Outcome::Fail("could not create scratch dir".into());
     };
-    let env = config_env(plan.config_home.as_deref(), scratch.path());
     if let Some(seed) = seed {
-        if let Err(e) = shell(seed, scratch.path(), &env) {
+        if let Err(e) = shell(seed, scratch.path()) {
             return Outcome::Fail(format!("setup failed: {e}"));
         }
     }
-    let reply = match drive(
-        agent,
-        prompt,
-        Authority::ReadOnly,
-        Some(scratch.path()),
-        &env,
-    ) {
+    let reply = match drive(agent, prompt, Authority::ReadOnly, Some(scratch.path())) {
         Ok(r) => r,
         Err(e) => return Outcome::Fail(format!("{} invocation failed: {e}", agent.name())),
     };
@@ -863,7 +856,7 @@ fn run_reply(
     let verdict = match (narrative, judge) {
         (Some(want), Some(judge)) => {
             let jp = judge_prompt(prompt, &reply, want);
-            match drive(judge, &jp, Authority::ReadOnly, Some(scratch.path()), &[]) {
+            match drive(judge, &jp, Authority::ReadOnly, Some(scratch.path())) {
                 Ok(raw) => {
                     let verdict = read_verdict(&raw);
                     if verdict == Verdict::Unparseable {
@@ -898,17 +891,15 @@ fn run_behavioral(plan: &Plan, setup: &str, assert: &str) -> Outcome {
         return Outcome::Fail("could not create scratch workdir".into());
     };
     let dir = work.path();
-    let env = config_env(plan.config_home.as_deref(), dir);
-
-    if let Err(e) = shell(setup, dir, &env) {
+    if let Err(e) = shell(setup, dir) {
         return Outcome::Fail(format!("setup failed: {e}"));
     }
 
     // The agent's own failure is not fatal: the assert decides, since a
     // non-zero exit with correct artefacts is still a pass.
-    let reply = drive(agent, prompt, Authority::Workdir, Some(dir), &env).unwrap_or_default();
+    let reply = drive(agent, prompt, Authority::Workdir, Some(dir)).unwrap_or_default();
 
-    match shell(&format!("set -x\n{assert}"), dir, &env) {
+    match shell(&format!("set -x\n{assert}"), dir) {
         Ok(_) => Outcome::Pass("behavioral".into()),
         Err(trace) => {
             let culprit = trace
@@ -920,8 +911,7 @@ fn run_behavioral(plan: &Plan, setup: &str, assert: &str) -> Outcome {
             // The scratch dir is removed on drop, so the tree is the only
             // record of what the agent actually created — often the
             // fastest way to see a file landed one directory up.
-            let tree =
-                shell("find . -not -path '*/.git/*' | head -60", dir, &[]).unwrap_or_default();
+            let tree = shell("find . -not -path '*/.git/*' | head -60", dir).unwrap_or_default();
             let dump = dump_path("verify-behavioral", label);
             let _ = fs::write(
                 &dump,
@@ -939,35 +929,12 @@ fn run_behavioral(plan: &Plan, setup: &str, assert: &str) -> Outcome {
     }
 }
 
-/// Where claude's automatic memory goes in a fixture with `config_home:`.
-pub const CLAUDE_AUTO: &str = "claude-auto";
-
-/// Point claude's automatic memory at the workdir, before the prompt (the
-/// last argument).
-fn own_claude_memory(args: &mut Vec<String>, dir: &Path) {
-    let at = args.len().saturating_sub(1);
-    let settings = serde_json::json!({ "autoMemoryDirectory": dir.join(CLAUDE_AUTO) });
-    args.splice(at..at, [String::from("--settings"), settings.to_string()]);
-}
-
-/// The environment a fixture's runs get: its `config_home:` as
-/// `XDG_CONFIG_HOME` under the workdir.
-type Env = Vec<(&'static str, PathBuf)>;
-
-fn config_env(config_home: Option<&str>, dir: &Path) -> Env {
-    config_home
-        .map(|d| ("XDG_CONFIG_HOME", dir.join(d)))
-        .into_iter()
-        .collect()
-}
-
 /// Run a shell fragment in `dir`, returning its combined output on
 /// failure. `set -e` so a fixture's first broken command stops it.
-fn shell(script: &str, dir: &Path, env: &[(&str, PathBuf)]) -> std::result::Result<String, String> {
+fn shell(script: &str, dir: &Path) -> std::result::Result<String, String> {
     let out = std::process::Command::new("bash")
         .arg("-c")
         .arg(format!("set -e\n{script}"))
-        .envs(env.iter().map(|(k, v)| (k, v)))
         .current_dir(dir)
         .output()
         .map_err(|e| e.to_string())?;
@@ -988,15 +955,9 @@ fn drive(
     prompt: &str,
     authority: Authority,
     workdir: Option<&Path>,
-    env: &[(&str, PathBuf)],
 ) -> Result<String> {
     let last = tempfile::NamedTempFile::new().context("creating reply file")?;
-    let mut inv = invocation(agent, prompt, authority, workdir, last.path());
-    // A fixture with its own config must not reach claude's real automatic
-    // memory either: it goes to `<workdir>/claude-auto` instead.
-    if let (Agent::Claude, false, Some(dir)) = (agent, env.is_empty(), workdir) {
-        own_claude_memory(&mut inv.args, dir);
-    }
+    let inv = invocation(agent, prompt, authority, workdir, last.path());
     if let (Agent::Kiro, Authority::ReadOnly, Some(dir)) = (agent, authority, workdir) {
         let agents = dir.join(".kiro/agents");
         fs::create_dir_all(&agents).context("creating kiro agent dir")?;
@@ -1008,9 +969,7 @@ fn drive(
     }
 
     let mut cmd = std::process::Command::new(&inv.program);
-    cmd.args(&inv.args)
-        .envs(env.iter().map(|(k, v)| (k, v)))
-        .stdin(std::process::Stdio::null());
+    cmd.args(&inv.args).stdin(std::process::Stdio::null());
     if let Some(dir) = &inv.cwd {
         cmd.current_dir(dir);
     }
@@ -1053,24 +1012,6 @@ fn drive(
 mod tests {
     use super::*;
     use tempfile::TempDir;
-
-    #[test]
-    fn claudes_own_memory_goes_to_the_workdir_before_the_prompt() {
-        let mut args = vec!["--print".to_string(), "PROMPT".to_string()];
-        own_claude_memory(&mut args, Path::new("/w"));
-        assert_eq!(args[1], "--settings");
-        assert_eq!(args[2], r#"{"autoMemoryDirectory":"/w/claude-auto"}"#);
-        assert_eq!(args.last().unwrap(), "PROMPT");
-    }
-
-    #[test]
-    fn config_home_reaches_the_fixture_shell_under_the_workdir() {
-        let dir = TempDir::new().unwrap();
-        let env = config_env(Some("cfg"), dir.path());
-        let out = shell("echo \"$XDG_CONFIG_HOME\"", dir.path(), &env).unwrap();
-        assert_eq!(out.trim(), dir.path().join("cfg").display().to_string());
-        assert!(config_env(None, dir.path()).is_empty());
-    }
 
     /// Validate frontmatter through the real file path, as production does.
     fn frontmatter_of(body: &str) -> Result<(), String> {

@@ -339,19 +339,19 @@ mod tests {
             Agent::Kiro,
             MCP,
             None,
-            vec![Item::skipped(What::Mcp, "browser", "no sub-agent")],
+            vec![Item::skipped(What::Mcp, "browser", "not placed")],
         )
         .unwrap();
         record(dir.path(), Agent::Kiro, MCP, None, vec![]).unwrap();
         assert_eq!(entries(dir.path(), Agent::Kiro), vec![mcp]);
     }
 
-    /// Skipped for want of a kiro sub-agent, then installed into one, then
-    /// uninstalled from it: nothing is left.
+    /// Skipped with no scope, then placed in a scope, then removed from
+    /// it: nothing is left.
     #[test]
     fn recording_in_a_scope_drops_the_unscoped_skip() {
         let dir = TempDir::new().unwrap();
-        let skip = Item::skipped(What::Mcp, "browser", "no sub-agent named");
+        let skip = Item::skipped(What::Mcp, "browser", "not placed");
         record(dir.path(), Agent::Kiro, MCP, None, vec![skip]).unwrap();
         let scoped = Item {
             scope: Some("a".into()),

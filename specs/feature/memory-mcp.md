@@ -106,7 +106,7 @@ Part of initiative: [[my-harness]]
   no claude); the automatic-memory setting (absent, mAId's, identical and
   adopted, identical but another part's, on); legacy memory-dir removal;
   harvest `--project` prefix matching against Claude's project dir names;
-  the store config read/write and its default.
+  the store config read/write.
 - **Integration (free, temp HOME):** build-tool install and uninstall with
   a stub `claude` that records its `mcp add/remove` arguments and edits a
   temp `~/.claude.json`; asserts the part list, the settings file, and

@@ -197,7 +197,9 @@ the plugins through each CLI, after mAId's own plugin, so a failure there
 vendor's is copied into the profile. Neither CLI records who added a
 marketplace, so an item is mAId's only when mAId's part list names it
 as placed or the run added it; a marketplace or plugin the user had
-already is kept, recorded skipped "not mAId's", and never removed.
+already is kept, recorded skipped "not mAId's", and never removed. A run
+that cannot list them (no CLI, or a listing that cannot be read) keeps
+what the part list names as mAId's placed.
 Uninstall removes mAId's plugins, then mAId's marketplace unless a plugin
 not mAId's is installed from it (removing a marketplace uninstalls every
 plugin from it). codex is pinned to the commit (`--ref`); claude's CLI
@@ -527,15 +529,17 @@ same-named entry, or one another part's list records as placed, alone. A
 store that is not there is reported and skipped, never created, and mAId's
 earlier entry is removed. An unreadable `~/.claude.json` fails install.
 
-**Claude's own automatic memory is off** while memory servers are in use,
-so saves go to a server and not to Claude's memory dir: user settings
-`env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1"` (Claude applies user-settings
-`env` at startup). A part sets it only while its own server is registered
-after install, so whenever any part's server is there, some part has set
-it. Under rules 2 and 3 it is set when empty, adopted when identical and no
-other part's list records it, otherwise left and recorded skipped. A part
-with no server of its own leaves the setting alone, or removes its own
-value if it holds one. The `autoMemoryDirectory` value an
+**Claude's own automatic memory is turned off** by a part whose server is
+registered, so saves go to a server and not to Claude's memory dir: user
+settings `env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1"` (Claude applies
+user-settings `env` at startup). A part sets it only while its own server is
+registered after install. Under rules 2 and 3 it is set when empty, adopted
+when identical and no other part's list records it, otherwise left and
+recorded skipped. A part removes its own value when it uninstalls, or when
+it installs with claude on PATH and no server of its own; another part's
+value it leaves alone. A part with a server that follows these rules then
+takes the value on at its next install; until then Claude's own memory is
+on. The `autoMemoryDirectory` value an
 older mAId set is removed when it is still the recorded value.
 
 `just memory-harvest --to <dir> [--project <path-prefix>]` copies Claude's
@@ -659,6 +663,7 @@ mAId/
 │   │   ├── tests/integration.rs  cross-stage tests against the real repo
 │   │   ├── tests/plugins.rs  ignored: Plugins and BringIns against the real claude/codex CLIs in a temp HOME
 │   │   ├── tests/no_cli.rs   install with no agent CLI on PATH keeps the old links
+│   │   ├── tests/stops_on_list.rs  an unreadable part list stops install and uninstall, through the binary
 │   │   ├── tests/memory.rs   the memory verbs through the binary, temp HOME
 │   │   ├── tests/memory_install.rs  install's claude memory step, a stub claude, its part list
 │   │   ├── tests/conformance.rs  whole.rs against the conformance set
@@ -743,7 +748,9 @@ rollback after rollback-then-install, an earlier generation the agents
 cannot take, no earlier generation, the 30-day cleanup keeping the
 previous install (also after an unchanged install), rollback past a
 link mAId did not write, the part list install leaves (placed,
-skipped, the vendor marketplace, gone after uninstall), Claude's
+skipped, the vendor marketplace, gone after uninstall), install and
+uninstall with no claude or codex on PATH keeping the bring-ins mAId's
+(a later uninstall still removes them), Claude's
 plugin-dir grant (there after install, gone after uninstall), and `just
 status --whole` finding what mAId placed, then a second part's list beside
 it.
@@ -956,14 +963,7 @@ expect: <narrative the judge scores against>
 task: <the imperative task, phrased as a user would>
 expect: <narrative>          for prose skills with no artefact
 --- setup --- / --- assert --- optional; seed and inspect a workdir
-config_home: <dir>           optional; XDG_CONFIG_HOME=<workdir>/<dir> for every run
 ```
-
-A skill that reads user config gets a seeded one through `config_home:`:
-agents run with the real HOME, so without it a fixture would read the
-user's real config. For such a fixture the runner also sends claude's own
-automatic memory to `<workdir>/claude-auto` (`--settings`), so a fixture
-never writes into the user's memory either.
 
 `--dry-run` on either stage constructs every prompt and checks it
 structurally **without calling an agent** — explicit prompts must carry
