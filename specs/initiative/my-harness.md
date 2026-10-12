@@ -132,3 +132,11 @@ is built and parked; M4 agy; codex end to end). Not started on its own.
   only as strings; a dotted name is first a top-level key) · why: G4's
   review found two readings readers could differ on · cost if wrong: a
   non-string setting value is reported not checkable
+- Ruling: adopting an identical value applies to every setting a part
+  owns, autoMemoryDirectory included (M9 brings mAId and the shared text
+  in line; G5 builds to it) · why: the user's adopt ruling, one rule for
+  all settings · cost if wrong: uninstall removes a value set by hand
+- Ruling: a part names the default memory store only when no other part's
+  file names one (rule 3); otherwise it reports and skips the claim · why:
+  install order must not decide · cost if wrong: work memory not routed
+  until the user clears the other default
