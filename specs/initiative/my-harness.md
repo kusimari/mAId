@@ -166,3 +166,10 @@ is built and parked; M4 agy; codex end to end). Not started on its own.
   memory is turned off; memory-harvest picks projects by path prefix ·
   why: one small implementation to maintain · cost if wrong: a third repo
   to publish and pin
+- Ruling (user, 2026-10-12): the memory server is `pensieve`, its own
+  public repo (to be github.com/kusimari/pensieve, published by the
+  user), built locally first; as simple as possible, Python libraries
+  allowed where they make it simpler. Tools follow Anthropic's memory
+  tool command set plus search; files follow Claude Code's memory format;
+  per-store standing text from the store's about.md · why: no existing
+  server sends per-store instructions · cost if wrong: one small repo
