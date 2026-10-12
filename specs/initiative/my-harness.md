@@ -48,9 +48,10 @@ Under a scratch HOME:
 - Embedded, not wrapped: no wrapper scripts, aliases or `PATH` shims.
 - mAId depends on no other part; the part-list format is defined here.
 - Memory copy-out copies; it never deletes.
-- A one-value setting another part may own (Claude's
-  `autoMemoryDirectory`) is set only when empty, already mAId's, or
-  identical to what mAId would write and owned by no other part (adopted).
+- A one-value setting another part may own (today Claude's
+  `env.CLAUDE_CODE_DISABLE_AUTO_MEMORY`) is set only when empty, already
+  mAId's, or identical to what mAId would write and owned by no other part
+  (adopted).
 - Paid tests: up to 25 smoke-fixture runs for this half.
 - Pushes, PRs and the merge to `main` are the user's.
 
@@ -66,6 +67,7 @@ Under a scratch HOME:
 | M9 | reader-rules-values | Rule 14 says how a setting's value compares (string-only) and that a dotted name is tried first as a top-level key; cases added | M7, M8 | merged |
 | M10 | memory-mcp | Register pensieve as personal-memory; Claude's own memory off; old memory skill and config removed; harvest by project prefix | M9 | merged |
 | M11 | conformance-generic | Shared conformance data names no part: list-setting's plugin paths become generic | M8 | merged |
+| M12 | initiative-fixes | Defects from the initiative briefing: bring-in ownership kept when a CLI is missing, contract and README sentences made true, dead fixture code removed, missing tests | M10 | running |
 | M4 | agy-verified | agy loads skills and the memory include | M2 | parked: claude first |
 | M7 | claude-plugin-reads | A session reads every file of mAId's skills (kdevkit's modules) with no prompt, by a setting mAId installs and owns | M2 | merged |
 | M8 | reader-rules | The whole-status reader's error rules written into the contract, so any reader implements them from text | M5 | merged |
@@ -197,3 +199,8 @@ is built and parked; M4 agy; codex end to end). Not started on its own.
 - Macro test (Claude only, scratch HOME, two runs): union, status, this
   part's server and setting, routing, recall and uninstall PASS. The
   remaining checks need the user's real install.
+- Ruling: the initiative briefing's defects go back as fix stream M12;
+  defect 2 (the shared setting after one part uninstalls) is fixed by
+  making the contract sentence true, not by a hand-over mechanism, as in
+  the other part · why: least code; reinstall is the repair · cost if
+  wrong: Claude's own memory on until the other part reinstalls
