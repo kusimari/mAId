@@ -65,6 +65,7 @@ Under a scratch HOME:
 | M6 | kiro-global-mcp | kiro gets mAId's MCP server from kiro's global MCP config, not a named sub-agent | M1 | merged |
 | M9 | reader-rules-values | Rule 14 says how a setting's value compares (string-only) and that a dotted name is tried first as a top-level key; cases added | M7, M8 | merged |
 | M10 | memory-mcp | Research then plan: memory as MCP servers, one per persona, bound to its store; on-demand recall in the agent loop | M9 | running (research) |
+| M11 | conformance-generic | Shared conformance data names no part: list-setting's plugin paths become generic | M8 | running |
 | M4 | agy-verified | agy loads skills and the memory include | M2 | parked: claude first |
 | M7 | claude-plugin-reads | A session reads every file of mAId's skills (kdevkit's modules) with no prompt, by a setting mAId installs and owns | M2 | merged |
 | M8 | reader-rules | The whole-status reader's error rules written into the contract, so any reader implements them from text | M5 | merged |
