@@ -64,6 +64,7 @@ Under a scratch HOME:
 | M2 | memory | Memory skill, the way into the store per harness, `just memory-harvest` | M1 | merged |
 | M6 | kiro-global-mcp | kiro gets mAId's MCP server from kiro's global MCP config, not a named sub-agent | M1 | merged |
 | M9 | reader-rules-values | Rule 14 says how a setting's value compares (string-only) and that a dotted name is tried first as a top-level key; cases added | M7, M8 | merged |
+| M10 | memory-mcp | Research then plan: memory as MCP servers, one per persona, bound to its store; on-demand recall in the agent loop | M9 | running (research) |
 | M4 | agy-verified | agy loads skills and the memory include | M2 | parked: claude first |
 | M7 | claude-plugin-reads | A session reads every file of mAId's skills (kdevkit's modules) with no prompt, by a setting mAId installs and owns | M2 | merged |
 | M8 | reader-rules | The whole-status reader's error rules written into the contract, so any reader implements them from text | M5 | merged |
@@ -146,3 +147,12 @@ is built and parked; M4 agy; codex end to end). Not started on its own.
   part's uninstall removes another's setting · cost if wrong: none known
 - Note: supersedes "a hand-set value is left alone" above for an exact
   match; any other value is still left alone.
+- Ruling (user, 2026-10-12): memory is served by MCP servers, one per
+  persona (corporate bound to the corporate store, personal to the
+  personal store); each server states what belongs in it and owns its
+  store and format; coding agents only register servers. Research first
+  (M10): an existing server to depend on, and how to bring memory into
+  the agent loop on demand or as a standing instruction. G5 and M2's
+  setting-based memory are redesigned after it · why: least coupling to
+  any coding agent's internals; on-demand recall scales · cost if wrong:
+  a server process per persona
