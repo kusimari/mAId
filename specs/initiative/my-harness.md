@@ -191,3 +191,6 @@ is built and parked; M4 agy; codex end to end). Not started on its own.
   part's own memory server is registered · why: no personal names in a
   public repo; never leave a machine with no memory · cost if wrong: one
   setup command
+- Macro test run 1 (Claude only, scratch HOME): this part's install,
+  personal-memory, memory-off setting, routing, recall and uninstall PASS.
+  The other part's registration failed and is being fixed there.
