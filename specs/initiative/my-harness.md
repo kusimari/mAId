@@ -49,7 +49,8 @@ Under a scratch HOME:
 - mAId depends on no other part; the part-list format is defined here.
 - Memory copy-out copies; it never deletes.
 - A one-value setting another part may own (Claude's
-  `autoMemoryDirectory`) is set only when empty or already mAId's.
+  `autoMemoryDirectory`) is set only when empty, already mAId's, or
+  identical to what mAId would write and owned by no other part (adopted).
 - Paid tests: up to 25 smoke-fixture runs for this half.
 - Pushes, PRs and the merge to `main` are the user's.
 
@@ -140,3 +141,8 @@ is built and parked; M4 agy; codex end to end). Not started on its own.
   file names one (rule 3); otherwise it reports and skips the claim · why:
   install order must not decide · cost if wrong: work memory not routed
   until the user clears the other default
+- Ruling: a part never adopts a setting value another part's list records
+  as placed · why: two lists must never both claim one value, or one
+  part's uninstall removes another's setting · cost if wrong: none known
+- Note: supersedes "a hand-set value is left alone" above for an exact
+  match; any other value is still left alone.
