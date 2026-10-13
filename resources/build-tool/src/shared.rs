@@ -366,6 +366,18 @@ pub fn memory_store_file() -> Result<PathBuf> {
         .ok_or_else(|| anyhow!("MAID_MEMORY_STORE must be an absolute path (got {raw:?})"))
 }
 
+/// mAId's user-owned config dir, `${XDG_CONFIG_HOME:-~/.config}/maid`: skill
+/// state dirs, the browser allowlist, the memory store's file.
+/// The Justfile owns where it is and passes it in, as for the parts dir.
+pub fn config_dir() -> Result<PathBuf> {
+    let raw = std::env::var("MAID_CONFIG")
+        .context("MAID_CONFIG not set — invoke via `just` (resources/Justfile sets it)")?;
+    let dir = PathBuf::from(&raw);
+    dir.is_absolute()
+        .then_some(dir)
+        .ok_or_else(|| anyhow!("MAID_CONFIG must be an absolute path (got {raw:?})"))
+}
+
 /// codex's own home, where it keeps its memories when they are on.
 pub fn codex_home() -> Result<PathBuf> {
     match std::env::var("CODEX_HOME") {

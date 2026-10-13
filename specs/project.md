@@ -188,6 +188,36 @@ removing either on uninstall; any other element is left alone, and a recorded va
 that shape is not mAId's. claude not on PATH, or no plugin in the profile,
 writes nothing; a value that is not a list is left and recorded skipped.
 
+**Skill state (claude).** A skill that keeps user state keeps it in
+user-owned files in its own dir under mAId's config dir,
+`${XDG_CONFIG_HOME:-~/.config}/maid/<skill>/` (`MAID_CONFIG` in
+`resources/Justfile`), and loads them on top of its shipped body:
+writing-style's `writing-style/learned.md` holds the pending `## Learned
+rules` and the `## Promoted rules`, both of which win over the body. No
+skill tells the runtime to find, read or edit a checkout; content
+validation fails a skill file that says `resources/content/`, "mAId
+checkout", `just install` or `just resources::`. Changing a shipped body is
+a maintainer action, an edit under `resources/content/` and `just install`,
+never a runtime one. So install adds `Edit(/<config dir>/<skill>/**)` to
+`permissions.allow` in `~/.claude/settings.json` for each skill in
+`reads::STATEFUL_SKILLS` (today writing-style), and the same rule on the
+path it resolves to when that differs: Claude checks a path as written and
+as resolved, so behind a symlinked HOME a rule on one form is denied. With
+both, Read and Write there pass with no prompt in the default mode (checked
+on Claude Code 2.1.296); an `additionalDirectories` element would grant
+reads only. Only skill dirs are granted, never the config dir itself: it
+also holds the browser allowlist, which no agent may write, and the memory
+store's file. The rules follow the same element rules as the plugin dir
+(owned, adopted, another part's left alone, a stale one replaced, removed
+on uninstall), one part-list entry each; a recorded value not of the shape
+`Edit(/<absolute path>/<stateful skill>/**)` (no `..`, no glob or rule
+characters) is not mAId's, and a config path whose rule would not be of it
+is granted nothing and recorded skipped, and mAId's earlier rules are
+removed. Install does not create the dirs. The rules are user settings, so
+they hold in every session in every repo: content a session reads there can
+write rules a later session loads, so at session start writing-style lists
+the pending rules and the count and newest three of the promoted ones.
+
 **Bring-ins (claude, codex).** A vendor's plugin marketplace mAId
 brings in is a `BRING_INS` row in the registry: the name both CLIs list
 it under, its public git source, a commit, the plugins to install from
@@ -658,7 +688,7 @@ mAId/
 │   │   ├── src/memory.rs   the personal store, personal-memory on claude, Claude's memory off
 │   │   ├── src/harvest.rs  copying each harness's own memory into a store dir
 │   │   ├── src/settings.rs Claude's user settings file, kept key for key
-│   │   ├── src/reads.rs    Claude's additionalDirectories element for mAId's skill files
+│   │   ├── src/reads.rs    Claude's grants: mAId's skill files (additionalDirectories), skill state (allow)
 │   │   ├── src/stages.rs   content → check → install → smoke
 │   │   ├── tests/integration.rs  cross-stage tests against the real repo
 │   │   ├── tests/plugins.rs  ignored: Plugins and BringIns against the real claude/codex CLIs in a temp HOME
@@ -751,7 +781,7 @@ link mAId did not write, the part list install leaves (placed,
 skipped, the vendor marketplace, gone after uninstall), install and
 uninstall with no claude or codex on PATH keeping the bring-ins mAId's
 (a later uninstall still removes them), Claude's
-plugin-dir grant (there after install, gone after uninstall), and `just
+plugin-dir and config-dir grants (there after install, gone after uninstall), and `just
 status --whole` finding what mAId placed, then a second part's list beside
 it.
 It needs network for the vendor marketplace.
@@ -773,7 +803,8 @@ One test deliberately breaks the fake-`$HOME` pattern:
 `resources/content/`. Everything else here builds a synthetic tree, so
 without it the suite can be green while the content on disk is
 uninstallable — which is exactly what happened when two descriptions
-carried an unquoted `: ` (see "Writing a skill"). It reads only, so it
+carried an unquoted `: ` (see "Writing a skill"). It also fails a skill
+that points the runtime at the repo ("Skill state"). It reads only, so it
 keeps the no-side-effects property.
 
 **`just resources::check-skills` / `…::smoke-skills` — AI-tool
@@ -1131,8 +1162,8 @@ Not a service — consumed locally.
 the claude/codex plugin and links kiro and agy at it, registers the
 vendor marketplaces it brings in (Architecture, "Bring-ins"), points
 `personal-memory` on the personal store and turns Claude's own automatic
-memory off (Architecture, "Memory"), lets Claude read mAId's skill files (Architecture, "Skill
-reads"), and writes mAId's part list (see Architecture, "My harness");
+memory off (Architecture, "Memory"), lets Claude read mAId's skill files and read and write each skill's state
+dir (Architecture, "Skill reads", "Skill state"), and writes mAId's part list (see Architecture, "My harness");
 `just uninstall` reverses it, removing the list, and removes the profile;
 `just status` reports the generation, each plugin and
 each link, and `just status --whole` checks every part's list against
@@ -1176,7 +1207,8 @@ the experience is symmetric across resource kinds.
   the `maid@maid` plugin and `maid` marketplace registrations, the
   bring-in marketplaces and plugins it added, the MCP registrations, its
   elements of Claude's settings (`env.CLAUDE_CODE_DISABLE_AUTO_MEMORY`, its
-  `additionalDirectories` element), and its own part list. Never the user's default
+  `additionalDirectories` element, its `Edit` rules on skill state dirs in
+  `permissions.allow`), and its own part list. Never the user's default
   nix profile (a home-manager may own it). The rust toolchain and `just` come
   from the dev shell; `build-tool` is invoked through `cargo run
   -p build-tool` (wrapped by Just) from the checkout — no shim

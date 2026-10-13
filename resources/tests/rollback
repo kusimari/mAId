@@ -22,8 +22,8 @@ export CARGO_HOME=${CARGO_HOME:-$HOME/.cargo} CARGO_TARGET_DIR=$here/target
 # nix keeps its settings and fetch cache under these; the agents do not.
 export XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config} XDG_CACHE_HOME=${XDG_CACHE_HOME:-$HOME/.cache}
 unset CODEX_HOME CLAUDE_CONFIG_DIR XDG_STATE_HOME MY_HARNESS_PARTS
-# XDG_CONFIG_HOME stays real for nix, so the memory store file must not.
-export MAID_MEMORY_STORE=$work/config/maid/memory-store
+# XDG_CONFIG_HOME stays real for nix, so mAId's config dir must not.
+export MAID_CONFIG=$work/config/maid MAID_MEMORY_STORE=$work/config/maid/memory-store
 
 fails=0
 check() {
@@ -82,6 +82,10 @@ grant=$(dirname "$MAID_PROFILE")/marketplace/plugins/maid
 granted() { jq -e --arg d "$grant" '.permissions.additionalDirectories | index($d)' "$th/.claude/settings.json" >/dev/null 2>&1; }
 check "install lets claude read mAId's plugin dir, and records it" \
   eval 'granted && entries claude | grep -qx "setting permissions.additionalDirectories"'
+edit_rule="Edit(/$MAID_CONFIG/writing-style/**)"
+writable() { jq -e --arg r "$edit_rule" '.permissions.allow | index($r)' "$th/.claude/settings.json" >/dev/null 2>&1; }
+check "install lets claude read and write writing-style's state dir, and records it" \
+  eval 'writable && entries claude | grep -qx "setting permissions.allow"'
 vendor=anthropic-agent-skills
 brought_in() {
   for h in claude codex; do
@@ -206,6 +210,7 @@ inhome just resources::uninstall-skills >/dev/null 2>&1
 inhome just resources::uninstall-browser-mcp >/dev/null 2>&1
 check "uninstall removes the part list" eval '[ ! -e "$partlist" ]'
 check "uninstall takes the plugin-dir grant away" eval '! granted'
+check "uninstall takes the config-dir grant away" eval '! writable'
 # A listing that is not JSON must not pass as "removed".
 vendor_gone() {
   local cli m

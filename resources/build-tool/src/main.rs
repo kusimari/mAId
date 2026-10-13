@@ -21,7 +21,7 @@ use build_tool::harness::{Selection, Stage};
 use build_tool::memory;
 use build_tool::part::What;
 use build_tool::shared::{
-    codex_home, home_dir, memory_store_file, parts_dir, profile_dir, repo_root, usage,
+    codex_home, config_dir, home_dir, memory_store_file, parts_dir, profile_dir, repo_root, usage,
     validate_agent, validate_agents, Agent, UsageError, BRING_INS, CONTENT_DIR,
     PROFILE_CONTENT_DIR,
 };
@@ -230,6 +230,7 @@ fn run(cli: Cli) -> Result<u8> {
             let reads = stages::cmd_install_reads(
                 &home_dir()?,
                 &profile_dir()?,
+                &config_dir()?,
                 &parts_dir()?,
                 a.dry_run,
                 agent,

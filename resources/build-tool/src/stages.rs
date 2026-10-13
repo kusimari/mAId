@@ -37,21 +37,85 @@ use std::path::{Path, PathBuf};
 /// files or the joined error list. Caller decides whether to print or
 /// abort.
 pub fn check_content(content_dir: &Path) -> Result<usize, Vec<String>> {
-    // Walk every skill, partition into (oks, errs), and report the Ok
-    // count or the FULL error list — matching on the partitioned tuple
-    // so there's no intermediate binding but all errors are still kept.
-    match fs::read_dir(content_dir.join("skills"))
+    let skills: Vec<PathBuf> = fs::read_dir(content_dir.join("skills"))
         .into_iter()
         .flatten()
         .filter_map(Result::ok)
-        .map(|entry| entry.path().join("SKILL.md"))
-        .filter(|p| p.exists())
-        .map(|p| check_one_skill(&p))
-        .partition::<Vec<_>, _>(Result::is_ok)
-    {
-        (oks, errs) if errs.is_empty() => Ok(oks.len()),
-        (_, errs) => Err(errs.into_iter().map(Result::unwrap_err).collect()),
+        .map(|entry| entry.path())
+        .filter(|dir| dir.join("SKILL.md").exists())
+        .collect();
+    let errs: Vec<String> = skills
+        .iter()
+        .flat_map(|dir| {
+            check_one_skill(&dir.join("SKILL.md"))
+                .err()
+                .into_iter()
+                .chain(repo_pointers(dir))
+        })
+        .collect();
+    match errs.is_empty() {
+        true => Ok(skills.len()),
+        false => Err(errs),
     }
+}
+
+/// Text that sends an installed session to the mAId repo, which it never
+/// has (see project.md "Skill state"). Matched lowercased.
+const REPO_POINTERS: [&str; 4] = [
+    "resources/content/",
+    "maid checkout",
+    "just install",
+    "just resources::",
+];
+
+/// Every line of every `.md` file in a skill dir, modules included, that
+/// names one of `REPO_POINTERS`.
+fn repo_pointers(skill_dir: &Path) -> Vec<String> {
+    md_files(skill_dir)
+        .into_iter()
+        .flat_map(|p| match fs::read_to_string(&p) {
+            Err(e) => vec![format!("{}: cannot read: {e}", p.display())],
+            Ok(text) => text
+                .lines()
+                .enumerate()
+                .filter_map(|(n, line)| {
+                    let line = line.to_lowercase();
+                    REPO_POINTERS
+                        .iter()
+                        .find(|pat| line.contains(*pat))
+                        .map(|pat| {
+                            format!(
+                                "{}:{}: points the installed skill at the repo ({pat})",
+                                p.display(),
+                                n + 1
+                            )
+                        })
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+fn md_files(dir: &Path) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        // The entry's own type, so a linked dir is not followed into a cycle.
+        .flat_map(|e| match e.file_type().is_ok_and(|t| t.is_dir()) {
+            true => md_files(&e.path()),
+            false => {
+                let p = e.path();
+                p.extension()
+                    .is_some_and(|x| x == "md")
+                    .then_some(p)
+                    .into_iter()
+                    .collect()
+            }
+        })
+        .collect();
+    found.sort();
+    found
 }
 
 /// Validate one SKILL.md: readable, `---`-fenced YAML frontmatter, and
@@ -332,11 +396,13 @@ fn legacy_setting(home: &Path, parts: &Path, dry_run: bool) -> Result<bool> {
     Ok(true)
 }
 
-/// Install's claude step for reading mAId's skill files: add mAId's
-/// plugin dir to Claude's additional directories, and record it.
+/// Install's claude step for reading mAId's skill files and the user's
+/// skill state: grant mAId's plugin dir and config dir, and record each
+/// element.
 pub fn cmd_install_reads(
     home: &Path,
     profile: &Path,
+    config: &Path,
     parts: &Path,
     dry_run: bool,
     agent: Option<Agent>,
@@ -344,31 +410,31 @@ pub fn cmd_install_reads(
     if agent.is_some_and(|a| a != Agent::Claude) {
         return Ok(0);
     }
-    let own = recorded_setting(parts, reads::SETTING)?;
-    let out = reads::install_claude(
-        home,
-        profile,
-        own.as_ref(),
-        &part::claimed_by_others(parts, Agent::Claude, reads::SETTING),
-        on_path(Agent::Claude.cli()),
-        dry_run,
-    )?;
-    println!("{}", out.line);
-    if !dry_run {
-        part::record_setting(parts, Agent::Claude, reads::SETTING, out.item).with_context(
-            || {
-                format!(
-                    "claude {} may hold mAId's element but it is not recorded; check it by hand",
-                    reads::SETTING
-                )
-            },
+    for grant in [reads::plugin_grant(profile), reads::config_grant(config)] {
+        let setting = grant.list.setting();
+        let out = reads::install_claude(
+            home,
+            &grant,
+            &recorded_settings(parts, setting)?,
+            &part::claimed_by_others(parts, Agent::Claude, setting),
+            on_path(Agent::Claude.cli()),
+            dry_run,
         )?;
+        out.lines.iter().for_each(|l| println!("{l}"));
+        if !dry_run {
+            part::record_named(parts, Agent::Claude, What::Setting, None, setting, out.items)
+                .with_context(|| {
+                    format!(
+                        "claude {setting} may hold mAId's elements but they are not recorded; check it by hand"
+                    )
+                })?;
+        }
     }
     Ok(0)
 }
 
-/// Uninstall's claude step for skill reads: remove mAId's recorded element
-/// only.
+/// Uninstall's claude step for skill reads and skill state: remove mAId's
+/// recorded elements only.
 pub fn cmd_uninstall_reads(
     home: &Path,
     parts: &Path,
@@ -378,13 +444,26 @@ pub fn cmd_uninstall_reads(
     if agent.is_some_and(|a| a != Agent::Claude) {
         return Ok(0);
     }
-    let own = recorded_setting(parts, reads::SETTING)?;
-    let out = reads::uninstall_claude(home, own.as_ref(), dry_run)?;
-    println!("{}", out.line);
-    if !dry_run {
-        part::record_setting(parts, Agent::Claude, reads::SETTING, None)?;
+    for list in reads::List::ALL {
+        let setting = list.setting();
+        let own = recorded_settings(parts, setting)?;
+        reads::uninstall_claude(home, list, &own, dry_run)?
+            .iter()
+            .for_each(|l| println!("{l}"));
+        if !dry_run {
+            part::record_setting(parts, Agent::Claude, setting, None)?;
+        }
     }
     Ok(0)
+}
+
+/// Every element of the list setting `name` mAId's part list records
+/// placed on claude.
+fn recorded_settings(parts: &Path, name: &str) -> Result<Vec<Item>> {
+    Ok(part::placed(parts, Agent::Claude)?
+        .into_iter()
+        .filter(|i| i.kind == What::Setting && i.name == name)
+        .collect())
 }
 
 /// The setting `name` as mAId's part list records it placed on claude.
@@ -1282,6 +1361,51 @@ mod tests {
             "---\nname: multi\ndescription: a multi-file skill\n---\nbody.\n",
         );
         write(&skill_dir.join("setup.md"), "# Plain markdown.\n");
+        assert_eq!(check_content(dir.path()).unwrap(), 1);
+    }
+
+    #[test]
+    fn check_content_flags_repo_pointers_in_skill_md_and_modules() {
+        let dir = TempDir::new().unwrap();
+        let skill = dir.path().join("skills/foo");
+        write(
+            &skill.join("SKILL.md"),
+            "---\nname: foo\ndescription: bar\n---\nok\nIn a mAId Checkout, edit it.\n",
+        );
+        write(
+            &skill.join("phases/a.md"),
+            "x\nsee resources/content/skills/foo\n",
+        );
+        write(&skill.join("b.md"), "then run `just install`\n");
+        write(
+            &skill.join("c.md"),
+            "or `just resources::browser-mcp-allow`\n",
+        );
+        write(&skill.join("notes.txt"), "just install\n");
+        let errs = check_content(dir.path()).unwrap_err();
+        let at = |f: &str, n: usize| format!("{}:{n}:", skill.join(f).display());
+        assert_eq!(errs.len(), 4, "{errs:?}");
+        for (e, (f, n, pat)) in errs.iter().zip([
+            ("SKILL.md", 6, "maid checkout"),
+            ("b.md", 1, "just install"),
+            ("c.md", 1, "just resources::"),
+            ("phases/a.md", 2, "resources/content/"),
+        ]) {
+            assert!(e.starts_with(&at(f, n)) && e.contains(pat), "{e}");
+        }
+    }
+
+    #[test]
+    fn check_content_passes_a_skill_naming_no_repo_path() {
+        let dir = TempDir::new().unwrap();
+        let skill = dir.path().join("skills/foo");
+        write(
+            &skill.join("SKILL.md"),
+            "---\nname: foo\ndescription: bar\n---\nInstall the content, then check out a branch.\n",
+        );
+        write(&skill.join("phases/a.md"), "the user's own config\n");
+        // A linked dir is not walked, so a cycle ends.
+        std::os::unix::fs::symlink(&skill, skill.join("phases/loop")).unwrap();
         assert_eq!(check_content(dir.path()).unwrap(), 1);
     }
 
