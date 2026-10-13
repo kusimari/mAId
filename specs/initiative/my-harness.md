@@ -69,7 +69,7 @@ Under a scratch HOME:
 | M10 | memory-mcp | Register pensieve as personal-memory; Claude's own memory off; old memory skill and config removed; harvest by project prefix | M9 | merged |
 | M11 | conformance-generic | Shared conformance data names no part: list-setting's plugin paths become generic | M8 | merged |
 | M12 | initiative-fixes | Defects from the initiative briefing: bring-in ownership kept when a CLI is missing, contract and README sentences made true, dead fixture code removed, missing tests | M10 | merged |
-| M13 | installed-skills-never-need-repo | No skill sends the runtime to the repo; skills' user-owned files readable and writable without a prompt (backlog of the same name) | M7 | running |
+| M13 | installed-skills-never-need-repo | No skill sends the runtime to the repo; skills' user-owned files readable and writable without a prompt (backlog of the same name) | M7 | merged |
 | M4 | agy-verified | agy loads skills and the memory include | M2 | parked: claude first |
 | M7 | claude-plugin-reads | A session reads every file of mAId's skills (kdevkit's modules) with no prompt, by a setting mAId installs and owns | M2 | merged |
 | M8 | reader-rules | The whole-status reader's error rules written into the contract, so any reader implements them from text | M5 | merged |
