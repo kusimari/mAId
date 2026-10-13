@@ -11,7 +11,7 @@
     # The memory MCP server. Pinned from a local checkout until it is
     # published; re-pin to the published commit before any PR.
     pensieve = {
-      url = "git+file:///local/home/gorantls/tool-workplace/ai-workspace/pensieve?rev=146f867d5ca93664faa795851a37ac9aeea07803";
+      url = "git+file:///local/home/gorantls/tool-workplace/ai-workspace/pensieve?rev=556cab36b5a93d3692c42ff65e8f45b8a01633e7";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
