@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# mAId/install — the checkout's install entry-point: `just install`.
+#
+# Exists so a caller that only knows "run the repo's ./install" (a
+# machine-setup walk, a fresh clone) gets the same install as `just
+# install`, without knowing mAId uses just. Outside the dev shell it
+# re-execs through the repo's flake, which carries just and the rust
+# toolchain the install builds with.
+#
+# Usage: ./install [agent]   → just install [agent]
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
+if command -v just >/dev/null 2>&1 && command -v cargo >/dev/null 2>&1; then
+    exec just install "$@"
+fi
+command -v nix >/dev/null 2>&1 || { echo "ERROR: need just + cargo on PATH, or nix for the repo's dev shell." >&2; exit 1; }
+exec nix develop --command just install "$@"
