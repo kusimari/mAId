@@ -270,7 +270,11 @@ re-auth. Its shape differs from skills in two ways:
     (profile, then skills and browser MCP), `just uninstall`,
     `just status`, `just rollback`, and the Macro test `just
     verify-install` / `just verify-install-paid` (both `[confirm]`-gated).
-    Later installables (kaimux) join here.
+    Later installables (kaimux) join here. `./install [agent]` at the
+    repo root is the same install for callers that only know a repo's
+    `./install` (a machine-setup walk): it runs `just install`, through
+    the flake's dev shell when `just`/`cargo` are not on `PATH`. It
+    stays a pass-through — install logic lives in the Justfile.
   - **Workspace hygiene** at the root (no namespace —
     operates on every member): `just test`, `just fmt`,
     `just fmt-check`, `just lint`, `just check`,
@@ -292,6 +296,7 @@ mAId/
 ├── Cargo.toml              workspace root: members = ["resources/build-tool"]
 ├── Cargo.lock              committed (binary-workspace policy)
 ├── Justfile                root verb surface (workspace hygiene + `mod resources` / `mod kaimux`)
+├── install                 entry-point for setup walks: `just install`, via the dev shell if needed
 ├── rust-toolchain.toml     stable + clippy + rustfmt
 ├── flake.nix / .envrc      dev shell (rust toolchain, just, jq) and the installable package
 ├── resources/
