@@ -49,12 +49,14 @@ skill bodies, the harness map) stays behind a pointer.
   the goal and next step of the work (taken from the work's own record),
   and the few rules that must never drift. Kept small (about a paragraph), never the whole session-start
   picture again.
-- **Mode context, when a focused mode is in play:** a mode is where the
-  agent is and the job it is doing, whether a bring-in guides the job
-  (coding with kdevkit, a review briefing, a sweep) or the agent does it
-  natively. In a mode, its key rules come first, plus the entries of the
-  bring-in's own memory and of the persona's memory that bear on it. Added
-  when the mode starts, dropped when it ends.
+- **Mode context, when the work is focused:** the mode is not declared by
+  anyone; it is what the harness works out from the outcome being pursued,
+  the location or project the agent is in, and the bring-ins that apply
+  there (coding with kdevkit, a review briefing, a sweep, or the agent's
+  native way of doing a job no bring-in covers). While it holds, the key
+  rules of the bring-ins in play come first, plus the entries of their own
+  memory and of the persona's memory that bear on it. It changes as the
+  outcome, the location or the bring-ins in play change.
 - **The goal and next step come from the work itself** (a feature spec, a
   task list, the base harness's own plan); the harness does not keep a
   second copy.
@@ -163,7 +165,7 @@ Draft: in a scratch HOME with the personal part installed,
 | **store** | a git checkout the user owns; holds persona memory, permanent bring-in memory, and the user's own files |
 | **harness map** | the union of every part's declarations: the harness's model of itself, generated at install |
 | **session** | what the user says it is; has sub-sessions; continued by the work's own records |
-| **mode** | a focused way of working in a session: *location* (where the agent is) and *job* (what it is doing, guided by a bring-in or native). Selects the mode context |
+| **mode** | derived, never declared: the outcome being pursued, the location or project context, and the bring-ins that apply there. The harness resolves it; no bring-in names a mode. Selects the mode context |
 | **context layers** | the session picture, the per-call reinforcement, the mode context, and the on-demand pointers |
 | **selector** | picks the few memories that bear on the next call; a cheap lookup first, a local decision model later |
 | **reflection** | packer (session to bundle) -> reflector (bundle + map) -> findings -> user decisions -> apply or file -> ledger |
@@ -183,8 +185,8 @@ it simply ignores it.
 |---|---|---|
 | `kind` | harness or task | session start: which list it belongs to |
 | `job` | one line: what it is for | session start: the catalog line |
-| `modes` | the modes it serves, each with signals the harness can check (locations, keywords, a job it guides) | every call: detecting the mode and adding its context |
-| `rules` | a pointer to the few lines that come first while its mode lasts | every call: mode context |
+| `signals` | optional hints that it applies: locations or file patterns, outcomes it serves; without them the harness uses `job` and the standard's own description | every call: resolving which bring-ins apply |
+| `rules` | a pointer to the few lines that come first while it is in play | every call: mode context |
 | `state` | none, or its tiers: local (pending) and permanent, each named by a config key, with a promotion rule (auto, propose or off) | session start (own memory or not), selector (where to look), reflection (where learnings go) |
 | `config` | the keys it needs set per environment or persona, secrets marked | the part binds them to values; nothing environment-specific inside the bring-in |
 | `requires` | what must be present for it to be ready (a command, a base harness capability) | session start and status: available vs ready |
@@ -222,10 +224,10 @@ does not repeat them.
  |    +-- harness bring-ins .. present in every session
  |    |     memory, reflection, status, and the context layers' sources
  |    |
- |    +-- task bring-ins ..... present in a mode or on demand
+ |    +-- task bring-ins ..... present when they apply, or on demand
  |          coding, writing, notes, triage, documents, web, brought-in tools
  |
- |    every bring-in declares:  kind | job | modes | rules | state | config | requires
+ |    every bring-in declares:  kind | job | signals | rules | state | config | requires
  |    the part records:         part | persona | source | route | values
  |    state:                    local tier --promote--> permanent tier
  |
@@ -259,9 +261,10 @@ does not repeat them.
     active persona -------------+      never-drift rules
     invariants -----------------+
                                        +
-    location + job -----> MODE ----+--> MODE CONTEXT (while the mode lasts)
-      (guided by a bring-in        |      the mode's key rules
-       or native)                  |      + selected memories for this mode
+    outcome (from the work) ---+
+    location / project --------+--> MODE (resolved) --+--> MODE CONTEXT (while it holds)
+    bring-ins that apply ------+   no one declares it  |     rules of the bring-ins in play
+      (their job + signals)                            |     + selected memories for it
     stores + bring-in memory ------+
       --> SELECTOR (capped) -------+--> RECALL: the few memories for this call
 
@@ -351,3 +354,7 @@ sub-sessions; drafted after this conceptual design is agreed.
   design needs, not a copy of other systems' manifests, and rides inside
   existing standards' extension slots, so a bring-in developed here can be
   vended to anyone without this harness.
+- Ruling (user, 2026-10-27): a mode is derived, not declared: the outcome
+  being pursued, the location or project context, and the bring-ins that
+  apply there. Bring-ins declare optional signals, not modes. The rest of
+  the conceptual design is agreed.
