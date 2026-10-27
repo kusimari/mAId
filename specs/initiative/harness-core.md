@@ -236,3 +236,29 @@ These are the ones the design cannot settle by default.
 - Ruling (user, 2026-10-26): the design is independent of any machine or
   environment; file layout per environment is decided later · why: it
   will run in different kinds of environments · cost if wrong: none
+- Ruling (user, 2026-10-27, PR review): the design reads as three layers
+  of one architecture: the experience architecture (what must happen
+  implicitly at session start, on every agent call, and at close), then
+  the conceptual design, then its mapping to the system design. The
+  "Experience" is implicit behaviour, not what the user sees.
+- Ruling (user, 2026-10-27): answers to the open questions:
+  - a session is what the user says it is: by default a launch until the
+    agent is asked to close; resumes, compactions and branches (which make
+    sub-sessions) belong to it; a feature file or other persisted record
+    can continue one;
+  - a separate reflector that knows how the harness is designed is given
+    the session;
+  - reflection learns from everything (my words, how the agent read them,
+    the words of the skills and prompts); the aim is to find what in the
+    harness, bring-ins, memories or stores to change so the next session
+    is better;
+  - contradictions and cross-persona guesses go to the user to decide,
+    for now; automating later;
+  - unlearning is learning that something should be removed;
+  - a simple map of how the harness is put together lets the reflector
+    know each thing's source (a git project repo, a git store, or a
+    machine directory) and say "file this as a backlog item" or "work it
+    in a worktree into a PR", without spelling out how;
+  - getting better: fewer bring-in updates needed and higher accuracy of
+    work; for memories, productivity going up;
+  - the harness knows as much about itself as reflection needs.
