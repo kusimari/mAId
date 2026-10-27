@@ -17,29 +17,78 @@ turn. A small **harness core** makes my harness present in every session
 next (a reflection at session close that routes what was learned to where
 it belongs), on any base harness, with no wrapper.
 
-## Experience
+## Experience architecture
 
-- A fresh session already knows who I am, which stores I keep, and the
-  few memories that matter, before I say anything.
-- When a session closes, it reflects and recommends what to keep, and
-  each kind of learning lands where it belongs:
-  - a fact about me or my work goes into the right persona's memory;
-  - something a bring-in learned goes into that bring-in's own memory:
-    first its local (pending) tier, then its permanent tier once it is
-    confirmed;
-  - a skill edit or a new skill is proposed as a PR or a backlog item on
-    the part that owns it;
-  - a harness design change is proposed as a PR or a backlog item on the
-    part that owns it.
-- I can start that reflection myself at any point ("reflect on this
-  session"); doing it by hand first is how we learn what to automate.
-- Facts about a machine or environment stay with it; facts about me
-  travel.
-- My memory follows me to another environment with no manual sync.
+What must happen implicitly, at three points of a session, whatever the
+base harness. This is behaviour the harness guarantees, not anything the
+user sees or asks for. The conceptual design and its mapping to the
+system design follow from it.
+
+A **session** is what the user says it is: by default from a launch until
+the agent is asked to close. Resumes and compactions belong to it;
+branches (sub-agents, parallel work) are its sub-sessions; a feature file
+or another persisted record can carry a session across launches.
+
+### 1. At session start: the agent already knows
+
+| It knows | Detail | Size |
+|---|---|---|
+| **my personas** | all of them, what each is for, and which one this session most likely serves (a guess the user can correct) | a few lines |
+| **the harness bring-ins** | each one's job and where its state lives; memory is one of them (one per persona), reflection is another | one line each |
+| **the task bring-ins** | a catalog only: name, when to use it, whether it keeps its own memory and where; none is loaded | one line each |
+| **the environment** | which base harness, where it runs, what is reachable (stores, tools, network, auth), what it cannot do here | a few lines |
+| **what is pending** | proposals and decisions waiting for the user | a count and a pointer |
+
+This holds after a resume or a compaction, and every sub-session starts
+with the part of it that its job needs. Everything larger (whole memories,
+skill bodies, the harness map) stays behind a pointer.
+
+### 2. On every agent call: minimal, current, task-aware
+
+- **Reinforced, only when it changed:** the active persona and its store,
+  the goal and next step of the work, and the few rules that must never
+  drift. Kept small (about a paragraph), never the whole session-start
+  picture again.
+- **Task context, when a task is in play:** the task bring-in's key rules
+  first, plus the entries of its own memory and of the persona's memory
+  that bear on this task. Added when the task starts, dropped when it
+  ends.
+- **Recall at the point of need:** a memory that bears on what the agent is
+  about to do reaches it then, not only if the agent thinks to search.
+- **Never:** the same text from two parts, a catalog repeated on every
+  call, or anything that changes the start of the context mid-session.
+
+### 3. At close, on request, or in a sweep of sessions: reflection
+
+- **Input:** the session with its sub-sessions: what the user said, what
+  the agent was instructed (skills, prompts, standing text), what it did,
+  what it touched, and where it hit friction (corrections, refusals,
+  interruptions, prompts, retries).
+- **The reflector** is separate from the session and knows how the harness
+  is put together: a map of every part, bring-in, memory and store, with
+  each one's source (a git project repo, a git store, or a machine
+  directory) and how a change to it is made.
+- **It learns from everything** and looks for what should change so the
+  next session is better: persona memories, a bring-in's own memory (local
+  tier first, then permanent), stores, harness and task bring-ins, and the
+  harness loop itself, the reflector included. Removing something is a
+  learning like any other.
+- **Each finding** names the thing it changes, quotes its evidence, and
+  goes where the map says: applied (a memory), filed as a backlog item, or
+  worked in a worktree into a PR on the owning source.
+- **The user decides** contradictions, guesses about which persona a
+  learning belongs to, and every proposal, in one short batch.
+- **It notices whether the harness is getting better:** fewer bring-in
+  updates needed and the same corrections no longer repeated, more work
+  right the first time; for memories, more done with less.
 
 Later, not in this initiative: the same reflection runs as a job over
 closed sessions, and other scheduled work (a daily sweep) runs the same
 plain base harness with the same harness and memory.
+
+> Constraints, Conceptual design and the mapping to the system design
+> below are from the previous draft and will be reworked once this
+> experience architecture is agreed.
 
 ## Macro test
 
