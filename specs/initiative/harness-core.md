@@ -158,7 +158,7 @@ Draft: in a scratch HOME with the personal part installed,
 | **base harness** | a vendor's agent loop; reached only through its extension points |
 | **carrier** | one extension point used to place one item: always-loaded context, a session-start or per-prompt hook, MCP instructions and tools, a skill, a sub-agent definition |
 | **part** | what one repo delivers for one persona: harness bring-ins and task bring-ins |
-| **bring-in** | a unit a part installs. Each declares: its *kind* (harness or task), its *job*, *when* it is present (always, in a mode, on demand), its *state* (none, or a local and a permanent tier with a promotion rule), its *source* (a git project repo, a git store, a machine directory, or a vendor) and its *change route* (write, backlog, worktree to PR, report only) |
+| **bring-in** | a unit a part installs (a skill, an MCP server, a sub-agent, a hook, a plugin). It declares what the harness needs to know about it (the bring-in contract, below); the part records where it came from |
 | **persona** | who the work is for; owns a store and the memory in it |
 | **store** | a git checkout the user owns; holds persona memory, permanent bring-in memory, and the user's own files |
 | **harness map** | the union of every part's declarations: the harness's model of itself, generated at install |
@@ -168,6 +168,46 @@ Draft: in a scratch HOME with the personal part installed,
 | **selector** | picks the few memories that bear on the next call; a cheap lookup first, a local decision model later |
 | **reflection** | packer (session to bundle) -> reflector (bundle + map) -> findings -> user decisions -> apply or file -> ledger |
 | **ledger** | what reflection records across sessions to tell whether the harness is getting better |
+
+### The bring-in contract
+
+A bring-in stays a plain unit of an existing standard (an Agent Skill, an
+MCP server, a plugin, a sub-agent), so anyone can use it without this
+harness. The contract adds only what this design needs, carried inside
+the standard's own extension slot, and a base harness that does not know
+it simply ignores it.
+
+**Declared by the bring-in** (travels with it, wherever it is vended):
+
+| Field | What it says | Needed for |
+|---|---|---|
+| `kind` | harness or task | session start: which list it belongs to |
+| `job` | one line: what it is for | session start: the catalog line |
+| `modes` | the modes it serves, each with signals the harness can check (locations, keywords, a job it guides) | every call: detecting the mode and adding its context |
+| `rules` | a pointer to the few lines that come first while its mode lasts | every call: mode context |
+| `state` | none, or its tiers: local (pending) and permanent, each named by a config key, with a promotion rule (auto, propose or off) | session start (own memory or not), selector (where to look), reflection (where learnings go) |
+| `config` | the keys it needs set per environment or persona, secrets marked | the part binds them to values; nothing environment-specific inside the bring-in |
+| `requires` | what must be present for it to be ready (a command, a base harness capability) | session start and status: available vs ready |
+
+**Recorded by the part at install** (not part of the bring-in; it differs
+per harness that uses it):
+
+| Field | What it says | Needed for |
+|---|---|---|
+| `part`, `persona` | who installed it, for whom | session picture, routing |
+| `source` | where it came from: a git project repo, a git store, a machine directory, or a vendor; pinned revision | reflection: where a change goes |
+| `route` | how a change is made: write, backlog, worktree to PR, report only (defaults from the source) | reflection: the finding's route |
+| `values` | the config values bound for this environment and persona | session start, selector |
+
+**Carried in existing slots, under one namespace:** an Agent Skill's
+`metadata` (flat keys); a plugin manifest's `extensions` entry; an MCP
+server's `_meta`; a sub-agent or hook through the plugin that ships it.
+What the part records goes into its part list, and the harness map is the
+union of both.
+
+**Left to the standards:** name, version, licence, permissions,
+dependencies and activation the base harness does itself. The contract
+does not repeat them.
 
 ### What forms a harness
 
@@ -307,3 +347,7 @@ sub-sessions; drafted after this conceptual design is agreed.
   per-call reinforcement is sent on change. Whether a base harness needs a
   repeated preamble, or keeps a context for every call, is an
   implementation investigation per base harness.
+- Ruling (user, 2026-10-27): the bring-in contract carries only what this
+  design needs, not a copy of other systems' manifests, and rides inside
+  existing standards' extension slots, so a bring-in developed here can be
+  vended to anyone without this harness.
