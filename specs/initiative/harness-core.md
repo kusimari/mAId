@@ -286,13 +286,108 @@ does not repeat them.
                                               LEDGER: is the harness getting better
 ```
 
-### Mapping to the system design
+## System design
 
-Next: which carrier each layer and component uses in each base harness,
-where each concept's state lives through its pointers, and which package
-ships what (harness-core, the memory server, each part). Grounded in the
-research on carriers and their survival across compaction and
-sub-sessions; drafted after this conceptual design is agreed.
+How the conceptual design maps onto base harnesses, Claude Code first. Still
+environment-independent: every location below is a configuration pointer,
+resolved per environment. Rows marked *(investigate)* are settled by a test
+on each base harness before they are built.
+
+### Who ships what
+
+| Package | Ships | Owns in the part list |
+|---|---|---|
+| **harness-core** (standalone) | the renderer (harness map -> carriers); the session-start, per-prompt and session-end hooks; the mode resolver and the selector; one packer per base harness; the reflection skill and the reflector agent; the decision step; the ledger format | the carriers it writes (one rules file, its hooks); registered once, whichever part installs first, like a third part |
+| **memory server** (standalone) | one instance per store; read, write, search; an index the selector can read cheaply | nothing; each part registers its own instance |
+| **each part** | its bring-ins, carrying the contract fields in their standard slots; its part list with what it recorded at install (source, route, bound values); its persona's store pointer | its own entries, as today |
+
+harness-core renders from the union of every part list present, so a part
+added or removed changes the rendered carriers on the next install of
+either part, and no part writes another's text.
+
+### Context layers to carriers
+
+| Layer | Content | Claude Code carrier | Other base harnesses |
+|---|---|---|---|
+| session picture, static | personas; harness bring-ins and where their state lives; task bring-in catalog (job, own memory or not); the shared memory guidance | one rules file without path scoping, rendered by harness-core | codex: user AGENTS.md block; kiro: always steering; agy: always-on rule |
+| session picture, dynamic | environment card, likely persona and why, store reachability, pending count, unreflected sessions | session-start hook on startup, resume, clear and compact | codex and agy: session-start hook; kiro: agent-spawn hook *(investigate placement)* |
+| per-call reinforcement | active persona and store, goal and next step from the work's record, never-drift rules | per-prompt hook, emitted only when its content changed, stamped | codex: per-prompt hook; kiro: prompt-submit hook; agy: pre-invocation message |
+| mode context | which bring-ins are in play and the first lines of their rules | the same per-prompt hook, from the mode resolver; skill bodies still load by the model | same carriers; kiro may add file-match steering |
+| recall | the few memory entries that bear on this prompt, as one-line pointers | the same per-prompt hook, from the selector | same |
+| on demand | full memories, skill bodies, manuals, the harness map | memory server tools; file reads | same |
+| sub-sessions | the slice of the session picture a sub-agent's job needs | sub-agent start hook, or restated in the delegation | per harness *(investigate)* |
+
+*(investigate)* per base harness: whether the session picture survives
+compaction and reaches sub-agents unaided; whether any context is kept for
+every call so the per-call layer can stay silent; how much hook output is
+kept; trust prompts for hooks.
+
+### The per-prompt hook
+
+```
+ prompt + location (cwd, repo, branch) + the work's record (e.g. a feature spec's handoff)
+        |
+        v
+ MODE RESOLVER   bring-ins in play = those whose signals match the location, or whose
+                 job matches the outcome; v1 deterministic + keyword match, no model call
+        |
+        v
+ SELECTOR        candidate memories = the in-play bring-ins' memory + the active persona's
+                 index; v1 lexical scoring, top N (small) as one-line pointers; one
+                 interface (request in, ranked list out) so a local model can replace it
+        |
+        v
+ EMIT            reinforcement (only if changed) + mode context + recall,
+                 within the per-call budget; nothing if nothing changed
+```
+
+### Reflection
+
+```
+ user: "reflect" / "close this session"  -->  reflection skill
+   1. PACK      packer for this base harness reads the session and its sub-sessions
+                -> bundle: said | told | did | touched | friction, large outputs as pointers
+   2. REFLECT   reflector agent, fresh context: bundle + harness map + reflection rules
+                -> findings: thing (an id in the map), kind, evidence quote, proposed change
+   3. CHECK     drop findings whose evidence is not in the bundle; flag learnings that
+                rest only on tool or web content; scan for secrets and, for a public
+                store, for anything naming work
+   4. DECIDE    one batch to the user: contradictions and persona guesses first, then
+                proposals; one-line replies (ok / no / edit / -> backlog)
+   5. ROUTE     by the map: persona memory -> memory server write; bring-in memory ->
+                its local tier; skill, bring-in or harness change -> a backlog item or a
+                worktree on the owning source (left for the user to turn into a PR)
+   6. LEDGER    append counts: corrections, refusals and prompts, findings by thing,
+                accepted vs rejected; read back by the next reflection
+ session end (any base harness):  the end hook only records the session as unreflected;
+                                  the session-start digest shows the count
+```
+
+### State through pointers
+
+| State | Home | Travels | Pointer set by |
+|---|---|---|---|
+| persona memory | the persona's store, `memory/` | yes (git) | the part |
+| bring-in memory, permanent | the persona's store, under the bring-in's name, or the bring-in's own repo | yes | the bring-in's `state` key, bound by the part |
+| bring-in memory, local | per-environment state, under the bring-in's name | no | the bring-in's `state` key, bound by the part |
+| pending decisions, ledger | the persona's store | yes | harness-core config |
+| harness map, environment card, unreflected sessions | per-environment state | no | harness-core config |
+
+**Sync:** the session-start hook pulls each reachable store without
+blocking; the memory server commits on every write; reflection pushes at
+its end. A conflict becomes a pending decision, never a forced push.
+
+### What changes in work already built
+
+- **memory server:** exposes its index cheaply for the selector; its
+  standing text keeps only the store's persona, while the shared memory
+  guidance moves once into the rules file, so two stores no longer repeat
+  it.
+- **parts:** their skills gain the contract fields in `metadata`; their
+  part lists gain what the part records (source, route, bound values) and a
+  ready check from `requires`, so status tells registered from ready.
+- **install:** a real install comes from one canonical source per part;
+  installing from a second checkout replaces the first.
 
 ## Streams
 
