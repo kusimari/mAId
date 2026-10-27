@@ -225,9 +225,9 @@ does not repeat them.
  |    +-- task bring-ins ..... present in a mode or on demand
  |          coding, writing, notes, triage, documents, web, brought-in tools
  |
- |    every bring-in declares:  kind | job | when | state | source | route
- |                                                  |
- |                                    local tier --promote--> permanent tier
+ |    every bring-in declares:  kind | job | modes | rules | state | config | requires
+ |    the part records:         part | persona | source | route | values
+ |    state:                    local tier --promote--> permanent tier
  |
  +-- harness map ............ union of all parts' declarations (generated):
  |                            the harness's model of itself
