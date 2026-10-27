@@ -123,11 +123,16 @@ Draft: in a scratch HOME with the personal part installed,
 - **Public repo:** no employer, internal tool or store names.
 - **Parts stay independent:** each part depends on standalone packages
   (the memory server, harness-core), never on another part.
-- **Small and stable context.** The session picture stays a few hundred
-  tokens; per-call reinforcement about a paragraph, sent only on change;
-  mode context bounded per mode; anything larger behind a pointer.
-  Nothing rewrites the start of the context mid-session, and each item has
-  exactly one carrier, so no two parts inject the same text.
+- **Small and stable context.** The session picture is loaded once per
+  session (and again only when the base harness drops it, as after a
+  compaction); the per-call reinforcement is sent only when it changed.
+  Whether a base harness instead needs a session-plus-call preamble on
+  every call, or offers a context that is kept for every call, is an
+  implementation question per base harness: use its kept context if it has
+  one, repeat only if it must. Mode context is bounded per mode; anything
+  larger stays behind a pointer. Nothing rewrites the start of the context
+  mid-session, and each item has exactly one carrier, so no two parts
+  inject the same text.
 - **One record of the work.** Goal, next step and session continuity come
   from the work's own records; the harness keeps no parallel copy.
 - **Reflection writes memories, proposes everything else.** It applies
@@ -164,37 +169,78 @@ Draft: in a scratch HOME with the personal part installed,
 | **reflection** | packer (session to bundle) -> reflector (bundle + map) -> findings -> user decisions -> apply or file -> ledger |
 | **ledger** | what reflection records across sessions to tell whether the harness is getting better |
 
-### How they relate
+### What forms a harness
 
 ```
-   parts ---declare---> bring-ins --(kind, job, when, state, source, route)
-     |                       |
-     |                       +--> harness map  <------------------------------+
-     |                                 |                                       |
-     v                                 v                                       |
-  personas --own--> stores        context layers                               |
-     |                 ^            session picture : personas, bring-ins,      |
-     |                 |                              environment, pending     |
-     |                 |            per call        : persona, goal/next step   |
-     |                 |                              (from the work), invariants
-     |                 |            mode context    : mode = location x job     |
-     |                 |                              -> its rules + memories   |
-     |                 |            on demand       : pointers                  |
-     |                 |                 ^                                      |
-     |                 +-- selector -----+  (few memories per call, capped)     |
-     |                 |                                                        |
-     |   session ------+--> packer --> bundle --> reflector <-- harness map ----+
-     |   (+ sub-sessions)                            |
-     |                                               v
-     |                                           findings (thing, evidence, kind)
-     |                                               |
-     +---------------- user decides contradictions, persona guesses, proposals
-                                                     |
-                                route from the map: write memory / bring-in local tier
-                                                    backlog / worktree -> PR on the source
-                                                     |
-                                                  ledger: fewer bring-in updates,
-                                                  fewer repeated corrections, accuracy
+ MY HARNESS
+ |
+ +-- part (one per persona: personal, work, ...)
+ |    |
+ |    +-- persona ............ who the work is for
+ |    |     +-- store ........ git checkout: persona memory, permanent bring-in memory
+ |    |
+ |    +-- harness bring-ins .. present in every session
+ |    |     memory, reflection, status, and the context layers' sources
+ |    |
+ |    +-- task bring-ins ..... present in a mode or on demand
+ |          coding, writing, notes, triage, documents, web, brought-in tools
+ |
+ |    every bring-in declares:  kind | job | when | state | source | route
+ |                                                  |
+ |                                    local tier --promote--> permanent tier
+ |
+ +-- harness map ............ union of all parts' declarations (generated):
+ |                            the harness's model of itself
+ |
+ +-- shared packages ........ memory server, harness-core (no part owns them)
+ |
+ +-- environment ............ where this session runs; reachable stores, tools
+```
+
+### How a session is assembled, at each point
+
+```
+ 1. SESSION START  (once; again only if the base harness drops it)
+
+    harness map ----------------+
+      every bring-in's job,     |
+      when, state               |
+    personas + stores ----------+--> SESSION PICTURE
+    environment probe ----------+      personas (and the likely one)
+    pending decisions ----------+      harness bring-ins + where their state lives
+                                       task bring-ins: catalog, own memory or not
+                                       environment, pending count
+                                       everything larger: a pointer
+
+ 2. EVERY AGENT CALL  (only what changed)
+
+    the work's own record ------+--> REINFORCEMENT (on change)
+      goal, next step           |      active persona + store, goal, next step,
+    active persona -------------+      never-drift rules
+    invariants -----------------+
+                                       +
+    location + job -----> MODE ----+--> MODE CONTEXT (while the mode lasts)
+      (guided by a bring-in        |      the mode's key rules
+       or native)                  |      + selected memories for this mode
+    stores + bring-in memory ------+
+      --> SELECTOR (capped) -------+--> RECALL: the few memories for this call
+
+ 3. CLOSE / ON REQUEST / SWEEP  (after the session, outside it)
+
+    session + sub-sessions --> PACKER --> BUNDLE
+                                 said | told | did | touched | friction
+    BUNDLE + harness map ----> REFLECTOR --> FINDINGS (thing, kind, evidence)
+                                                 |
+          contradictions, persona guesses,       v
+          proposals ---------------------> USER DECIDES (one batch)
+                                                 |
+          route from the map:                    v
+            persona memory .............. write
+            bring-in memory ............. write to its local tier
+            skill / bring-in / harness .. backlog or worktree -> PR on its source
+                                                 |
+                                                 v
+                                              LEDGER: is the harness getting better
 ```
 
 ### Mapping to the system design
@@ -257,3 +303,7 @@ sub-sessions; drafted after this conceptual design is agreed.
   a bring-in or done natively. Recall at the point of need, with a small
   cap: start with a cheap lookup, move to a local decision model so it
   needs no outside call (a context-engineering concern).
+- Ruling (user, 2026-10-27): the session picture is loaded once and the
+  per-call reinforcement is sent on change. Whether a base harness needs a
+  repeated preamble, or keeps a context for every call, is an
+  implementation investigation per base harness.
