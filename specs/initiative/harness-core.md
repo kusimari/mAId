@@ -5,7 +5,7 @@
   initiative; Goal, Experience, Macro test and Constraints are drafts for
   the user to correct. Streams are not planned yet.
 - Follows initiative `my-harness` (parts, part lists, whole-status, a
-  memory server per persona), which is in review.
+  memory bring-in per part), which is in review.
 
 ## Goal
 
@@ -34,29 +34,28 @@ or another persisted record can carry a session across launches.
 | It knows | Detail | Size |
 |---|---|---|
 | **my personas** | all of them, what each is for, and which one this session most likely serves (a guess the user can correct) | a few lines |
-| **the harness bring-ins** | each one's job and where its state lives; memory is one of them (one per persona), reflection is another | one line each |
-| **the task bring-ins** | a catalog only: name, when to use it, whether it keeps its own memory and where; none is loaded | one line each |
-| **the environment** | which base harness, where it runs, what is reachable (stores, tools, network, auth), what it cannot do here | a few lines |
+| **the session bring-ins** | each one's job and where its state lives; memory is one of them (one per part), reflection is another | one line each |
+| **the turn bring-ins** | a catalog only: name, what they attach for, whether each keeps its own memory and where; none is loaded | one line each |
+| **the environment** | the parts, their bring-ins and the stores and tools those point at, as resolved here: what is bound, reachable and ready, and what is not | a few lines |
 | **what is pending** | proposals and decisions waiting for the user | a count and a pointer |
 
 This holds after a resume or a compaction, and every sub-session starts
 with the part of it that its job needs. Everything larger (whole memories,
 skill bodies, the harness map) stays behind a pointer.
 
-### 2. On every agent call: minimal, current, task-aware
+### 2. On every turn: minimal, current, fitted to the work
 
-- **Reinforced, only when it changed:** the active persona and its store,
+- **Reinforced, only when it changed:** the active persona and its memory,
   the goal and next step of the work (taken from the work's own record),
   and the few rules that must never drift. Kept small (about a paragraph), never the whole session-start
   picture again.
-- **Mode context, when the work is focused:** the mode is not declared by
-  anyone; it is what the harness works out from the outcome being pursued,
-  the location or project the agent is in, and the bring-ins that apply
-  there (coding with kdevkit, a review briefing, a sweep, or the agent's
-  native way of doing a job no bring-in covers). While it holds, the key
-  rules of the bring-ins in play come first, plus the entries of their own
-  memory and of the persona's memory that bear on it. It changes as the
-  outcome, the location or the bring-ins in play change.
+- **Turn bring-ins attach when they fit:** which ones apply is worked out,
+  never declared, from the outcome being pursued, the job being done, the
+  state the work has reached, and the location or project context (coding
+  with kdevkit, a review briefing, a sweep, or the agent's native way of
+  doing a job no bring-in covers). While they apply, their key rules come
+  first, plus the entries of their own memory and of the persona's memory
+  that bear on the work. The set changes as those four change.
 - **The goal and next step come from the work itself** (a feature spec, a
   task list, the base harness's own plan); the harness does not keep a
   second copy.
@@ -80,7 +79,7 @@ skill bodies, the harness map) stays behind a pointer.
   directory) and how a change to it is made.
 - **It learns from everything** and looks for what should change so the
   next session is better: persona memories, a bring-in's own memory (local
-  tier first, then permanent), stores, harness and task bring-ins, and the
+  tier first, then permanent), stores, session and turn bring-ins, and the
   harness loop itself, the reflector included. Removing something is a
   learning like any other.
 - **Each finding** names the thing it changes, quotes its evidence, and
@@ -123,15 +122,17 @@ Draft: in a scratch HOME with the personal part installed,
   behind a configuration pointer; each environment's file layout is
   decided later and separately.
 - **Public repo:** no employer, internal tool or store names.
-- **Parts stay independent:** each part depends on standalone packages
-  (the memory server, harness-core), never on another part.
+- **Parts stay independent:** a part never depends on another part. The
+  harness core ships with one part; every other part carries only
+  bring-ins, which work as plain standard units where the core is absent.
+  A bring-in names the package it uses (two parts may use the same one).
 - **Small and stable context.** The session picture is loaded once per
   session (and again only when the base harness drops it, as after a
   compaction); the per-call reinforcement is sent only when it changed.
   Whether a base harness instead needs a session-plus-call preamble on
   every call, or offers a context that is kept for every call, is an
   implementation question per base harness: use its kept context if it has
-  one, repeat only if it must. Mode context is bounded per mode; anything
+  one, repeat only if it must. Turn context is bounded; anything
   larger stays behind a pointer. Nothing rewrites the start of the context
   mid-session, and each item has exactly one carrier, so no two parts
   inject the same text.
@@ -158,16 +159,20 @@ Draft: in a scratch HOME with the personal part installed,
 | Concept | What it is |
 |---|---|
 | **base harness** | a vendor's agent loop; reached only through its extension points |
-| **carrier** | one extension point used to place one item: always-loaded context, a session-start or per-prompt hook, MCP instructions and tools, a skill, a sub-agent definition |
-| **part** | what one repo delivers for one persona: harness bring-ins and task bring-ins |
-| **bring-in** | a unit a part installs (a skill, an MCP server, a sub-agent, a hook, a plugin). It declares what the harness needs to know about it (the bring-in contract, below); the part records where it came from |
-| **persona** | who the work is for; owns a store and the memory in it |
-| **store** | a git checkout the user owns; holds persona memory, permanent bring-in memory, and the user's own files |
-| **harness map** | the union of every part's declarations: the harness's model of itself, generated at install |
+| **carrier** | one extension point used to place one item: always-loaded context, a session-start, per-prompt or end hook, MCP instructions and tools, a skill, a sub-agent definition |
+| **part** | what one repo delivers: a persona name and its bring-ins |
+| **persona** | a name: who the work is for. It owns nothing itself; its memory is a bring-in that points at a store |
+| **bring-in** | a unit a part installs (a skill, an MCP server, a sub-agent, a hook, a plugin), at one of two scopes: |
+| - **session bring-in** | acts for the whole session: memory, reflection, status, the core's own context |
+| - **turn bring-in** | attaches per turn when it fits the outcome, the job, the state reached and the location (coding, writing, notes, triage, documents, web, brought-in tools) |
+| **package** | the implementation a bring-in uses (for example a memory server); named by the bring-in, configured by the part. Two parts' bring-ins may use the same package |
+| **store** | a git checkout the user owns; a bring-in points at it through its config |
+| **harness map** | the union of every part's declarations, generated at install: the harness's model of itself |
+| **environment** | the harness map as resolved where the session runs: which config is bound, which stores and tools are reachable, which bring-ins are ready. Derived, not authored |
 | **session** | what the user says it is; has sub-sessions; continued by the work's own records |
-| **mode** | derived, never declared: the outcome being pursued, the location or project context, and the bring-ins that apply there. The harness resolves it; no bring-in names a mode. Selects the mode context |
-| **context layers** | the session picture, the per-call reinforcement, the mode context, and the on-demand pointers |
-| **selector** | picks the few memories that bear on the next call; a cheap lookup first, a local decision model later |
+| **turn fit** | which turn bring-ins apply now, worked out from outcome, job, state and location; never declared |
+| **context layers** | the session picture, the per-turn reinforcement, the turn context, and on-demand pointers |
+| **selector** | picks the few memories that bear on the next turn; a cheap lookup first, a local decision model later |
 | **reflection** | packer (session to bundle) -> reflector (bundle + map) -> findings -> user decisions -> apply or file -> ledger |
 | **ledger** | what reflection records across sessions to tell whether the harness is getting better |
 
@@ -175,68 +180,67 @@ Draft: in a scratch HOME with the personal part installed,
 
 A bring-in stays a plain unit of an existing standard (an Agent Skill, an
 MCP server, a plugin, a sub-agent), so anyone can use it without this
-harness. The contract adds only what this design needs, carried inside
-the standard's own extension slot, and a base harness that does not know
-it simply ignores it.
+harness. The contract adds only what this design needs, carried inside the
+standard's own extension slot; a base harness that does not know it
+ignores it.
 
 **Declared by the bring-in** (travels with it, wherever it is vended):
 
 | Field | What it says | Needed for |
 |---|---|---|
-| `kind` | harness or task | session start: which list it belongs to |
-| `job` | one line: what it is for | session start: the catalog line |
-| `signals` | optional hints that it applies: locations or file patterns, outcomes it serves; without them the harness uses `job` and the standard's own description | every call: resolving which bring-ins apply |
-| `rules` | a pointer to the few lines that come first while it is in play | every call: mode context |
-| `state` | none, or its tiers: local (pending) and permanent, each named by a config key, with a promotion rule (auto, propose or off) | session start (own memory or not), selector (where to look), reflection (where learnings go) |
-| `config` | the keys it needs set per environment or persona, secrets marked | the part binds them to values; nothing environment-specific inside the bring-in |
-| `requires` | what must be present for it to be ready (a command, a base harness capability) | session start and status: available vs ready |
+| `scope` | session or turn | session start: which list it belongs to |
+| `job` | one line: what it is for | session start: the catalog line; turn fit |
+| `signals` | optional hints that it fits: outcomes, jobs, states, locations or file patterns; without them the harness uses `job` and the standard's own description | every turn: turn fit |
+| `rules` | a pointer to the few lines that come first while it applies | every turn: turn context |
+| `package` | the implementation it runs, if any (for example a memory server) | install: what to provide; status: ready or not |
+| `config` | every key it needs set per environment or part, secrets marked, **including each place it keeps state** (its store, its local tier, its permanent tier) | the part binds values; nothing environment-specific inside the bring-in |
+| `state` | none, or which config keys hold its tiers and the promotion rule (auto, propose or off) | session start (own memory or not), selector, reflection |
+| `requires` | what must be present for it to be ready (a command, a base harness capability) | status: available vs ready |
 
-**Recorded by the part at install** (not part of the bring-in; it differs
-per harness that uses it):
+**Recorded by the part at install** (differs per installation):
 
 | Field | What it says | Needed for |
 |---|---|---|
 | `part`, `persona` | who installed it, for whom | session picture, routing |
 | `source` | where it came from: a git project repo, a git store, a machine directory, or a vendor; pinned revision | reflection: where a change goes |
 | `route` | how a change is made: write, backlog, worktree to PR, report only (defaults from the source) | reflection: the finding's route |
-| `values` | the config values bound for this environment and persona | session start, selector |
+| `values` | the config values bound here, store locations included | everything that reads state |
 
 **Carried in existing slots, under one namespace:** an Agent Skill's
 `metadata` (flat keys); a plugin manifest's `extensions` entry; an MCP
 server's `_meta`; a sub-agent or hook through the plugin that ships it.
-What the part records goes into its part list, and the harness map is the
-union of both.
+Name, version, licence, permissions, dependencies and the base harness's
+own activation are left to the standards.
 
-**Left to the standards:** name, version, licence, permissions,
-dependencies and activation the base harness does itself. The contract
-does not repeat them.
+**State lives only behind config.** No state location is fixed by the
+design: each one is a config key the bring-in declares and the part binds,
+so a bring-in, a store or an environment can change without touching the
+other two.
 
 ### What forms a harness
 
 ```
  MY HARNESS
  |
- +-- part (one per persona: personal, work, ...)
+ +-- part (one per repo; today a personal part and a work part)
  |    |
- |    +-- persona ............ who the work is for
- |    |     +-- store ........ git checkout: persona memory, permanent bring-in memory
+ |    +-- persona ............... a name: who the work is for
  |    |
- |    +-- harness bring-ins .. present in every session
- |    |     memory, reflection, status, and the context layers' sources
+ |    +-- session bring-ins ..... act for the whole session
+ |    |     memory (points at a store), reflection, status, ...
  |    |
- |    +-- task bring-ins ..... present when they apply, or on demand
+ |    +-- turn bring-ins ........ attach per turn when they fit
  |          coding, writing, notes, triage, documents, web, brought-in tools
  |
- |    every bring-in declares:  kind | job | signals | rules | state | config | requires
+ |    every bring-in declares:  scope | job | signals | rules | package | config | state | requires
+ |                                                                         |
+ |                                       config holds every state location: store, local, permanent
  |    the part records:         part | persona | source | route | values
- |    state:                    local tier --promote--> permanent tier
  |
- +-- harness map ............ union of all parts' declarations (generated):
- |                            the harness's model of itself
+ +-- harness map ............... union of all parts' declarations (generated)
  |
- +-- shared packages ........ memory server, harness-core (no part owns them)
- |
- +-- environment ............ where this session runs; reachable stores, tools
+ +-- environment ............... the map resolved where the session runs (derived):
+                                 bound config, reachable stores and tools, ready bring-ins
 ```
 
 ### How a session is assembled, at each point
@@ -244,29 +248,24 @@ does not repeat them.
 ```
  1. SESSION START  (once; again only if the base harness drops it)
 
-    harness map ----------------+
-      every bring-in's job,     |
-      when, state               |
-    personas + stores ----------+--> SESSION PICTURE
-    environment probe ----------+      personas (and the likely one)
-    pending decisions ----------+      harness bring-ins + where their state lives
-                                       task bring-ins: catalog, own memory or not
-                                       environment, pending count
-                                       everything larger: a pointer
+    harness map -------------+
+    environment (resolved) --+--> SESSION PICTURE
+    pending decisions -------+      personas
+                                    session bring-ins + where their state lives
+                                    turn bring-ins: catalog, own memory or not
+                                    environment: bound, reachable, ready
+                                    pending count; everything larger: a pointer
 
- 2. EVERY AGENT CALL  (only what changed)
+ 2. EVERY TURN  (only what changed)
 
-    the work's own record ------+--> REINFORCEMENT (on change)
-      goal, next step           |      active persona + store, goal, next step,
-    active persona -------------+      never-drift rules
-    invariants -----------------+
-                                       +
-    outcome (from the work) ---+
-    location / project --------+--> MODE (resolved) --+--> MODE CONTEXT (while it holds)
-    bring-ins that apply ------+   no one declares it  |     rules of the bring-ins in play
-      (their job + signals)                            |     + selected memories for it
-    stores + bring-in memory ------+
-      --> SELECTOR (capped) -------+--> RECALL: the few memories for this call
+    the work's own record --+--> REINFORCEMENT (on change)
+      goal, next step, state |      active persona + memory, goal, next step,
+    active persona ----------+      never-drift rules
+                                    +
+    outcome, job, state, ---> TURN FIT --+--> TURN CONTEXT (while they apply)
+    location                  (worked out)|     rules of the turn bring-ins in play
+    turn bring-ins' job + signals --------+     + selected memories for them
+    memories behind config --> SELECTOR (capped) --> RECALL: the few for this turn
 
  3. CLOSE / ON REQUEST / SWEEP  (after the session, outside it)
 
@@ -278,9 +277,9 @@ does not repeat them.
           proposals ---------------------> USER DECIDES (one batch)
                                                  |
           route from the map:                    v
-            persona memory .............. write
-            bring-in memory ............. write to its local tier
-            skill / bring-in / harness .. backlog or worktree -> PR on its source
+            memory .................... write, where its config points
+            bring-in memory ........... write to its local tier
+            bring-in / harness ........ backlog or worktree -> PR on its source
                                                  |
                                                  v
                                               LEDGER: is the harness getting better
@@ -288,104 +287,88 @@ does not repeat them.
 
 ## System design
 
-How the conceptual design maps onto base harnesses, Claude Code first. Still
-environment-independent: every location below is a configuration pointer,
-resolved per environment. Rows marked *(investigate)* are settled by a test
-on each base harness before they are built.
+How the conceptual design maps onto the base harnesses, Claude Code first.
+Still environment-independent: every location is a config value bound per
+environment. Rows marked *(investigate)* are settled by a test on each base
+harness before they are built.
 
 ### Who ships what
 
-| Package | Ships | Owns in the part list |
-|---|---|---|
-| **harness-core** (standalone) | the renderer (harness map -> carriers); the session-start, per-prompt and session-end hooks; the mode resolver and the selector; one packer per base harness; the reflection skill and the reflector agent; the decision step; the ledger format | the carriers it writes (one rules file, its hooks); registered once, whichever part installs first, like a third part |
-| **memory server** (standalone) | one instance per store; read, write, search; an index the selector can read cheaply | nothing; each part registers its own instance |
-| **each part** | its bring-ins, carrying the contract fields in their standard slots; its part list with what it recorded at install (source, route, bound values); its persona's store pointer | its own entries, as today |
+| Repo | Ships |
+|---|---|
+| **personal part** (this repo) | the **harness core** (renderer, the three hooks, turn fit, selector, packers, reflection skill and reflector agent, decision step, ledger) and its own session and turn bring-ins |
+| **work part** (another repo) | only bring-ins: its session bring-ins (its memory, pointing at its store) and its turn bring-ins, with the contract fields; its part list |
+| **packages** | what bring-ins name: for example the memory server, used by both parts' memory bring-ins with different config |
 
-harness-core renders from the union of every part list present, so a part
-added or removed changes the rendered carriers on the next install of
-either part, and no part writes another's text.
+The core reads every part list present, so it serves the work part's
+bring-ins without either part depending on the other. Without the personal
+part installed, the work part's bring-ins still work as plain units; only
+the core's behaviour (session picture, turn fit, reflection) is absent.
 
-### Context layers to carriers
+### The three hooks
 
-| Layer | Content | Claude Code carrier | Other base harnesses |
+```
+ SESSION START  Claude Code: SessionStart hook, on startup | resume | clear | compact
+   runs   core session-start
+   reads  every part list (the harness map); each bring-in's bound config
+   does   resolve the environment (bound, reachable, ready); pull reachable stores
+          without blocking; count pending decisions and unreflected sessions
+   emits  the dynamic session picture (environment, likely persona, pending)
+   static part of the picture: one rules file the core renders at install,
+          so it is not re-sent each session
+   sub-sessions: SubagentStart hook emits the slice a sub-agent's job needs
+
+ EVERY TURN     Claude Code: UserPromptSubmit hook
+   runs   core turn
+   reads  the prompt; location (cwd, repo, branch); the work's own record
+          (goal, next step, state reached); turn bring-ins' job + signals;
+          memory indexes through their config
+   does   turn fit: which turn bring-ins apply (v1 deterministic and keyword
+          match, no model call); selector: top few memories (v1 lexical, one
+          request-in, ranked-list-out interface so a local model can replace it)
+   emits  only what changed: reinforcement + turn context (rules first lines)
+          + recall pointers, within the per-turn budget; nothing otherwise
+
+ CLOSE          two halves
+   Claude Code SessionEnd hook: core session-end records the session as
+          unreflected (fast, no model call)
+   reflection skill ("reflect", "close this session", or a later sweep):
+          core pack -> bundle; reflector agent (fresh context: bundle + map)
+          -> findings; core check (evidence, tool-only content, secrets,
+          public-store guard) -> one decision batch -> core route by the map
+          (memory write where its config points; bring-in local tier;
+          backlog item or worktree on the source) -> ledger append
+```
+
+| Hook | codex | kiro | agy |
 |---|---|---|---|
-| session picture, static | personas; harness bring-ins and where their state lives; task bring-in catalog (job, own memory or not); the shared memory guidance | one rules file without path scoping, rendered by harness-core | codex: user AGENTS.md block; kiro: always steering; agy: always-on rule |
-| session picture, dynamic | environment card, likely persona and why, store reachability, pending count, unreflected sessions | session-start hook on startup, resume, clear and compact | codex and agy: session-start hook; kiro: agent-spawn hook *(investigate placement)* |
-| per-call reinforcement | active persona and store, goal and next step from the work's record, never-drift rules | per-prompt hook, emitted only when its content changed, stamped | codex: per-prompt hook; kiro: prompt-submit hook; agy: pre-invocation message |
-| mode context | which bring-ins are in play and the first lines of their rules | the same per-prompt hook, from the mode resolver; skill bodies still load by the model | same carriers; kiro may add file-match steering |
-| recall | the few memory entries that bear on this prompt, as one-line pointers | the same per-prompt hook, from the selector | same |
-| on demand | full memories, skill bodies, manuals, the harness map | memory server tools; file reads | same |
-| sub-sessions | the slice of the session picture a sub-agent's job needs | sub-agent start hook, or restated in the delegation | per harness *(investigate)* |
+| session start | SessionStart (hooks need trust) | agentSpawn *(investigate placement)* | SessionStart |
+| every turn | UserPromptSubmit | userPromptSubmit | PreInvocation (truly per call) |
+| close | session end hook *(investigate)* | stop *(investigate)* | *(investigate)* |
+| static picture | user AGENTS.md block | always steering | always-on rule |
 
-*(investigate)* per base harness: whether the session picture survives
-compaction and reaches sub-agents unaided; whether any context is kept for
-every call so the per-call layer can stay silent; how much hook output is
-kept; trust prompts for hooks.
+*(investigate)* per base harness: whether the picture survives compaction
+and reaches sub-agents; whether a context is kept for every call so the
+per-turn hook can stay silent; how much hook output is kept; hook trust.
 
-### The per-prompt hook
+### State through config
 
-```
- prompt + location (cwd, repo, branch) + the work's record (e.g. a feature spec's handoff)
-        |
-        v
- MODE RESOLVER   bring-ins in play = those whose signals match the location, or whose
-                 job matches the outcome; v1 deterministic + keyword match, no model call
-        |
-        v
- SELECTOR        candidate memories = the in-play bring-ins' memory + the active persona's
-                 index; v1 lexical scoring, top N (small) as one-line pointers; one
-                 interface (request in, ranked list out) so a local model can replace it
-        |
-        v
- EMIT            reinforcement (only if changed) + mode context + recall,
-                 within the per-call budget; nothing if nothing changed
-```
-
-### Reflection
-
-```
- user: "reflect" / "close this session"  -->  reflection skill
-   1. PACK      packer for this base harness reads the session and its sub-sessions
-                -> bundle: said | told | did | touched | friction, large outputs as pointers
-   2. REFLECT   reflector agent, fresh context: bundle + harness map + reflection rules
-                -> findings: thing (an id in the map), kind, evidence quote, proposed change
-   3. CHECK     drop findings whose evidence is not in the bundle; flag learnings that
-                rest only on tool or web content; scan for secrets and, for a public
-                store, for anything naming work
-   4. DECIDE    one batch to the user: contradictions and persona guesses first, then
-                proposals; one-line replies (ok / no / edit / -> backlog)
-   5. ROUTE     by the map: persona memory -> memory server write; bring-in memory ->
-                its local tier; skill, bring-in or harness change -> a backlog item or a
-                worktree on the owning source (left for the user to turn into a PR)
-   6. LEDGER    append counts: corrections, refusals and prompts, findings by thing,
-                accepted vs rejected; read back by the next reflection
- session end (any base harness):  the end hook only records the session as unreflected;
-                                  the session-start digest shows the count
-```
-
-### State through pointers
-
-| State | Home | Travels | Pointer set by |
-|---|---|---|---|
-| persona memory | the persona's store, `memory/` | yes (git) | the part |
-| bring-in memory, permanent | the persona's store, under the bring-in's name, or the bring-in's own repo | yes | the bring-in's `state` key, bound by the part |
-| bring-in memory, local | per-environment state, under the bring-in's name | no | the bring-in's `state` key, bound by the part |
-| pending decisions, ledger | the persona's store | yes | harness-core config |
-| harness map, environment card, unreflected sessions | per-environment state | no | harness-core config |
-
-**Sync:** the session-start hook pulls each reachable store without
-blocking; the memory server commits on every write; reflection pushes at
-its end. A conflict becomes a pending decision, never a forced push.
+Every state location is a config key on the bring-in that keeps it, bound
+by the part: a memory bring-in's store; a bring-in's local and permanent
+tiers. The core's own state (pending decisions, ledger, unreflected
+sessions, the generated map and environment) is the same: config keys on
+the core's own session bring-ins. **Sync:** session start pulls each
+reachable store without blocking; the memory package commits on every
+write; reflection pushes at its end; a conflict becomes a pending decision.
 
 ### What changes in work already built
 
-- **memory server:** exposes its index cheaply for the selector; its
-  standing text keeps only the store's persona, while the shared memory
-  guidance moves once into the rules file, so two stores no longer repeat
-  it.
-- **parts:** their skills gain the contract fields in `metadata`; their
-  part lists gain what the part records (source, route, bound values) and a
-  ready check from `requires`, so status tells registered from ready.
+- **memory:** becomes a session bring-in per part that names the memory
+  package and points at its store through config; the shared memory
+  guidance moves once into the core's rules file, so two parts' memories
+  stop repeating it; the package exposes its index for the selector.
+- **parts:** their bring-ins gain the contract fields; their part lists
+  gain source, route and bound values, and a ready check from `requires`.
 - **install:** a real install comes from one canonical source per part;
   installing from a second checkout replaces the first.
 
@@ -453,3 +436,15 @@ its end. A conflict becomes a pending decision, never a forced push.
   being pursued, the location or project context, and the bring-ins that
   apply there. Bring-ins declare optional signals, not modes. The rest of
   the conceptual design is agreed.
+- Ruling (user, 2026-10-29): a persona is a name and owns no store; a
+  memory bring-in points at a store through config. Bring-ins split by
+  scope: session bring-ins (memory, reflection, ...) and turn bring-ins
+  (attach when they fit outcome, job, state and location). A bring-in
+  names the package it uses instead of a shared-packages layer. The
+  environment is derived: the parts and bring-ins as resolved where the
+  session runs. Every state location is config on the bring-in.
+- Ruling (ringmaster, to ratify): the harness core ships with the personal
+  part (this repo); the work part carries only bring-ins · why: the user's
+  split; no third package to publish, and the core reads every part list,
+  so no part depends on another · cost if wrong: the core moves to its own
+  package later, unchanged in shape
