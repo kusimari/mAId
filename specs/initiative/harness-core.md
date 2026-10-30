@@ -383,7 +383,7 @@ coding CLIs, so the genome never depends on them.
 
 | # | Feature | Ships | Needs | Status |
 |---|---|---|---|---|
-| 1 | core-and-infusion | the core with its entry points as a library and CLI; the bring-in contract read from each standard's slot; part lists recording source, tenure, route and bound values; fusion of every part present into the harness map; the derived environment; the delivery record; status tells registered from ready | - | planned |
+| 1 | core-and-infusion | the core with its entry points as a library and CLI; the bring-in contract read from each standard's slot; part lists recording source, tenure, route and bound values; fusion of every part present into the harness map; the derived environment; the delivery record; status tells registered from ready | - | running |
 | 2 | session-and-turn-hooks | `genome` and `expression` on Claude Code: the rules file, SessionStart and SubagentStart, UserPromptSubmit; turn fit; the v1 selector behind its interface; emit on change; the on-demand resource, prompt and tool; probes for what Claude Code keeps across compaction and sub-agents | 1, 4 | planned |
 | 3 | sleep-and-adaptation | `sleep` (the SessionEnd mark and the explicit close), `experience` (the session-source interface and the Claude Code transcript packer), `adaptation` (the reflection skill, the reflector agent, the guards, the decision batch, routing by the map, the ledger) | 1, 4 | planned |
 | 4 | session-bring-ins | memory as a session bring-in naming the memory package, its store behind config, its index readable by the selector; the core's adapters as session bring-ins; any other session bring-in the design needs | 1 | planned |
