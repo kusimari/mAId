@@ -308,6 +308,36 @@ own activation stay with the standards.
       --> ledger
 ```
 
+### For any persona part
+
+What a repo that delivers a persona does to join the ghost. It needs
+nothing from the core's repo but this list, and it still works without the
+core, as plain standard units.
+
+1. **Name its persona** in its part list.
+2. **Declare the contract on every bring-in** it ships, in that standard's
+   slot: `scope`, `job`, `signals` (optional), `rules`, `package` (if
+   any), `config` (secrets marked, every state location included), `state`,
+   `requires`.
+3. **Give its persona a memory:** a session bring-in that names the memory
+   package and points at the persona's own store through config (a private
+   store for anything that names work).
+4. **Record at install** in its part list: `part`, `persona`, `source`
+   with the pinned revision, `tenure` (own, or borrowed from whom),
+   `route`, and the bound config `values`.
+5. **Mark what it borrows** (servers, skills or packages someone else
+   provides) as borrowed, and never change them; what it learns about them
+   goes to their lender.
+6. **Leave the core's carriers alone:** the core owns the always-loaded
+   context file and the start, turn and end hooks; a part adds bring-ins,
+   never a second copy of those.
+7. **Keep its own copy** of the contract and the reader rules in its own
+   docs, kept in step by the person, and name no other part.
+8. **Install from one canonical clone**; a second checkout installing
+   replaces the first.
+9. **Report ready, not just registered:** status checks each bring-in's
+   `requires`.
+
 ## System design: mapping per base harness
 
 Each entry point reaches each shell through the carrier named; *(test)*
@@ -358,7 +388,7 @@ coding CLIs, so the genome never depends on them.
 | 3 | sleep-and-adaptation | `sleep` (the SessionEnd mark and the explicit close), `experience` (the session-source interface and the Claude Code transcript packer), `adaptation` (the reflection skill, the reflector agent, the guards, the decision batch, routing by the map, the ledger) | 1, 4 | planned |
 | 4 | session-bring-ins | memory as a session bring-in naming the memory package, its store behind config, its index readable by the selector; the core's adapters as session bring-ins; any other session bring-in the design needs | 1 | planned |
 | 5 | turn-bring-ins | this repo's turn bring-ins (kdevkit, kyodakit, kreviewkit, writing-style with its two tiers, notes, browser, the vendor document skills) carrying the contract in their standard slots | 1 | planned |
-| 6 | fold-back | README and project.md say how mAId works with this design, in the framing: the shell, the ghost, and its genome, expression, experience, sleep and adaptation | 1-5 | planned |
+| 6 | fold-back | README and project.md say how mAId works with this design, in the framing: the shell, the ghost, and its genome, expression, experience, sleep and adaptation; project.md also carries "For any persona part" as its own section, so a person adding another persona repo needs only project.md | 1-5 | planned |
 
 The work part's own bring-ins take the contract in their own repo, outside
 this initiative.
@@ -476,3 +506,6 @@ this initiative.
   locally into this branch, the only push is this branch once at the end,
   and the PR goes to main as a merge commit so each stream stays its own
   commit.
+- Ruling (user, 2026-10-30): "For any persona part" lists what a persona
+  repo does to join the ghost, and the fold-back stream copies it into
+  project.md so it can be followed without reading this spec.
