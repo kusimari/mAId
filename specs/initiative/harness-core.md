@@ -27,12 +27,22 @@ the next, on any base harness, without wrapping it.
 - **Without that infusion, the base harness is a zombie in the shell**: it
   acts, often well, on instinct alone, with no self, no memory of who it
   serves, and nothing learned from last time.
+- **One ghost, several personas, fused.** The person is one ghost with
+  several personas (work, personal, ...), each delivered by its own part.
+  Infusion fuses them: every session carries the whole ghost, acts through
+  the persona the work belongs to, and keeps what each persona learns in
+  that persona's own memory, so the fusion never mixes their stores.
+- **Bring-ins come and go.** A bring-in is part of the ghost for as long as
+  it is brought in: some are the person's own, some are borrowed (a server
+  or a skill someone lent them), used for a while, and given back. The
+  ghost is always the bring-ins present now; adding or removing one changes
+  the next session's genome and nothing else.
 
 ### The ghost works like an organism
 
 | Function | What it does, and why |
 |---|---|
-| **genome** (plus habits) | Carries who the person is: the nature their parts ship (bring-ins, rules) and the habits learned since (memories, what bring-ins have learned), so every session starts as them and not as a blank shell. |
+| **genome** (plus habits) | Carries who the person is, all personas fused: the nature their parts ship (the bring-ins present now, rules) and the habits learned since (memories, what bring-ins have learned), so every session starts as them and not as a blank shell. |
 | **expression** | Switches on, at each turn, only the part of the genome the work at hand needs, so the shell acts on what matters now without carrying everything at once. |
 | **experience** | Records everything done toward the outcome as it happened (what was said, what the agent was told, what it did, what it touched, where it struggled), so there is something true to learn from. |
 | **sleep** | Is the moment, once the outcome is done, when experience is gathered and adaptation runs, so learning never interrupts the work itself. |
@@ -52,8 +62,8 @@ file or another persisted record can carry it across launches.
 
 | The shell already knows | Detail | Size |
 |---|---|---|
-| **the personas** | all of them, what each is for, and which one this session most likely serves (a guess the person can correct) | a few lines |
-| **the session bring-ins** | each one's job and where its state lives (memory is one, one per part) | one line each |
+| **the personas, fused** | all of them, what each is for, and which one this session most likely acts through (a guess the person can correct); a session may move between them | a few lines |
+| **the session bring-ins** | each one's job, where its state lives (memory is one, one per part), and whether it is the person's own or borrowed | one line each |
 | **the turn bring-ins** | a catalog only: what each is for, whether it keeps its own memory and where; none loaded | one line each |
 | **the environment** | the parts, their bring-ins, and the stores and tools they point at, as resolved here: bound, reachable, ready, or not | a few lines |
 | **what is pending** | decisions waiting for the person | a count and a pointer |
@@ -101,8 +111,10 @@ the slice its job needs. Anything larger stays behind a pointer.
   - **habits** (persona memory, a bring-in's local tier) are written;
   - **nature** (a bring-in, a skill, the harness) is only proposed, as a
     backlog item or a worktree to turn into a PR on its source;
-  - contradictions and guesses about which persona a learning belongs to
-    go to the person;
+  - each learning goes to the persona it belongs to; contradictions and
+    guesses about which persona that is go to the person;
+  - a borrowed bring-in is never changed: what is learned about it is a
+    note for its lender or a proposal to stop borrowing it;
   - nothing from tool or web content alone becomes a habit without the
     person's yes, and nothing the reflector cannot place goes to a public
     store;
@@ -162,11 +174,18 @@ part beside it, on Claude Code:
 - **Paid tests:** up to 30 model runs for the initiative.
 - **Claude Code first;** the other shells in the System design are mapped,
   not built, in this initiative.
-- **Build base.** The build needs initiative `my-harness`. Until it is on
-  `main`, the build stacks this branch on the local `initiative/my-harness`
-  and does not push code (that branch still pins the memory server by a
-  local path); once `my-harness` is on `main`, it rebases onto `main` and
-  pushes as usual. The spec itself is on the remote now.
+- **Build base.** The build needs initiative `my-harness`. It brings it in
+  by merging the local `initiative/my-harness` into this branch (a merge,
+  not a rebase, so nothing already pushed is rewritten).
+- **Nothing reaches main until the end.** Every stream works on its own
+  branch cut from this initiative branch and is squash-merged into it
+  locally, one commit per stream; stream branches are never pushed, and no
+  review happens on any branch but this one. The only push is this
+  initiative branch, once, when every stream has merged and the memory
+  server is pinned to its published commit (no local path). The PR from
+  this branch then carries everything, `my-harness` included, and goes to
+  `main` with a merge commit so each stream stays its own commit; the
+  stream history also stays on the forge after branches are deleted.
 - **Finish:** one review brief for the whole initiative, by design area,
   not stream by stream, with where to focus first.
 
@@ -184,9 +203,11 @@ stated with what it is, why it exists, and the framing concept it serves.
 | **carrier kind** | append (kept in history), transient (sent with one call only) or on demand (called when wanted), because each needs a different rule for what to send again | infusion |
 | **part** | what one repo delivers: a persona name and its bring-ins, so personal and work can be installed apart and add up | the ghost |
 | **persona** | a name for who the work is for; it owns nothing, so a store or a bring-in can change without renaming anyone | genome |
+| **fusion** | the genome built from every part present, each persona kept distinct: one active persona per turn, each learning routed back to its own persona, so the ghost is whole without mixing its stores | the ghost |
 | **bring-in** | a standard unit (a skill, an MCP server, a plugin, a sub-agent, a hook) that a part installs and that declares what the ghost needs to know about it, so it can be vended to anyone and still serve this harness | genome (nature) |
 | **session bring-in** | a bring-in that acts for the whole session (memory, status, the core's adapters), because some of the genome must be present from the start | genome |
 | **turn bring-in** | a bring-in that attaches when it fits the work (coding, writing, notes, triage, documents, web, brought-in tools), because the rest of the genome should be expressed only when needed | expression |
+| **tenure** | whether a bring-in is the person's own or borrowed (from whom, since when), recorded by the part, so a borrowed bring-in can be used, left untouched by adaptation, and given back cleanly | genome, adaptation |
 | **package** | the implementation a bring-in uses (for example the memory server), named by the bring-in and configured by the part, so two parts can share one without depending on each other | genome |
 | **store** | a git checkout the person owns, pointed at by a bring-in's config, so habits travel between environments | habits |
 | **state tiers** | a bring-in's local (pending) and permanent memory, each a config key, with a promotion rule, so a learning is tried before it is trusted | habits, adaptation |
@@ -230,7 +251,8 @@ know it ignores it.
 |---|---|---|
 | `part`, `persona` | who installed it, for whom | genome, route |
 | `source` | a git project repo, a git store, a machine directory, or a vendor; pinned revision | route |
-| `route` | write, backlog, worktree to PR, report only (defaults from the source) | adaptation |
+| `tenure` | own, or borrowed (from whom, since when) | genome, adaptation (borrowed: report only) |
+| `route` | write, backlog, worktree to PR, report only (defaults from the source; report only when borrowed) | adaptation |
 | `values` | the config values bound here, every state location included | everything that reads state |
 
 **Slots:** an Agent Skill's `metadata` (flat keys); a plugin manifest's
@@ -249,9 +271,10 @@ own activation stay with the standards.
  |    +-- turn bring-ins ....... coding, writing, notes, triage, ... (genome, expressed when they fit)
  |
  |    each bring-in declares: scope | job | signals | rules | package | config | state | requires
- |    each part records:      part | persona | source | route | values
+ |    each part records:      part | persona | source | tenure | route | values
  |    state lives only behind config: store, local tier -> permanent tier   (habits)
  |
+ +-- fusion .................... every part's persona present, kept distinct  (one ghost)
  +-- harness map ............... union of the parts' declarations    (the ghost's model of itself)
  +-- environment ............... the map resolved where it runs      (what this shell can do)
  +-- core (with the personal part): entry points genome, expression, experience, sleep, adaptation
@@ -261,7 +284,7 @@ own activation stay with the standards.
 
 ```
  1. START  ->  genome
-    harness map + environment + pending decisions
+    harness map (fused from every part present) + environment + pending decisions
       --> session picture: personas, session bring-ins and their state,
           turn bring-in catalog, environment, pending count
 
@@ -279,8 +302,9 @@ own activation stay with the standards.
     bundle + harness map --> reflector --> findings (thing, kind, evidence)
       --> checks --> the person decides (one batch)
       --> route from the map:
-            habits:  persona memory written; bring-in local tier written
+            habits:  the owning persona's memory written; bring-in local tier written
             nature:  bring-in / skill / harness -> backlog or worktree to PR
+            borrowed: a note for its lender, or a proposal to give it back
       --> ledger
 ```
 
@@ -329,7 +353,7 @@ coding CLIs, so the genome never depends on them.
 
 | # | Feature | Ships | Needs | Status |
 |---|---|---|---|---|
-| 1 | core-and-infusion | the core with its entry points as a library and CLI; the bring-in contract read from each standard's slot; part lists recording source, route and bound values; the harness map and the derived environment; the delivery record; status tells registered from ready | - | planned |
+| 1 | core-and-infusion | the core with its entry points as a library and CLI; the bring-in contract read from each standard's slot; part lists recording source, tenure, route and bound values; fusion of every part present into the harness map; the derived environment; the delivery record; status tells registered from ready | - | planned |
 | 2 | session-and-turn-hooks | `genome` and `expression` on Claude Code: the rules file, SessionStart and SubagentStart, UserPromptSubmit; turn fit; the v1 selector behind its interface; emit on change; the on-demand resource, prompt and tool; probes for what Claude Code keeps across compaction and sub-agents | 1, 4 | planned |
 | 3 | sleep-and-adaptation | `sleep` (the SessionEnd mark and the explicit close), `experience` (the session-source interface and the Claude Code transcript packer), `adaptation` (the reflection skill, the reflector agent, the guards, the decision batch, routing by the map, the ledger) | 1, 4 | planned |
 | 4 | session-bring-ins | memory as a session bring-in naming the memory package, its store behind config, its index readable by the selector; the core's adapters as session bring-ins; any other session bring-in the design needs | 1 | planned |
@@ -445,3 +469,10 @@ this initiative.
   "harness/task bring-ins", "mode", "picture/turn/reflect" or "close" are
   superseded by these terms. The build runs in a separate session; the
   finish is one initiative-level review brief by design area.
+- Ruling (user, 2026-10-30): the ghost is one person with several
+  personas fused at infusion, each persona's learnings kept in its own
+  memory; bring-ins are point in time, own or borrowed, and adaptation never
+  changes a borrowed one. Nothing reaches main until the end: streams merge
+  locally into this branch, the only push is this branch once at the end,
+  and the PR goes to main as a merge commit so each stream stays its own
+  commit.
