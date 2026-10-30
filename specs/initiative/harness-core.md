@@ -448,3 +448,5 @@ write; reflection pushes at its end; a conflict becomes a pending decision.
   split; no third package to publish, and the core reads every part list,
   so no part depends on another · cost if wrong: the core moves to its own
   package later, unchanged in shape
+- Ruling (user, 2026-10-30): the harness core ships with the personal part
+  (this repo); ratified.
