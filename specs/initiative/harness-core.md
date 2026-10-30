@@ -17,6 +17,27 @@ turn. A small **harness core** makes my harness present in every session
 next (a reflection at session close that routes what was learned to where
 it belongs), on any base harness, with no wrapper.
 
+## Framing
+
+*Ghost in the Shell*: the base harness is the **shell**, my harness is the
+**ghost** that can inhabit any shell. A shell with no ghost is a **zombie in
+the shell**: it acts, often well, on instinct alone, but carries no self, no
+memory of who I am, nothing learned from last time. In that film's own
+Puppet Master, a ghost argues it is a living organism, and the ghost here
+works like one, through five functions:
+
+| Function | What it does | In fiction |
+|---|---|---|
+| **genome** (plus habits) | what I carry: nature the parts ship, nurture learned since | *The Girl with All the Gifts*: fungus (nature) plus schooling (nurture) |
+| **expression** | what this turn switches on, for this outcome and this place | *iZombie*: a brain's skills, taken on for one case, then gone |
+| **experience** | everything done for the outcome, as it happened | *Warm Bodies*: a life relived in vivid memory |
+| **adaptation** | the experience turned into a changed genome and new habits | *Warm Bodies*, *The Girl with All the Gifts*: coming alive, a new kind |
+| **sleep** | where experience and adaptation happen | *Warm Bodies*: zombies do not sleep; the first dream is coming alive |
+
+And one warning: *Pontypool*, where infection spreads through words. That is
+prompt injection, and why adaptation never turns tool or web content into a
+habit without my yes.
+
 ## Experience architecture
 
 What must happen implicitly, at three points of a session, whatever the
@@ -315,11 +336,11 @@ drift apart.
 
 | Entry point | Does |
 |---|---|
-| `picture` | the session picture: personas, session and turn bring-ins, environment, pending |
-| `turn` | turn fit, selector, reinforcement: the turn context for this prompt |
-| `close-record` | marks a session as ended and unreflected |
-| `pack` | a session, from a session source, into a bundle |
-| `reflect` | bundle + harness map -> findings -> decision batch -> route -> ledger |
+| `genome` | genome plus habits: what the parts ship (nature) and what was learned since (nurture), as the session picture: personas, session and turn bring-ins, environment, pending |
+| `expression` | what this turn switches on: turn fit, selector, reinforcement, as the turn context for this prompt |
+| `experience` | what was lived: a session, from a session source, into a bundle |
+| `adaptation` | bundle + harness map -> findings -> decision batch -> route -> ledger: nurture written, nature proposed, new nurture created |
+| `sleep` | marks a session as ended and unadapted; experience and adaptation happen at sleep, on request or in a sweep |
 
 Three **carrier kinds** reach them, declared per base harness in a
 **carrier profile** in the harness map:
@@ -369,7 +390,7 @@ backlog item for the user.
 
 ```
  SESSION START  Claude Code: SessionStart hook, on startup | resume | clear | compact
-   runs   core picture
+   runs   core genome
    reads  every part list (the harness map); each bring-in's bound config
    does   resolve the environment (bound, reachable, ready); pull reachable stores
           without blocking; count pending decisions and unreflected sessions
@@ -379,7 +400,7 @@ backlog item for the user.
    sub-sessions: SubagentStart hook emits the slice a sub-agent's job needs
 
  EVERY TURN     Claude Code: UserPromptSubmit hook
-   runs   core turn
+   runs   core expression
    reads  the prompt; location (cwd, repo, branch); the work's own record
           (goal, next step, state reached); turn bring-ins' job + signals;
           memory indexes through their config
@@ -391,12 +412,12 @@ backlog item for the user.
           whose hash changed
 
  CLOSE          two halves
-   Claude Code SessionEnd hook: core close-record marks the session as
+   Claude Code SessionEnd hook: core sleep marks the session as
           unreflected (fast, no model call); nothing depends on it firing
    reflection skill ("reflect", "close this session", or a later sweep):
-          core pack -> bundle; reflector agent (fresh context: bundle + map)
-          -> findings; core check (evidence, tool-only content, secrets,
-          public-store guard) -> one decision batch -> core route by the map
+          core experience -> bundle; core adaptation: reflector agent (fresh
+          context: bundle + map) -> findings -> check (evidence, tool-only
+          content, secrets, public-store guard) -> one decision batch -> route by the map
           (memory write where its config points; bring-in local tier;
           backlog item or worktree on the source) -> ledger append
 ```
@@ -437,6 +458,7 @@ write; reflection pushes at its end; a conflict becomes a pending decision.
 
 | # | Feature | Ships | Needs | Status |
 |---|---|---|---|---|
+| last | readme-and-project | README and project.md say how mAId works with this design, using the framing (ghost in the shell; genome, expression, experience, adaptation, sleep) | every other stream | planned |
 
 ## Decision Log
 
@@ -520,3 +542,9 @@ write; reflection pushes at its end; a conflict becomes a pending decision.
   framework store, traces); adapters are bring-ins · why: keeps both hooked
   and on-demand use open and lets non-coding frameworks host the harness ·
   cost if wrong: a little more indirection than calling hooks directly
+- Ruling (user, 2026-10-30): framing is Ghost in the Shell (base harness =
+  shell, my harness = ghost; without it, a zombie in the shell); the entry
+  points are named for how the ghost works as an organism: genome (plus
+  habits), expression, experience, adaptation, sleep; the initiative keeps
+  its name; the closing stream updates the README and project.md to tell
+  how mAId works with this design, using the framing.
