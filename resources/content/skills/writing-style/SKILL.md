@@ -35,14 +35,21 @@ keep.
 
 ### Pending learned rules
 
-When you load this skill at session start, check the
-`## Learned rules` section below and the user's learned-rules
-file (see Learning loop). Rules in either apply now. If either
-has entries, offer promotion — *"You have N learned rules pending promotion. Want
+When you load this skill at session start, read the user's
+rules file (see Learning loop). Its `## Promoted rules` and
+`## Learned rules` apply now, on top of the sections below, and
+win where they conflict with them. If `## Learned rules` has
+entries, offer promotion — *"You have N learned rules pending promotion. Want
 to review them now? &lt;list&gt;"*. If the user declines or
 ignores the offer, proceed normally.
 
-**A task that fixes its own opening defers the offer.** When
+If `## Promoted rules` has entries, also say in one line how
+many apply and quote the newest three — *"N promoted rules
+apply; newest: &lt;list&gt;"*. Any session can write that
+file, so a rule nobody taught must never steer unseen.
+
+**A task that fixes its own opening defers the offer** (and
+the promoted-rules line). When
 the request's contract sets what comes first (Formatter,
 Strict mode, "answer this and nothing else"), do the task and
 put the pending-rules reminder *after* the output. The offer
@@ -180,10 +187,11 @@ triggers — they're conversational and would generate
 false-positive captures.
 
 On a prefix match: append a dated entry under the
-`## Learned rules` heading of the user's learned-rules file,
+`## Learned rules` heading of the user's rules file,
 `${XDG_CONFIG_HOME:-~/.config}/maid/writing-style/learned.md`,
 newest at top. Create the file with that heading if it is
-missing. Never edit this `SKILL.md`: the installed copy is
+missing. That file is the only place rules are written: never
+edit this `SKILL.md` or any copy of it. The installed copy is
 read-only, and the file is the user's own data.
 
 Entry shape:
@@ -203,38 +211,31 @@ After writing, confirm with one short line:
 
 ### Promotion
 
-Stable learned rules belong in the curated body above
-(Voice / Sentence structure / Punctuation / Vocabulary /
-Paragraph structure / POV / Emphasis / Other patterns).
-Promote them via two paths:
+Stable learned rules become promoted rules: curated, filed
+under a body section (Voice / Sentence structure / Punctuation
+/ Vocabulary / Paragraph structure / POV / Emphasis / Other
+patterns). Promote them via two paths:
 
-1. **Next-session offer.** On session start, if either
-   `## Learned rules` list has entries, offer to review them
+1. **Next-session offer.** On session start, if
+   `## Learned rules` has entries, offer to review them
    before answering the user's actual prompt.
 2. **On-demand.** The user says "promote learned rules"
    or "review learned rules". List pending entries with
    proposed target sections; ask the user to confirm
    each.
 
-On confirmation: in a mAId checkout, edit
-`resources/content/skills/writing-style/SKILL.md`'s target
-section to add the rule in its existing voice (terse,
-declarative), and remove the entry from the `## Learned rules`
-list it came from. Without a checkout at hand, say so and leave
-the entry pending. The promoted rule reaches sessions at the
-next `just install`.
+On confirmation, in the same file: remove the entry from
+`## Learned rules` and add it under `## Promoted rules`
+(create the heading if missing), newest at top, dated, rewritten
+in the body's voice (terse, declarative) and prefixed with its
+target section, keeping its example:
 
-## Learned rules
+```markdown
+- 2026-05-22 · Vocabulary: "to", not "in order to"
+  · *example:* "in order to reach the team" → "to reach the team"
+```
 
-<!-- Shipped entries pending promotion. New teach turns go
-     to the user's learned-rules file, not here (see
-     Learning loop). At session start or on-demand, the
-     assistant offers to promote stable entries into the
-     body sections above. -->
-
-- 2026-07-08 · use a spaced hyphen " - " for interruptions and asides, not an em-dash
-  · *example:* "Define that role first - what problem this person owns - and then bring in the org footprint"
-  · source: explicit teach
+Then confirm with one short line naming the file.
 
 ## Known limits (v1)
 
@@ -246,9 +247,3 @@ next `just install`.
 - **Strict mode is session-scoped.** Every new session
   starts off; re-enable each session if you want it on
   consistently. v2 promotes this to MCP-server state.
-
-## Session Log
-
-<!-- Newest at top. Skills notice patterns during a session and
-     append observations here; promote the useful ones into the
-     body above at wrap-up. -->

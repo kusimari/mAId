@@ -21,7 +21,9 @@ export MAID_PROFILE=$work/state/maid/profile
 export CARGO_HOME=${CARGO_HOME:-$HOME/.cargo} CARGO_TARGET_DIR=$here/target
 # nix keeps its settings and fetch cache under these; the agents do not.
 export XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config} XDG_CACHE_HOME=${XDG_CACHE_HOME:-$HOME/.cache}
-unset CODEX_HOME CLAUDE_CONFIG_DIR XDG_STATE_HOME
+unset CODEX_HOME CLAUDE_CONFIG_DIR XDG_STATE_HOME MY_HARNESS_PARTS
+# XDG_CONFIG_HOME stays real for nix, so mAId's config dir must not.
+export MAID_CONFIG=$work/config/maid MAID_MEMORY_STORE=$work/config/maid/memory-store
 
 fails=0
 check() {
@@ -43,6 +45,10 @@ codex_has_marker() { grep -rqs "$marker" "$th/.codex/plugins/cache"; }
 kiro_has_marker() { grep -qs "$marker" "$th/.kiro/skills/notes/SKILL.md"; }
 skills() { inhome just resources::install-skills >"$work/log" 2>&1 || { cat "$work/log"; return 1; }; }
 rollback() { inhome just rollback >"$work/out" 2>&1; }
+partlist=$th/.local/state/my-harness/parts/maid-harness.json
+# The entries one harness has in mAId's part list, one `kind name [skipped]` per line.
+entries() { jq -r --arg h "$1" '.harnesses[$h][]? | "\(.kind) \(.name)\(if .skipped then " skipped" else "" end)"' "$partlist" 2>/dev/null; }
+mcp_entry() { entries "$1" | grep -qx "mcp chrome-devtools\( skipped\)\?"; }
 
 # Three installs: one older than the plugin marketplace (C), this
 # checkout (A), and a clone with one skill line added (B).
@@ -63,6 +69,58 @@ nix build --profile "$MAID_PROFILE" "$A" && skills || exit 1
 nix build --profile "$MAID_PROFILE" "$B" && skills || exit 1
 check "second install is live in claude, codex and kiro" \
   eval 'both_at "$vB" && codex_has_marker && kiro_has_marker'
+
+inhome just resources::install-browser-mcp >"$work/log" 2>&1 || { cat "$work/log"; exit 1; }
+placed_on_all() {
+  for h in claude codex; do
+    entries $h | grep -qx "plugin maid@maid" && entries $h | grep -qx "marketplace maid" && mcp_entry $h || return 1
+  done
+  entries kiro-cli | grep -qx "skill notes" && mcp_entry kiro-cli
+}
+check "the part list names what install placed on claude, codex and kiro" placed_on_all
+grant=$(dirname "$MAID_PROFILE")/marketplace/plugins/maid
+granted() { jq -e --arg d "$grant" '.permissions.additionalDirectories | index($d)' "$th/.claude/settings.json" >/dev/null 2>&1; }
+check "install lets claude read mAId's plugin dir, and records it" \
+  eval 'granted && entries claude | grep -qx "setting permissions.additionalDirectories"'
+edit_rule="Edit(/$MAID_CONFIG/writing-style/**)"
+writable() { jq -e --arg r "$edit_rule" '.permissions.allow | index($r)' "$th/.claude/settings.json" >/dev/null 2>&1; }
+check "install lets claude read and write writing-style's state dir, and records it" \
+  eval 'writable && entries claude | grep -qx "setting permissions.allow"'
+vendor=anthropic-agent-skills
+brought_in() {
+  for h in claude codex; do
+    entries $h | grep -qx "marketplace $vendor" && entries $h | grep -qx "plugin document-skills@$vendor" || return 1
+  done
+  entries kiro-cli | grep -qx "marketplace $vendor skipped"
+}
+check "the part list names the vendor marketplace placed on claude and codex, skipped on kiro" brought_in
+
+# Whole-status reads each harness's own listing: everything mAId placed is
+# there, and a second part's list beside mAId's is checked the same way.
+whole() { inhome just status --whole "$@" >"$work/whole" 2>/dev/null; }
+shows() { grep -qx "    present        $1" "$work/whole"; }
+maid_whole() {
+  whole || return 1
+  for h in claude codex; do
+    whole $h && shows "plugin maid@maid" && shows "marketplace maid" || return 1
+  done
+  for h in kiro agy; do whole $h && shows "skill notes" || return 1; done
+}
+check "status --whole finds what mAId placed on each harness" maid_whole
+vendor_whole() {
+  for h in claude codex; do
+    whole $h && shows "marketplace $vendor" && shows "plugin document-skills@$vendor" || return 1
+  done
+}
+check "status --whole finds the vendor marketplace and plugin on claude and codex" vendor_whole
+other=$(dirname "$partlist")/other.json
+echo '{"format":1,"part":"other","harnesses":{"claude":[{"kind":"marketplace","name":"maid"},{"kind":"plugin","name":"absent@nowhere"}]}}' >"$other"
+whole
+rc=$?
+check "status --whole reports a second part beside mAId's and fails on what it lacks" \
+  eval '[ $rc != 0 ] && grep -qx "  other" "$work/whole" && grep -qx "  maid-harness" "$work/whole" && grep -qx "    missing        plugin absent@nowhere" "$work/whole"'
+rm "$other"
+check "removing that list leaves mAId whole" maid_whole
 
 rollback
 rc=$?
@@ -127,7 +185,39 @@ rollback
 rc=$?
 check "rollback past a link mAId did not write still moves the agents" \
   eval '[ $rc != 0 ] && [ "$(gen)" = 3 ] && both_at "$vD" && [ "$(readlink "$th/.gemini/config/skills")" = "$work/elsewhere" ]'
+check "the part list names agy's skills as skipped past that link" \
+  eval 'entries agy | grep -qx "skill notes skipped"'
+
+# With claude and codex off PATH, install and uninstall cannot list the
+# bring-ins, so the part list keeps them as mAId's; the uninstall below,
+# with the CLIs back, still removes them.
+nocli=$(tr ':' '\n' <<<"$PATH" | while read -r d; do
+  [ -x "$d/claude" ] || [ -x "$d/codex" ] || printf '%s:' "$d"
+done)
+# The run saw no CLI (mAId's own plugin is skipped), yet the bring-ins stay placed.
+kept_without_cli() {
+  for h in claude codex; do
+    entries $h | grep -qx "marketplace $vendor" && entries $h | grep -qx "plugin document-skills@$vendor" || return 1
+  done
+}
+PATH=${nocli%:} inhome just resources::install-skills >/dev/null 2>&1
+check "install with no claude or codex on PATH keeps the vendor marketplace mAId's" \
+  eval 'entries claude | grep -qx "plugin maid@maid skipped" && kept_without_cli'
+PATH=${nocli%:} inhome just resources::uninstall-skills >/dev/null 2>&1
+check "uninstall with no claude or codex on PATH keeps the vendor marketplace mAId's" kept_without_cli
 
 inhome just resources::uninstall-skills >/dev/null 2>&1
+inhome just resources::uninstall-browser-mcp >/dev/null 2>&1
+check "uninstall removes the part list" eval '[ ! -e "$partlist" ]'
+check "uninstall takes the plugin-dir grant away" eval '! granted'
+check "uninstall takes the config-dir grant away" eval '! writable'
+# A listing that is not JSON must not pass as "removed".
+vendor_gone() {
+  local cli m
+  for cli in claude codex; do
+    m=$(inhome $cli plugin marketplace list --json 2>/dev/null) && jq -e . <<<"$m" >/dev/null && ! grep -q "$vendor" <<<"$m" || return 1
+  done
+}
+check "uninstall removes the vendor marketplace from claude and codex" vendor_gone
 [ "$fails" = 0 ] && echo "all rollback checks passed" || echo "$fails rollback check(s) failed"
 exit $((fails > 0))

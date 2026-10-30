@@ -75,11 +75,13 @@ Two halves at the top level:
      **`deploy.rs` hands over to the agent where it can.** The pipeline
      declares *what* it wants deployed; `deploy.rs` alone knows *how*,
      behind a `Deploy` trait (`install` / `uninstall` / `status` /
-     `is_deployed`, each returning a `Report`, never a path). `Plugins`
+     `is_deployed`, each returning a `Report`, never a path, and
+     `placed`, what the part list records). `Plugins`
      drives claude's and codex's own plugin CLIs; `Symlinks` (the
      $HOME-layout knowledge, `Link`/`FanOut` registry expansion,
      `--force` semantics) covers the agents with no such command (kiro,
-     agy). `Deployment` routes each agent to one of them, so nothing in
+     agy). `Deployment` routes each agent to one of them, then runs
+     `BringIns` (the vendor marketplaces, below), so nothing in
      `stages.rs` knows which. `check` needs no deployment at all — it receives a
      `NoDeploy` target and runs with no `$HOME`, which is what makes
      "check needs no install" a structural fact rather than a
@@ -114,7 +116,8 @@ root, so `cargo build --workspace` covers everything.
 `resources/build-tool/src/shared.rs`: `REGISTRY`, a slice of
 `(home_subpath, source_subpath, kind, agent)` tuples for the linked
 agents, and `PLUGIN_AGENTS` for the plugin ones (with where each
-one's pre-plugin links lived, which install reaps). The
+one's pre-plugin links lived, which install reaps), and `BRING_INS` for
+the vendor marketplaces mAId registers with the plugin ones. The
 authoritative manifest for what gets installed where. The
 `agent` tag is what lets install/uninstall/status be scoped
 to one coding agent (`--agent`, surfaced as the Just verbs'
@@ -167,6 +170,78 @@ the generations above the live one (the ones a rollback returned from),
 after its build succeeds; otherwise a rollback after rollback-then-install would land on
 them rather than on the install before.
 
+**Skill reads (claude).** Claude loads a plugin of a `directory`
+marketplace live from the marketplace path, so it reports each mAId skill's
+base dir as `<marketplace>/plugins/maid/skills/<skill>`, and a Read of a
+module there asks for permission in manual mode. A plugin cannot grant
+itself reads (a plugin's settings take no permissions; a skill's
+`allowed-tools` lasts one turn), and a `Read` allow rule on that path does
+not match, since Claude also checks the file it resolves to, in the store.
+So install adds `<marketplace>/plugins/maid` (the profile-side path, never a
+store path) to `permissions.additionalDirectories` in
+`~/.claude/settings.json`: Claude then reads anything under it without
+asking. This widens Claude's working directories only to a read-only tree,
+so the edit half of a working directory grants nothing there. It is one
+element of a list the user and other parts also write: mAId owns the element
+its part list records, and adopts an identical one it finds (rule 2),
+removing either on uninstall; any other element is left alone, and a recorded value not of
+that shape is not mAId's. claude not on PATH, or no plugin in the profile,
+writes nothing; a value that is not a list is left and recorded skipped.
+
+**Skill state (claude).** A skill that keeps user state keeps it in
+user-owned files in its own dir under mAId's config dir,
+`${XDG_CONFIG_HOME:-~/.config}/maid/<skill>/` (`MAID_CONFIG` in
+`resources/Justfile`), and loads them on top of its shipped body:
+writing-style's `writing-style/learned.md` holds the pending `## Learned
+rules` and the `## Promoted rules`, both of which win over the body. No
+skill tells the runtime to find, read or edit a checkout; content
+validation fails a skill file that says `resources/content/`, "mAId
+checkout", `just install` or `just resources::`. Changing a shipped body is
+a maintainer action, an edit under `resources/content/` and `just install`,
+never a runtime one. So install adds `Edit(/<config dir>/<skill>/**)` to
+`permissions.allow` in `~/.claude/settings.json` for each skill in
+`reads::STATEFUL_SKILLS` (today writing-style), and the same rule on the
+path it resolves to when that differs: Claude checks a path as written and
+as resolved, so behind a symlinked HOME a rule on one form is denied. With
+both, Read and Write there pass with no prompt in the default mode (checked
+on Claude Code 2.1.296); an `additionalDirectories` element would grant
+reads only. Only skill dirs are granted, never the config dir itself: it
+also holds the browser allowlist, which no agent may write, and the memory
+store's file. The rules follow the same element rules as the plugin dir
+(owned, adopted, another part's left alone, a stale one replaced, removed
+on uninstall), one part-list entry each; a recorded value not of the shape
+`Edit(/<absolute path>/<stateful skill>/**)` (no `..`, no glob or rule
+characters) is not mAId's, and a config path whose rule would not be of it
+is granted nothing and recorded skipped, and mAId's earlier rules are
+removed. Install does not create the dirs. The rules are user settings, so
+they hold in every session in every repo: content a session reads there can
+write rules a later session loads, so at session start writing-style lists
+the pending rules and the count and newest three of the promoted ones.
+
+**Bring-ins (claude, codex).** A vendor's plugin marketplace mAId
+brings in is a `BRING_INS` row in the registry: the name both CLIs list
+it under, its public git source, a commit, the plugins to install from
+it, and the commands its skills run. Install registers it and installs
+the plugins through each CLI, after mAId's own plugin, so a failure there
+(no network) leaves mAId's skills in and exits non-zero. Nothing of the
+vendor's is copied into the profile. Neither CLI records who added a
+marketplace, so an item is mAId's only when mAId's part list names it
+as placed or the run added it; a marketplace or plugin the user had
+already is kept, recorded skipped "not mAId's", and never removed. A run
+that cannot list them (no CLI, or a listing that cannot be read) keeps
+what the part list names as mAId's placed.
+Uninstall removes mAId's plugins, then mAId's marketplace unless a plugin
+not mAId's is installed from it (removing a marketplace uninstalls every
+plugin from it). codex is pinned to the commit (`--ref`); claude's CLI
+takes only a branch or tag, so claude holds the commit current when it
+first registered it, and third-party marketplaces do not auto-update.
+The row's commit applies to fresh installs only: a marketplace already
+registered is not re-pinned when it changes. A part list that cannot be
+read stops install and uninstall (ownership is unknown); `status` reports
+it and carries on. kiro and agy have no plugin marketplace, so the part list
+records them skipped. The first row is the vendor's document skills
+(`xlsx`, `pptx`, `docx`, `pdf`).
+
 Skills reach kiro (and agy) through the registry as symlinks at their
 own skills path, verified to load with no extra preamble. kiro reads
 `~/.kiro/skills/*/SKILL.md`, a dir that also holds the user's own
@@ -192,14 +267,26 @@ re-auth. Its shape differs from skills in two ways:
 - **Registration vs. runtime split.** A skill lives entirely
   in the harness config as a symlink. An MCP server is an
   out-of-process service the harness *calls*, so only its
-  *registration* goes in each harness config (`claude mcp
-  add` / `kiro-cli mcp add`); its *runtime* (the pinned
+  *registration* goes in each harness's global config (`claude mcp
+  add` / `codex mcp add`, and for kiro an edit of
+  `~/.kiro/settings/mcp.json`); its *runtime* (the pinned
   chrome-devtools-mcp and its Node) is a closure in the mAId
   profile. This is why the registry
   above can't express it — registration is a runnable command,
   not a symlink — so it lives in `resources::browser-mcp-*`
   Just verbs (shell over each harness's MCP CLI), keeping the
   Rust build-tool pure-symlink.
+- **Kiro's registration is a direct edit.** `kiro-cli mcp add`
+  needs a login and writes every other server back through its own
+  struct, dropping keys it does not know, so `manage` sets mAId's
+  entry in kiro's global config with `jq` and leaves every other key
+  as it is. The entry is mAId's only while its `command` is the
+  profile's `bin/maid-browser-mcp`: install and uninstall leave any
+  other `chrome-devtools` alone (install records it as skipped, "not
+  mAId's"). The write is atomic (a temp file beside the resolved
+  target, with its mode, renamed over it), and uninstall needs no
+  `kiro-cli`. Kiro agents get it by pulling the global config in; mAId
+  writes into no kiro agent file.
 - **Browser-enforced allowlist.** The agent may act only on
   sites in a user-owned allowlist file
   (`${XDG_CONFIG_HOME:-$HOME/.config}/maid/browser-allowlist`).
@@ -210,6 +297,290 @@ re-auth. Its shape differs from skills in two ways:
   profile's `bin/maid-browser-mcp`) re-reads the file on each
   (re)connect, so edits apply next session without restarting
   Chrome.
+
+### My harness
+
+The terms mAId uses for what it installs:
+
+- **Agent**: the whole entity a session runs as: base harness, my
+  harness and my memory.
+- **Base harness**: a model plus a vendor coding agent (`claude`,
+  `codex`, `kiro-cli`, `agy`), run as the vendor ships it.
+- **My harness**: what parts add on top of the base harnesses
+  (skills, MCP servers, sub-agents, later more), through each base
+  harness's own extension points. It has no driver loop of its own.
+- **Part**: what one repo installs into the base harnesses. mAId's
+  part is `maid-harness`. Other parts may sit beside it; my harness is
+  the union.
+
+The rules every part follows, so that parts add up and never fight:
+
+1. No wrapper. The base harness binaries run as the vendor ships them:
+   no wrapper scripts, aliases or `PATH` shims.
+2. A part owns only what it wrote in each extension point, and
+   removes only that. A setting's value (for a list, one element) that is
+   exactly what the part would write is adopted: the part records it with
+   `adopted`, reports it `already present, adopted`, and owns and removes
+   it as if it had written it. Before adopting or writing a value it does
+   not already hold, it reads the other part lists: when any of format 1
+   records that setting with that value and no `skipped`, the value is that
+   part's, so the part neither adopts nor writes it and records `skipped:
+   "another part's"`. Two lists never both claim one value. Any other value
+   it did not write is another's.
+3. A setting that holds one value is set only when it is empty or
+   already this part's.
+4. Each part writes a part list (below) on install and removes it on
+   uninstall.
+5. Setup is idempotent and assumes nothing about other parts.
+
+**The part list.** Each part keeps one file,
+`${XDG_STATE_HOME:-$HOME/.local/state}/my-harness/parts/<part>.json`,
+that says what it placed on each base harness. A part writes only its
+own file, and may keep a temporary dotfile beside it while it writes. A
+whole-status reads every `*.json` file in the dir that is not a dotfile.
+
+```json
+{
+  "format": 1,
+  "part": "maid-harness",
+  "harnesses": {
+    "claude": [
+      { "kind": "marketplace", "name": "maid" },
+      { "kind": "plugin", "name": "maid@maid" },
+      { "kind": "mcp", "name": "chrome-devtools", "skipped": "no graphical Chrome" }
+    ],
+    "kiro-cli": [
+      { "kind": "skill", "name": "notes" },
+      { "kind": "mcp", "name": "chrome-devtools" }
+    ]
+  }
+}
+```
+
+- `format`: 1. A reader refuses a format it does not know, and ignores
+  keys it does not know.
+- `part`: the part's name, the same as the file name.
+- `harnesses`: keyed by the base harness's command (`claude`, `codex`,
+  `kiro-cli`, `agy`), one list of entries each.
+- `kind`: `skill`, `mcp`, `agent`, `plugin`, `marketplace` or
+  `setting`. `name`: what the harness's own listing calls it; for a
+  `setting`, its key, or a dotted path to a nested one
+  (`permissions.additionalDirectories`); a top-level key that holds the
+  dots itself wins (rule 14).
+- `scope`, optional: where inside the harness, for a part that places
+  something in one of several places. mAId places everything in one
+  place per harness and writes none.
+- `skipped`, optional: install meant to place this and did not, and
+  why. A reader reports such an entry and does not check it for
+  presence.
+- `value`, optional: for a `setting`, the value the part set, so a later
+  install can tell its own value from another part's. For a setting that
+  holds a list, the entry is one element of it and `value` is that element.
+  Writers write a string; a reader checks no other type (rule 14).
+- `adopted`, optional: `true` when the part found this exact value already
+  there and took it over; it owns it as if it had written it.
+- An entry without `skipped` is placed: the harness lists it, in
+  whatever state (a plugin the user disabled is still placed).
+
+The list says what is there after install, read back from each step,
+plus what install skipped. Uninstall leaves only what it could not
+remove, and deletes the file when nothing is left. In mAId, `part.rs`
+is the one writer: install and uninstall record what `Deploy::placed`
+reads back, and the browser-MCP script records its server through
+`build-tool record`.
+
+**Whole-status.** `just status --whole [agent]` reads every part's list
+(`whole.rs`) and reports each entry, per harness and part, in one of six
+states: present, present (disabled) (the listing says the user turned it
+off), missing, skipped (with the part's reason), not checkable, or
+unreadable. Presence is read from the harness's own listing or config:
+
+| Harness | skill | agent | mcp | plugin | marketplace | setting |
+|---|---|---|---|---|---|---|
+| `claude` | `~/.claude/skills/<n>/SKILL.md` | `~/.claude/agents/*.md` frontmatter `name` | `~/.claude.json` `mcpServers` (scope `user`) | `claude plugin list --json`, `user` scope only | `claude plugin marketplace list --json` | `~/.claude/settings.json` key (rule 14) |
+| `codex` | `~/.codex/skills/<n>/SKILL.md` | - | `codex mcp list --json` | `codex plugin list --json` | `codex plugin marketplace list --json` | - |
+| `kiro-cli` | `~/.kiro/skills/<n>/SKILL.md` | `~/.kiro/agents/*.json` `name` (or file name) | the agent named by `scope`, its `mcpServers`; no scope: `~/.kiro/settings/mcp.json` | - | - | `~/.kiro/settings/cli.json` key (rule 14) |
+| `agy` | `~/.gemini/config/skills/<n>/SKILL.md` | - | - | - | - | - |
+
+claude's MCP is read from its config because `claude mcp list` and `get`
+start each server. agy is checked by path only. A kiro MCP's sub-agent
+comes from each entry's `scope`, so `--whole` takes no sub-agent argument.
+
+**Reader rules.** Any whole-status reader, in any repo or language, follows
+these, and the conformance set below checks them. A rule is what changes a
+state or the exit code. The report's wording, layout, order and reasons
+are free.
+
+1. **Text.** Every file and every CLI's stdout is UTF-8, strictly. A
+   byte-order mark is not stripped, so a JSON file that starts with one is
+   not JSON. stderr is decoded leniently and only ever feeds a reason. In a
+   JSON object with a repeated key, the last one counts.
+2. **Which lists.** Every entry in the parts dir named `<stem>.json`, with
+   a stem that is not empty and does not start with `.`. No parts dir: no
+   lists, which passes. A parts dir that exists but cannot be listed
+   (permissions, not a dir) aborts: no report, exit 1. That is the only
+   abort. Every other failure stays with its list or its entry.
+3. **Refused lists.** A list is refused, reported by file name, and fails
+   the run when: it cannot be read (permissions, a dir), is not UTF-8,
+   JSON or an object; `format` is not a JSON number whose value, read as a
+   double, is 1 (`1.0` passes, `true` and `"1"` do not); `part` is not a string equal to the
+   stem, exactly; `harnesses` is not an object of arrays; an entry is not
+   an object; `kind` or `name` is not a string; or `scope` or `skipped` is
+   neither a string nor null. Other keys are not read, and `value` and
+   `adopted` are taken whatever their type (rule 14 reads a setting's
+   `value`; one that is not a string makes that entry not checkable). No entry of a refused list is checked; the other
+   lists still are.
+4. **Absent and present.** A field that is null is absent. A field that is
+   a string is present, whatever it holds: `"skipped": ""` is skipped, and
+   `"scope": ""` is a scope.
+5. **Each entry**, in this order: with `skipped`, skipped, and nothing is
+   read. A harness key or kind not exactly one in the table: not
+   checkable. A `-` in the table: not checkable. Then its scope (rule 6),
+   then its source.
+6. **Scope.** Absent: the harness's one place. A claude plugin or MCP:
+   `"user"` is that place too, and any other scope is not checkable. A
+   kiro MCP: the scope names the kiro agent (`""` included) whose
+   `mcpServers` should hold it (no such agent: missing); with no scope,
+   `~/.kiro/settings/mcp.json`.
+   Any other kind with a scope: not checkable.
+7. **Names** compare exactly, case included, with the names a source
+   holds, and are never joined into a path: a skill `a/b` or `.` is
+   missing.
+8. **CLIs.** A CLI is on PATH when an absolute PATH dir, in order, holds
+   a regular file of that name with any execute bit. Empty and relative
+   entries are skipped, never read as the current dir: status runs what
+   it finds, and a `claude` planted in a checked-out repo must not run. Not on PATH: not checkable. It
+   runs with the reader's HOME. If it fails to start, exits non-zero, or
+   its stdout is not one JSON value (whitespace around it is fine, empty
+   is not) or not the listing's shape, every entry it would answer is
+   unreadable. With exit 0, stderr is ignored: stderr never decides a
+   state. Shapes: claude's `plugin list` is an array, items named by `id`,
+   counting only `"scope": "user"`; claude's marketplaces an array by
+   `name`; codex's `plugin list` an object whose `installed` array names by
+   `pluginId`; codex's marketplaces an object whose `marketplaces` array
+   names by `name`; codex's `mcp list` an array by `name`. An item that is
+   not an object or has no string name is ignored. An item with
+   `"enabled": false` (the JSON value; not `0`, not `"false"`) is present
+   (disabled).
+9. **Config files** (`~/.claude.json`, `~/.claude/settings.json`,
+   `~/.kiro/settings/*.json`). Absent: nothing listed. Only "does not
+   exist" is absent, here and for a dir in rule 10; any other failure, a
+   parent that is not a dir included, is unreadable. Cannot be read, not
+   UTF-8, not JSON, or not an object: unreadable. A key counts whatever its
+   value, null included (a setting's key is found as in rule 14). A member read for names (`mcpServers`) that is
+   absent or null lists nothing; of any other non-object type, unreadable.
+10. **Dirs.** An absent skills or agents dir lists nothing. One that
+    exists but cannot be listed (permissions, not a dir): every entry read
+    from it is unreadable. A skill is present when `<dir>/<name>/SKILL.md`
+    is a regular file after links; when that cannot be confirmed (absent,
+    not a file, its own dir without permission), missing.
+11. **Agent files** are every regular file, after links, named `<stem>.md`
+    (claude) or `<stem>.json` (kiro): stem not empty, dotfiles included,
+    extension exact. One that cannot be read or is not UTF-8 is unreadable
+    under its stem, which is the name an entry matches it by.
+    - kiro: a JSON object, named by its `name` when that is a string, else
+      by its stem. Not JSON or not an object: unreadable under its stem.
+      Its `mcpServers` reads as in rule 9.
+    - claude: lines split on LF, a trailing CR dropped. A first line that
+      starts with a byte-order mark: unreadable under its stem.
+      Frontmatter is the lines between a first line exactly `---` and the
+      next line exactly `---`. The name is on the first of those lines
+      that starts `name:` at column 0: the rest of that line, cut at its
+      first ` #`, trimmed of spaces and tabs, then one pair of matching surrounding quotes
+      (`"` or `'`) removed. No frontmatter, or no `name:` line: the file
+      names nothing.
+12. **One name, several sources** (listing items, agent files): the best
+    state wins, so order never matters: present, then present (disabled),
+    then unreadable, then missing. A kiro MCP whose agent name is in two
+    files is present if either lists it, else unreadable if one could not
+    be read or its `mcpServers` is not an object.
+13. **Exit.** 0, unless an entry is missing or unreadable or a list was
+    refused: then 1. An abort exits 1; a bad invocation 2. With one
+    harness selected, only its entries are checked and reported, and
+    refused lists still are reported and fail the run.
+14. **Settings.** A setting's `name` is first a key of the config file's
+    top-level object equal to the whole name, dots included; only when
+    there is no such key, a dotted path split at every `.`, each part a key
+    of the object one level down (`permissions.additionalDirectories`). A
+    key with dots below the top level is never found as one key. Neither
+    found: missing, as is a path through a value that is not an object. A `value` compares only
+    as a string: one that is neither null nor a string makes the entry not
+    checkable, decided before the file is read. With a string `value`, the
+    entry is present only when the setting, or when the setting is an
+    array one element of it, is a JSON string equal to `value` code point
+    for code point (escapes decoded, no normalisation), else missing; a
+    setting or element that is not a string never matches. With no `value`
+    or a null one, a found key is present. `adopted` changes no state.
+
+**Conformance set.** `resources/build-tool/tests/conformance/<case>/`, plain
+data any reader's tests can copy (`tests/conformance.rs` runs `whole.rs`
+against it):
+
+- `parts/`: the parts dir (no `parts/`: no parts dir; a file: not a dir).
+- `home/`: HOME. Placeholder files keep dirs git would drop; a
+  `.gitattributes` of `* -text` keeps every byte as written.
+- `case.json`: `about`; optional `harness`, the one selected; optional
+  `clis`, per CLI, per exact argument string, `stdout` or `stdout_file`,
+  `stderr` or `stderr_file` (paths under the case), and `exit`. A CLI not
+  named is not on PATH; the PATH holds only the stubs' dir, which is also
+  the run's working dir, and arguments not listed exit 3. Optional `path`:
+  the PATH entries to use instead, as written. Optional `modes`, paths under the run dir (`parts/…`,
+  `home/…`, `bin/<cli>`) to octal modes, set before the run. Where they
+  do not bite (as root) the case cannot run; mAId's test then fails
+  unless `CONFORMANCE_ALLOW_SKIPS=1` is set. `expect`:
+  `exit`, `aborted` (when the report aborts), `entries` (`harness`,
+  `part`, `kind`, `name`, `scope` when the entry has one, and `state`, as
+  above) and `refused` (file names), compared in any order.
+
+A reader of part lists keeps its own lenient structs beside the writer's
+strict ones (`whole.rs` beside `part.rs`), so a kind or harness it does not
+know is one entry it cannot check, not a refused file.
+
+**Memory.** Memory is served by MCP servers, one per persona, each bound
+to one store: a git checkout the user owns. Each part registers its own
+server on its own store; parts share no store config. The server is
+`pensieve` (its own public repo, pinned as a flake input, in the profile
+as `bin/pensieve`): it owns the store format (Claude Code's auto-memory
+format under `<store>/memory/`), its tools, and its instructions, which it
+builds from the store's `about.md` (what belongs here and what does not,
+then a short profile). That file is the user's; no part writes it or
+anything else in a store. Syncing a store (pull, commit, push) is the
+user's.
+
+mAId's server is `personal-memory` on the personal store, whose path is in
+`${XDG_CONFIG_HOME:-$HOME/.config}/maid/memory-store` (`just memory-store
+<path>` sets it). With none set, install reports "no personal store set"
+and registers nothing. Install
+registers it on claude with `claude mcp add -s user personal-memory --
+<profile>/bin/pensieve --store <path>` and records it as `mcp`. The entry
+is mAId's while its command is the profile's `bin/pensieve`; install
+re-registers it when the store path changes and leaves any other
+same-named entry, or one another part's list records as placed, alone. A
+store that is not there is reported and skipped, never created, and mAId's
+earlier entry is removed. An unreadable `~/.claude.json` fails install.
+
+**Claude's own automatic memory is turned off** by a part whose server is
+registered, so saves go to a server and not to Claude's memory dir: user
+settings `env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1"` (Claude applies
+user-settings `env` at startup). A part sets it only while its own server is
+registered after install. Under rules 2 and 3 it is set when empty, adopted
+when identical and no other part's list records it, otherwise left and
+recorded skipped. A part removes its own value when it uninstalls, or when
+it installs with claude on PATH and no server of its own; another part's
+value it leaves alone. A part with a server that follows these rules then
+takes the value on at its next install; until then Claude's own memory is
+on. The `autoMemoryDirectory` value an
+older mAId set is removed when it is still the recorded value.
+
+`just memory-harvest --to <dir> [--project <path-prefix>]` copies Claude's
+per-project memories (and, with no `--project`, codex's `memories/`
+registry) into `<dir>/memory/`, never changing the originals. `<dir>` must
+exist. A prefix matches the way Claude names project dirs (every character
+that is not a letter or digit as `-`), so it may take a sibling; each
+project taken is printed. A rerun changes nothing, and a same-name
+different memory lands as `<stem>-N.md`, reported.
+
+codex, kiro-cli and agy reach the same servers by registration, later.
 
 ## Tech Stack
 
@@ -223,10 +594,12 @@ re-auth. Its shape differs from skills in two ways:
 - **Isolation:** one flake, two outputs. `devShells.default`
   (loaded by `.envrc` via direnv) is the dev closure: the rust
   toolchain (rust-overlay), `just`, and `jq` (the install tests read
-  the agents' JSON). `packages.default` is
+  the agents' JSON, and the browser MCP install edits kiro's global
+  config with it). `packages.default` is
   the installable: the skills plus `chrome-devtools-mcp`
   (packaged from its npm tarball, which has no dependencies)
-  wrapped with `nodejs_22`.
+  wrapped with `nodejs_22`, and `pensieve`, the memory server, from its
+  own flake (a pinned input).
 - **Dependencies.** mAId does not care how a prerequisite got
   onto PATH (host package, home-manager, nix profile), and does
   not check for it; a missing one fails in the step that needs it.
@@ -234,7 +607,8 @@ re-auth. Its shape differs from skills in two ways:
   | Kind | What | Provided by |
   |---|---|---|
   | Runtime prerequisites | coding-agent CLIs, `git`, a graphical Chrome (browser only) | the environment |
-  | Runtime-provided | skills, node, chrome-devtools-mcp | the mAId profile |
+  | Runtime-provided | skills, node, chrome-devtools-mcp, pensieve | the mAId profile |
+  | What the vendor document skills run | `python` with openpyxl, pandas, pypdf, pdfplumber, reportlab, pypdfium2, pdf2image, Pillow, lxml, defusedxml, python-pptx, markitdown; `node` with the `docx` and `pptxgenjs` packages; LibreOffice (`soffice`), `pandoc`, `markitdown`, `qpdf`, poppler (`pdftotext`, `pdftoppm`, `pdfimages`), ImageMagick (`magick`) | the environment; `just status` names each missing command |
   | Install and dev prerequisites | `nix` with flakes; `direnv` optional | the developer |
 - **Entrypoints:** Justfile organised as a root file with
   `mod` declarations per area, so verbs are namespaced by
@@ -258,7 +632,7 @@ re-auth. Its shape differs from skills in two ways:
     [name]` (construct and structurally check every prompt
     without calling an agent; free).
     Browser-control MCP adds
-    `install-browser-mcp [agent] [kiro-sub]` /
+    `install-browser-mcp [agent]` /
     `uninstall-browser-mcp` / `status-browser-mcp` /
     `browser-mcp-allow <pattern>` (register/report the server
     + append allowlist patterns), plus `verify-browser-mcp`
@@ -266,9 +640,15 @@ re-auth. Its shape differs from skills in two ways:
   - **`kaimux::*`** (operate on the kaimux crate):
     `just kaimux::build` (release + copy to `dist/`),
     `just kaimux::test`, `just kaimux::integration`.
-  - **Install** at the root: `just install [agent] [kiro-sub]`
+  - **Memory** at the root: `just memory-store <path>`, `just
+    memory-harvest --to <dir> [--project <path-prefix>]`; `just status`
+    reports the store, its server and Claude's own memory. Each wraps a
+    `resources::*-memory*` verb over `build-tool memory`.
+  - **Install** at the root: `just install [agent]`
     (profile, then skills and browser MCP), `just uninstall`,
-    `just status`, `just rollback`, and the Macro test `just
+    `just status` (`--whole`: every part's list against each
+    harness), `just
+    rollback`, and the Macro test `just
     verify-install` / `just verify-install-paid` (both `[confirm]`-gated).
     Later installables (kaimux) join here. `./install [agent]` at the
     repo root is the same install for callers that only know a repo's
@@ -307,20 +687,33 @@ mAId/
 │   │   ├── src/lib.rs      module wiring + the pipeline doc comment
 │   │   ├── src/shared.rs   Agent, REGISTRY, roots — what every stage speaks
 │   │   ├── src/harness.rs  fixtures, the five kinds, prompts, invocation, verdicts
-│   │   ├── src/deploy.rs   the Deploy trait: Plugins (claude, codex) and Symlinks (kiro, agy)
+│   │   ├── src/deploy.rs   the Deploy trait: Plugins (claude, codex), Symlinks (kiro, agy), BringIns
+│   │   ├── src/part.rs     mAId's part list: the format and its one writer
+│   │   ├── src/whole.rs    whole-status: every part's list, checked against each harness
+│   │   ├── src/memory.rs   the personal store, personal-memory on claude, Claude's memory off
+│   │   ├── src/harvest.rs  copying each harness's own memory into a store dir
+│   │   ├── src/settings.rs Claude's user settings file, kept key for key
+│   │   ├── src/reads.rs    Claude's grants: mAId's skill files (additionalDirectories), skill state (allow)
 │   │   ├── src/stages.rs   content → check → install → smoke
 │   │   ├── tests/integration.rs  cross-stage tests against the real repo
-│   │   ├── tests/plugins.rs  ignored: Plugins against the real claude/codex CLIs in a temp HOME
-│   │   └── tests/no_cli.rs   install with no agent CLI on PATH keeps the old links
+│   │   ├── tests/plugins.rs  ignored: Plugins and BringIns against the real claude/codex CLIs in a temp HOME
+│   │   ├── tests/no_cli.rs   install with no agent CLI on PATH keeps the old links
+│   │   ├── tests/stops_on_list.rs  an unreadable part list stops install and uninstall, through the binary
+│   │   ├── tests/memory.rs   the memory verbs through the binary, temp HOME
+│   │   ├── tests/memory_install.rs  install's claude memory step, a stub claude, its part list
+│   │   ├── tests/conformance.rs  whole.rs against the conformance set
+│   │   ├── tests/conformance/  the whole-status conformance set, one dir per case
+│   │   └── tests/reads_install.rs   install's claude skill-reads step beside memory's
 │   ├── content/            the deployable skills (copied into the profile)
 │   │   ├── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
 │   │   ├── skills/kdevkit/  SKILL.md core + phases/, tiers/, setup.md, interviews.md
 │   │   └── skills/kyodakit/ SKILL.md: developer judgement, any language
 │   ├── browser/            browser-control MCP (not symlinked — runnable)
 │   │   ├── launch          allowlist-enforcing launcher; the flake wraps it as maid-browser-mcp
-│   │   └── manage          data-driven MCP registrar (MCP_AGENTS table: claude/codex global, kiro per-sub-agent)
+│   │   └── manage          data-driven MCP registrar (MCP_AGENTS table; every agent global, kiro by editing its config)
 │   └── tests/              fixtures + the attended browser test (the runner itself is in build-tool)
 │       ├── browser-functional   ATTENDED test: drives real Chrome, asserts off-list blocked
+│       ├── browser-mcp          free: kiro's browser MCP registration, temp HOME, stub CLIs
 │       ├── rollback             free: `just rollback` and install's generation cleanup, temp HOME
 │       ├── verify-install       the installable Macro test, on the real install (`just verify-install`)
 │       ├── conversational-stream.txt  the --stressed prefix
@@ -358,12 +751,29 @@ a fake `$HOME`, `--force` semantics per state, and deployment
 detection — the tests most sensitive to a symlink-layout regression —
 and, for `Plugins`, reading each CLI's listing, the commands each
 plugin state leads to, and reaping the links an older install left.
+`whole.rs` checks each (harness, kind) against a temp HOME and stub CLIs
+on a PATH it is handed, never the real ones, and `tests/conformance.rs`
+runs it, and the binary for the exit code, against every case of the
+conformance set (see "My harness").
 
 `cargo test -p build-tool --test plugins -- --ignored` drives the real
 claude and codex CLIs in a temp HOME (install, update, a disabled
-plugin, a codex marketplace whose dir is gone, uninstall). Free (no
-model calls) but needs both CLIs, so it is out of `just test`; run it
-after any change to `Plugins`.
+plugin, a codex marketplace whose dir is gone, uninstall), and the
+bring-ins: install and a no-op reinstall, uninstall keeping a marketplace
+another plugin uses, the user's own marketplace kept and not claimed, and
+an unreachable source failing the run. Free (no model calls) but needs
+both CLIs and network (it clones the vendor repo), so it is out of `just
+test`; run it after any change to `Plugins` or `BringIns`.
+
+`nix develop -c resources/tests/browser-mcp` drives
+`resources/browser/manage` for kiro in a temp HOME with stub `kiro-cli`
+and Chrome (free, seconds): other servers and keys in kiro's global
+config kept, reruns byte-identical, a same-named entry that is not
+mAId's left alone, a config that is not JSON left alone, a linked
+config kept a link with its mode through an atomic rename, a link
+cycle refused, uninstall with no `kiro-cli`, the part list's entries
+and whole-status reading them, and kiro-cli never run. Run it after
+any change to `manage`.
 
 `nix develop -c resources/tests/rollback` drives `just rollback` and
 install's generation cleanup against the real claude and codex CLIs in a
@@ -371,9 +781,16 @@ temp HOME and a temp profile (free, under a minute): rollback, an
 install whose build fails keeping the generations it would drop,
 rollback after rollback-then-install, an earlier generation the agents
 cannot take, no earlier generation, the 30-day cleanup keeping the
-previous install (also after an unchanged install), and rollback past a
-link mAId did not write.
-Run it after any change to the profile recipes.
+previous install (also after an unchanged install), rollback past a
+link mAId did not write, the part list install leaves (placed,
+skipped, the vendor marketplace, gone after uninstall), install and
+uninstall with no claude or codex on PATH keeping the bring-ins mAId's
+(a later uninstall still removes them), Claude's
+plugin-dir and config-dir grants (there after install, gone after uninstall), and `just
+status --whole` finding what mAId placed, then a second part's list beside
+it.
+It needs network for the vendor marketplace.
+Run it after any change to the profile recipes or the part list.
 
 **`just verify-install` is the installable Macro test**
 (`resources/tests/verify-install`), run on the real install: install
@@ -391,7 +808,8 @@ One test deliberately breaks the fake-`$HOME` pattern:
 `resources/content/`. Everything else here builds a synthetic tree, so
 without it the suite can be green while the content on disk is
 uninstallable — which is exactly what happened when two descriptions
-carried an unquoted `: ` (see "Writing a skill"). It reads only, so it
+carried an unquoted `: ` (see "Writing a skill"). It also fails a skill
+that points the runtime at the repo ("Skill state"). It reads only, so it
 keeps the no-side-effects property.
 
 **`just resources::check-skills` / `…::smoke-skills` — AI-tool
@@ -746,10 +1164,15 @@ slice.
 
 Not a service — consumed locally.
 `just install` validates content, builds the mAId profile, installs
-the claude/codex plugin and links kiro and agy at it (see
-Architecture); `just uninstall` reverses it and removes the profile;
+the claude/codex plugin and links kiro and agy at it, registers the
+vendor marketplaces it brings in (Architecture, "Bring-ins"), points
+`personal-memory` on the personal store and turns Claude's own automatic
+memory off (Architecture, "Memory"), lets Claude read mAId's skill files and read and write each skill's state
+dir (Architecture, "Skill reads", "Skill state"), and writes mAId's part list (see Architecture, "My harness");
+`just uninstall` reverses it, removing the list, and removes the profile;
 `just status` reports the generation, each plugin and
-each link; `just rollback` returns every agent to the previous install
+each link, and `just status --whole` checks every part's list against
+each harness; `just rollback` returns every agent to the previous install
 (no selector: the profile is shared). `just resources::verify-skills` drives the
 real AI tools against the installed content. Each takes an
 optional coding-agent selector (`claude|kiro|codex`; omit for all
@@ -758,9 +1181,9 @@ three). App workspace members (`kaimux/`) build via
 --release` + copy into `dist/`).
 
 The browser-control MCP is registered by `just install` too
-(env-gated): `just resources::install-browser-mcp [agent]
-[kiro-sub]`, which it calls, registers the server with each harness
-(claude/codex global; kiro per named sub-agent) and prints the
+(env-gated): `just resources::install-browser-mcp [agent]`, which
+it calls, registers the server globally with each harness (kiro in
+its global MCP config) and prints the
 one-time manual step (enable Chrome remote debugging via
 `chrome://inspect`). It graceful-skips where a prereq is missing
 (no GUI Chrome, no harness CLI) — never a
@@ -786,9 +1209,12 @@ the experience is symmetric across resource kinds.
   ad-hoc edit.
 - **No global state mutation** on install beyond what mAId
   owns: the mAId profile, its marketplace dir, the registry's links,
-  the `maid@maid` plugin and `maid` marketplace registrations, and
-  the MCP registrations. Never the user's default nix profile (a
-  home-manager may own it). The rust toolchain and `just` come
+  the `maid@maid` plugin and `maid` marketplace registrations, the
+  bring-in marketplaces and plugins it added, the MCP registrations, its
+  elements of Claude's settings (`env.CLAUDE_CODE_DISABLE_AUTO_MEMORY`, its
+  `additionalDirectories` element, its `Edit` rules on skill state dirs in
+  `permissions.allow`), and its own part list. Never the user's default
+  nix profile (a home-manager may own it). The rust toolchain and `just` come
   from the dev shell; `build-tool` is invoked through `cargo run
   -p build-tool` (wrapped by Just) from the checkout — no shim
   under `~/.local/bin`, no `cargo install` anywhere in the

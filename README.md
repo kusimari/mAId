@@ -50,12 +50,30 @@ Feature specs: [`specs/feature/`](./specs/feature/).
 every coding agent or one (`claude|kiro|codex|agy`):
 
 ```
-just install [agent] [kiro-sub]     # build the profile, point the agents at it (plugin or links)
-just uninstall [agent] [kiro-sub]   # remove the plugin, the links, the MCP registration, and (no agent) the profile
-just status [agent] [kiro-sub]      # profile generation, plugins, links, MCP registration
+just install [agent]                # build the profile, point the agents at it (plugin or links), register your memory server with claude
+just uninstall [agent]              # remove the plugin, the links, the MCP registration, and (no agent) the profile
+just status [agent]                 # profile generation, plugins, links, MCP registration, the memory store
+just status --whole [agent]         # what every part's list says it placed, checked on each harness
 just rollback                       # every agent back on the install before this one
 just verify-install                 # the end-to-end install test on this machine (free)
 just verify-install-paid            # the same, also asking each agent (9 model calls)
+```
+
+**Memory** (root) - your personal store is a git checkout you own.
+`just install` registers the memory server
+([pensieve](https://github.com/kusimari/pensieve)) with claude as
+`personal-memory`, bound to that store, and turns Claude's own automatic
+memory off so saves go to the server. With no store set, install says so,
+registers nothing, and, with claude on PATH, removes the memory-off value an
+earlier install set (Claude's own memory is then on, unless another part
+turned it off). Install never
+creates the store or writes into it. Put an `about.md` at its root: what belongs in this store
+and what does not, then a short profile. The server sends it to the agent
+as standing instructions; pensieve's README has the format.
+
+```
+just memory-store <path>                                 # set your personal store (an existing checkout); then `just install`
+just memory-harvest --to <dir> [--project <path-prefix>] # copy Claude's own memories (only those projects) into <dir>/memory/, leaving the originals
 ```
 
 Three more groups, namespaced by what they touch:
@@ -69,17 +87,22 @@ just resources::install-profile            # validate content + build the checko
 just resources::install-skills [agent]     # install or update the claude/codex plugin; link kiro (and agy) at the profile
 just resources::uninstall-skills [agent]   # remove the plugin and the links
 just resources::status-skills [agent]      # report each plugin's version and each link
+just resources::status-whole [agent]       # check every part's list against each harness
 just resources::check-skills [agent]      # pre-install: verify each skill from the checkout (costs API credits, gated)
 just resources::smoke-skills [agent]      # post-install: verify against the deployed tree (gated)
 just resources::verify-skills [agent]     # both stages
 just resources::verify-skills-one <name> [agent]   # single fixture, both stages
 just resources::verify-skills-dry [name]  # construct + structurally check every prompt; free
 
-just resources::install-browser-mcp [agent] [kiro-sub]     # register the browser-control MCP server (claude/codex global; kiro into the named sub-agent)
-just resources::uninstall-browser-mcp [agent] [kiro-sub]   # remove it (keeps your allowlist)
-just resources::status-browser-mcp [agent] [kiro-sub]      # report registration state + allowlist size
+just resources::install-browser-mcp [agent]               # register the browser-control MCP server (globally, for each agent)
+just resources::uninstall-browser-mcp [agent]             # remove it (keeps your allowlist)
+just resources::status-browser-mcp [agent]                # report registration state + allowlist size
 just resources::browser-mcp-allow <pattern>               # append a site pattern to the allowlist
-just resources::verify-browser-mcp [claude|kiro|codex] [kiro-sub]   # ATTENDED: drives real Chrome (run by hand)
+just resources::verify-browser-mcp [claude|kiro|codex] [kiro-agent]   # ATTENDED: drives real Chrome (run by hand)
+
+just resources::set-memory-store <path>                     # what `just memory-store` wraps
+just resources::status-memory                               # the store, its server on claude, and Claude's own memory
+just resources::harvest-memory --to <dir> [--project <p>]   # what `just memory-harvest` wraps
 ```
 
 **`kaimux::*`** — operate on the kaimux crate:
@@ -215,15 +238,11 @@ Three things to know before first use:
    logged-in site. Edit it directly or use
    `resources::browser-mcp-allow '<pattern>'`; changes take
    effect on the next session — Chrome is not restarted.
-3. **Kiro is per-agent.** Claude and codex expose a registered
-   server to every session, so no agent is named. Kiro partitions
-   MCP servers per agent and `kiro-cli chat` runs a specific agent
-   — so name the sub-agent to register into:
-   `just install kiro <kiro-sub>`. Omit it
-   and kiro is skipped (claude and codex still install). mAId
-   never guesses which of your agents to write into. Use the
-   *same* sub-agent name when testing:
-   `… verify-browser-mcp kiro <kiro-sub>`.
+3. **Kiro reads it from its global MCP config.** mAId adds
+   `chrome-devtools` to `~/.kiro/settings/mcp.json` and touches no
+   other entry there. A kiro agent sees it when it pulls in the
+   global config (kiro's default agent does). If that file already
+   has a `chrome-devtools` that is not mAId's, mAId leaves it alone.
 
 The `browser` skill teaches the agent the safe driving loop and
 the attended-use safety posture. `uninstall-browser-mcp` removes

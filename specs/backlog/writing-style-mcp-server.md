@@ -22,9 +22,9 @@ Tools the server would expose:
 - `list_pending()` — lists current `## Learned rules`
   entries with proposed target sections.
 - `promote_rule(entry_id, target_section)` — atomically
-  edits the body section and removes the learned-rules
-  entry. Returns the new SKILL.md sha so callers can
-  detect concurrent edits.
+  moves the entry from `## Learned rules` to `## Promoted
+  rules` in the user's rules file. Never touches
+  `SKILL.md`.
 
 ## Why
 

@@ -1,0 +1,22 @@
+{
+  "about": "a list that cannot be read is refused, and only it",
+  "modes": {
+    "parts/locked.json": "000"
+  },
+  "expect": {
+    "exit": 1,
+    "entries": [
+      {
+        "harness": "agy",
+        "part": "good",
+        "kind": "skill",
+        "name": "s",
+        "state": "skipped"
+      }
+    ],
+    "refused": [
+      "dir.json",
+      "locked.json"
+    ]
+  }
+}

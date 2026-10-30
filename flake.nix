@@ -8,9 +8,15 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # The memory MCP server. Pinned from a local checkout until it is
+    # published; re-pin to the published commit before any PR.
+    pensieve = {
+      url = "git+file:///local/home/gorantls/tool-workplace/ai-workspace/pensieve?rev=556cab36b5a93d3692c42ff65e8f45b8a01633e7";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, rust-overlay }:
+  outputs = { self, nixpkgs, flake-utils, rust-overlay, pensieve }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -39,6 +45,8 @@
               --set CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS 1
           '';
         };
+
+        pensieveServer = pensieve.packages.${system}.default;
 
         maid-browser-mcp = pkgs.writeShellApplication {
           name = "maid-browser-mcp";
@@ -100,6 +108,7 @@
             sed -i "s/@version@/1.0.0-$hash/" $p/.claude-plugin/plugin.json $p/.codex-plugin/plugin.json
             ln -s marketplace/plugins/maid/skills $out/share/maid/skills
             ln -s ${maid-browser-mcp}/bin/maid-browser-mcp $out/bin/maid-browser-mcp
+            ln -s ${pensieveServer}/bin/pensieve $out/bin/pensieve
           '';
         };
 
@@ -107,7 +116,7 @@
           buildInputs = [
             rustToolchain
             pkgs.just
-            pkgs.jq # the install tests read the agents' JSON
+            pkgs.jq # the install tests read the agents' JSON; install edits kiro's MCP config
           ];
         };
       }

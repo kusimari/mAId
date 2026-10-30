@@ -17,7 +17,11 @@ use crate::harness::{
     Assertion, Authority, Fixture, Kind as TestKind, Outcome, Plan, Reach, Selection, Skipped,
     Stage, Stress, Verdict, KIRO_READONLY_AGENT, KIRO_READONLY_NAME,
 };
-use crate::shared::{checkout_skill, usage, Agent};
+use crate::harvest;
+use crate::memory;
+use crate::part::{self, Item, What};
+use crate::reads;
+use crate::shared::{checkout_skill, on_path, usage, Agent};
 use anyhow::{anyhow, Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -33,21 +37,85 @@ use std::path::{Path, PathBuf};
 /// files or the joined error list. Caller decides whether to print or
 /// abort.
 pub fn check_content(content_dir: &Path) -> Result<usize, Vec<String>> {
-    // Walk every skill, partition into (oks, errs), and report the Ok
-    // count or the FULL error list — matching on the partitioned tuple
-    // so there's no intermediate binding but all errors are still kept.
-    match fs::read_dir(content_dir.join("skills"))
+    let skills: Vec<PathBuf> = fs::read_dir(content_dir.join("skills"))
         .into_iter()
         .flatten()
         .filter_map(Result::ok)
-        .map(|entry| entry.path().join("SKILL.md"))
-        .filter(|p| p.exists())
-        .map(|p| check_one_skill(&p))
-        .partition::<Vec<_>, _>(Result::is_ok)
-    {
-        (oks, errs) if errs.is_empty() => Ok(oks.len()),
-        (_, errs) => Err(errs.into_iter().map(Result::unwrap_err).collect()),
+        .map(|entry| entry.path())
+        .filter(|dir| dir.join("SKILL.md").exists())
+        .collect();
+    let errs: Vec<String> = skills
+        .iter()
+        .flat_map(|dir| {
+            check_one_skill(&dir.join("SKILL.md"))
+                .err()
+                .into_iter()
+                .chain(repo_pointers(dir))
+        })
+        .collect();
+    match errs.is_empty() {
+        true => Ok(skills.len()),
+        false => Err(errs),
     }
+}
+
+/// Text that sends an installed session to the mAId repo, which it never
+/// has (see project.md "Skill state"). Matched lowercased.
+const REPO_POINTERS: [&str; 4] = [
+    "resources/content/",
+    "maid checkout",
+    "just install",
+    "just resources::",
+];
+
+/// Every line of every `.md` file in a skill dir, modules included, that
+/// names one of `REPO_POINTERS`.
+fn repo_pointers(skill_dir: &Path) -> Vec<String> {
+    md_files(skill_dir)
+        .into_iter()
+        .flat_map(|p| match fs::read_to_string(&p) {
+            Err(e) => vec![format!("{}: cannot read: {e}", p.display())],
+            Ok(text) => text
+                .lines()
+                .enumerate()
+                .filter_map(|(n, line)| {
+                    let line = line.to_lowercase();
+                    REPO_POINTERS
+                        .iter()
+                        .find(|pat| line.contains(*pat))
+                        .map(|pat| {
+                            format!(
+                                "{}:{}: points the installed skill at the repo ({pat})",
+                                p.display(),
+                                n + 1
+                            )
+                        })
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+fn md_files(dir: &Path) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        // The entry's own type, so a linked dir is not followed into a cycle.
+        .flat_map(|e| match e.file_type().is_ok_and(|t| t.is_dir()) {
+            true => md_files(&e.path()),
+            false => {
+                let p = e.path();
+                p.extension()
+                    .is_some_and(|x| x == "md")
+                    .then_some(p)
+                    .into_iter()
+                    .collect()
+            }
+        })
+        .collect();
+    found.sort();
+    found
 }
 
 /// Validate one SKILL.md: readable, `---`-fenced YAML frontmatter, and
@@ -96,6 +164,7 @@ pub fn cmd_validate(content_dir: &Path) -> Result<u8> {
 pub fn cmd_install(
     target: &impl Deploy,
     content_dir: &Path,
+    parts: &Path,
     dry_run: bool,
     force: bool,
     agent: Option<Agent>,
@@ -107,16 +176,347 @@ pub fn cmd_install(
         ));
     }
     cmd_validate(content_dir)?;
-    outcome(target.install(agent, dry_run, force)?, dry_run, false)
+    // Recorded even when install stops partway: the list says what is there.
+    let done = target.install(agent, dry_run, force);
+    let recorded = match dry_run {
+        true => Ok(()),
+        false => record_placed(target, parts, agent, |_| true),
+    };
+    let rc = outcome(
+        done.inspect_err(|_| warn_unrecorded(&recorded))?,
+        dry_run,
+        false,
+    )?;
+    recorded.map(|()| rc)
 }
 
 pub fn cmd_uninstall(
     target: &impl Deploy,
+    parts: &Path,
     dry_run: bool,
     force: bool,
     agent: Option<Agent>,
 ) -> Result<u8> {
-    outcome(target.uninstall(agent, dry_run, force)?, dry_run, true)
+    let done = target.uninstall(agent, dry_run, force);
+    // What uninstall did not reach is still there; a skip is not.
+    let recorded = match dry_run {
+        true => Ok(()),
+        false => record_placed(target, parts, agent, |i| i.skipped.is_none()),
+    };
+    let rc = outcome(
+        done.inspect_err(|_| warn_unrecorded(&recorded))?,
+        dry_run,
+        true,
+    )?;
+    recorded.map(|()| rc)
+}
+
+/// The step's own error is returned; a part-list failure beside it is
+/// still said.
+fn warn_unrecorded(recorded: &Result<()>) {
+    if let Err(e) = recorded {
+        eprintln!("build-tool: part list not updated: {e:#}");
+    }
+}
+
+/// What `Deploy` places; the browser MCP is recorded by its own script.
+const DEPLOYED_KINDS: &[What] = &[What::Skill, What::Plugin, What::Marketplace];
+
+/// Write what the target reports placed into the part list, for each
+/// selected agent.
+fn record_placed(
+    target: &impl Deploy,
+    parts: &Path,
+    agent: Option<Agent>,
+    keep: impl Fn(&Item) -> bool,
+) -> Result<()> {
+    let placed = target.placed(agent)?;
+    for &a in Agent::ALL
+        .iter()
+        .filter(|a| agent.is_none_or(|sel| sel == **a))
+    {
+        let items = placed
+            .iter()
+            .filter(|(g, i)| *g == a && keep(i))
+            .map(|(_, i)| i.clone())
+            .collect();
+        part::record(parts, a, DEPLOYED_KINDS, None, items)?;
+    }
+    Ok(())
+}
+
+/// Record one kind of entry on one agent in the part list, for a step
+/// outside `Deploy` (the browser MCP). No names clears that kind.
+pub fn cmd_record(
+    parts: &Path,
+    agent: Agent,
+    kind: What,
+    scope: Option<&str>,
+    skipped: Option<&str>,
+    only: Option<&str>,
+    names: &[String],
+) -> Result<u8> {
+    // Each setting is owned by the step that writes it, with its value.
+    if kind == What::Setting {
+        return Err(usage("a setting is recorded by the step that sets it"));
+    }
+    let items = names
+        .iter()
+        .map(|n| Item {
+            scope: scope.map(str::to_string),
+            skipped: skipped.map(str::to_string),
+            ..Item::placed(kind, n)
+        })
+        .collect();
+    match only {
+        Some(name) if names.iter().any(|n| n != name) => {
+            return Err(usage(format!("--only {name} records that name only")))
+        }
+        Some(name) => part::record_named(parts, agent, kind, scope, name, items)?,
+        None => part::record(parts, agent, &[kind], scope, items)?,
+    }
+    Ok(0)
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Memory — the personal store's server, Claude's own memory, harvest.
+// ─────────────────────────────────────────────────────────────────
+
+/// The profile's memory server.
+fn launcher(profile: &Path) -> PathBuf {
+    profile.join("bin/pensieve")
+}
+
+/// Install's claude memory step: register `personal-memory` on the
+/// personal store, turn Claude's own automatic memory off, and take away
+/// the memory dir an older mAId set. Each is recorded in the part list.
+pub fn cmd_install_memory(
+    home: &Path,
+    store_file: &Path,
+    profile: &Path,
+    parts: &Path,
+    dry_run: bool,
+    agent: Option<Agent>,
+) -> Result<u8> {
+    if agent.is_some_and(|a| a != Agent::Claude) {
+        return Ok(0);
+    }
+    let cli_present = on_path(Agent::Claude.cli());
+    let store = memory::store(store_file)?;
+    let launcher = launcher(profile);
+    let plan = memory::ServerPlan {
+        launcher: &launcher,
+        store: store.as_deref(),
+        claimed: part::placed_by_others(parts, Agent::Claude, What::Mcp, memory::SERVER),
+        cli_present,
+    };
+    let memory::ServerOutcome {
+        out: server,
+        failed,
+    } = memory::install_server(home, &plan, dry_run)?;
+    println!("{}", server.line);
+    let registered = server.item.as_ref().is_some_and(|i| i.skipped.is_none());
+    let off = memory::install_off(home, &ownership(parts)?, registered, cli_present, dry_run)?;
+    println!("{}", off.line);
+    let legacy = legacy_setting(home, parts, dry_run)?;
+    if !dry_run {
+        // mAId owns only what it recorded, so an unrecorded change is the user's to undo.
+        let unrecorded =
+            |what: &str| format!("claude {what} may be set but is not recorded; check it by hand");
+        part::record_named(
+            parts,
+            Agent::Claude,
+            What::Mcp,
+            None,
+            memory::SERVER,
+            server.item.into_iter().collect(),
+        )
+        .with_context(|| unrecorded(memory::SERVER))?;
+        part::record_setting(parts, Agent::Claude, memory::SETTING, off.item)
+            .with_context(|| unrecorded(memory::SETTING))?;
+        if legacy {
+            part::record_setting(parts, Agent::Claude, memory::LEGACY_SETTING, None)?;
+        }
+    }
+    Ok(u8::from(failed))
+}
+
+pub fn cmd_uninstall_memory(
+    home: &Path,
+    profile: &Path,
+    parts: &Path,
+    dry_run: bool,
+    agent: Option<Agent>,
+) -> Result<u8> {
+    if agent.is_some_and(|a| a != Agent::Claude) {
+        return Ok(0);
+    }
+    let memory::ServerOutcome {
+        out: server,
+        failed,
+    } = memory::uninstall_server(
+        home,
+        &launcher(profile),
+        part::placed_by_others(parts, Agent::Claude, What::Mcp, memory::SERVER),
+        on_path(Agent::Claude.cli()),
+        dry_run,
+    )?;
+    println!("{}", server.line);
+    let off = memory::uninstall_off(home, &ownership(parts)?, dry_run)?;
+    println!("{}", off.line);
+    let legacy = legacy_setting(home, parts, dry_run)?;
+    if !dry_run {
+        part::record_named(
+            parts,
+            Agent::Claude,
+            What::Mcp,
+            None,
+            memory::SERVER,
+            server.item.into_iter().collect(),
+        )?;
+        part::record_setting(parts, Agent::Claude, memory::SETTING, None)?;
+        if legacy {
+            part::record_setting(parts, Agent::Claude, memory::LEGACY_SETTING, None)?;
+        }
+    }
+    Ok(u8::from(failed))
+}
+
+/// Remove the memory dir an older mAId set, while it is the value mAId
+/// recorded. Whether the part list holds an entry for it to clear: one
+/// recorded as skipped has no value and nothing to remove, but still goes.
+fn legacy_setting(home: &Path, parts: &Path, dry_run: bool) -> Result<bool> {
+    let Some(item) = part::recorded(parts, Agent::Claude, What::Setting, memory::LEGACY_SETTING)?
+    else {
+        return Ok(false);
+    };
+    if let Some(line) = memory::remove_legacy(home, item.value.as_deref(), dry_run)? {
+        println!("{line}");
+    }
+    Ok(true)
+}
+
+/// Install's claude step for reading mAId's skill files and the user's
+/// skill state: grant mAId's plugin dir and config dir, and record each
+/// element.
+pub fn cmd_install_reads(
+    home: &Path,
+    profile: &Path,
+    config: &Path,
+    parts: &Path,
+    dry_run: bool,
+    agent: Option<Agent>,
+) -> Result<u8> {
+    if agent.is_some_and(|a| a != Agent::Claude) {
+        return Ok(0);
+    }
+    for grant in [reads::plugin_grant(profile), reads::config_grant(config)] {
+        let setting = grant.list.setting();
+        let out = reads::install_claude(
+            home,
+            &grant,
+            &recorded_settings(parts, setting)?,
+            &part::claimed_by_others(parts, Agent::Claude, setting),
+            on_path(Agent::Claude.cli()),
+            dry_run,
+        )?;
+        out.lines.iter().for_each(|l| println!("{l}"));
+        if !dry_run {
+            part::record_named(parts, Agent::Claude, What::Setting, None, setting, out.items)
+                .with_context(|| {
+                    format!(
+                        "claude {setting} may hold mAId's elements but they are not recorded; check it by hand"
+                    )
+                })?;
+        }
+    }
+    Ok(0)
+}
+
+/// Uninstall's claude step for skill reads and skill state: remove mAId's
+/// recorded elements only.
+pub fn cmd_uninstall_reads(
+    home: &Path,
+    parts: &Path,
+    dry_run: bool,
+    agent: Option<Agent>,
+) -> Result<u8> {
+    if agent.is_some_and(|a| a != Agent::Claude) {
+        return Ok(0);
+    }
+    for list in reads::List::ALL {
+        let setting = list.setting();
+        let own = recorded_settings(parts, setting)?;
+        reads::uninstall_claude(home, list, &own, dry_run)?
+            .iter()
+            .for_each(|l| println!("{l}"));
+        if !dry_run {
+            part::record_setting(parts, Agent::Claude, setting, None)?;
+        }
+    }
+    Ok(0)
+}
+
+/// Every element of the list setting `name` mAId's part list records
+/// placed on claude.
+fn recorded_settings(parts: &Path, name: &str) -> Result<Vec<Item>> {
+    Ok(part::placed(parts, Agent::Claude)?
+        .into_iter()
+        .filter(|i| i.kind == What::Setting && i.name == name)
+        .collect())
+}
+
+/// The setting `name` as mAId's part list records it placed on claude.
+fn recorded_setting(parts: &Path, name: &str) -> Result<Option<Item>> {
+    Ok(part::placed(parts, Agent::Claude)?
+        .into_iter()
+        .find(|i| i.kind == What::Setting && i.name == name))
+}
+
+/// What mAId owns of Claude's automatic-memory setting: what its part list
+/// says it set or adopted.
+fn ownership(parts: &Path) -> Result<memory::Ownership> {
+    let item = recorded_setting(parts, memory::SETTING)?;
+    Ok(memory::Ownership {
+        adopted: item.as_ref().is_some_and(|i| i.adopted),
+        recorded: item.and_then(|i| i.value),
+        claimed: part::claimed_by_others(parts, Agent::Claude, memory::SETTING),
+    })
+}
+
+pub fn cmd_memory_status(
+    home: &Path,
+    store_file: &Path,
+    profile: &Path,
+    parts: &Path,
+) -> Result<u8> {
+    let store = memory::store(store_file)?;
+    memory::status(
+        home,
+        store.as_deref(),
+        &launcher(profile),
+        &ownership(parts)?,
+    )?
+    .iter()
+    .for_each(|l| println!("{l}"));
+    Ok(0)
+}
+
+/// Copy each harness's native memory into `<to>/memory/`. Refuses, before
+/// writing anything, a `to` that is not a directory.
+pub fn cmd_harvest(home: &Path, codex_home: &Path, to: &Path, project: Option<&str>) -> Result<u8> {
+    if !to.is_dir() {
+        return Err(usage(format!(
+            "{} is not a directory; clone the store first",
+            to.display()
+        )));
+    }
+    println!("harvest  into {}", to.join("memory").display());
+    harvest::harvest(home, codex_home, to, project)?
+        .lines()
+        .iter()
+        .for_each(|l| println!("{l}"));
+    Ok(0)
 }
 
 pub fn cmd_status(target: &impl Deploy, agent: Option<Agent>) -> Result<u8> {
@@ -181,6 +581,13 @@ fn outcome_line(report: &crate::deploy::Report, dry_run: bool, removing: bool) -
         (State::Unreadable(why), _) => {
             skipped += 1;
             format!("{tag}skip          {at} (unreadable: {why})")
+        }
+        (State::Failed(why), _) => {
+            skipped += 1;
+            format!("{tag}FAILED        {at} ({why})")
+        }
+        (State::InUse, _) => {
+            format!("{tag}skip          {at} (in use by a plugin not mAId's; kept)")
         }
         (State::Current(_) | State::Stale { .. } | State::Disabled { .. }, true) if removing => {
             format!("{tag}removed       {at}")
@@ -481,35 +888,30 @@ fn execute(plan: &Plan, judge: Option<Agent>) -> Outcome {
         return Outcome::Fail(format!("{} required but not on PATH", plan.agent.name()));
     }
     match &plan.assertion {
-        Assertion::Behavioral { setup, assert } => {
-            run_behavioral(plan.agent, &plan.prompt, setup, assert, &plan.name)
-        }
+        Assertion::Behavioral { setup, assert } => run_behavioral(plan, setup, assert),
         Assertion::Reply {
             substr,
             narrative,
             seed,
         } => run_reply(
-            plan.agent,
-            &plan.prompt,
+            plan,
             substr.as_deref(),
             narrative.as_deref(),
             seed.as_deref(),
             judge,
-            &plan.name,
         ),
     }
 }
 
 /// Drive an agent read-only and score its reply.
 fn run_reply(
-    agent: Agent,
-    prompt: &str,
+    plan: &Plan,
     substr: Option<&str>,
     narrative: Option<&str>,
     seed: Option<&str>,
     judge: Option<Agent>,
-    label: &str,
 ) -> Outcome {
+    let (agent, prompt, label) = (plan.agent, plan.prompt.as_str(), plan.name.as_str());
     // A scratch cwd, so a relative path in the prompt cannot reach the
     // checkout the runner was started from.
     let Ok(scratch) = tempfile::TempDir::new() else {
@@ -562,12 +964,12 @@ fn run_reply(
 /// broke: asserts are silent `test`/`grep -q` under `set -e`, so without
 /// the trace every behavioral failure read "assert failed" with nothing
 /// after it — undiagnosable without hand-reproducing the fixture.
-fn run_behavioral(agent: Agent, prompt: &str, setup: &str, assert: &str, label: &str) -> Outcome {
+fn run_behavioral(plan: &Plan, setup: &str, assert: &str) -> Outcome {
+    let (agent, prompt, label) = (plan.agent, plan.prompt.as_str(), plan.name.as_str());
     let Ok(work) = tempfile::TempDir::new() else {
         return Outcome::Fail("could not create scratch workdir".into());
     };
     let dir = work.path();
-
     if let Err(e) = shell(setup, dir) {
         return Outcome::Fail(format!("setup failed: {e}"));
     }
@@ -756,14 +1158,169 @@ mod tests {
         assert_eq!(check_content(dir.path()).unwrap(), 1);
     }
 
+    /// A profile with one valid skill, its home, and a parts dir.
+    fn installable() -> (TempDir, crate::deploy::Symlinks, PathBuf) {
+        let dir = TempDir::new().unwrap();
+        write(
+            &dir.path().join("profile/share/maid/skills/notes/SKILL.md"),
+            "---\nname: notes\ndescription: d\n---\nbody.\n",
+        );
+        let target = crate::deploy::Symlinks {
+            home: dir.path().join("home"),
+            source: dir.path().join("profile"),
+        };
+        let parts = dir.path().join("parts");
+        (dir, target, parts)
+    }
+
+    fn content(dir: &TempDir) -> PathBuf {
+        dir.path().join("profile/share/maid")
+    }
+
+    #[test]
+    fn install_writes_the_part_list_and_uninstall_removes_it() {
+        let (dir, target, parts) = installable();
+        cmd_install(&target, &content(&dir), &parts, false, false, None).unwrap();
+        let text = fs::read_to_string(part::path(&parts)).unwrap();
+        for harness in ["kiro-cli", "agy"] {
+            assert!(text.contains(&format!("\"{harness}\"")), "{text}");
+        }
+        assert!(text.contains(r#""name": "notes""#), "{text}");
+        cmd_uninstall(&target, &parts, false, false, None).unwrap();
+        assert!(!part::path(&parts).exists());
+    }
+
+    /// Installs into kiro, then fails before the rest.
+    struct Partway;
+
+    impl Deploy for Partway {
+        fn install(
+            &self,
+            _: Option<Agent>,
+            _: bool,
+            _: bool,
+        ) -> Result<Vec<crate::deploy::Report>> {
+            Err(anyhow!("codex plugin install failed"))
+        }
+        fn uninstall(
+            &self,
+            _: Option<Agent>,
+            _: bool,
+            _: bool,
+        ) -> Result<Vec<crate::deploy::Report>> {
+            unreachable!()
+        }
+        fn status(&self, _: Option<Agent>) -> Result<Vec<crate::deploy::Report>> {
+            unreachable!()
+        }
+        fn is_deployed(&self, _: Agent) -> bool {
+            unreachable!()
+        }
+        fn placed(&self, _: Option<Agent>) -> Result<Vec<(Agent, Item)>> {
+            Ok(vec![(Agent::Kiro, Item::placed(What::Skill, "notes"))])
+        }
+    }
+
+    #[test]
+    fn an_install_that_stops_partway_records_what_it_placed() {
+        let (dir, _, parts) = installable();
+        let err = cmd_install(&Partway, &content(&dir), &parts, false, false, None).unwrap_err();
+        assert!(err.to_string().contains("codex"), "{err}");
+        let text = fs::read_to_string(part::path(&parts)).unwrap();
+        assert!(text.contains(r#""name": "notes""#), "{text}");
+    }
+
+    #[test]
+    fn a_dry_run_writes_no_part_list() {
+        let (dir, target, parts) = installable();
+        cmd_install(&target, &content(&dir), &parts, true, false, None).unwrap();
+        assert!(!parts.exists());
+    }
+
+    #[test]
+    fn record_refuses_a_setting_and_writes_nothing() {
+        let dir = TempDir::new().unwrap();
+        let parts = dir.path().join("parts");
+        let err = cmd_record(
+            &parts,
+            Agent::Claude,
+            What::Setting,
+            None,
+            None,
+            None,
+            &["k".into()],
+        )
+        .unwrap_err();
+        assert!(
+            err.downcast_ref::<crate::shared::UsageError>().is_some(),
+            "{err}"
+        );
+        assert!(!parts.exists());
+    }
+
+    #[test]
+    fn record_only_replaces_that_name_and_keeps_the_kinds_others() {
+        let dir = TempDir::new().unwrap();
+        let parts = dir.path().join("parts");
+        let rec = |only, names: &[&str]| {
+            let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+            cmd_record(&parts, Agent::Claude, What::Mcp, None, None, only, &names)
+        };
+        rec(Some("personal-memory"), &["personal-memory"]).unwrap();
+        rec(Some("chrome-devtools"), &["chrome-devtools"]).unwrap();
+        rec(Some("chrome-devtools"), &[]).unwrap();
+        let names: Vec<_> = part::placed(&parts, Agent::Claude)
+            .unwrap()
+            .into_iter()
+            .map(|i| i.name)
+            .collect();
+        assert_eq!(names, ["personal-memory"]);
+        assert!(rec(Some("a"), &["b"]).is_err());
+    }
+
+    #[test]
+    fn uninstall_drops_a_skip_but_keeps_what_is_still_there() {
+        let (dir, target, parts) = installable();
+        cmd_record(
+            &parts,
+            Agent::Kiro,
+            What::Mcp,
+            Some("s"),
+            None,
+            None,
+            &["m".into()],
+        )
+        .unwrap();
+        // agy's skills dir is the user's, so install skips it.
+        write(&dir.path().join("home/.gemini/config/skills/x"), "mine");
+        cmd_install(&target, &content(&dir), &parts, false, false, None).unwrap();
+        assert!(fs::read_to_string(part::path(&parts))
+            .unwrap()
+            .contains("skipped"));
+        cmd_uninstall(&target, &parts, false, false, None).unwrap();
+        let text = fs::read_to_string(part::path(&parts)).unwrap();
+        assert!(
+            !text.contains("skipped") && !text.contains("notes"),
+            "{text}"
+        );
+        assert!(text.contains(r#""name": "m""#), "{text}");
+    }
+
     /// A missing tree validates as zero files, so without the guard an
     /// install with no profile would link every agent at nothing.
     #[test]
     fn install_without_a_profile_names_the_fix() {
         let dir = TempDir::new().unwrap();
-        let err = cmd_install(&crate::deploy::NoDeploy, dir.path(), false, false, None)
-            .unwrap_err()
-            .to_string();
+        let err = cmd_install(
+            &crate::deploy::NoDeploy,
+            dir.path(),
+            dir.path(),
+            false,
+            false,
+            None,
+        )
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("just install"), "{err}");
     }
 
@@ -804,6 +1361,51 @@ mod tests {
             "---\nname: multi\ndescription: a multi-file skill\n---\nbody.\n",
         );
         write(&skill_dir.join("setup.md"), "# Plain markdown.\n");
+        assert_eq!(check_content(dir.path()).unwrap(), 1);
+    }
+
+    #[test]
+    fn check_content_flags_repo_pointers_in_skill_md_and_modules() {
+        let dir = TempDir::new().unwrap();
+        let skill = dir.path().join("skills/foo");
+        write(
+            &skill.join("SKILL.md"),
+            "---\nname: foo\ndescription: bar\n---\nok\nIn a mAId Checkout, edit it.\n",
+        );
+        write(
+            &skill.join("phases/a.md"),
+            "x\nsee resources/content/skills/foo\n",
+        );
+        write(&skill.join("b.md"), "then run `just install`\n");
+        write(
+            &skill.join("c.md"),
+            "or `just resources::browser-mcp-allow`\n",
+        );
+        write(&skill.join("notes.txt"), "just install\n");
+        let errs = check_content(dir.path()).unwrap_err();
+        let at = |f: &str, n: usize| format!("{}:{n}:", skill.join(f).display());
+        assert_eq!(errs.len(), 4, "{errs:?}");
+        for (e, (f, n, pat)) in errs.iter().zip([
+            ("SKILL.md", 6, "maid checkout"),
+            ("b.md", 1, "just install"),
+            ("c.md", 1, "just resources::"),
+            ("phases/a.md", 2, "resources/content/"),
+        ]) {
+            assert!(e.starts_with(&at(f, n)) && e.contains(pat), "{e}");
+        }
+    }
+
+    #[test]
+    fn check_content_passes_a_skill_naming_no_repo_path() {
+        let dir = TempDir::new().unwrap();
+        let skill = dir.path().join("skills/foo");
+        write(
+            &skill.join("SKILL.md"),
+            "---\nname: foo\ndescription: bar\n---\nInstall the content, then check out a branch.\n",
+        );
+        write(&skill.join("phases/a.md"), "the user's own config\n");
+        // A linked dir is not walked, so a cycle ends.
+        std::os::unix::fs::symlink(&skill, skill.join("phases/loop")).unwrap();
         assert_eq!(check_content(dir.path()).unwrap(), 1);
     }
 

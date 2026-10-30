@@ -1,0 +1,233 @@
+{
+  "about": "a claude agent's name is the first column-0 name: line of its frontmatter, comment cut, trimmed, one pair of quotes removed; no name names nothing; a BOM or bad UTF-8 is unreadable by the file's stem; a name found elsewhere wins over that",
+  "expect": {
+    "exit": 1,
+    "entries": [
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "plain",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "commented",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "double",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "single",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "dq-comment",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "\"mixed'",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "outer",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "inner",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "nested-only",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "deep",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "crlf",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "yes",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "123",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "padded",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "tight",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "a#b",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "hidden",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "noframe",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "unclosed",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "late",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "after",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "first",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "second",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "upper",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "bom",
+        "state": "unreadable"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "badutf8",
+        "state": "unreadable"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "dup",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "dir",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "tabbed",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "kept ",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "kept",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "linked",
+        "state": "present"
+      }
+    ],
+    "refused": []
+  }
+}

@@ -734,8 +734,3 @@ during dev, not reactively at review.
 New content goes where its trigger lives — see "Where new content
 goes" at the top of this file. Phase-specific rules land in that
 phase's module, not here.
-
-## Session Log
-
-<!-- Newest at top. Observations during sessions; promote durable
-     ones into the body above at wrap-up. -->
