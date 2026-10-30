@@ -509,3 +509,12 @@ this initiative.
 - Ruling (user, 2026-10-30): "For any persona part" lists what a persona
   repo does to join the ghost, and the fold-back stream copies it into
   project.md so it can be followed without reading this spec.
+- Ruling (ringmaster, stream 1 planning): the harness map is derived on
+  every call, not generated and stored at install · why: a part that
+  installs later cannot regenerate a stored map without depending on the
+  core · cost if wrong: add a write step; the shape is the same
+- Ruling (ringmaster, stream 1 planning): the contract namespace in every
+  standard's slot is `my-harness`; mAId's persona is `personal`; a part
+  list keeps format 1 with `persona` and `bring_ins` added · why: one
+  generic namespace, and every reader already ignores unknown keys · cost
+  if wrong: renaming keys before any third-party unit carries them
