@@ -305,11 +305,71 @@ bring-ins without either part depending on the other. Without the personal
 part installed, the work part's bring-ins still work as plain units; only
 the core's behaviour (session picture, turn fit, reflection) is absent.
 
+### Entry points, carriers and on-demand use
+
+The core is a small set of **entry points**, each carrier-neutral: input is
+plain data (session id, prompt, location, the work's record), output is
+blocks, each with a hash and an "as of" marker. Every way of reaching the
+core calls the same entry point, so a hook and an on-demand call never
+drift apart.
+
+| Entry point | Does |
+|---|---|
+| `picture` | the session picture: personas, session and turn bring-ins, environment, pending |
+| `turn` | turn fit, selector, reinforcement: the turn context for this prompt |
+| `close-record` | marks a session as ended and unreflected |
+| `pack` | a session, from a session source, into a bundle |
+| `reflect` | bundle + harness map -> findings -> decision batch -> route -> ledger |
+
+Three **carrier kinds** reach them, declared per base harness in a
+**carrier profile** in the harness map:
+
+- **append**: what the carrier adds stays in history (coding CLI hooks).
+  Here a block is sent only when its hash changed.
+- **transient**: added to one model call and not kept (framework
+  middleware, context processors). Here the turn context can be re-sent
+  whole on every call.
+- **on demand**: the agent or the user calls the core: MCP tools, MCP
+  resources and prompts (the picture and the turn context are always
+  offered this way too), the reflection skill, a CLI. Works in any host,
+  needs no hook trust and no app change, but does not guarantee it runs:
+  the picture arrives after the first call and recall only when asked.
+
+**Delivery is recorded per session id**, supplied by the adapter or the
+caller, so a hook and an on-demand call do not send the same block twice.
+
+**Session start** is the first turn on a session id with no picture yet, or
+the first turn after a compaction or resume; a base harness's own start
+event, where it has one, triggers it earlier. **Close never depends on an
+end event:** an end event, where it exists, only records the session;
+packing and reflection run on request or in a sweep.
+
+**Turn input is neutral:** the adapter supplies location and the work's
+record (a coding CLI: cwd, repo, branch, a feature spec; a framework app:
+its own notion of where and what).
+
+**Sessions come from a session source:** a base harness's transcript, a
+framework's own store (checkpointer, session service), or traces
+(OpenTelemetry GenAI or an observability tool), each adapter setting an
+explicit session id. Traces are strongest on friction and on what the
+model was told, weakest on what the user said.
+
+**Adapters are bring-ins:** each base harness or framework gets a small
+session bring-in that binds the entry points to its carriers. A framework
+app needs one registration line by its owner (a plugin, middleware or
+callback); where that is not possible, on-demand use still works.
+MCP server instructions are not a reliable carrier outside the coding CLIs,
+so the picture never depends on them.
+
+**The decision batch** uses the host's own human-in-the-loop where it has
+one (an interrupt, an approval); otherwise the findings are filed as one
+backlog item for the user.
+
 ### The three hooks
 
 ```
  SESSION START  Claude Code: SessionStart hook, on startup | resume | clear | compact
-   runs   core session-start
+   runs   core picture
    reads  every part list (the harness map); each bring-in's bound config
    does   resolve the environment (bound, reachable, ready); pull reachable stores
           without blocking; count pending decisions and unreflected sessions
@@ -326,12 +386,13 @@ the core's behaviour (session picture, turn fit, reflection) is absent.
    does   turn fit: which turn bring-ins apply (v1 deterministic and keyword
           match, no model call); selector: top few memories (v1 lexical, one
           request-in, ranked-list-out interface so a local model can replace it)
-   emits  only what changed: reinforcement + turn context (rules first lines)
-          + recall pointers, within the per-turn budget; nothing otherwise
+   emits  reinforcement + turn context (rules first lines) + recall pointers,
+          within the per-turn budget; on this append carrier, only blocks
+          whose hash changed
 
  CLOSE          two halves
-   Claude Code SessionEnd hook: core session-end records the session as
-          unreflected (fast, no model call)
+   Claude Code SessionEnd hook: core close-record marks the session as
+          unreflected (fast, no model call); nothing depends on it firing
    reflection skill ("reflect", "close this session", or a later sweep):
           core pack -> bundle; reflector agent (fresh context: bundle + map)
           -> findings; core check (evidence, tool-only content, secrets,
@@ -450,3 +511,12 @@ write; reflection pushes at its end; a conflict becomes a pending decision.
   package later, unchanged in shape
 - Ruling (user, 2026-10-30): the harness core ships with the personal part
   (this repo); ratified.
+- Ruling (ringmaster, from research F on non-coding frameworks): the core
+  is carrier-neutral entry points (picture, turn, close-record, pack,
+  reflect) that hooks, framework adapters and on-demand calls all reach;
+  carriers are append, transient or on demand per a carrier profile;
+  session start is the first turn without a picture; close never depends
+  on an end event; sessions come from a session source (transcript,
+  framework store, traces); adapters are bring-ins · why: keeps both hooked
+  and on-demand use open and lets non-coding frameworks host the harness ·
+  cost if wrong: a little more indirection than calling hooks directly
