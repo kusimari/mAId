@@ -118,19 +118,26 @@ plain base harness with the same harness and memory.
 
 ## Macro test
 
-Draft: in a scratch HOME with the personal part installed,
+In a scratch HOME with the personal part installed (and a second part's
+fixture bring-ins beside it), Claude Code:
 
-1. A fresh session's context contains the preamble and the digest (each
-   persona's memory index, environment facts, pending proposals), read
-   from the base harness's own startup report.
-2. A session in which the user corrects the agent once and teaches a
-   bring-in a rule, then closes: the reflection writes the fact to the
-   right persona's memory, the rule to that bring-in's local tier, and
-   files one skill-edit proposal as a backlog item; it applies nothing
-   else.
-3. The same reflection started by hand mid-session gives the same routing.
-4. A second scratch HOME pulls the stores and its first session recalls
-   the memory; the first HOME's environment facts are not there.
+1. **genome:** a fresh session's startup report shows the session picture
+   (personas, session and turn bring-ins with where their state lives,
+   environment as bound and ready, pending count); the same picture comes
+   back from the on-demand resource.
+2. **expression:** in a location where a turn bring-in fits, a prompt
+   gets that bring-in's first rules and a few memory pointers; a second
+   prompt with nothing changed gets nothing new.
+3. **sleep, experience, adaptation:** a session where the user corrects the
+   agent once and teaches a bring-in a rule, then asks to close: the
+   bundle holds the correction and the rule; one decision batch proposes a
+   persona-memory fact, a bring-in local-tier entry and one skill edit as a
+   backlog item; after the user's ok the fact and the entry are written
+   where their config points and nothing else changes.
+4. **On demand:** the same adaptation started by hand mid-session routes
+   the same way.
+5. **Travel:** a second scratch HOME pulls the stores and its genome shows
+   the new memory; the first HOME's environment facts are not there.
 
 ## Constraints
 
@@ -172,6 +179,7 @@ Draft: in a scratch HOME with the personal part installed,
   outside model call under a small cap, but its interface must let a
   local decision model replace it.
 - **Claude Code first;** other base harnesses next.
+- **Paid tests:** up to 30 model runs for the initiative (to ratify).
 
 ## Conceptual design
 
@@ -458,6 +466,13 @@ write; reflection pushes at its end; a conflict becomes a pending decision.
 
 | # | Feature | Ships | Needs | Status |
 |---|---|---|---|---|
+| 0 | land-my-harness | initiative `my-harness` merged to main, so parts, part lists, whole-status and the memory server exist to build on | - | planned |
+| 1 | bring-in-contract | the contract fields in each standard's slot for this repo's bring-ins (writing-style's two tiers among them); part lists record source, route and bound values; the harness map and the derived environment (bound, reachable, ready) generated at install; status tells registered from ready | 0 | planned |
+| 2 | memory-bring-in | memory as a session bring-in that names the memory package and points at its store through config; the package exposes its index cheaply | 1 | planned |
+| 3 | genome | the `genome` entry point: the rules file rendered at install, the session-start and sub-agent-start hooks, the on-demand resource and prompt, delivery recorded per session id; probes settle what Claude Code keeps across compaction and sub-agents | 1, 2 | planned |
+| 4 | expression | the `expression` entry point: turn fit from location, the work's record and bring-ins' signals; the v1 selector over memory indexes behind its interface; reinforcement on change; the per-prompt hook and the on-demand tool | 3 | planned |
+| 5 | experience | the `sleep` marker on the session-end hook; the `experience` packer for Claude Code transcripts and sub-agent transcripts behind a session-source interface | 1 | planned |
+| 6 | adaptation | the `adaptation` entry point: the reflection skill, the reflector agent, the evidence and public-store checks, the decision batch, routing by the map (memory write, local tier, backlog item, worktree), the ledger | 2, 5 | planned |
 | last | readme-and-project | README and project.md say how mAId works with this design, using the framing (ghost in the shell; genome, expression, experience, adaptation, sleep) | every other stream | planned |
 
 ## Decision Log
@@ -548,3 +563,9 @@ write; reflection pushes at its end; a conflict becomes a pending decision.
   habits), expression, experience, adaptation, sleep; the initiative keeps
   its name; the closing stream updates the README and project.md to tell
   how mAId works with this design, using the framing.
+- Ruling (ringmaster, to ratify): eight streams, each shipping something
+  the Macro test can see; stream 0 lands initiative my-harness first, since
+  this design builds on its parts, part lists and memory server; the work
+  part's own bring-ins gain the contract fields in its own repo, outside
+  this initiative · why: fewest features in dependency order, genome before
+  expression, experience before adaptation · cost if wrong: re-cut streams
