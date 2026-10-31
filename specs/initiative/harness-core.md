@@ -540,3 +540,15 @@ this initiative.
   · cost if wrong: one overlay per borrowed unit to move
 - Paid tests: 4 of 30 granted to stream 5 (writing-style playback on
   claude, activation on codex and kiro).
+- Ruling (ringmaster, stream 3 planning): guards, the decision batch and
+  every write are core code; the reflector is a read-only sub-agent that
+  returns findings as data; SessionEnd only marks; a persona habit is
+  written through the memory package's own write path where one exists,
+  so it reaches the store's history and travels · why: the guards hold
+  whatever an agent does, and the store stays the package's · cost if
+  wrong: the core carries a copy of the package's write
+- Ruling (ringmaster): stream 2 owns the plugin's hooks file, how hooks
+  find `bin/maid-core`, and the `session_id` fallback; stream 3 adds only
+  its SessionEnd entry · why: one owner for shared plumbing
+- Paid tests: 4 of 30 granted to stream 3 (one real transcript; three
+  reflector runs on the Macro step-3 fixture).
