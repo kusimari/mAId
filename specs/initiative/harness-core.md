@@ -588,4 +588,4 @@ this initiative.
   why: the person's one-line read must be the whole write, and nothing is
   kept longer than it is needed
 - Paid tests: stream 3 spent 4 of 4; 1 more granted (reflector re-run).
-  15 remain.
+  6 spent so far; 5 granted and unspent; 19 unallocated.
