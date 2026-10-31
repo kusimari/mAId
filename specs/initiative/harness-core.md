@@ -567,3 +567,12 @@ this initiative.
 - Paid tests: 4 of 30 granted to stream 2 (persona and store named from
   the genome; a fitted rule changes behaviour). 18 remain, reserved for
   the Macro test and re-runs.
+- Ruling (ringmaster, stream 5 review): kiro's loading of `my-harness.*`
+  frontmatter stays unverified; the only check repoints the real HOME's
+  skill links, which no stream may touch · why: Claude Code first; kiro is
+  mapped, not built · cost if wrong: a kiro session lists a skill wrongly,
+  found by the backlog check
+- Paid tests: stream 5 spent 2 of its 4; 2 return to the pool (20 remain).
+- For the user at the initiative review: which lines each skill's `rules`
+  pointer reinforces on every fitting turn (writing-style points at
+  `## Voice`, kdevkit at its phase-gating cues, notes at its behaviour rules).
