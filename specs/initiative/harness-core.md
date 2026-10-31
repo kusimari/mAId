@@ -582,6 +582,12 @@ this initiative.
   PASS with a stub reflector; step 5 PASS; the checklist dry run found 13
   gaps · Ruling: the defects go to fix stream 7, macro-fixes; the
   real-model part of steps 3 and 4 waits for it
+- Macro test run 2 (free part, at f176327, fresh scratch HOMEs installed
+  as `just` installs, real Claude Code 2.1.314 and 2.1.169 against a
+  loopback stub): steps 1, 2 and 5 PASS on both; steps 3 and 4 PASS with a
+  stub reflector on both; D1 and D2 repros fixed; all 13 checklist gaps
+  covered by "For any persona part". Open: the real-model part of steps 3
+  and 4, and stream 2's paid R1-R4, which need the user's model access
 - For the user at the initiative review: which lines each skill's `rules`
   pointer reinforces on every fitting turn (writing-style points at
   `## Voice`, kdevkit at its phase-gating cues, notes at its behaviour rules).
