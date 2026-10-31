@@ -3,8 +3,11 @@
 //! order, because the step finds claude through the process-wide PATH.
 
 use build_tool::shared::Agent;
-use build_tool::stages::{cmd_install_memory, cmd_uninstall_memory};
+use build_tool::stages::{
+    cmd_install_bring_ins, cmd_install_memory, cmd_uninstall_memory, Checkout,
+};
 use build_tool::whole;
+use maid_core::parts::{Source, SourceKind};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -112,6 +115,7 @@ fn settings(e: &Env, text: &str) {
 #[test]
 fn claude_memory_step() {
     registers_turns_memory_off_and_whole_status_sees_both();
+    the_memory_bring_in_is_declared_and_ready_by_its_store();
     a_moved_store_is_registered_again();
     a_missing_store_is_skipped_never_created_and_maids_entry_goes();
     no_store_set_registers_nothing_and_leaves_claudes_memory_on();
@@ -172,6 +176,63 @@ fn registers_turns_memory_off_and_whole_status_sees_both() {
         before
     );
     assert!(!e.at("state/maid-harness.json").exists());
+}
+
+fn the_memory_bring_in_is_declared_and_ready_by_its_store() {
+    let e = Env::new(true);
+    assert_eq!(e.install(), 0);
+    // The profile as the flake builds it: the skills dir and the shipped
+    // server manifest.
+    fs::create_dir_all(e.at("profile/share/maid/skills")).unwrap();
+    let unit = e.at("profile/share/maid/servers/personal-memory/server.json");
+    fs::create_dir_all(unit.parent().unwrap()).unwrap();
+    let shipped = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../content/servers/personal-memory/server.json");
+    fs::copy(shipped, &unit).unwrap();
+    let pensieve = Source {
+        kind: SourceKind::Project,
+        at: Some("https://github.com/me/pensieve".into()),
+        rev: Some("p1".into()),
+    };
+    let checkout = Checkout {
+        pensieve: Some(pensieve.clone()),
+        ..Checkout::default()
+    };
+    let rc = cmd_install_bring_ins(
+        &e.at("state"),
+        &e.at("profile"),
+        checkout,
+        &e.at("store-file"),
+        &[],
+        false,
+    )
+    .unwrap();
+    assert_eq!(rc, 0);
+    let list = e.json("state/maid-harness.json");
+    let memory = list["bring_ins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["name"] == "personal-memory")
+        .unwrap();
+    assert_eq!(memory["unit"]["path"], unit.display().to_string());
+    assert_eq!(memory["source"], serde_json::to_value(&pensieve).unwrap());
+    assert_eq!(memory["values"]["index"], "memory/MEMORY.md");
+    let report = e.whole();
+    assert!(
+        report.contains("    ready          personal-memory\n"),
+        "{report}"
+    );
+
+    fs::remove_dir(e.at("stores/personal")).unwrap();
+    let report = e.whole();
+    let store = e.at("stores/personal").display().to_string();
+    assert!(
+        report.contains(&format!(
+            "    not ready      personal-memory (store at {store} not there)"
+        )),
+        "{report}"
+    );
 }
 
 fn a_moved_store_is_registered_again() {

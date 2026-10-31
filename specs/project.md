@@ -445,6 +445,17 @@ ignores it:
 `scope` and `job` are required. A unit with no declaration is undeclared:
 its standard's own description stands in for `job`.
 
+**Session bring-ins.** mAId's part records two: its memory (Memory,
+below) and the core's adapter on each shell it is built for. On Claude Code
+that is `claude-adapter`, declared in the Claude manifest of mAId's plugin
+(`extensions["my-harness"]`, which the flake fills from
+`resources/content/adapters/claude/my-harness.json`), whose hooks are the
+core's carriers; it is recorded while `maid@maid` is placed on claude,
+source this repo, own. `claude plugin validate` warns on `extensions`, and
+`--strict` refuses it; that is known and accepted, since Claude Code ignores
+the field at load time. Status needs no bring-in of its own: it is the
+genome's environment section.
+
 **The core.** `maid-core` (`resources/core`, in the profile as
 `bin/maid-core`) reads every part list, fuses the personas and bring-ins
 into the harness map on every call (never stored), derives the
@@ -652,7 +663,36 @@ mAId's server is `personal-memory` on the personal store, whose path is in
 <path>` sets it). With none set, install reports "no personal store set"
 and registers nothing. Install
 registers it on claude with `claude mcp add -s user personal-memory --
-<profile>/bin/pensieve --store <path>` and records it as `mcp`. The entry
+<profile>/bin/pensieve --store <path>` and records it as `mcp`.
+
+It is also a session bring-in. Its declaration is mAId's own
+`resources/content/servers/personal-memory/server.json` (every MCP
+server's declaration in this repo lives at
+`resources/content/servers/<name>/server.json`), in the profile under
+`share/maid/servers/`: scope `session`, package `pensieve`, config `store`
+(the store) and `index` (the memory index, relative to `store`), and
+`store` as its permanent tier with promote `off`, since persona memories
+are habits, written directly. Install records it while the server is
+registered: unit that manifest, values `store` (the store path) and
+`index` (`memory/MEMORY.md`, pensieve's layout), tenure own, and source
+the package's own repo at the revision `flake.lock` pins
+(`https://github.com/<owner>/<repo>` for a GitHub pin, the node the root's
+`inputs` name; any other pin records no source, so no local path is
+written). The lock is read with or without git. Its route is then the
+project default: a finding about the server is a PR on pensieve, while a
+habit goes to the store.
+
+**The memory index, as a reader such as the selector takes it.** A
+bring-in whose declaration has a `state.permanent` key and a config key
+`index` has a memory index at that tier's bound location joined with the
+bound `index`, which is relative and never leaves the location. A reader
+takes the path from those values, never a literal. The index is markdown,
+one memory per line, `- [Title](file.md) - hook`, each file relative to
+the index's dir; each memory file has frontmatter `name`, `description`
+and `metadata.type` (`user`, `feedback`, `project` or `reference`), then
+its body (Claude Code's auto-memory format). The memory's persona is the
+one of the part that records the bring-in. A bring-in with no `index` key
+has no index in this shape. The entry
 is mAId's while its command is the profile's `bin/pensieve`; install
 re-registers it when the store path changes and leaves any other
 same-named entry, or one another part's list records as placed, alone. A
@@ -810,14 +850,16 @@ mAId/
 │   │   ├── tests/no_cli.rs   install with no agent CLI on PATH keeps the old links
 │   │   ├── tests/stops_on_list.rs  an unreadable part list stops install and uninstall, through the binary
 │   │   ├── tests/memory.rs   the memory verbs through the binary, temp HOME
-│   │   ├── tests/memory_install.rs  install's claude memory step, a stub claude, its part list
+│   │   ├── tests/memory_install.rs  install's claude memory step, a stub claude, its part list, the memory bring-in's readiness
 │   │   ├── tests/conformance.rs  whole.rs against the conformance set
 │   │   ├── tests/conformance/  the whole-status conformance set, one dir per case
 │   │   └── tests/reads_install.rs   install's claude skill-reads step beside memory's
 │   ├── content/            the deployable skills (copied into the profile)
 │   │   ├── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
 │   │   ├── skills/kdevkit/  SKILL.md core + phases/, tiers/, setup.md, interviews.md
-│   │   └── skills/kyodakit/ SKILL.md: developer judgement, any language
+│   │   ├── skills/kyodakit/ SKILL.md: developer judgement, any language
+│   │   ├── servers/<name>/server.json  each MCP server's declaration (copied to share/maid/servers/)
+│   │   └── adapters/claude/my-harness.json  the core's Claude Code adapter declaration (into the plugin manifest)
 │   ├── browser/            browser-control MCP (not symlinked — runnable)
 │   │   ├── launch          allowlist-enforcing launcher; the flake wraps it as maid-browser-mcp
 │   │   └── manage          data-driven MCP registrar (MCP_AGENTS table; every agent global, kiro by editing its config)
@@ -901,9 +943,12 @@ uninstall with no claude or codex on PATH keeping the bring-ins mAId's
 plugin-dir and config-dir grants (there after install, gone after uninstall), and `just
 status --whole` finding what mAId placed, then a second part's list beside
 it; the profile's `maid-core genome` under `env -i HOME=…` showing mAId's
-persona and bring-ins, the bring-ins recorded with tenure and this
-checkout's revision (dirty or not), and a spec-only commit building the
-same profile.
+persona and bring-ins, with the memory (its store as its state) and the
+core's adapter under session bring-ins, the bring-ins recorded with
+tenure and this checkout's revision (dirty or not), the memory's source
+as pensieve at the flake's pin, and a spec-only commit building the same
+profile. It sets a temp personal store, so the memory server is
+registered on the temp HOME's claude.
 It needs network for the vendor marketplace.
 Run it after any change to the profile recipes or the part list.
 

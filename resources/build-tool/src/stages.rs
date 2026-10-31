@@ -285,8 +285,9 @@ pub fn cmd_record(
 // ─────────────────────────────────────────────────────────────────
 
 /// Record mAId's persona and its bring-ins in its part list: each shipped
-/// skill, the personal memory server when a store is set, and each vendor
-/// plugin, borrowed. See project.md "My harness".
+/// skill, the core's adapter on Claude Code, the personal memory server when
+/// a store is set (its source the memory package), and each vendor plugin,
+/// borrowed. See project.md "My harness".
 pub fn cmd_install_bring_ins(
     parts: &Path,
     profile: &Path,
@@ -298,10 +299,13 @@ pub fn cmd_install_bring_ins(
     // A bring-in is recorded only while install has it placed somewhere.
     let items = bring_ins(
         profile,
-        &project_source(checkout),
+        &Sources {
+            pensieve: checkout.pensieve.clone(),
+            project: project_source(checkout),
+        },
         memory::store(store_file)?.as_deref(),
         vendors,
-        &placed_anywhere(parts)?,
+        &Placed::read(parts)?,
         &part::bring_ins(parts)?,
         &today(),
     )?;
@@ -319,7 +323,7 @@ pub fn cmd_install_bring_ins(
 /// Uninstall keeps only the bring-ins some harness still has placed, so a
 /// whole uninstall clears them with the persona.
 pub fn cmd_uninstall_bring_ins(parts: &Path, vendors: &[Marketplace], dry_run: bool) -> Result<u8> {
-    let placed = placed_anywhere(parts)?;
+    let placed = Placed::read(parts)?;
     let mut kept = part::bring_ins(parts)?;
     kept.retain(|b| still_placed(b, &placed, vendors));
     if !dry_run {
@@ -328,15 +332,48 @@ pub fn cmd_uninstall_bring_ins(parts: &Path, vendors: &[Marketplace], dry_run: b
     Ok(0)
 }
 
+/// Where mAId's bring-ins come from: this repo, and the memory package as
+/// `flake.lock` pins it.
+struct Sources {
+    project: Source,
+    pensieve: Option<Source>,
+}
+
+/// What mAId's list records placed: on any harness, and on claude alone,
+/// where the core's adapter is.
+#[derive(Default)]
+struct Placed {
+    anywhere: Vec<Item>,
+    claude: Vec<Item>,
+}
+
+impl Placed {
+    fn read(parts: &Path) -> Result<Placed> {
+        let mut anywhere = vec![];
+        for agent in Agent::ALL {
+            anywhere.extend(part::placed(parts, *agent)?);
+        }
+        Ok(Placed {
+            anywhere,
+            claude: part::placed(parts, Agent::Claude)?,
+        })
+    }
+}
+
+/// The core's adapter on Claude Code, declared in mAId's plugin manifest.
+const ADAPTER: &str = "claude-adapter";
+const ADAPTER_MANIFEST: &str = "share/maid/marketplace/plugins/maid/.claude-plugin/plugin.json";
+
 fn bring_ins(
     profile: &Path,
-    project: &Source,
+    sources: &Sources,
     store: Option<&Path>,
     vendors: &[Marketplace],
-    placed: &[Item],
+    placed: &Placed,
     recorded: &[BringIn],
     today: &str,
 ) -> Result<Vec<BringIn>> {
+    let project = &sources.project;
     let own = |name: &str| BringIn {
         name: name.into(),
         unit: None,
@@ -365,9 +402,25 @@ fn bring_ins(
             ..own(n)
         })
         .collect();
+    items.push(BringIn {
+        unit: Some(Unit {
+            standard: Standard::Plugin,
+            path: profile.join(ADAPTER_MANIFEST),
+        }),
+        ..own(ADAPTER)
+    });
     if let Some(store) = store {
         items.push(BringIn {
-            values: [("store".to_string(), store.display().to_string())].into(),
+            unit: Some(Unit {
+                standard: Standard::Mcp,
+                path: profile.join(memory::MANIFEST),
+            }),
+            source: sources.pensieve.clone(),
+            values: [
+                ("store".to_string(), store.display().to_string()),
+                ("index".to_string(), memory::INDEX.to_string()),
+            ]
+            .into(),
             ..own(memory::SERVER)
         });
     }
@@ -404,12 +457,18 @@ fn bring_ins(
 }
 
 /// Whether some harness still has what this bring-in needs placed: the
-/// memory server, the vendor's plugin, or mAId's skills (through the plugin
-/// or as links).
-fn still_placed(b: &BringIn, placed: &[Item], vendors: &[Marketplace]) -> bool {
-    let has = |kind: What, name: &str| placed.iter().any(|i| i.kind == kind && i.name == name);
+/// memory server, the vendor's plugin, mAId's plugin on claude for the
+/// adapter, or mAId's skills (through the plugin or as links).
+fn still_placed(b: &BringIn, placed: &Placed, vendors: &[Marketplace]) -> bool {
+    let on = |items: &[Item], kind: What, name: &str| {
+        items.iter().any(|i| i.kind == kind && i.name == name)
+    };
+    let has = |kind: What, name: &str| on(&placed.anywhere, kind, name);
     if b.name == memory::SERVER {
         return has(What::Mcp, memory::SERVER);
+    }
+    if b.name == ADAPTER {
+        return on(&placed.claude, What::Plugin, crate::shared::PLUGIN_ID);
     }
     if let Tenure::Borrowed { from, .. } = &b.tenure {
         return vendors
@@ -417,34 +476,33 @@ fn still_placed(b: &BringIn, placed: &[Item], vendors: &[Marketplace]) -> bool {
             .filter(|v| v.marketplace == from)
             .any(|v| has(What::Plugin, &v.plugin_id(&b.name)));
     }
-    has(What::Plugin, crate::shared::PLUGIN_ID) || placed.iter().any(|i| i.kind == What::Skill)
+    has(What::Plugin, crate::shared::PLUGIN_ID)
+        || placed.anywhere.iter().any(|i| i.kind == What::Skill)
 }
 
-/// Everything mAId's list records placed, on every harness.
-fn placed_anywhere(parts: &Path) -> Result<Vec<Item>> {
-    let mut placed = vec![];
-    for agent in Agent::ALL {
-        placed.extend(part::placed(parts, *agent)?);
-    }
-    Ok(placed)
-}
-
-/// What install reads from the checkout it runs from: its `origin` URL,
-/// and its revision with `-dirty` when the tree has changes. Read there,
-/// not from the profile, so the profile stays addressed by its content.
+/// What install reads from the checkout it runs from: its `origin` URL, its
+/// revision with `-dirty` when the tree has changes, and the memory
+/// package's pin in `flake.lock`. Read there, not from the profile, so the
+/// profile stays addressed by its content.
 #[derive(Debug, Default)]
 pub struct Checkout {
     pub origin: Option<String>,
     pub head: Option<String>,
     pub dirty: bool,
+    /// The memory package as the checkout's `flake.lock` pins it.
+    pub pensieve: Option<Source>,
 }
 
 impl Checkout {
     /// Read through the `git` that PATH finds by rule 8. With no git, or
-    /// outside a repo, every field is empty.
+    /// outside a repo, the git fields are empty; the lock needs no git.
     pub fn read(dir: &Path) -> Checkout {
+        let pensieve = locked_pensieve(dir);
         let Some(git) = crate::shared::find_on(std::env::var_os("PATH").as_deref(), "git") else {
-            return Checkout::default();
+            return Checkout {
+                pensieve,
+                ..Checkout::default()
+            };
         };
         let run = |args: &[&str]| {
             std::process::Command::new(&git)
@@ -469,8 +527,42 @@ impl Checkout {
                 "--untracked-files=no",
             ])
             .is_some_and(|s| !s.is_empty()),
+            pensieve,
         }
     }
+}
+
+/// The memory package as the `flake.lock` in `dir` pins it.
+fn locked_pensieve(dir: &Path) -> Option<Source> {
+    pinned(
+        &fs::read_to_string(dir.join("flake.lock")).ok()?,
+        "pensieve",
+    )
+}
+
+/// An input `flake.lock` pins on GitHub, as a project source. Any other pin
+/// (a path on this machine, say) gives none, so no local path is recorded.
+fn pinned(lock: &str, input: &str) -> Option<Source> {
+    let lock: serde_json::Value = serde_json::from_str(lock).ok()?;
+    // The root's inputs name each input's node, which may differ from it.
+    let root = lock["root"].as_str().unwrap_or("root");
+    let node = lock["nodes"][root]["inputs"][input]
+        .as_str()
+        .unwrap_or(input);
+    let locked = &lock["nodes"][node]["locked"];
+    let field = |k: &str| locked[k].as_str().filter(|v| !v.is_empty());
+    if field("type")? != "github" {
+        return None;
+    }
+    Some(Source {
+        kind: SourceKind::Project,
+        at: Some(format!(
+            "https://github.com/{}/{}",
+            field("owner")?,
+            field("repo")?
+        )),
+        rev: Some(field("rev")?.to_string()),
+    })
 }
 
 /// This repo as a source.
@@ -1851,10 +1943,10 @@ mod tests {
         let p = profile_with(&["notes"]);
         let none = bring_ins(
             p.path(),
-            &project(),
+            &sources(),
             None,
             &[VENDOR],
-            &[],
+            &Placed::default(),
             &[],
             "2026-10-31",
         )
@@ -1863,10 +1955,10 @@ mod tests {
         let links = [Item::placed(What::Skill, "notes")];
         let skills = bring_ins(
             p.path(),
-            &project(),
+            &sources(),
             None,
             &[VENDOR],
-            &links,
+            &anywhere(links.to_vec()),
             &[],
             "2026-10-31",
         )
@@ -1883,21 +1975,61 @@ mod tests {
         }
     }
 
+    fn pensieve() -> Source {
+        Source {
+            kind: SourceKind::Project,
+            at: Some("https://github.com/me/pensieve".into()),
+            rev: Some("p1".into()),
+        }
+    }
+
+    fn sources() -> Sources {
+        Sources {
+            project: project(),
+            pensieve: Some(pensieve()),
+        }
+    }
+
+    /// Placed on some harness, not on claude.
+    fn anywhere(items: Vec<Item>) -> Placed {
+        Placed {
+            anywhere: items,
+            claude: vec![],
+        }
+    }
+
+    /// Placed on claude, so on some harness too.
+    fn on_claude(items: Vec<Item>) -> Placed {
+        Placed {
+            anywhere: items.clone(),
+            claude: items,
+        }
+    }
+
     #[test]
     fn install_records_each_skill_the_memory_server_and_the_vendor_borrowed() {
         let p = profile_with(&["notes", "kdevkit"]);
         let items = bring_ins(
             p.path(),
-            &project(),
+            &sources(),
             Some(Path::new("/s")),
             &[VENDOR],
-            &all_placed(),
+            &on_claude(all_placed()),
             &[],
             "2026-10-31",
         )
         .unwrap();
         let names: Vec<_> = items.iter().map(|b| b.name.as_str()).collect();
-        assert_eq!(names, ["kdevkit", "notes", "personal-memory", "docs"]);
+        assert_eq!(
+            names,
+            [
+                "kdevkit",
+                "notes",
+                "claude-adapter",
+                "personal-memory",
+                "docs"
+            ]
+        );
         let notes = &items[1];
         assert_eq!(
             notes.unit.as_ref().unwrap().path,
@@ -1907,15 +2039,38 @@ mod tests {
             (&notes.tenure, notes.source.as_ref()),
             (&Tenure::Own, Some(&project()))
         );
-        assert_eq!(items[2].values["store"], "/s");
+        let adapter = &items[2];
         assert_eq!(
-            items[3].tenure,
+            adapter.unit,
+            Some(Unit {
+                standard: Standard::Plugin,
+                path: p.path().join(ADAPTER_MANIFEST)
+            })
+        );
+        assert_eq!(adapter.source.as_ref(), Some(&project()));
+        let memory = &items[3];
+        assert_eq!(
+            memory.unit,
+            Some(Unit {
+                standard: Standard::Mcp,
+                path: p.path().join(memory::MANIFEST)
+            })
+        );
+        assert_eq!(
+            (&memory.tenure, memory.source.as_ref()),
+            (&Tenure::Own, Some(&pensieve())),
+            "the memory's source is its package, not mAId"
+        );
+        assert_eq!(memory.values["store"], "/s");
+        assert_eq!(memory.values["index"], "memory/MEMORY.md");
+        assert_eq!(
+            items[4].tenure,
             Tenure::Borrowed {
                 from: "a-vendor".into(),
                 since: Some("2026-10-31".into())
             }
         );
-        assert_eq!(items[3].route(), maid_core::parts::Route::Report);
+        assert_eq!(items[4].route(), maid_core::parts::Route::Report);
     }
 
     #[test]
@@ -1923,10 +2078,10 @@ mod tests {
         let p = profile_with(&["notes"]);
         let first = bring_ins(
             p.path(),
-            &project(),
+            &sources(),
             None,
             &[VENDOR],
-            &all_placed(),
+            &anywhere(all_placed()),
             &[],
             "2026-01-01",
         )
@@ -1934,10 +2089,10 @@ mod tests {
         assert!(first.iter().all(|b| b.name != "personal-memory"));
         let again = bring_ins(
             p.path(),
-            &project(),
+            &sources(),
             None,
             &[VENDOR],
-            &all_placed(),
+            &anywhere(all_placed()),
             &first,
             "2026-10-31",
         )
@@ -1979,7 +2134,7 @@ mod tests {
             false,
         )
         .unwrap();
-        assert_eq!(names(), ["notes"]);
+        assert_eq!(names(), ["claude-adapter", "notes"]);
         let placed = Item::placed(What::Mcp, memory::SERVER);
         part::record_named(
             parts.path(),
@@ -1999,7 +2154,7 @@ mod tests {
             false,
         )
         .unwrap();
-        assert_eq!(names(), ["notes", "personal-memory"]);
+        assert_eq!(names(), ["claude-adapter", "notes", "personal-memory"]);
         part::record_named(
             parts.path(),
             Agent::Claude,
@@ -2012,7 +2167,7 @@ mod tests {
         cmd_uninstall_bring_ins(parts.path(), &[], false).unwrap();
         assert_eq!(
             names(),
-            ["notes"],
+            ["claude-adapter", "notes"],
             "removing the memory server keeps the skills the plugin still places"
         );
         part::record(parts.path(), Agent::Claude, &[What::Plugin], None, vec![]).unwrap();
@@ -2022,6 +2177,154 @@ mod tests {
             !part::path(parts.path()).exists(),
             "the list goes with its last bring-in"
         );
+    }
+
+    #[test]
+    fn the_adapter_is_a_bring_in_only_while_maids_plugin_is_on_claude() {
+        let p = profile_with(&["notes"]);
+        let plugin = vec![Item::placed(What::Plugin, crate::shared::PLUGIN_ID)];
+        let names = |placed: &Placed| -> Vec<String> {
+            bring_ins(p.path(), &sources(), None, &[], placed, &[], "2026-10-31")
+                .unwrap()
+                .into_iter()
+                .map(|b| b.name)
+                .collect()
+        };
+        assert_eq!(names(&anywhere(plugin.clone())), ["notes"], "codex only");
+        assert_eq!(names(&on_claude(plugin)), ["notes", "claude-adapter"]);
+        let adapter = bring_ins(
+            p.path(),
+            &sources(),
+            None,
+            &[],
+            &on_claude(vec![Item::placed(What::Plugin, crate::shared::PLUGIN_ID)]),
+            &[],
+            "2026-10-31",
+        )
+        .unwrap()
+        .pop()
+        .unwrap();
+        let left = anywhere(vec![Item::placed(What::Plugin, crate::shared::PLUGIN_ID)]);
+        assert!(!still_placed(&adapter, &left, &[]), "uninstall drops it");
+    }
+
+    #[test]
+    fn the_lock_gives_a_github_pin_as_its_source_and_nothing_else() {
+        let lock = |locked: serde_json::Value| {
+            serde_json::json!({"nodes": {"pensieve": {"locked": locked}}}).to_string()
+        };
+        let github = lock(serde_json::json!(
+            {"type": "github", "owner": "me", "repo": "pensieve", "rev": "p1"}
+        ));
+        assert_eq!(pinned(&github, "pensieve"), Some(pensieve()));
+        let path = lock(serde_json::json!({"type": "path", "path": "/home/me/pensieve"}));
+        assert_eq!(
+            pinned(&path, "pensieve"),
+            None,
+            "a local path is never recorded"
+        );
+        assert_eq!(pinned(&github, "other"), None);
+        assert_eq!(pinned("not json", "pensieve"), None);
+        let renamed = serde_json::json!({"root": "root", "nodes": {
+            "root": {"inputs": {"pensieve": "pensieve_2"}},
+            "pensieve": {"locked": {"type": "path", "path": "/elsewhere"}},
+            "pensieve_2": {"locked":
+                {"type": "github", "owner": "me", "repo": "pensieve", "rev": "p1"}}}});
+        assert_eq!(
+            pinned(&renamed.to_string(), "pensieve"),
+            Some(pensieve()),
+            "the root's inputs name the node"
+        );
+    }
+
+    #[test]
+    fn with_no_github_pin_the_memory_has_no_source_and_only_reports() {
+        let p = profile_with(&[]);
+        let unpinned = Sources {
+            project: project(),
+            pensieve: None,
+        };
+        let items = bring_ins(
+            p.path(),
+            &unpinned,
+            Some(Path::new("/s")),
+            &[],
+            &anywhere(all_placed()),
+            &[],
+            "2026-10-31",
+        )
+        .unwrap();
+        let memory = items.iter().find(|b| b.name == memory::SERVER).unwrap();
+        assert_eq!(memory.source, None, "never mAId's project source");
+        assert_eq!(memory.route(), maid_core::parts::Route::Report);
+    }
+
+    #[test]
+    fn the_checkouts_lock_is_read_from_its_dir() {
+        let dir = TempDir::new().unwrap();
+        assert_eq!(locked_pensieve(dir.path()), None);
+        let lock = serde_json::json!({"nodes": {"pensieve": {"locked":
+            {"type": "github", "owner": "me", "repo": "pensieve", "rev": "p1"}}}});
+        fs::write(dir.path().join("flake.lock"), lock.to_string()).unwrap();
+        assert_eq!(locked_pensieve(dir.path()), Some(pensieve()));
+    }
+
+    #[test]
+    fn this_repo_pins_the_memory_package_at_its_published_commit() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let lock = fs::read_to_string(root.join("flake.lock")).unwrap();
+        let got = pinned(&lock, "pensieve").expect("pensieve pinned on GitHub");
+        assert_eq!(
+            got.at.as_deref(),
+            Some("https://github.com/kusimari/pensieve")
+        );
+        let rev = got.rev.unwrap();
+        assert!(
+            rev.len() == 40 && rev.chars().all(|c| c.is_ascii_hexdigit()),
+            "{rev}"
+        );
+    }
+
+    #[test]
+    fn the_shipped_memory_declaration_names_its_package_store_and_index() {
+        use maid_core::contract::{read, Scope, Slot};
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../content");
+        let path = root
+            .join(memory::MANIFEST.trim_start_matches("share/maid/"))
+            .canonicalize()
+            .unwrap();
+        let Ok(Slot::Declared(d)) = read(Standard::Mcp, &path) else {
+            panic!("{path:?} holds no declaration");
+        };
+        assert_eq!(d.scope, Scope::Session);
+        assert_eq!(d.package.as_deref(), Some("pensieve"));
+        let keys: Vec<_> = d.config.keys().map(String::as_str).collect();
+        assert_eq!(keys, ["index", "store"]);
+        assert!(d.config.values().all(|k| !k.optional && !k.secret));
+        let state = d.state.unwrap();
+        assert_eq!(
+            (state.local, state.permanent.as_deref()),
+            (None, Some("store"))
+        );
+    }
+
+    #[test]
+    fn the_shipped_adapter_declaration_reads_from_a_plugin_manifest() {
+        use maid_core::contract::{read, Scope, Slot};
+        let shipped = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../content/adapters/claude/my-harness.json");
+        let decl: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(shipped).unwrap()).unwrap();
+        // As the flake writes it into the Claude plugin manifest.
+        let dir = TempDir::new().unwrap();
+        let manifest = dir.path().join("plugin.json");
+        let plugin = serde_json::json!({"name": "maid", "extensions": {"my-harness": decl}});
+        fs::write(&manifest, plugin.to_string()).unwrap();
+        let Ok(Slot::Declared(d)) = read(Standard::Plugin, &manifest) else {
+            panic!("no declaration");
+        };
+        assert_eq!(d.scope, Scope::Session);
+        assert!(d.job.contains("Claude Code"), "{}", d.job);
     }
 
     #[test]
@@ -2061,6 +2364,7 @@ mod tests {
                 origin: None,
                 head: head.map(str::to_string),
                 dirty,
+                pensieve: None,
             })
             .rev
         };

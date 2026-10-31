@@ -91,11 +91,15 @@
             policy.installation = "AVAILABLE";
           } ];
         };
+        # `extensions` declares the core's adapter on Claude Code (project.md
+        # "My harness"). Claude Code ignores the field at load time; only
+        # `claude plugin validate --strict` refuses it.
         claudePlugin = manifest "claude-plugin.json" {
           name = "maid";
           version = "@version@";
           inherit description;
           author.name = "mAId";
+          extensions."my-harness" = builtins.fromJSON (builtins.readFile ./resources/content/adapters/claude/my-harness.json);
         };
         codexPlugin = manifest "codex-plugin.json" {
           name = "maid";
@@ -117,6 +121,7 @@
             p=$m/plugins/maid
             mkdir -p $m/.claude-plugin $m/.agents/plugins $p/.claude-plugin $p/.codex-plugin $out/bin
             cp -r ${./resources/content/skills} $p/skills
+            cp -r ${./resources/content/servers} $out/share/maid/servers
             cp ${claudeMarketplace} $m/.claude-plugin/marketplace.json
             cp ${codexMarketplace} $m/.agents/plugins/marketplace.json
             cp ${claudePlugin} $p/.claude-plugin/plugin.json

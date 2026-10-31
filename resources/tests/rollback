@@ -24,6 +24,10 @@ export XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config} XDG_CACHE_HOME=${XDG_CA
 unset CODEX_HOME CLAUDE_CONFIG_DIR XDG_STATE_HOME MY_HARNESS_PARTS
 # XDG_CONFIG_HOME stays real for nix, so mAId's config dir must not.
 export MAID_CONFIG=$work/config/maid MAID_MEMORY_STORE=$work/config/maid/memory-store
+# A personal store, so install registers and records the memory server.
+store=$work/store
+mkdir -p "$store" "$MAID_CONFIG"
+echo "$store" >"$MAID_MEMORY_STORE"
 
 fails=0
 check() {
@@ -112,6 +116,22 @@ core_bare() {
     grep -q 'document-skills: .*borrowed from anthropic-agent-skills' "$work/genome"
 }
 check "the profile's maid-core shows mAId's persona and bring-ins under a bare environment" core_bare
+# The genome's session bring-ins: the declared memory, with its store as
+# its state, and the core's adapter on Claude Code.
+session_bring_ins() {
+  sed -n '/^session bring-ins:/,/^turn bring-ins:/p' "$work/genome" >"$work/session"
+  grep -qx "  personal-memory: .* \[personal, own\]; state: $store" "$work/session" &&
+    grep -q '^  claude-adapter: ' "$work/session" &&
+    ! grep -q 'undeclared: .*personal-memory' "$work/genome"
+}
+check "the genome lists the declared memory with its store, and the adapter, as session bring-ins" session_bring_ins
+pin=$(jq -r .nodes.pensieve.locked.rev "$here/flake.lock")
+memory_source() {
+  jq -e --arg pin "$pin" '.bring_ins[] | select(.name == "personal-memory")
+    | .source.at == "https://github.com/kusimari/pensieve" and .source.rev == $pin
+      and .tenure.kind == "own" and .values.index == "memory/MEMORY.md"' "$partlist" >/dev/null
+}
+check "the part list records the memory's source as its package at the flake's pin" memory_source
 # Install runs from this checkout, so it records this checkout's revision,
 # marked dirty when the tree has changes.
 rev=$(git -C "$here" rev-parse HEAD)

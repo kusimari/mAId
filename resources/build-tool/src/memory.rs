@@ -16,6 +16,11 @@ use std::process::Command;
 
 /// The name mAId registers its memory server under.
 pub const SERVER: &str = "personal-memory";
+/// Its declaration in the profile (project.md "My harness", Memory).
+pub const MANIFEST: &str = "share/maid/servers/personal-memory/server.json";
+/// pensieve's index, relative to the store: the value install binds to the
+/// declaration's `index` key, so the selector reads it from the map.
+pub const INDEX: &str = "memory/MEMORY.md";
 /// Claude's automatic memory, off. A string, so rule 14 can check it.
 pub const SETTING: &str = "env.CLAUDE_CODE_DISABLE_AUTO_MEMORY";
 const ENV: &str = "env";
