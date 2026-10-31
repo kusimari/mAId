@@ -389,7 +389,7 @@ coding CLIs, so the genome never depends on them.
 | 4 | session-bring-ins | memory as a session bring-in naming the memory package, its store behind config, its index readable by the selector; the core's adapters as session bring-ins; any other session bring-in the design needs | 1 | merged |
 | 5 | turn-bring-ins | this repo's turn bring-ins (kdevkit, kyodakit, kreviewkit, writing-style with its two tiers, notes, browser, the vendor document skills) carrying the contract in their standard slots | 1 | merged |
 | 6 | fold-back | README and project.md say how mAId works with this design, in the framing: the shell, the ghost, and its genome, expression, experience, sleep and adaptation; project.md also carries "For any persona part" as its own section, so a person adding another persona repo needs only project.md | 1-5 | merged |
-| 7 | macro-fixes | defects from Macro test run 1: the installed plugin's hooks refused by current Claude Code (D1), the second prompt re-sending the reinforcement (D2), and "For any persona part" made followable alone (D3 and the dry-run gaps) | 1-6 | running |
+| 7 | macro-fixes | defects from Macro test run 1: the installed plugin's hooks refused by current Claude Code (D1), the second prompt re-sending the reinforcement (D2), and "For any persona part" made followable alone (D3 and the dry-run gaps) | 1-6 | merged |
 
 The work part's own bring-ins take the contract in their own repo, outside
 this initiative.
