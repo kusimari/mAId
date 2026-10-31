@@ -12,6 +12,9 @@ pub struct Config {
     /// The core's own state (delivery record, pending decisions):
     /// `MY_HARNESS_STATE`, default `${XDG_STATE_HOME:-$HOME/.local/state}/my-harness`.
     pub state: PathBuf,
+    /// Claude Code's transcripts: `$CLAUDE_CONFIG_DIR/projects`, default
+    /// `$HOME/.claude/projects` (Claude Code's own setting, not ours).
+    pub claude: Option<PathBuf>,
 }
 
 impl Config {
@@ -47,7 +50,16 @@ impl Config {
             }
         };
         let parts = get("MY_HARNESS_PARTS")?.unwrap_or_else(|| state.join("parts"));
-        Ok(Config { parts, state })
+        let claude = match get("CLAUDE_CONFIG_DIR")? {
+            Some(c) => Some(c),
+            None => get("HOME")?.map(|h| h.join(".claude")),
+        }
+        .map(|c| c.join("projects"));
+        Ok(Config {
+            parts,
+            state,
+            claude,
+        })
     }
 
     pub fn delivery(&self) -> PathBuf {
@@ -56,6 +68,33 @@ impl Config {
 
     pub fn pending(&self) -> PathBuf {
         self.state.join("pending")
+    }
+
+    pub fn sleep(&self) -> PathBuf {
+        self.state.join("sleep")
+    }
+
+    pub fn experience(&self) -> PathBuf {
+        self.state.join("experience")
+    }
+
+    pub fn proposals(&self) -> PathBuf {
+        self.state.join("proposals")
+    }
+
+    pub fn notes(&self) -> PathBuf {
+        self.state.join("notes")
+    }
+
+    /// The session in full as its brief showed the reflector, kept only
+    /// until its batch is decided or dismissed. Callers check the id
+    /// (`delivery::check_id`) first.
+    pub fn briefed(&self, session: &str) -> PathBuf {
+        self.state.join("briefed").join(format!("{session}.json"))
+    }
+
+    pub fn ledger(&self) -> PathBuf {
+        self.state.join("ledger.jsonl")
     }
 }
 
@@ -79,6 +118,11 @@ mod tests {
         assert_eq!(c.parts, PathBuf::from("/h/.local/state/my-harness/parts"));
         let c = from(&[("HOME", "/h"), ("XDG_STATE_HOME", "/x")]).unwrap();
         assert_eq!(c.parts, PathBuf::from("/x/my-harness/parts"));
+        assert_eq!(c.claude, Some(PathBuf::from("/h/.claude/projects")));
+        let c = from(&[("HOME", "/h"), ("CLAUDE_CONFIG_DIR", "/c")]).unwrap();
+        assert_eq!(c.claude, Some(PathBuf::from("/c/projects")));
+        let c = from(&[("MY_HARNESS_STATE", "/s")]).unwrap();
+        assert_eq!(c.claude, None);
     }
 
     #[test]

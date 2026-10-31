@@ -110,6 +110,7 @@ fn shipped_skills_declare_the_contract() {
             "kreviewkit",
             "kyodakit",
             "notes",
+            "reflect",
             "writing-style"
         ]
     );
@@ -163,4 +164,33 @@ fn shipped_servers_and_overlays_declare_the_contract() {
             );
         }
     }
+}
+
+/// The reflector reads and never writes: it reads untrusted session
+/// content, so it holds no write authority (see project.md "My harness",
+/// Adaptation). The reflect skill names the core the flake fills in, and
+/// the reflector it dispatches.
+#[test]
+fn the_reflector_reads_only_and_the_reflect_skill_names_it_and_the_core() {
+    #[derive(serde::Deserialize)]
+    struct Agent {
+        name: String,
+        description: String,
+        tools: String,
+    }
+    let content = repo_root().unwrap().join("resources/content");
+    let text = std::fs::read_to_string(content.join("agents/reflector.md")).unwrap();
+    let agent = gray_matter::Matter::<gray_matter::engine::YAML>::new()
+        .parse::<Agent>(&text)
+        .unwrap()
+        .data
+        .unwrap();
+    assert_eq!(agent.name, "reflector");
+    assert!(!agent.description.is_empty());
+    let tools: Vec<&str> = agent.tools.split(',').map(str::trim).collect();
+    assert_eq!(tools, ["Read", "Grep", "Glob"]);
+    let skill = std::fs::read_to_string(content.join("skills/reflect/SKILL.md")).unwrap();
+    assert!(skill.contains("`maid:reflector`"));
+    assert!(skill.contains("@maid-core@ adaptation --session"));
+    assert!(skill.contains("${CLAUDE_SESSION_ID}"));
 }

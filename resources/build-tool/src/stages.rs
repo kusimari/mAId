@@ -529,6 +529,7 @@ fn bring_ins(
             values: [
                 ("store".to_string(), store.display().to_string()),
                 ("index".to_string(), memory::INDEX.to_string()),
+                ("serve".to_string(), serve(profile, store)),
             ]
             .into(),
             ..own(memory::SERVER)
@@ -718,31 +719,22 @@ fn remote(url: &str) -> Option<String> {
         .then(|| format!("{host}:{path}"))
 }
 
-/// Today's UTC date as `YYYY-MM-DD` (days to civil date, after Howard
-/// Hinnant's algorithm), so no date crate is needed for one stamp.
-fn today() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
-    civil(secs / 86_400)
-}
-
-fn civil(days: u64) -> String {
-    let z = days as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
-    format!("{y:04}-{m:02}-{d:02}")
-}
+use maid_core::time::today;
 
 // ─────────────────────────────────────────────────────────────────
 // Memory — the personal store's server, Claude's own memory, harvest.
 // ─────────────────────────────────────────────────────────────────
+
+/// The command that serves the store over MCP stdio, as the memory's
+/// `serve` value: the same command install registers on claude.
+fn serve(profile: &Path, store: &Path) -> String {
+    serde_json::json!([
+        launcher(profile).display().to_string(),
+        "--store",
+        store.display().to_string()
+    ])
+    .to_string()
+}
 
 /// The profile's memory server.
 fn launcher(profile: &Path) -> PathBuf {
@@ -2225,6 +2217,9 @@ mod tests {
         );
         assert_eq!(memory.values["store"], "/s");
         assert_eq!(memory.values["index"], "memory/MEMORY.md");
+        let serve: Vec<String> = serde_json::from_str(&memory.values["serve"]).unwrap();
+        assert_eq!(serve[1..], ["--store", "/s"]);
+        assert!(serve[0].ends_with("/bin/pensieve"), "{serve:?}");
         assert_eq!(
             items[4].tenure,
             Tenure::Borrowed {
@@ -2629,7 +2624,7 @@ mod tests {
         assert_eq!(d.scope, Scope::Session);
         assert_eq!(d.package.as_deref(), Some("pensieve"));
         let keys: Vec<_> = d.config.keys().map(String::as_str).collect();
-        assert_eq!(keys, ["index", "store"]);
+        assert_eq!(keys, ["index", "serve", "store"]);
         assert!(d.config.values().all(|k| !k.optional && !k.secret));
         let state = d.state.unwrap();
         assert_eq!(
@@ -2705,6 +2700,7 @@ mod tests {
 
     #[test]
     fn civil_dates_are_right_across_leap_days() {
+        use maid_core::time::civil;
         assert_eq!(civil(0), "1970-01-01");
         assert_eq!(civil(11_016), "2000-02-29");
         assert_eq!(civil(20_757), "2026-10-31");

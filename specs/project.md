@@ -567,7 +567,9 @@ build's core, so the plugin and its core are one build. SessionStart
 keeps its history and its id; Claude Code does not place a SessionStart
 context identical to one already there); `clear` and `compact` call it with
 `--reset`; SubagentStart calls it with `--slice sub-session`;
-UserPromptSubmit calls `expression`. `maid-core mcp --session-env
+UserPromptSubmit calls `expression`; SessionEnd calls `sleep`, which marks
+the session and prints nothing (its input's own `reason` is recorded as
+`end`). `maid-core mcp --session-env
 CLAUDE_CODE_SESSION_ID` serves the on-demand carrier: resource
 `my-harness://genome`, prompt `genome`, tool `expression` (a folder under
 the server's own, else its own). Claude Code places
@@ -577,6 +579,66 @@ lines per part and bring-in, is not cut, so a ghost of many parts would
 reach it first. A shell needs no
 always-loaded rules file: SessionStart covers every point where context
 drops. Another stream's hook adds its own entry to `hooks/claude.json`.
+
+**Sleep, experience, adaptation.** A session is marked for sleep by its
+end event (on Claude Code, the plugin's SessionEnd hook) or by the
+person's close or reflect (the `reflect` skill): `maid-core sleep`, one
+mark per session under `<state>/sleep/`, keeping the first source and
+adding each later reason; a later mark opens a decided session again,
+except the end event, since closing is the usual last thing a session
+does after the person reflected. Nothing else runs at an end event; the genome
+says how many sessions wait to be reflected on. `maid-core experience`
+packs a session and its sub-sessions from a **session source** into an
+experience (said, told, did, touched, friction; each text cut to 400
+characters with its `<file>:<line>`), stored at
+`<state>/experience/<session>.json`; naming no session, it lists those
+waiting. Only Claude Code's source is built: its transcripts under
+`$CLAUDE_CONFIG_DIR/projects` (default `~/.claude/projects`), each
+sub-agent's file under `<session>/subagents/`, read leniently since the
+format is Claude Code's own. `maid-core adaptation` takes three inputs:
+none gives the **reflector's brief** (the experience, every bring-in it
+may change with its persona, tenure, route and tiers, and what the
+session already decided); the reflector's findings give the **decision
+batch**; the person's decisions (`"ok"`, `"none"`, or per item, a
+persona for an item that asks) are applied. The reflector is the
+plugin's `reflector` agent, with `Read, Grep, Glob` only: it reads
+session content, which is data, and only proposes. The guards are the
+core's, in order: every quote at least 8 characters and found word for
+word in the session as the brief showed it (the brief stores that
+session under `<state>/briefed/`, so nothing after it, the reflector's own run included, backs a
+finding; findings with no brief are refused); at most 10 findings; every
+text the batch shows or a write keeps (change, entry, title, type) one
+line, a title with no `[` or `]`, a type one of the four; the thing is in
+the map (or `harness`); a habit's tier is declared and bound. A
+sub-agent's prompt is its dispatcher's words, and a command's output in
+the person's turn is tool content. Then the route, from
+the map: a **habit** (a persona memory, or a bring-in's tier) is
+written; **nature** (a bring-in, a skill, the harness) becomes a
+proposal under `<state>/proposals/<thing>/`, backlog-item shaped, naming
+the source repo and revision, and a worktree-to-PR one only when it
+carries an edit and the route is `worktree`; anything about a
+**borrowed** bring-in is a note for its lender under `<state>/notes/`;
+an own bring-in with route `report` gets a note too. A habit not placed
+on a persona is asked, never written. A habit with a quote not in the
+person's own words, a contradiction, or a persona guess leaves the item
+out of "ok", for its own answer. Every answer is checked before any is
+applied, and each accepted item is placed again on the map as it is
+then. A habit's entry is at most 200 characters, read whole in the
+batch. "skip" leaves the session out with nothing applied, and
+`{"dismiss": "all" | [<session>, ...]}` does the same for sessions
+waiting to be reflected on: their marks stop waiting and the ledger
+records them as dismissed. Once a batch is decided or dismissed, its
+`briefed/` copy is deleted; the capped experience stays. An entry
+already in either tier is listed `already in <tier>`, with no action. Each undecided item is one file
+under `<state>/pending/`, which is the genome's pending count; an item
+that fails to apply stays, with why. A new file the core writes is
+`0600`. A tier file is markdown: an entry
+is `- <date> · <entry>` and a `source:` line under its first `## `
+heading, newest first; a new file gets `## <Key> rules`. The **ledger**
+(`<state>/ledger.jsonl`) keeps what each reflection saw (friction by
+tool, corrections by thing; a session's last reflection counts) and each
+decision and each dismissal; `maid-core ledger` counts them by thing
+(findings decided and accepted) and the sessions dismissed.
 
 The list says what is there after install, read back from each step,
 plus what install skipped. Uninstall leaves only what it could not
@@ -775,17 +837,26 @@ It is also a session bring-in. Its declaration is mAId's own
 server's declaration in this repo lives at
 `resources/content/servers/<name>/server.json`), in the profile under
 `share/maid/servers/`: scope `session`, package `pensieve`, config `store`
-(the store) and `index` (the memory index, relative to `store`), and
+(the store), `index` (the memory index, relative to `store`) and `serve`
+(the command that serves the store over MCP stdio, a JSON array), and
 `store` as its permanent tier with promote `off`, since persona memories
 are habits, written directly. Install records it while the server is
-registered: unit that manifest, values `store` (the store path) and
-`index` (`memory/MEMORY.md`, pensieve's layout), tenure own, and source
+registered: unit that manifest, values `store` (the store path),
+`index` (`memory/MEMORY.md`, pensieve's layout) and `serve` (the profile's
+`bin/pensieve --store <store>`, as registered on claude), tenure own, and source
 the package's own repo at the revision `flake.lock` pins
 (`https://github.com/<owner>/<repo>` for a GitHub pin, the node the root's
 `inputs` name; any other pin records no source, so no local path is
 written). The lock is read with or without git. Its route is then the
 project default: a finding about the server is a PR on pensieve, while a
-habit goes to the store.
+habit goes to the store. The core writes an accepted habit through the
+server itself: it runs `serve`, calls the memory tool one request at a
+time, stopping at the first that fails (`memory_create`, then the index
+line by `memory_insert`, or `memory_create` for a new index; a remove by
+`memory_str_replace` and `memory_delete`), and stops it. `index` is then
+`<dir>/<file>`, the dir the server serves as `/memories`; so the store is left as any other memory write leaves it. pensieve
+does no git, so a habit reaches another environment when the person syncs
+the store.
 
 **The memory index, as a reader such as the selector takes it.** A
 bring-in whose declaration has a `state.permanent` key and a config key
@@ -840,7 +911,8 @@ codex, kiro-cli and agy reach the same servers by registration, later.
   (loaded by `.envrc` via direnv) is the dev closure: the rust
   toolchain (rust-overlay), `just`, and `jq` (the install tests read
   the agents' JSON, and the browser MCP install edits kiro's global
-  config with it). `packages.default` is
+  config with it), plus `MAID_TEST_PENSIEVE`, the pinned pensieve the
+  core's adaptation test writes through. `packages.default` is
   the installable: the skills plus `chrome-devtools-mcp`
   (packaged from its npm tarball, which has no dependencies)
   wrapped with `nodejs_22`, `pensieve`, the memory server, from its
@@ -938,6 +1010,14 @@ mAId/
 │   │   ├── src/record.rs   the work's own record a turn bring-in points at
 │   │   ├── src/fit.rs      turn fit and the persona guess
 │   │   ├── src/select.rs   recall: the memory indexes and the Selector
+│   │   ├── src/source.rs   session sources: where a session is read from
+│   │   ├── src/claude.rs   Claude Code's transcripts, located and packed
+│   │   ├── src/experience.rs  a session as said, told, did, touched, friction
+│   │   ├── src/sleep.rs    sleep marks: sessions waiting to be reflected on
+│   │   ├── src/adapt.rs    findings, the guards, the decision batch, the routes (tests in adapt/)
+│   │   ├── src/memory.rs   a persona memory written through its server, MCP over stdio
+│   │   ├── src/ledger.rs   what reflections saw and the person decided
+│   │   ├── src/files.rs, src/time.rs  whole-file writes; UTC stamps
 │   │   ├── src/entry.rs    genome, expression, experience, sleep, adaptation
 │   │   ├── src/mcp.rs      the on-demand carrier as an MCP server on stdio
 │   │   ├── src/main.rs     the CLI
@@ -945,7 +1025,9 @@ mAId/
 │   │   ├── tests/claude_hooks.rs  the shipped Claude hooks and MCP config, run as Claude Code runs them
 │   │   ├── tests/mcp.rs    the MCP server over stdio
 │   │   ├── tests/shipped_fit.rs  turn fit against this repo's own declarations
-│   │   └── tests/claude_live.rs  ignored: Claude Code against a stub model API on loopback
+│   │   ├── tests/claude_live.rs  ignored: Claude Code against a stub model API on loopback
+│   │   ├── tests/adaptation.rs  close, reflect and decide through the binary, the real memory server, a store's travel
+│   │   └── tests/fixtures/claude/  a real-shaped Claude Code session and sub-agent
 │   ├── build-tool/         Rust crate — the pipeline (check/install/uninstall/status/smoke)
 │   │   ├── Cargo.toml      deps: clap, anyhow, gray_matter, serde, serde_json, tempfile, maid-core
 │   │   ├── src/main.rs     the shim: clap surface + dispatch, in pipeline order
@@ -975,6 +1057,8 @@ mAId/
 │   │   ├── skills/kdevkit/  SKILL.md core + phases/, tiers/, setup.md, interviews.md
 │   │   ├── skills/kyodakit/ SKILL.md: developer judgement, any language
 │   │   ├── servers/<name>/server.json  each MCP server's declaration (copied to share/maid/servers/)
+│   │   ├── skills/reflect/  SKILL.md: close or reflect, the batch, the person's answer (names `@maid-core@`)
+│   │   ├── agents/reflector.md  the reflector, a read-only Claude Code sub-agent (into the plugin)
 │   │   └── adapters/claude/ the Claude Code adapter: my-harness.json (its declaration), hooks.json, mcp.json
 │   ├── browser/            browser-control MCP (not symlinked — runnable)
 │   │   ├── launch          allowlist-enforcing launcher; the flake wraps it as maid-browser-mcp
@@ -1013,10 +1097,15 @@ covering the content validator and the symlink state
 machine against a `tempfile`-fake `$HOME`, plus the kaimux
 crate's 53 unit tests against a tempdir `Store`, and the core's
 (`maid-core`: the contract readers, fusion, readiness, the delivery
-record, the entry points, turn fit, the work record, recall, and its
-binary under a bare environment: the shipped Claude hooks run through
-`sh -c` with a payload, the MCP server over stdio, and turn fit against
-this repo's own declarations). Fast
+record, the entry points, turn fit, the work record, recall, the
+transcript packer on a real-shaped fixture, each guard and route against
+a stub memory server, the ledger, and its binary under a bare
+environment: the shipped Claude hooks run through `sh -c` with a
+payload, the MCP server over stdio, turn fit against this repo's own
+declarations, and `tests/adaptation.rs`, which closes, reflects and
+decides through the binary with a stub reflector and the real memory
+server, `MAID_TEST_PENSIEVE`, which the dev shell sets to the profile's
+pinned pensieve, then syncs the store to a second clone). Fast
 (sub-second). No real `$HOME` side effects, no API credits.
 Load-bearing — this is the kdevkit Test Gate default. `deploy.rs` carries
 the structural coverage: a full install→status→uninstall round-trip in
@@ -1036,7 +1125,8 @@ core, against a stub of the model API on `127.0.0.1` at a port the OS
 picks, which records every request: the genome placed once at start, a
 fitting prompt's rules and memory pointer, nothing new on a second prompt,
 a sub-agent's slice, the genome again once after `/compact`, the MCP tool
-answering, and the plugin loading with `extensions` in its manifest. Free
+answering, the plugin loading with `extensions` in its manifest, and a
+session that ends marked for sleep. Free
 (no model, no network). Run it after any change to the adapter or the
 plugin manifest, and after a Claude Code update.
 
@@ -1079,8 +1169,10 @@ core's adapter under session bring-ins, the Claude plugin's hooks and MCP
 server naming the profile's own core and a start hook answering, every mAId bring-in declared and
 writing-style ready with no rules file, the bring-ins recorded with
 tenure and this checkout's revision (dirty or not), the memory's source
-as pensieve at the flake's pin, and a spec-only commit building the same
-profile. It sets a temp personal store, so the memory server is
+as pensieve at the flake's pin and its `serve` the profile's pensieve on
+the store, the reflector agent in the plugin, the reflect skill naming a
+core of this build that runs bare, `claude plugin validate` passing the
+built plugin, and a spec-only commit building the same profile. It sets a temp personal store, so the memory server is
 registered on the temp HOME's claude.
 It needs network for the vendor marketplace.
 Run it after any change to the profile recipes or the part list.

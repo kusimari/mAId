@@ -3,24 +3,30 @@
 //! the CLI. Each returns items for the carrier to place; the delivery
 //! record decides what a carrier that keeps history is sent again.
 
+use crate::adapt;
 use crate::config::Config;
 use crate::contract;
 use crate::contract::Scope;
 use crate::delivery::{self, Record};
 use crate::environment::{self, Host, Readiness};
+use crate::experience::{Bundle, Struggle, Who};
+use crate::files::write_atomic;
 use crate::fit;
 use crate::here::Here;
+use crate::ledger;
 use crate::map::{self, BringIn, Declared, Map};
 use crate::parts::Tenure;
 use crate::record;
 use crate::select::{self, Selector};
+use crate::sleep;
+use crate::source::{self, Located};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use serde_json::Value;
 use std::fmt::Write as _;
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// How a carrier keeps what it is given.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -105,6 +111,8 @@ pub struct Picture {
     /// Bring-in names more than one part records.
     pub clashes: Vec<String>,
     pub pending: Pending,
+    /// Sessions marked for sleep and not yet reflected on.
+    pub waiting: usize,
 }
 
 /// One bring-in, as the picture names it.
@@ -362,19 +370,264 @@ fn fit_id(part: &str, name: &str) -> String {
     }
 }
 
-/// What happened in a session. Not filled yet: answers nothing.
+/// What happened in a session: packs it, stores the experience, and says
+/// where it is and what it holds. Naming no session, the sessions waiting
+/// to be reflected on.
 pub fn experience(ctx: &Ctx, call: &Call) -> Result<Vec<Item>> {
-    deliver(ctx, call, vec![])
+    let named = call.session.is_some()
+        || !call.input["transcript_path"].is_null()
+        || !call.input["cwd"].is_null();
+    let item = match named {
+        false => {
+            let marks = sleep::waiting(&ctx.config)?;
+            let mut text = match marks.len() {
+                0 => "no sessions wait to be reflected on\n".to_string(),
+                n => format!("sessions to reflect on: {n}\n"),
+            };
+            for m in &marks {
+                let _ = writeln!(text, "  {} ({}, {})", m.session, m.reasons.join(", "), m.at);
+            }
+            Item {
+                id: "waiting".into(),
+                text,
+                data: serde_json::to_value(&marks)?,
+            }
+        }
+        true => {
+            let (_, bundle, at) = pack(ctx, call)?;
+            Item {
+                id: "experience".into(),
+                text: summary(&bundle, &at),
+                data: serde_json::json!({ "session": bundle.session, "at": at }),
+            }
+        }
+    };
+    deliver(ctx, call, vec![item])
 }
 
-/// Marks an outcome done. Not filled yet: answers nothing.
+/// Marks a session for sleep: from its end event, or the person's close
+/// or reflect. Nothing else happens until the person reflects.
 pub fn sleep(ctx: &Ctx, call: &Call) -> Result<Vec<Item>> {
-    deliver(ctx, call, vec![])
+    let (_, at) = locate(ctx, call)?;
+    let input = &call.input;
+    // Claude Code's end event carries its own `reason` (`other`, `clear`,
+    // ...); to the mark it is the end, whatever ended it.
+    let reason = match (input["hook_event_name"].as_str(), input["reason"].as_str()) {
+        (Some("SessionEnd"), _) => sleep::END,
+        (_, Some(r)) => r,
+        (_, None) => "close",
+    };
+    let m = sleep::mark(&ctx.config, &at, input["cwd"].as_str(), reason)?;
+    if reason == sleep::END {
+        // The session has ended: there is no one to tell.
+        return Ok(vec![]);
+    }
+    let item = Item {
+        id: "sleep".into(),
+        text: format!(
+            "session {} marked for sleep ({})\n",
+            m.session,
+            m.reasons.join(", ")
+        ),
+        data: serde_json::to_value(&m)?,
+    };
+    deliver(ctx, call, vec![item])
 }
 
-/// Turns experience into changes. Not filled yet: answers nothing.
+/// Where a call's session is: its mark's transcript when it has one, else
+/// what the input names, in the source the input names.
+pub fn locate(ctx: &Ctx, call: &Call) -> Result<(Box<dyn source::SessionSource>, Located)> {
+    let mut input = call.input.clone();
+    if let Some(m) = match call.session.as_deref() {
+        Some(s) => sleep::read(&ctx.config, s)?,
+        None => None,
+    } {
+        if input["transcript_path"].is_null() {
+            input["transcript_path"] = m.transcript.into();
+        }
+        if input["source"].is_null() {
+            input["source"] = m.source.into();
+        }
+    }
+    let src = source::named(&ctx.config, &input)?;
+    let at = src.locate(call.session.as_deref(), &input)?;
+    Ok((src, at))
+}
+
+/// The session in full as its brief showed it to the reflector.
+fn briefed(ctx: &Ctx, call: &Call) -> Result<Bundle> {
+    let (_, at) = locate(ctx, call)?;
+    let path = ctx.config.briefed(&at.session);
+    let text = match fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => anyhow::bail!(
+            "no brief for session {}: findings are checked against the session the brief showed, so get the brief first",
+            at.session
+        ),
+        Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
+    };
+    serde_json::from_str(&text).with_context(|| format!("{} is not an experience", path.display()))
+}
+
+/// Pack the call's session and store its capped experience: the session,
+/// every text in full, and where the stored copy is.
+pub fn pack(ctx: &Ctx, call: &Call) -> Result<(Located, Bundle, PathBuf)> {
+    let (src, at) = locate(ctx, call)?;
+    let bundle = src.pack(&at)?;
+    let path = ctx.config.experience().join(format!("{}.json", at.session));
+    let stored = serde_json::to_string_pretty(&bundle.clone().capped())?;
+    write_atomic(&path, stored.as_bytes())
+        .with_context(|| format!("cannot write {}", path.display()))?;
+    Ok((at, bundle, path))
+}
+
+fn summary(b: &Bundle, at: &std::path::Path) -> String {
+    let person = b.said.iter().filter(|e| e.who == Who::Person).count();
+    let mut counts: std::collections::BTreeMap<Struggle, usize> = Default::default();
+    for (kind, _) in b.struggles() {
+        *counts.entry(kind).or_default() += 1;
+    }
+    let friction: Vec<String> = counts
+        .iter()
+        .map(|(k, n)| {
+            format!(
+                "{n} {}",
+                serde_json::to_value(k)
+                    .unwrap_or_default()
+                    .as_str()
+                    .unwrap_or("?")
+            )
+        })
+        .collect();
+    format!(
+        "experience of {} ({}): {} said ({person} by the person), {} told, {} did, {} touched; friction: {}; {} sub-sessions\n  at {}\n",
+        b.session,
+        b.source,
+        b.said.len(),
+        b.told.len(),
+        b.did.len(),
+        b.touched.len(),
+        match friction.is_empty() {
+            true => "none".to_string(),
+            false => friction.join(", "),
+        },
+        b.sub_sessions.len(),
+        at.display()
+    )
+}
+
+/// Turns experience into changes, with the person's guards. With no
+/// findings or decisions in its input: the reflector's brief. With the
+/// reflector's findings: the decision batch. With the person's
+/// decisions: what was applied.
 pub fn adaptation(ctx: &Ctx, call: &Call) -> Result<Vec<Item>> {
-    deliver(ctx, call, vec![])
+    let input = &call.input;
+    let map = map::fuse(&ctx.config.parts)
+        .with_context(|| format!("cannot read {}", ctx.config.parts.display()))?;
+    let item = if !input["dismiss"].is_null() {
+        let sessions: Vec<String> = match &input["dismiss"] {
+            Value::String(s) if s == "all" => sleep::waiting(&ctx.config)?
+                .into_iter()
+                .map(|m| m.session)
+                .collect(),
+            Value::Array(ids) => ids
+                .iter()
+                .map(|v| {
+                    v.as_str()
+                        .map(str::to_string)
+                        .ok_or_else(|| anyhow::anyhow!("dismiss takes session ids"))
+                })
+                .collect::<Result<_>>()?,
+            other => anyhow::bail!("dismiss is \"all\" or a list of session ids, not {other}"),
+        };
+        adapt::dismiss(&ctx.config, &sessions)?;
+        Item {
+            id: "dismissed".into(),
+            text: match sessions.len() {
+                0 => "no sessions to dismiss\n".to_string(),
+                n => format!("dismissed {n} sessions: {}\n", sessions.join(", ")),
+            },
+            data: serde_json::json!({ "dismissed": sessions }),
+        }
+    } else if input["decide"] == "skip" {
+        let session = call
+            .session
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("name the session to skip"))?;
+        adapt::dismiss(&ctx.config, &[session.to_string()])?;
+        Item {
+            id: "dismissed".into(),
+            text: format!("skipped: nothing from {session} is applied\n"),
+            data: serde_json::json!({ "dismissed": [session] }),
+        }
+    } else if !input["decide"].is_null() {
+        let session = call
+            .session
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("name the session the decisions are for"))?;
+        let before = adapt::pending(&ctx.config, session)?;
+        let out = adapt::decide(&ctx.config, &map, session, &input["decide"])?;
+        let changes: Vec<(adapt::Outcome, String)> = out
+            .iter()
+            .map(|o| {
+                let change = before
+                    .iter()
+                    .find(|p| p.n == o.n)
+                    .map(|p| p.finding.change.clone())
+                    .unwrap_or_default();
+                (o.clone(), change)
+            })
+            .collect();
+        ledger::decided(&ctx.config, session, &changes)?;
+        let left = adapt::pending(&ctx.config, session)?.len();
+        Item {
+            id: "applied".into(),
+            text: adapt::applied(session, &out, left),
+            data: serde_json::to_value(&out)?,
+        }
+    } else if !input["findings"].is_null() || !input["corrections"].is_null() {
+        let mut only = serde_json::Map::new();
+        for k in ["findings", "corrections"] {
+            if !input[k].is_null() {
+                only.insert(k.into(), input[k].clone());
+            }
+        }
+        let reflection: adapt::Reflection = serde_json::from_value(Value::Object(only))
+            .context("the reflector's answer is not findings of the stated shape")?;
+        let corrections = reflection.corrections.clone();
+        let bundle = briefed(ctx, call)?;
+        let (kept, dropped) = adapt::check(&ctx.config, &map, &bundle, reflection)?;
+        ledger::seen(&ctx.config, &bundle, &corrections)?;
+        if kept.is_empty() {
+            adapt::done(&ctx.config, &bundle.session)?;
+        }
+        Item {
+            id: "batch".into(),
+            text: adapt::batch(&bundle.session, &kept, &dropped),
+            data: serde_json::json!({ "items": kept, "dropped": dropped }),
+        }
+    } else {
+        let (at, bundle, path) = pack(ctx, call)?;
+        // The evidence is checked against the session as the reflector was
+        // shown it: what the session does after this (the reflector's own
+        // run, the findings handed back) cannot back a finding.
+        let briefed = ctx.config.briefed(&at.session);
+        write_atomic(&briefed, serde_json::to_string(&bundle)?.as_bytes())
+            .with_context(|| format!("cannot write {}", briefed.display()))?;
+        let decided = ledger::decided_in(&ctx.config, &at.session)?;
+        Item {
+            id: "brief".into(),
+            text: adapt::brief(
+                &at.session,
+                &path,
+                &at.transcript.display().to_string(),
+                &map,
+                &decided,
+            ),
+            data: serde_json::json!({ "session": at.session, "experience": path }),
+        }
+    };
+    deliver(ctx, call, vec![item])
 }
 
 fn deliver(ctx: &Ctx, call: &Call, items: Vec<Item>) -> Result<Vec<Item>> {
@@ -468,6 +721,7 @@ pub fn picture_at(ctx: &Ctx, here: &Here) -> Result<Picture> {
         refused: map.refused.len(),
         clashes: map.clashes.clone(),
         pending: pending(ctx)?,
+        waiting: sleep::waiting(&ctx.config)?.len(),
     })
 }
 
@@ -623,6 +877,13 @@ pub fn render_slice(p: &Picture, slice: Slice) -> String {
         "pending: {} decisions ({})",
         p.pending.count, p.pending.at
     );
+    if p.waiting > 0 {
+        let _ = writeln!(
+            s,
+            "  to reflect on: {} sessions marked for sleep (the reflect skill takes them)",
+            p.waiting
+        );
+    }
     s
 }
 
@@ -638,6 +899,7 @@ mod tests {
             config: Config {
                 parts: dir.join("parts"),
                 state: dir.join("state"),
+                claude: Some(dir.join("claude")),
             },
             host: Host::default(),
         }
@@ -743,9 +1005,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let c = ctx(dir.path());
         let k = call(Some("s"), Carrier::Append, false);
-        for f in [expression, experience, sleep, adaptation] {
-            assert!(f(&c, &k).unwrap().is_empty());
-        }
+        assert!(expression(&c, &k).unwrap().is_empty());
     }
 
     #[test]
@@ -1192,6 +1452,74 @@ mod tests {
                 "{carrier:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_end_event_marks_the_session_and_the_genome_counts_it_waiting() {
+        let dir = TempDir::new().unwrap();
+        let c = ctx(dir.path());
+        let projects = crate::fixtures::claude_projects(dir.path());
+        part(dir.path(), "a", "personal", json!([]));
+        let s = crate::fixtures::SESSION;
+        let end = Call {
+            input: json!({"session_id": s, "hook_event_name": "SessionEnd", "cwd": "/work", "reason": "other",
+                "transcript_path": projects.join(format!("-work/{s}.jsonl"))}),
+            ..call(Some(s), Carrier::Append, false)
+        };
+        assert!(
+            sleep(&c, &end).unwrap().is_empty(),
+            "an ended session is told nothing"
+        );
+        let p = picture(&c).unwrap();
+        assert_eq!(p.waiting, 1);
+        assert!(render(&p).contains("  to reflect on: 1 sessions marked for sleep"));
+        let listed = experience(&c, &call(None, Carrier::OnDemand, false)).unwrap();
+        assert!(
+            listed[0].text.contains(&format!("  {s} (end, ")),
+            "{}",
+            listed[0].text
+        );
+    }
+
+    #[test]
+    fn a_close_names_the_session_and_experience_packs_and_stores_it() {
+        let dir = TempDir::new().unwrap();
+        let c = ctx(dir.path());
+        crate::fixtures::claude_projects(dir.path());
+        let s = crate::fixtures::SESSION;
+        let close = Call {
+            input: json!({"cwd": "/work"}),
+            ..call(Some(s), Carrier::OnDemand, false)
+        };
+        assert!(sleep(&c, &close).unwrap()[0].text.ends_with("(close)\n"));
+        let got = experience(&c, &call(Some(s), Carrier::OnDemand, false)).unwrap();
+        let stored = dir.path().join(format!("state/experience/{s}.json"));
+        assert!(stored.is_file());
+        assert!(
+            got[0].text.contains("(4 by the person)")
+                && got[0]
+                    .text
+                    .contains("friction: 1 interrupt, 1 refusal, 2 error, 1 retry")
+                && got[0].text.contains("2 sub-sessions"),
+            "{}",
+            got[0].text
+        );
+        let none = experience(&c, &call(None, Carrier::OnDemand, false)).unwrap();
+        assert!(none[0].text.contains("sessions to reflect on: 1"));
+    }
+
+    #[test]
+    fn a_source_not_built_says_so() {
+        let dir = TempDir::new().unwrap();
+        let k = Call {
+            input: json!({"source": "pi", "cwd": "/w"}),
+            ..call(Some("s"), Carrier::OnDemand, false)
+        };
+        let e = sleep(&ctx(dir.path()), &k).unwrap_err();
+        assert!(
+            e.to_string().contains("no session source for pi yet"),
+            "{e}"
+        );
     }
 
     #[test]

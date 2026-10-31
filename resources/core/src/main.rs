@@ -57,12 +57,19 @@ enum Cmd {
     Genome(CallArgs),
     /// What this turn needs (not filled yet: answers nothing).
     Expression(CallArgs),
-    /// What happened in a session (not filled yet: answers nothing).
+    /// What happened in a session, packed; with none named, the sessions
+    /// waiting to be reflected on.
     Experience(CallArgs),
-    /// Mark an outcome done (not filled yet: answers nothing).
+    /// Mark a session for sleep: its end, or a close or reflect.
     Sleep(CallArgs),
-    /// Turn experience into changes (not filled yet: answers nothing).
+    /// Turn experience into changes: the reflector's brief, then the
+    /// decision batch, then what the person's decisions applied.
     Adaptation(CallArgs),
+    /// What reflections saw and the person decided, counted by thing.
+    Ledger {
+        #[arg(long)]
+        json: bool,
+    },
     /// The harness map, every part fused, as JSON.
     Map,
     /// Each bring-in's readiness where this runs.
@@ -129,6 +136,21 @@ fn run(cli: Cli) -> Result<()> {
             };
             let stdin = std::io::stdin().lock();
             return Ok(mcp::serve(&ctx, &session, stdin, std::io::stdout().lock())?);
+        }
+        Cmd::Ledger { json } => {
+            let records = maid_core::ledger::read(&ctx.config)?;
+            let rows = maid_core::ledger::summary(&records);
+            let dismissed = maid_core::ledger::dismissed_count(&records);
+            match json {
+                true => println!(
+                    "{}",
+                    serde_json::to_string_pretty(
+                        &serde_json::json!({"things": rows, "dismissed": dismissed})
+                    )?
+                ),
+                false => print!("{}", maid_core::ledger::render(&rows, dismissed)),
+            }
+            return Ok(());
         }
         Cmd::Map => {
             let m = fuse(&ctx)?;

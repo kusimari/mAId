@@ -132,6 +132,10 @@
             p=$m/plugins/maid
             mkdir -p $m/.claude-plugin $m/.agents/plugins $p/.claude-plugin $p/.codex-plugin $p/hooks $out/bin
             cp -r ${./resources/content/skills} $p/skills
+            cp -r ${./resources/content/agents} $p/agents
+            # The reflect skill names the core as `@maid-core@`: this build's.
+            chmod u+w $p/skills/reflect $p/skills/reflect/SKILL.md
+            sed -i "s|@maid-core@|${maid-core}/bin/maid-core|g" $p/skills/reflect/SKILL.md
             # Bring-in declarations outside the plugin: MCP servers', and
             # overlays for borrowed units mAId does not own.
             cp -r ${./resources/content/servers} $out/share/maid/servers
@@ -160,6 +164,9 @@
             pkgs.just
             pkgs.jq # the install tests read the agents' JSON; install edits kiro's MCP config
           ];
+          # The core's adaptation test writes a habit through the real
+          # memory server, the one the profile ships.
+          MAID_TEST_PENSIEVE = "${pensieveServer}/bin/pensieve";
         };
       }
     );

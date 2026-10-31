@@ -35,6 +35,7 @@ fn setup() -> (TempDir, Ctx) {
         config: Config {
             parts,
             state: dir.path().join("state"),
+            claude: None,
         },
         host: Host::default(),
     };

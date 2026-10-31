@@ -117,16 +117,15 @@ fn an_append_carrier_gets_the_picture_once_per_session_until_reset() {
 #[test]
 fn the_unfilled_entry_points_succeed_with_nothing() {
     let home = setup();
-    for e in ["expression", "experience", "sleep", "adaptation"] {
-        assert_eq!(
-            text(
-                home.path(),
-                &[e, "--carrier", "append", "--session", "s", "--input", "{}"]
-            ),
-            ""
-        );
-        assert_eq!(text(home.path(), &[e, "--json"]).trim(), r#"{"items":[]}"#);
-    }
+    let e = "expression";
+    assert_eq!(
+        text(
+            home.path(),
+            &[e, "--carrier", "append", "--session", "s", "--input", "{}"]
+        ),
+        ""
+    );
+    assert_eq!(text(home.path(), &[e, "--json"]).trim(), r#"{"items":[]}"#);
 }
 
 #[test]

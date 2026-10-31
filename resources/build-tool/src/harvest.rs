@@ -16,13 +16,7 @@ use std::path::{Path, PathBuf};
 const INDEX_LINES: usize = 200;
 const INDEX_BYTES: usize = 25 * 1024;
 
-/// Claude names a project's dir after its working directory with every
-/// character that is not a letter or digit turned into `-`.
-fn project_dir_name(path: &str) -> String {
-    path.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect()
-}
+use maid_core::claude::project_dir_name;
 
 const INDEX: &str = "MEMORY.md";
 

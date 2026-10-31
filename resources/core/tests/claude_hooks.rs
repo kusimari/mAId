@@ -262,3 +262,37 @@ fn the_shipped_mcp_config_starts_the_core_as_a_server_with_the_session() {
         "the session comes from the variable Claude Code sets"
     );
 }
+
+#[test]
+fn session_end_marks_the_session_for_sleep_and_says_nothing() {
+    let home = home();
+    let h = home.path();
+    let t = h.join(".claude/projects/-w/s1.jsonl");
+    fs::create_dir_all(t.parent().unwrap()).unwrap();
+    fs::write(&t, "{\"type\":\"user\",\"message\":{\"content\":\"hi\"}}\n").unwrap();
+    let end = json!({"session_id": "s1", "transcript_path": t, "cwd": "/w",
+        "hook_event_name": "SessionEnd", "reason": "other"});
+    let out = run(h, &command("SessionEnd", None), &end);
+    assert_eq!(context(&out, "SessionEnd"), None);
+    let mark: Value = serde_json::from_str(
+        &fs::read_to_string(h.join(".local/state/my-harness/sleep/s1.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(mark["reasons"], json!(["end"]));
+    let genome = context(
+        &run(
+            h,
+            &command("SessionStart", Some("startup")),
+            &start("startup"),
+        ),
+        "SessionStart",
+    )
+    .unwrap();
+    assert!(genome.contains("to reflect on: 1 sessions"), "{genome}");
+    // With no transcript to find, the hook fails quietly: an end event
+    // must never hold up Claude Code.
+    let lost = json!({"session_id": "s2", "transcript_path": "/nowhere/s2.jsonl",
+        "hook_event_name": "SessionEnd"});
+    let out = run(h, &command("SessionEnd", None), &lost);
+    assert!(out.status.success() && out.stdout.is_empty());
+}

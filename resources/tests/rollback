@@ -161,6 +161,24 @@ declared() {
     [ ! -e "$MAID_CONFIG/writing-style/learned.md" ]
 }
 check "every mAId bring-in is declared, and writing-style is ready with no rules file" declared
+# The reflector ships in the plugin, the reflect skill names this build's
+# core, which runs under a bare environment, and claude takes the plugin.
+plugin_dir=$MAID_PROFILE/share/maid/marketplace/plugins/maid
+reflection_ships() {
+  [ -f "$plugin_dir/agents/reflector.md" ] &&
+    ! grep -q '@maid-core@' "$plugin_dir/skills/reflect/SKILL.md" &&
+    core=$(grep -o '/nix/store/[^ `]*/bin/maid-core' "$plugin_dir/skills/reflect/SKILL.md" | head -1) &&
+    env -i HOME="$th" "$core" experience >"$work/waiting" 2>&1 &&
+    grep -qx 'no sessions wait to be reflected on' "$work/waiting" &&
+    inhome claude plugin validate "$plugin_dir" >"$work/validate" 2>&1
+}
+check "the reflector ships, the reflect skill's core runs, and claude validates the plugin" reflection_ships
+# The memory's serve value is the command install registers on claude.
+serve_bound() {
+  jq -e --arg p "$MAID_PROFILE/bin/pensieve" --arg s "$store" '.bring_ins[]
+    | select(.name == "personal-memory") | .values.serve | fromjson == [$p, "--store", $s]' "$partlist" >/dev/null
+}
+check "the part list binds the memory's serve to the profile's pensieve on the store" serve_bound
 # Install runs from this checkout, so it records this checkout's revision,
 # marked dirty when the tree has changes.
 rev=$(git -C "$here" rev-parse HEAD)

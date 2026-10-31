@@ -457,3 +457,19 @@ fn the_on_demand_resource_reads_the_genome_the_session_started_with() {
         "the resource returns what the session started with:\nplaced:\n{placed}\nread:\n{read}"
     );
 }
+
+#[test]
+#[ignore = "needs claude; run with --ignored"]
+fn a_session_that_ends_is_marked_for_sleep() {
+    let (url, _log) = stub();
+    let world = World::new();
+    world.session(&url, &["deploy the release"]);
+    let sleep = world.dir.path().join("home/.local/state/my-harness/sleep");
+    let marks: Vec<Value> = fs::read_dir(&sleep)
+        .unwrap_or_else(|e| panic!("no marks at {}: {e}", sleep.display()))
+        .map(|e| serde_json::from_str(&fs::read_to_string(e.unwrap().path()).unwrap()).unwrap())
+        .collect();
+    assert_eq!(marks.len(), 1, "{marks:?}");
+    assert_eq!(marks[0]["reasons"], json!(["end"]));
+    assert!(marks[0]["transcript"].as_str().unwrap().ends_with(".jsonl"));
+}

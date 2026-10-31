@@ -13,7 +13,8 @@
       "package": "pensieve",
       "config": {
         "store": { "about": "the persona's store, a git checkout the person owns" },
-        "index": { "about": "the memory index, a path relative to store" }
+        "index": { "about": "the memory index, a path relative to store" },
+        "serve": { "about": "the command that serves store over MCP stdio, a JSON array of strings" }
       },
       "state": { "permanent": "store", "promote": "off" }
     }
