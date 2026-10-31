@@ -530,3 +530,13 @@ this initiative.
 - Ruling (ringmaster, stream 4 planning): the selector reads a memory's
   index from what the bring-in states, never a hardcoded path · why: other
   packages and tiers will have other shapes · cost if wrong: none
+- Ruling (ringmaster, stream 5 planning): a borrowed unit gets its
+  declaration from an overlay manifest mAId ships in the unit's own
+  standard, recorded as the bring-in's unit; the vendor's files are never
+  read for it or changed. A `rules` pointer is `<file>#<heading slug>`, at
+  most 30 lines. writing-style's tiers are two files (pending, permanent),
+  promote `propose`; an optional tier not created yet counts as empty ·
+  why: no new list key or reader rule, and the lender's unit stays theirs
+  · cost if wrong: one overlay per borrowed unit to move
+- Paid tests: 4 of 30 granted to stream 5 (writing-style playback on
+  claude, activation on codex and kiro).
