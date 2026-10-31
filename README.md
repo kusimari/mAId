@@ -8,13 +8,15 @@ skills path.
 
 The repo has two halves:
 
-- **`resources/`** — three layers in one directory:
+- **`resources/`** — four layers in one directory:
   the markdown content (`resources/content/`) the AI tools
   load; the Rust tooling (`resources/build-tool/`) that
-  validates, installs, and verifies it; and
+  validates, installs, and verifies it;
   the Justfile verbs (`resources::install-skills`,
   `resources::uninstall-skills`, `resources::status-skills`,
-  `resources::verify-skills`) that drive the tooling.
+  `resources::verify-skills`) that drive the tooling; and the
+  core (`resources/core/`, `maid-core`) that the plugin's hooks
+  call.
 - **`kaimux/`** — sibling workspace member for the kaimux
   tmux-pane orchestrator. Built via `kaimux::build`.
 
@@ -22,6 +24,42 @@ The repo has two halves:
 (`~/.local/state/maid/profile`) and points every coding agent at
 it. Nothing installed refers back to the checkout: delete it and
 the install keeps working.
+
+## How mAId works
+
+Every coding agent you launch is a **shell**: Claude Code, codex, kiro-cli,
+agy, run as the vendor ships them. A shell can do the work, but it knows
+nothing about you. The **ghost** is what makes it act like you: mAId plus
+every other part you install beside it (a work repo, say). Each part names
+a persona and brings in skills, MCP servers and plugins. The ghost is one
+person with several personas, kept apart so each persona's learnings stay
+in its own memory. mAId also ships the core, `maid-core`, which fuses
+every part present and reaches the shell only through the shell's own
+hooks. Nothing wraps the shell.
+
+The core gives the ghost five functions. On Claude Code:
+
+| Function | What it does | When it fires | What you see |
+|---|---|---|---|
+| **genome** | who you are, all personas fused: the personas and which one this work is for, the session bring-ins and where their state lives, the turn bring-ins as a catalog, which bring-ins are ready here, and how many decisions wait for you | at session start, and again after `/clear` or a compaction; a sub-agent gets a slice | the startup report, in the agent's context from the first reply; the `genome` prompt or resource of the plugin's `my-harness` MCP server shows it, and `just status --whole` shows the same readiness |
+| **expression** | switches on only what this turn needs: the first rules of up to 3 turn bring-ins that fit, up to 3 memory pointers, and the goal and next step from the work's own record | on each prompt, sending only what changed | per-turn reminders the agent gets with your prompt; when no bring-in fits and no memory matches, nothing is sent and the shell works as it would without mAId |
+| **experience** | packs the session and its sub-agents from the transcript: what was said, what the agent was told, what it did, what it touched, where it struggled | when a reflection starts | nothing directly; it is what the reflector reads |
+| **sleep** | marks the session as done, to learn from | when the session ends, or when you say "close this session" or "reflect" | nothing at the end; the next session's startup report counts the sessions waiting |
+| **adaptation** | a read-only reflector finds what should change; the core checks every finding's evidence against the session and routes it | right after "close this session", "reflect", or "reflect on the waiting sessions" | one decision batch: numbered one-line items, each with what it changes, for which persona, and the quote it rests on. You answer "ok", "1 and 3 yes, 2 no", "4 is work", "none" or "skip" |
+
+After your yes, a habit is written: to the persona's memory through its
+own memory server, or to a bring-in's local tier. A change to a skill, a
+bring-in or the harness itself only becomes a proposal (a backlog item,
+or a worktree to turn into a PR), or a note when its route is report
+only. A bring-in you borrowed is never changed;
+what is learned about it becomes a note for its lender. A persona
+habit needs that persona's store: set yours with `just memory-store
+<path>` (see Verbs).
+
+Only Claude Code carries the ghost today. On codex, kiro-cli and agy the
+skills work as plain skills. How each piece is built is in
+[`specs/project.md`](./specs/project.md), "My harness". To add another
+persona repo, follow its "For any persona part" section.
 
 ## Develop
 
@@ -198,7 +236,8 @@ reported and kept, unless you pass `--force` to
 
 mAId installs no global instruction file. Each supported tool loads
 the skills natively, as a plugin or from its skills path, with no
-extra preamble. `AGENTS.md` is a
+extra preamble. On Claude Code the ghost's context reaches each session
+through the plugin's hooks, not through a file. `AGENTS.md` is a
 repo-root convention (per-project), not a global per-tool preamble;
 loading a project's `AGENTS.md` / `project.md` is the `kdevkit`
 skill's work-time job.

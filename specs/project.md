@@ -5,19 +5,22 @@
 <!-- What this project exists to do, and who it serves. One
      paragraph. Change only when the goal itself changes. -->
 
-Tool-agnostic source of truth for my agentic resources — mostly
-skills — compiled into whatever AI tool I'm using (Claude Code,
-Kiro, Codex, future tools). The repo is the checked-in source;
-`just install` builds it into a nix profile in user space and links
-each tool at that profile, so what is installed never depends on the
-checkout. claude and codex install the skills as a plugin through
-their own plugin commands; kiro (and agy) discover them natively at
-their own skills path, by symlink. Either way there is no global
-instruction preamble; the one non-skill resource
-(browser-control MCP) registers as a runnable server via Just verbs
-(see Architecture). One canonical set of resources, many consumer
-surfaces. Apps that ship binaries (today: future `kaimux/`, the
-agent-orch successor) live as
+Tool-agnostic source of truth for my agentic resources — mostly skills
+— compiled into whatever AI tool I'm using (Claude Code, Kiro, Codex,
+future tools). The repo is the checked-in source; `just install`
+builds it into a nix profile in user space and links each tool at that
+profile, so what is installed never depends on the checkout. claude
+and codex install the skills as a plugin through their own plugin
+commands; kiro (and agy) discover them natively at their own skills
+path, by symlink. Either way there is no global instruction file; the
+runnable resources (the browser-control and memory MCP servers, the
+core) are closures in the profile, the servers registered via Just
+verbs (see Architecture). One canonical set of resources, many
+consumer surfaces. mAId also ships the core that makes those resources
+a ghost in each shell, built so any base harness launched plain acts
+like me and gets better from use, through its own extension points,
+never a wrapper; today only Claude Code carries it. Apps that ship
+binaries (today: future `kaimux/`, the agent-orch successor) live as
 sibling workspace members with their own native cargo verbs.
 
 ## Architecture
@@ -28,11 +31,11 @@ sibling workspace members with their own native cargo verbs.
 
 Two halves at the top level:
 
-- **`resources/`** — three layers, working together:
+- **`resources/`** — four layers, working together:
   1. **Content** (`resources/content/skills/<name>/SKILL.md`) —
-     the skill definitions the AI tools load. Skills are the only
-     deployed artefact; each tool auto-discovers them at its own
-     skills path.
+     the skill definitions the AI tools load, beside the declarations,
+     adapter and agent the core uses (see Layout). Each tool
+     auto-discovers the skills at its own skills path.
 
      A skill may ship **deferred modules** beside its `SKILL.md` —
      sibling files, or files under subdirectories — that the
@@ -98,6 +101,9 @@ Two halves at the top level:
      omit for all three). These are how a human or another tool
      consumes the
      tooling.
+  4. **Core** (`resources/core/`) — `maid-core`, installed in the
+     profile: the ghost's five entry points, which every shell's carriers
+     call (see "My harness").
 - **`kaimux/`** — tmux-pane orchestrator for coding-agent
   sessions. Single-binary Rust crate (workspace member).
   Wraps `claude` / `kiro-cli` calls so each running agent
@@ -264,9 +270,10 @@ like a mAId one wins in kiro. mAId installs no global instruction file:
 `AGENTS.md` is a repo-root convention (per-project, alongside
 README.md), not a global per-tool preamble, and "load the project's
 AGENTS.md / project.md" is kdevkit's work-time instruction rather
-than something deployed here.
+than something deployed here. The ghost's context reaches a session
+through hooks, not a file (see "The Claude Code adapter").
 
-**Browser-control MCP** is the one resource that isn't a skill — the
+**Browser-control MCP** was the first resource that isn't a skill, and the
 first *runnable* one (skills are markdown symlinks; this is a live
 server). It lets the agent drive the user's already-running Chrome
 over the DevTools Protocol, so existing logins are reused with no
@@ -311,18 +318,40 @@ re-auth. Its shape differs from skills in two ways:
 
 ### My harness
 
-The terms mAId uses for what it installs:
+My harness is a ghost in the shell. The terms:
 
-- **Agent**: the whole entity a session runs as: base harness, my
-  harness and my memory.
-- **Base harness**: a model plus a vendor coding agent (`claude`,
-  `codex`, `kiro-cli`, `agy`), run as the vendor ships it.
-- **My harness**: what parts add on top of the base harnesses
-  (skills, MCP servers, sub-agents, later more), through each base
-  harness's own extension points. It has no driver loop of its own.
-- **Part**: what one repo installs into the base harnesses. mAId's
-  part is `maid-harness`. Other parts may sit beside it; my harness is
-  the union.
+- **Shell** (base harness): a model plus a vendor coding agent
+  (`claude`, `codex`, `kiro-cli`, `agy`), run as the vendor ships it. It
+  can do the work and knows nothing about me.
+- **Ghost** (my harness): what every part adds on top of the shells
+  (skills, MCP servers, plugins, sub-agents), through each shell's own
+  extension points, so the shell acts like me. It has no driver loop of
+  its own.
+- **Part**: what one repo installs into the shells: one persona and its
+  bring-ins. mAId's part is `maid-harness`, persona `personal`, and it
+  also ships the core. Other parts sit beside it; the ghost is the union.
+- **Persona**: a name for who the work is for. It owns nothing; each
+  persona's learnings go to its own memory, so fusing parts never mixes
+  their stores.
+- **Bring-in**: a plain standard unit a part installs (a skill, an MCP
+  server, a plugin) that declares what the ghost needs to know about it.
+  A **session** bring-in acts for the whole session (memory, the core's
+  adapter); a **turn** bring-in attaches when it fits the work. Each is
+  the part's own or borrowed.
+
+The core gives the ghost five functions, each an entry point every
+carrier calls the same way:
+
+| Function | What it does | Paragraph |
+|---|---|---|
+| `genome` | who I am at session start, every persona fused | "Genome" |
+| `expression` | only what this turn needs, sent when it changed | "Expression" |
+| `experience` | the session as it happened, packed to learn from | "Experience" |
+| `sleep` | marks the session done, so learning never interrupts work | "Sleep" |
+| `adaptation` | turns experience into habits and proposals, the person deciding | "Adaptation" |
+
+On Claude Code the carriers are the plugin's hooks and MCP server ("The
+Claude Code adapter"). The other shells get the skills only, for now.
 
 The rules every part follows, so that parts add up and never fight:
 
@@ -392,6 +421,13 @@ whole-status reads every `*.json` file in the dir that is not a dotfile.
   there and took it over; it owns it as if it had written it.
 - An entry without `skipped` is placed: the harness lists it, in
   whatever state (a plugin the user disabled is still placed).
+
+The list says what is there after install, read back from each step,
+plus what install skipped. Uninstall leaves only what it could not
+remove, and deletes the file when nothing is left. In mAId, `part.rs`
+is the one writer: install and uninstall record what `Deploy::placed`
+reads back, and the browser-MCP script records its server through
+`build-tool record`.
 
 **Persona and bring-ins.** Beside `harnesses`, a list may say what the part
 brings into the ghost; readers that do not know these keys ignore them, so
@@ -513,18 +549,26 @@ its session's delivery record does not hold; on demand always answers and
 records; transient always sends. An item counts as sent when it is handed
 to the carrier, so a carrier that fails to place it calls again with
 `--reset`, which forgets what the session was sent; a sub-session is its
-own id. The genome is one item, so any change re-sends all of it, and it
-adds a line for part lists it refused and for bring-in names two parts
-both record, when there are any. The core takes the same part lists
+own id. The core takes the same part lists
 whole-status takes (rule 3), and never keeps or prints a secret a list
 holds as a value. It reads `MY_HARNESS_PARTS` and
 `MY_HARNESS_STATE` (default `${XDG_STATE_HOME:-$HOME/.local/state}/my-harness`,
 parts under it), so it runs from a hook with no checkout. With no
 `--session`, the session is the input's `session_id` (with an `agent_id`,
-the sub-session `<session_id>.<agent_id>`); `--slice sub-session` gives a
-sub-agent the genome without the environment's detail and pending;
-`--claude-event <Event>` answers as a Claude Code hook and exits 0 on any
-error, a bad flag or a panic included.
+the sub-session `<session_id>.<agent_id>`); `--claude-event <Event>`
+answers as a Claude Code hook and exits 0 on any error, a bad flag or a
+panic included.
+
+**Genome** is the session's picture, a few lines per section: the
+personas (each with its part) and the one this session acts through, or
+"not known; ask"; each session bring-in with its job, own or borrowed, and
+where its state lives; the turn bring-ins as a catalog, none loaded; the
+environment, how many bring-ins are ready and why each other one is not;
+and the pending count, with how many sessions wait to be reflected on. It
+adds a line for part lists it refused and for bring-in names two parts
+both record, when there are any. It is one item, so any change re-sends
+all of it. `--slice sub-session` gives a sub-agent the same without the
+environment's detail and pending, which are the person's.
 
 **Expression** answers a turn from its input's `prompt` and `cwd`, each part
 its own item so an append carrier is sent only what changed, under 9,000
@@ -537,7 +581,10 @@ title and hook to 300, control characters dropped):
   `record` names one here, whether or not it fits, since `signals.states`
   match against it; a session told a persona or a record that moves to
   where none is known is told so once (`persona: none known here`,
-  `record: none here`), and a session never told one is told nothing;
+  `record: none here`), and a session never told one is told nothing.
+  With the fitting bring-ins' first rules below, and the genome placed
+  again at clear and compact, these are the few rules that must never
+  drift; there is no other carrier for them;
 - per turn bring-in that fits (at most 3, counted after the same rules
   text from two parts is sent once), its job and its first rules. Turn fit is derived, never
   declared: `signals.locations` globs against the folder's path, its name
@@ -554,8 +601,8 @@ title and hook to 300, control characters dropped):
 
 The acting persona is the only one when there is one; otherwise the one
 whose turn bring-ins' location or file signals match here, or whose bound
-state location holds the folder; otherwise not known. The genome uses the
-same guess from its input's `cwd`.
+state location holds the folder; otherwise not known. The genome makes
+the same guess from its input's `cwd`.
 
 **The Claude Code adapter** is data in mAId's plugin: `hooks/claude.json`
 and `claude-mcp.json` (from `resources/content/adapters/claude/`), named by
@@ -578,16 +625,19 @@ a hook's `additionalContext` whole up to 10,000 characters, past that a
 lines per part and bring-in, is not cut, so a ghost of many parts would
 reach it first. A shell needs no
 always-loaded rules file: SessionStart covers every point where context
-drops. Another stream's hook adds its own entry to `hooks/claude.json`.
+drops. A new hook of the core adds its own entry to `hooks/claude.json`;
+a part never adds one (see "For any persona part").
 
-**Sleep, experience, adaptation.** A session is marked for sleep by its
+**Sleep.** A session is marked for sleep by its
 end event (on Claude Code, the plugin's SessionEnd hook) or by the
 person's close or reflect (the `reflect` skill): `maid-core sleep`, one
 mark per session under `<state>/sleep/`, keeping the first source and
 adding each later reason; a later mark opens a decided session again,
 except the end event, since closing is the usual last thing a session
 does after the person reflected. Nothing else runs at an end event; the genome
-says how many sessions wait to be reflected on. `maid-core experience`
+says how many sessions wait to be reflected on.
+
+**Experience.** `maid-core experience`
 packs a session and its sub-sessions from a **session source** into an
 experience (said, told, did, touched, friction; each text cut to 400
 characters with its `<file>:<line>`), stored at
@@ -595,7 +645,9 @@ characters with its `<file>:<line>`), stored at
 waiting. Only Claude Code's source is built: its transcripts under
 `$CLAUDE_CONFIG_DIR/projects` (default `~/.claude/projects`), each
 sub-agent's file under `<session>/subagents/`, read leniently since the
-format is Claude Code's own. `maid-core adaptation` takes three inputs:
+format is Claude Code's own.
+
+**Adaptation.** `maid-core adaptation` takes three inputs:
 none gives the **reflector's brief** (the experience, every bring-in it
 may change with its persona, tenure, route and tiers, and what the
 session already decided); the reflector's findings give the **decision
@@ -611,15 +663,17 @@ text the batch shows or a write keeps (change, entry, title, type) one
 line, a title with no `[` or `]`, a type one of the four; the thing is in
 the map (or `harness`); a habit's tier is declared and bound. A
 sub-agent's prompt is its dispatcher's words, and a command's output in
-the person's turn is tool content. Then the route, from
-the map: a **habit** (a persona memory, or a bring-in's tier) is
-written; **nature** (a bring-in, a skill, the harness) becomes a
+the person's turn is tool content.
+
+Then the route, from the map: a **habit** (a persona memory, or a bring-in's tier) is
+written (a persona memory through its own server, see "Memory"); **nature** (a bring-in, a skill, the harness) becomes a
 proposal under `<state>/proposals/<thing>/`, backlog-item shaped, naming
 the source repo and revision, and a worktree-to-PR one only when it
 carries an edit and the route is `worktree`; anything about a
 **borrowed** bring-in is a note for its lender under `<state>/notes/`;
 an own bring-in with route `report` gets a note too. A habit not placed
-on a persona is asked, never written. A habit with a quote not in the
+on a persona is asked, never written, and a persona with no memory, or
+more than one, takes none. A habit with a quote not in the
 person's own words, a contradiction, or a persona guess leaves the item
 out of "ok", for its own answer. Every answer is checked before any is
 applied, and each accepted item is placed again on the map as it is
@@ -632,20 +686,15 @@ records them as dismissed. Once a batch is decided or dismissed, its
 already in either tier is listed `already in <tier>`, with no action. Each undecided item is one file
 under `<state>/pending/`, which is the genome's pending count; an item
 that fails to apply stays, with why. A new file the core writes is
-`0600`. A tier file is markdown: an entry
+`0600`.
+
+A tier file is markdown: an entry
 is `- <date> · <entry>` and a `source:` line under its first `## `
 heading, newest first; a new file gets `## <Key> rules`. The **ledger**
 (`<state>/ledger.jsonl`) keeps what each reflection saw (friction by
 tool, corrections by thing; a session's last reflection counts) and each
 decision and each dismissal; `maid-core ledger` counts them by thing
 (findings decided and accepted) and the sessions dismissed.
-
-The list says what is there after install, read back from each step,
-plus what install skipped. Uninstall leaves only what it could not
-remove, and deletes the file when nothing is left. In mAId, `part.rs`
-is the one writer: install and uninstall record what `Deploy::placed`
-reads back, and the browser-MCP script records its server through
-`build-tool record`.
 
 **Whole-status.** `just status --whole [agent]` reads every part's list
 (`whole.rs`) and reports each entry, per harness and part, in one of six
@@ -830,7 +879,12 @@ mAId's server is `personal-memory` on the personal store, whose path is in
 <path>` sets it). With none set, install reports "no personal store set"
 and registers nothing. Install
 registers it on claude with `claude mcp add -s user personal-memory --
-<profile>/bin/pensieve --store <path>` and records it as `mcp`.
+<profile>/bin/pensieve --store <path>` and records it as `mcp`. The entry
+is mAId's while its command is the profile's `bin/pensieve`; install
+re-registers it when the store path changes and leaves any other
+same-named entry, or one another part's list records as placed, alone. A
+store that is not there is reported and skipped, never created, and mAId's
+earlier entry is removed. An unreadable `~/.claude.json` fails install.
 
 It is also a session bring-in. Its declaration is mAId's own
 `resources/content/servers/personal-memory/server.json` (every MCP
@@ -868,12 +922,7 @@ the index's dir; each memory file has frontmatter `name`, `description`
 and `metadata.type` (`user`, `feedback`, `project` or `reference`), then
 its body (Claude Code's auto-memory format). The memory's persona is the
 one of the part that records the bring-in. A bring-in with no `index` key
-has no index in this shape. The entry
-is mAId's while its command is the profile's `bin/pensieve`; install
-re-registers it when the store path changes and leaves any other
-same-named entry, or one another part's list records as placed, alone. A
-store that is not there is reported and skipped, never created, and mAId's
-earlier entry is removed. An unreadable `~/.claude.json` fails install.
+has no index in this shape.
 
 **Claude's own automatic memory is turned off** by a part whose server is
 registered, so saves go to a server and not to Claude's memory dir: user
@@ -1626,6 +1675,78 @@ the experience is symmetric across resource kinds.
   rather than letting names land here. The `kdevkit`
   skill encodes this rule for every project; this bullet
   declares mAId as a public repo so the rule fires.
+
+## For any persona part
+
+What a repo that delivers a persona does to join the ghost. It needs
+nothing from the repo that ships the core but this list, and its units
+still work as plain standard units where the core is absent. Each shape
+named here is defined under Architecture, "My harness".
+
+1. **Write a part list, and name its persona.** On install, write
+   `<part>.json` in the parts dir (`$MY_HARNESS_PARTS`, default
+   `${XDG_STATE_HOME:-$HOME/.local/state}/my-harness/parts`; readers skip
+   a dotfile, so a temporary one beside it while writing is safe), and
+   on uninstall delete it once nothing it placed is left. It holds `format` `1`, `part` (the file's
+   stem), `harnesses` (what it placed on each shell, read back from the
+   shell), and `persona`, a name only. Follow
+   the five part rules: no wrapper, own and remove only what it wrote,
+   adopt only an identical value no other list records, set a one-value
+   setting only when empty or its own, assume nothing about other parts.
+2. **Declare the contract on every bring-in it ships,** in that
+   standard's slot under the namespace `my-harness`: a skill's
+   frontmatter `metadata` (flat keys, `my-harness.scope`, ...), a plugin
+   manifest's `extensions["my-harness"]`, an MCP server's `server.json`
+   `_meta["my-harness"]`. `scope` (`session` or `turn`) and `job` are
+   required. Add what applies: `signals`, `rules` (`<file>#<heading
+   slug>`, the file relative to the manifest's dir, at most 30 lines),
+   `package`, `config` (every key it needs, secrets marked, every state
+   location included), `state` (`local`, `permanent`, `promote`), `requires`, and on a turn bring-in that knows
+   where the work keeps its record, `record`.
+3. **Give its persona exactly one memory.** A session bring-in that names
+   its memory package in `package`, with config `store` (the persona's own
+   store, a git checkout the person owns; a private one for anything that
+   names work), `index` (`<dir>/<file>` relative to `store`) and `serve`
+   (the command that serves the store over MCP stdio, a JSON array of
+   strings whose first is absolute), and `state` `{"permanent": "store",
+   "promote": "off"}`. The core takes a bring-in with a `permanent` tier
+   and an `index` key as a memory, and writes an accepted habit by running
+   `serve` and calling the server's own memory tools. A persona with two
+   memories, or none, gets no habit written: the core cannot tell where it
+   goes. Register that server with each shell yourself, and record it
+   under `harnesses`. On Claude Code, turn Claude's own automatic memory
+   off while the server is registered, by the rules in "Memory".
+4. **Record each bring-in at install** in the list's `bring_ins`: `name`;
+   `unit` (`standard` `skill`, `plugin` or `mcp`, and the absolute `path`
+   of the manifest whose slot holds the declaration); `source` (`kind`
+   `project`, `store`, `dir` or `vendor`, `at`, never a local path or a
+   credential, and the pinned `rev`); `tenure`; `route` (`write`,
+   `backlog`, `worktree` or `report`; omit it for the default from the
+   source); and `values`, every config key bound here, every state
+   location included, a secret only as `env:<NAME>`.
+5. **Mark what it borrows,** a unit someone else provides, as `tenure`
+   `{"kind": "borrowed", "from": "<whom>", "since": "<date>"}`, and never
+   change it. Its declaration is an overlay: a manifest in the unit's own
+   standard holding only `name`, `description` and the `my-harness` slot,
+   shipped by the part and recorded as the bring-in's `unit`. The lender's
+   files are never read for it. Its route is always `report`: what is
+   learned about it becomes a note for its lender.
+6. **Leave the core's carriers alone.** The core owns the shell's start,
+   sub-agent start, turn and end hooks and the on-demand server that
+   serves the genome and expression; on Claude Code there is no
+   always-loaded rules file. A part adds bring-ins, never a second copy of
+   those.
+7. **Keep its own copy** of this list, the bring-in contract and the
+   reader rules in its own docs, kept in step by the person, and name no
+   other part.
+8. **Install from one canonical clone.** The list is keyed by the part's
+   name, so a second checkout installing replaces the first.
+9. **Report ready, not just registered.** Status checks each bring-in by
+   reader rule 15: ready, or not ready and why (a config key with no
+   value, an unset `env:` secret, a missing state location, a memory
+   index that leaves its store, a `requires` command not on PATH),
+   undeclared or unreadable. The genome's
+   environment line says the same in every session.
 
 ## Agent Development
 
