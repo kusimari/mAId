@@ -8,10 +8,9 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    # The memory MCP server. Pinned from a local checkout until it is
-    # published; re-pin to the published commit before any PR.
+    # The memory MCP server, pinned to its published commit.
     pensieve = {
-      url = "git+file:///local/home/gorantls/tool-workplace/ai-workspace/pensieve?rev=556cab36b5a93d3692c42ff65e8f45b8a01633e7";
+      url = "github:kusimari/pensieve/4ff98e71e442a8c5cccdb34bbab45a2c89786a04";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };

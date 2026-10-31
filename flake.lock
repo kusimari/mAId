@@ -41,18 +41,18 @@
         ]
       },
       "locked": {
-        "lastModified": 1791917358,
-        "narHash": "sha256-YqTJbUlo4wisK1HuAf2H8rZoekJxtSqGswVgD7pObeI=",
-        "ref": "refs/heads/feat/pensieve",
-        "rev": "556cab36b5a93d3692c42ff65e8f45b8a01633e7",
-        "revCount": 13,
-        "type": "git",
-        "url": "file:///local/home/gorantls/tool-workplace/ai-workspace/pensieve"
+        "lastModified": 1792600114,
+        "narHash": "sha256-5fKR6/Gn+P7DN43BBX3yIIJWwU2BxYDrnvVGJS5SIwI=",
+        "owner": "kusimari",
+        "repo": "pensieve",
+        "rev": "4ff98e71e442a8c5cccdb34bbab45a2c89786a04",
+        "type": "github"
       },
       "original": {
-        "rev": "556cab36b5a93d3692c42ff65e8f45b8a01633e7",
-        "type": "git",
-        "url": "file:///local/home/gorantls/tool-workplace/ai-workspace/pensieve"
+        "owner": "kusimari",
+        "repo": "pensieve",
+        "rev": "4ff98e71e442a8c5cccdb34bbab45a2c89786a04",
+        "type": "github"
       }
     },
     "root": {
