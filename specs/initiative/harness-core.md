@@ -552,3 +552,18 @@ this initiative.
   its SessionEnd entry · why: one owner for shared plumbing
 - Paid tests: 4 of 30 granted to stream 3 (one real transcript; three
   reflector runs on the Macro step-3 fixture).
+- Ruling (ringmaster, stream 2 planning): on Claude Code there is no
+  install-rendered rules file; SessionStart places the genome at every
+  point the shell drops context (startup, resume without it, clear,
+  compact). The System design row "rules file rendered at install" is
+  superseded for Claude Code · why: nothing in the genome is the same for
+  every environment and part, so a rendered file would be a stored map ·
+  cost if wrong: add it back as one more item
+- Ruling (ringmaster, stream 2 planning): the work's own record is found
+  through an optional contract field `record` on a turn bring-in
+  (`<file glob>#<heading slug>`), kdevkit pointing at its feature spec's
+  Handoff · why: "one record of the work" without a harness copy · cost if
+  wrong: one optional field to drop
+- Paid tests: 4 of 30 granted to stream 2 (persona and store named from
+  the genome; a fitted rule changes behaviour). 18 remain, reserved for
+  the Macro test and re-runs.
