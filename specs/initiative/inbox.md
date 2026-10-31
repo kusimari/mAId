@@ -1,10 +1,11 @@
 # Initiative: inbox
 
 - Branch: `initiative/inbox` (cut from `main` at 0881e13)
-- Status: draft for the person's review. Planned on `main`; rebased onto
-  `main` once initiative `harness-core` lands, before any build.
+- Status: draft for the person's review, at the framing and experience
+  layer. The design layers (technical concepts, mapping per shell, streams)
+  are written only once framing and experience are agreed.
 - Research: channels, connectors, jobs and inbox UIs (kept outside the
-  repo, summarised in the design below).
+  repo; drawn on when the design layers are written).
 
 - **Build gate: do not build until initiative `harness-core` (PR #60) is
   merged to `main`.** Planned in parallel with it; the build session's first
@@ -15,201 +16,167 @@
 ## Builds on harness-core
 
 The ghost in the shell: every base harness is a shell; the ghost (my
-harness) makes it act like me; one ghost, several personas fused. The ghost
-works through genome, expression, experience, sleep and adaptation, as
-entry points reached by hooks, framework adapters or on demand. Bring-ins
-are standard units with the contract (scope, job, signals, rules, package,
-config, state, requires) in their standard's slot; session bring-ins act
-for the whole session, turn bring-ins attach when they fit; state lives
-only behind config; carriers are append, transient or on demand. This
-initiative adds to that, it changes none of it.
+harness) makes it act like me; one ghost, several personas fused, each
+keeping its own memory. The ghost works through genome, expression,
+experience, sleep and adaptation, as entry points reached by hooks,
+framework adapters or on demand. Bring-ins are standard units with the
+contract (scope, job, signals, rules, package, config, state, requires) in
+their standard's slot; session bring-ins act for the whole session, turn
+bring-ins attach when they fit; state lives only behind config. The core
+ships with mAId; parts carry only bring-ins; no part depends on another.
+This initiative adds to that, it changes none of it.
 
 ## Goal
 
-The personal persona of my ghost perceives my world and keeps a routine:
-it gathers what arrives in my accounts (mail, calendar, messages) and what
-the harness itself is waiting on, into one inbox, on a schedule or when
-something arrives, without me starting a session and without wrapping the
-shell.
+My ghost keeps a rhythm and reflexes of its own. It senses through
+whatever channels my parts bring, responds to what arrives and to the time
+without being prompted each time, and gathers everything that needs me into
+one inbox. I start it by asking a session to run it: "run my inbox", or
+"run my rhythm and reflexes".
 
 ## Framing
 
-The ghost so far only knows the world when I tell it. An organism also
-senses and keeps a rhythm:
+So far the ghost acts only when I speak to it. An organism also has an
+autonomic side: it senses, keeps a rhythm, reacts by reflex, and brings to
+attention only what needs a decision. This initiative is that autonomic
+side. It is about **how** sensing, rhythm, reflexes and attention work,
+not about **which** senses there are: channels are the senses, and they are
+brought by parts.
 
 | Function | What it does, and why |
 |---|---|
-| **perception** (channels) | Lets the ghost sense my accounts (mail, calendar, messaging), so it can notice what needs me without being told. |
-| **rhythm** (jobs) | Runs the ghost on its own, on a schedule or when something arrives, so routine work (a sweep, sleep) happens without me starting a session. |
-| **attention** (the inbox) | Holds, in one place, everything that needs me (from every channel and from the harness's own pending decisions), so I have one list to work through instead of many. |
+| **senses** (channels, brought by parts) | Each channel lets the ghost perceive one source (a mailbox, a calendar, a chat, a queue). Any part, personal or work, can bring one, so the ghost senses what each persona needs without this initiative knowing the channel. |
+| **rhythm** (routines in time) | Runs routines on a cadence (a morning sweep, a sleep at the end of the day), so recurring work happens without me starting it each time. |
+| **reflexes** (responses to what arrives) | Responds when a sense reports something new (sort it, rank it, prepare a response), involuntarily, so what arrives is handled before I look. |
+| **attention** (the inbox) | Holds in one place everything that needs me, from every channel and from the ghost's own pending decisions, so I work one list instead of many. |
 
-Perception never acts on what it senses by itself: what arrives is
-untrusted, and anything sent out on my behalf needs me.
+The four are one bring-in, the **inbox**, shipped with the core. The
+session that runs it is a plain session in a base harness, carrying the
+ghost: the inbox is something the ghost does, not something wrapped around
+the shell.
 
 ## Experience architecture
 
-What must happen implicitly, whatever the shell.
+What must happen, whatever the shell.
 
-### 1. Perceiving: messages arrive
+### 1. Starting it
 
-- Each connected channel's new messages are gathered outside any session,
-  so a channel works whether or not a session is open.
-- Senders are gated before any model sees their text: known senders pass;
-  unknown ones are held for me.
-- What is gathered stays in the environment where it was gathered, never in
-  a git store.
+- I launch a session and ask it to run my inbox (or my rhythm and
+  reflexes); that session takes up the rhythm and reflexes and shows me the
+  inbox.
+- It knows which channels are present from the bring-ins the installed
+  parts declare; a part with no channel adds none.
+- Asking a running inbox to stop stops its rhythm and reflexes; the inbox
+  itself stays.
 
-### 2. Rhythm: jobs run
+### 2. Sensing
 
-- A job runs on a schedule (a sweep every morning) or on a trigger (a new
-  message in a swept channel), as a plain launch of a shell that carries
-  the same ghost.
-- Only one copy of a job runs at a time; a missed run catches up once.
-- A job that finishes its outcome is a session done: it sleeps like any
-  other.
+- Each channel reports what is new in its source in the same shape, so
+  rhythm, reflexes and attention treat every channel alike.
+- What a channel reports belongs to the persona of the part that brought
+  it, and stays with that persona.
+- How a channel is set up and authorised, and where what it gathers is
+  kept, is the channel's own concern, outside the harness.
 
-### 3. Attention: one inbox
+### 3. Rhythm and reflexes
 
-- Every item, from any channel or from the harness (decisions waiting, a
-  job that failed, auth about to expire), has the same shape: where it came
-  from, who, the thread, when, what it asks, its state.
-- The sweep reads the channels, groups and ranks what needs me, and drafts
-  what it can; it never sends.
-- The genome's "what is pending" reads from this inbox.
-- It feels like an inbox: a list, one key to open, archive, snooze, act; it
-  is there in the shell and beside it.
+- A routine runs on its cadence; a reflex runs when a sense reports
+  something new. Either is the ghost at work: its genome at start, its
+  expression while it runs.
+- A routine or reflex that finishes its outcome is experience like any
+  other: it sleeps, and adaptation learns from it under the same guards.
+- A routine or reflex never runs twice over the same thing, and a burst of
+  arrivals is handled as one.
 
-### 4. Acting, with guards
+### 4. Attention
 
-- The ghost drafts; sending happens only in a session I am in, after my yes.
-- Nothing from a message becomes a habit without my yes; adaptation treats
-  channel content like tool content.
-- A channel's credentials never enter a store, a log or the context.
+- Every item, from any channel or from the ghost itself (decisions
+  waiting, a routine that failed, a channel that needs me), has one shape:
+  where it came from, the persona, who, the thread, when, what it asks, and
+  its state.
+- The genome's "what is pending" reads from the inbox.
+- It looks and feels like an inbox: a list I scan, one key to open,
+  archive, snooze or act; it is there in the shell and beside it.
+
+### 5. Guards
+
+- What arrives through a sense is untrusted, like tool output: it never
+  becomes a habit or a rule without my yes, and never steers the ghost
+  across personas.
+- What the ghost may do on its own in response to an item, and what waits
+  for me, is set by my guards, never by the content of what arrived.
 
 ## Macro test
 
-In a scratch HOME with the personal part installed and two test channels
-(a local mail account and a test chat bot):
+In a scratch HOME with the core and two parts installed, each part
+bringing one test channel:
 
-1. Ingest gathers a new mail and a new chat message into the inbox, with
-   no session open; an unknown sender's message is held.
-2. A scheduled sweep job runs, ranks the items, drafts one reply, and the
-   inbox shows the draft as waiting for me; nothing is sent.
-3. A triggered sweep runs once when a message arrives, and only once when
-   two arrive together.
-4. In an attended session, I accept the draft and it is sent; the inbox
-   item closes.
-5. The genome of a fresh session shows the inbox count.
+1. Asking a session to run my inbox starts the rhythm and reflexes and
+   shows an inbox listing both channels' items, each with its persona.
+2. A new item on one channel triggers a reflex once; two arriving together
+   trigger it once.
+3. A routine on its cadence runs and its result appears in the inbox.
+4. An item whose content asks the ghost to change a rule produces no rule
+   change; it waits for me.
+5. A fresh session's genome shows the inbox count; removing a part removes
+   its channel and leaves the inbox working.
 
 ## Constraints
 
-- **Embedded, not wrapped.** Ingest is a small service outside any session;
-  jobs are plain shell launches through the shell's own CLI; no daemon runs
-  the agent loop.
-- **The personal persona only.** Channels connect personal accounts. They
-  run in an environment the person designates for the personal persona;
-  the design assumes no particular machine and never a work one.
-- **Credentials and mirrored data stay in the environment**, behind config,
-  never in git; the inbox store is machine-local.
-- **Draft by default; send only attended**, after the person's yes.
-- **Unofficial connectors are opt-in**, with their risk stated (a
-  messaging app that forbids automated clients can suspend the account).
-- **Jobs carry the ghost explicitly** (plugins, MCP and settings named on
-  the command line), so a change in a shell's defaults cannot drop it.
-- **Public repo:** no employer, internal tool or private store names.
-- **Claude Code first;** other shells mapped.
+How this must be architected, given how the harness and its parts are
+designed:
 
-## Conceptual design
+- **Embedded in a base harness.** The inbox runs inside a session of a
+  base harness, carrying the ghost through the same entry points; it may be
+  a session of its own. Nothing outside the shell runs the agent loop.
+- **A core bring-in, channel-agnostic.** The inbox ships with the core and
+  names no channel; it depends only on the channel contract.
+- **Channels are bring-ins of parts.** Any part, personal or work, may
+  bring channels with the bring-in contract; no part depends on another,
+  and the core depends on no part.
+- **Channel setup, credentials and gathered data live outside the
+  harness**, in the environment or in the part's setup, reached only
+  through config. How is designed later; nothing in the harness may assume
+  it.
+- **Personas stay separate.** An item keeps the persona of the part that
+  brought its channel; memory and adaptation stay per persona.
+- **Carrier-neutral.** Rhythm, reflexes and attention reach the ghost
+  through the existing entry points; Claude Code first, other shells
+  mapped.
+- **Public repo, environment-independent:** names nothing private and
+  assumes no particular machine.
 
-### Technical concepts
+## To design, once framing and experience are agreed
 
-| Concept | What it is, and why | Serves |
-|---|---|---|
-| **channel** | a turn bring-in (its read, search and draft tools) plus an ingest service, so reading happens in sessions and gathering happens outside them | perception |
-| **ingest service** | a small process per channel that fetches new messages into the mirror and the inbox, no model involved, so channels work without a session | perception |
-| **sender gate** | the allowlist each channel applies before any text reaches a model, so a stranger's message cannot steer the ghost | perception |
-| **cursor** | where ingest last read, per channel, so nothing is missed or read twice | perception |
-| **mirror** | the machine-local copy of what was gathered, so jobs and sessions read without asking the account again | perception |
-| **job** | a named run of a shell with the ghost, an outcome, a schedule or trigger, and a permission profile | rhythm |
-| **launch** (carrier kind) | the core starts a shell through its CLI (a timer or a path watch), so the ghost arrives through the usual hooks | rhythm |
-| **trigger** | a schedule, a file or path change, or an ingest event, debounced, so a burst starts one job | rhythm |
-| **inbox store** | machine-local list of items, one schema across sources, so attention has one place | attention |
-| **item** | source, sender, thread, time, ask, priority, state (new, seen, waiting, snoozed, done), and a draft if any | attention |
-| **decision item** | adaptation's decision batch as one inbox item, so the person's decisions live with everything else | attention, adaptation |
-| **inbox CLI and TUI** | the same store read as a command, a status-line count, a skill, and a full-screen list in a pane | attention |
-| **attended send** | a send tool usable only in a session the person is in, after their yes | guards |
-
-### Contract additions
-
-A **channel** bring-in also declares: its `ingest` command, its `cursor`
-and `mirror` config keys, its sender `gate` config key, and that its send
-tool is `attended` only. A **job** is declared by the part that wants it:
-`outcome`, `schedule` or `trigger`, `permissions`, `budget`. The core
-renders jobs into the environment's scheduler at install.
-
-### How it is assembled
-
-```
- CHANNELS (outside any session)
-   ingest per channel --gate--> mirror (local) --> inbox items
-                                                      ^
- HARNESS  decisions, failed jobs, auth expiring -------+
-                                                      |
- JOBS  timer / trigger --launch--> shell + ghost (genome, expression)
-         sweep: read mirror -> group, rank, draft --> inbox
-         sleep: experience + adaptation --> decision item --> inbox
-                                                      |
- ATTENTION  inbox CLI | status-line count | /inbox skill | TUI pane
-                                                      |
- ACT  attended session: open item -> accept draft -> attended send
-```
-
-## System design: mapping per shell
-
-| Need | Claude Code | codex | kiro-cli | frameworks |
-|---|---|---|---|---|
-| job launch | a user timer or path unit running the CLI non-interactively with plugins, MCP and settings named | `codex exec` | non-interactive chat | the app's own scheduler |
-| live arrival in an open session | a plugin monitor (interactive only); channels where the shell's own login allows | *(test)* | *(test)* | middleware reading the inbox |
-| per-session loop | `/loop` and session cron (short-lived) | - | - | - |
-| inbox in the shell | status-line count; `/inbox` skill | skill | skill | tool |
-
-Connectors (choose per channel; research notes in the design review):
-
-| Channel | Local-first option | Notes |
-|---|---|---|
-| mail (Google, others) | a CLI or MCP server over the provider's API or IMAP/JMAP | OAuth app in testing mode expires tokens weekly |
-| calendar | the same provider tools | |
-| chat with a bot API | the official bot API | supported, no ban risk |
-| encrypted messenger | a linked-device CLI | copyleft licence; must stay current |
-| a messenger without an official client API | linked-device libraries | opt-in only: automated clients can be banned |
-| messages on one desktop OS | that OS only | not portable |
-
-## Streams
-
-| # | Feature | Ships | Needs | Status |
-|---|---|---|---|---|
-| 1 | inbox-store | the item schema, the machine-local store, the inbox CLI, the genome's pending count reading it | harness-core | planned |
-| 2 | jobs | the launch carrier, job declarations, the core rendering timers and path triggers, one-at-a-time and catch-up, the sweep job as the first job | 1 | planned |
-| 3 | channel-contract | the channel bring-in contract, the ingest service shape, sender gate, cursor, mirror, attended send | 1 | planned |
-| 4 | first-channels | mail and calendar for the personal persona, then a bot-API chat | 3 | planned |
-| 5 | inbox-tui | status-line count, `/inbox` skill, the full-screen list in a pane beside the shell | 1 | planned |
-| 6 | fold-back | README and project.md: perception, rhythm and attention in the ghost's framing | 1-5 | planned |
+- The channel contract: what a channel declares and reports.
+- How a running inbox keeps rhythm and reflexes inside a session, and
+  whether they also run with no session open.
+- Where channel setup, credentials and gathered data live, per
+  environment.
+- The inbox store, the item shape, and the inbox views in and beside the
+  shell.
+- The first channels, and which part brings each.
+- Then the technical concepts, the mapping per shell, and the streams.
 
 ## Open questions
 
-1. Which environment runs the personal persona's channels and jobs (and
-   does it have a login that allows the shell's own channels)?
-2. Which channels first: mail and calendar, then which messenger?
-3. May the ghost ever send without an attended session (for example to
-   decline a meeting), or only draft?
-4. One inbox across personas, or the personal persona only?
-5. Sweep cadence and quiet hours; how long the mirror keeps messages.
+1. One inbox across personas with each item labelled (my recommendation),
+   or one inbox per persona?
+2. Is the inbox session the only place rhythm and reflexes run, or may
+   they also run with no session open?
+3. Do routines and reflexes come only from the inbox, or may parts declare
+   their own?
 
 ## Decision Log
 
-- Ruling (ringmaster, to ratify): channels are turn bring-ins plus an
-  ingest service outside sessions; jobs are a new carrier kind, launch;
-  the inbox is machine-local; draft by default, send attended · why:
-  every personal-agent gateway that does channels owns the agent loop,
-  which this design forbids; this split keeps the shell plain · cost if
-  wrong: a gateway later, at the cost of the embedded rule
+- Ruling (ringmaster, to ratify): channels are bring-ins any part brings;
+  the inbox (senses, rhythm, reflexes, attention) is a core bring-in that
+  names no channel and runs in a session of a base harness, which may be
+  its own session started on request; channel setup and credentials live
+  outside the harness, designed later · why: the person's review on PR #61
+  separated the channels from the autonomic side and asked for framing and
+  experience before design · cost if wrong: the channel contract reshapes
+  when the design layer is written
+- Superseded: the first draft's personal-persona-only channels, ingest
+  service, draft-only sending and connector table; they assumed design
+  that is now deferred.
