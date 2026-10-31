@@ -589,3 +589,12 @@ this initiative.
   kept longer than it is needed
 - Paid tests: stream 3 spent 4 of 4; 1 more granted (reflector re-run).
   6 spent so far; 5 granted and unspent; 19 unallocated.
+- Ruling (ringmaster, stream 2 review): the "few rules that must never
+  drift" (Experience §2) are the fitting bring-ins' first rules plus the
+  genome re-placed at clear and compact; no extra carrier. Leaving a
+  location for one with no persona or record says so once · why: no case
+  today needs a separate carrier; a stale persona would misroute learnings
+- Ruling (ringmaster, stream 2 review): stream 2's paid runs (R1-R4) run
+  at the initiative's end with the Macro test, since they need the user's
+  model credentials in a scratch HOME · why: no stream handles the user's
+  credentials
