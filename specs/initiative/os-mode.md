@@ -7,6 +7,12 @@
 - Research: session orchestration and run/binding separation (kept outside
   the repo, summarised in the design below).
 
+- **Build gate: do not build until initiative `harness-core` (PR #60) is
+  merged to `main`.** Planned in parallel with it; the build session's first
+  step is to rebase this branch onto `main` and confirm harness-core's
+  entry points, contract and carriers are there. Before that, only this
+  spec changes.
+
 ## Builds on harness-core
 
 The ghost in the shell: every base harness is a shell; the ghost makes it
