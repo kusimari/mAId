@@ -137,7 +137,10 @@ under `bin/`, and the plugin marketplace under `share/maid/marketplace`
 link and MCP registration names the *profile* path, never a store path
 or a checkout, so the checkout can be deleted, and an install from any
 other checkout or worktree takes over by adding a generation without
-touching agent config.
+touching agent config. The profile is addressed by its content: nothing
+in it may change with a commit alone (no revision, no build date), so a
+commit that changes no installed file makes no new generation and the
+rollback window holds only real changes.
 
 **Plugins (claude, codex).** Both agents are pointed at
 `<profile's dir>/marketplace`, a real directory of links into the
@@ -382,6 +385,85 @@ whole-status reads every `*.json` file in the dir that is not a dotfile.
 - An entry without `skipped` is placed: the harness lists it, in
   whatever state (a plugin the user disabled is still placed).
 
+**Persona and bring-ins.** Beside `harnesses`, a list may say what the part
+brings into the ghost; readers that do not know these keys ignore them, so
+the format stays 1:
+
+```json
+{
+  "persona": "personal",
+  "bring_ins": [
+    {
+      "name": "notes",
+      "unit": { "standard": "skill", "path": "/abs/path/notes/SKILL.md" },
+      "source": { "kind": "project", "at": "https://example.org/me/repo.git", "rev": "<commit>" },
+      "tenure": { "kind": "own" },
+      "route": "worktree",
+      "values": { "store": "/abs/path/store", "token": "env:TOKEN" }
+    }
+  ]
+}
+```
+
+- `persona`: who the part's work is for. A name only; it owns nothing.
+- `unit`, optional: the bring-in's manifest, whose slot holds its
+  declaration: `standard` `skill`, `plugin` or `mcp`, and an absolute `path`.
+- `source`, optional: `kind` `project` (a git project repo), `store` (a git
+  store), `dir` (a directory here) or `vendor`; `at` (never a path on this
+  machine, never with a user or token) and the pinned `rev`. mAId records
+  its checkout's `HEAD` at install, `-dirty` when the tree has changes;
+  nothing in the profile names a revision, so a commit that changes no
+  installed file makes no new generation. After `just rollback` the
+  list names the checkout's revision, not the generation's.
+- `tenure`: `{"kind": "own"}` (the default) or `{"kind": "borrowed",
+  "from": "<whom>", "since": "<date>"}`.
+- `route`, optional: `write`, `backlog`, `worktree` (to a PR on the source)
+  or `report`. Default from the source: project → worktree, store and dir
+  → write, vendor or none → report. Borrowed is always report.
+- `values`: the config values bound here, every state location included.
+  A secret's value is never written: it is `env:<NAME>`.
+
+**The bring-in contract.** A bring-in stays a plain unit of its standard
+and declares what the ghost needs in that standard's own extension slot,
+under the namespace `my-harness`; a shell that does not know the slot
+ignores it:
+
+- an Agent Skill: frontmatter `metadata`, flat string keys:
+  `my-harness.scope` (`session` or `turn`), `my-harness.job`,
+  `my-harness.signals.<outcomes|jobs|states|locations|files>` (comma
+  lists), `my-harness.rules`, `my-harness.package`,
+  `my-harness.config.<key>` (its description, after optional `[secret]`
+  and `[optional]` markers), `my-harness.state.local`,
+  `my-harness.state.permanent` (each a config key),
+  `my-harness.state.promote` (`auto`, `propose` or `off`) and
+  `my-harness.requires` (commands, a comma list);
+- a plugin manifest: `extensions["my-harness"]`, and an MCP server's
+  `server.json`: `_meta["my-harness"]`, each the same fields as one JSON
+  object (lists as arrays; `config` as `{ "<key>": { "about", "secret",
+  "optional" } }`; `state` as `{ "local", "permanent", "promote" }`).
+
+`scope` and `job` are required. A unit with no declaration is undeclared:
+its standard's own description stands in for `job`.
+
+**The core.** `maid-core` (`resources/core`, in the profile as
+`bin/maid-core`) reads every part list, fuses the personas and bring-ins
+into the harness map on every call (never stored), derives the
+environment (each bring-in ready, or not and why), and answers the entry
+points `genome`, `expression`, `experience`, `sleep` and `adaptation` for
+any carrier: `--session <id>`, `--carrier append|transient|on-demand`,
+`--reset`, `--input <json>`, `--json`. An append carrier is sent only what
+its session's delivery record does not hold; on demand always answers and
+records; transient always sends. An item counts as sent when it is handed
+to the carrier, so a carrier that fails to place it calls again with
+`--reset`, which forgets what the session was sent; a sub-session is its
+own id. The genome is one item, so any change re-sends all of it, and it
+adds a line for part lists it refused and for bring-in names two parts
+both record, when there are any. The core takes the same part lists
+whole-status takes (rule 3), and never keeps or prints a secret a list
+holds as a value. It reads `MY_HARNESS_PARTS` and
+`MY_HARNESS_STATE` (default `${XDG_STATE_HOME:-$HOME/.local/state}/my-harness`,
+parts under it), so it runs from a hook with no checkout.
+
 The list says what is there after install, read back from each step,
 plus what install skipped. Uninstall leaves only what it could not
 remove, and deletes the file when nothing is left. In mAId, `part.rs`
@@ -393,7 +475,9 @@ reads back, and the browser-MCP script records its server through
 (`whole.rs`) and reports each entry, per harness and part, in one of six
 states: present, present (disabled) (the listing says the user turned it
 off), missing, skipped (with the part's reason), not checkable, or
-unreadable. Presence is read from the harness's own listing or config:
+unreadable. Then each part's bring-ins, ready or not (rule 15), read
+through the core, which status shares with every session. Presence is read
+from the harness's own listing or config:
 
 | Harness | skill | agent | mcp | plugin | marketplace | setting |
 |---|---|---|---|---|---|---|
@@ -511,6 +595,18 @@ are free.
     for code point (escapes decoded, no normalisation), else missing; a
     setting or element that is not a string never matches. With no `value`
     or a null one, a found key is present. `adopted` changes no state.
+15. **Bring-ins.** Every bring-in of every list not refused is reported,
+    whatever harness is selected, as **ready**, **not ready** (a non-optional
+    config key without a value, an `env:` value whose variable is unset or
+    empty, an absolute state location that does not exist, a `requires`
+    command not on PATH by rule 8, where a command with a `/` is never
+    found), **undeclared** (no `unit`, or a unit whose slot holds no
+    declaration) or **unreadable** (the entry is not of the shape above, the
+    unit is not a regular file of at most 1 MiB or its declaration is
+    malformed, or a secret's value is not `env:<NAME>`). A null field is
+    absent (rule 4). A list whose `persona` is not a string or whose
+    `bring_ins` is not an array is not refused; its bring-ins are one
+    unreadable line named `*`. None of these changes the exit code.
 
 **Conformance set.** `resources/build-tool/tests/conformance/<case>/`, plain
 data any reader's tests can copy (`tests/conformance.rs` runs `whole.rs`
@@ -519,7 +615,10 @@ against it):
 - `parts/`: the parts dir (no `parts/`: no parts dir; a file: not a dir).
 - `home/`: HOME. Placeholder files keep dirs git would drop; a
   `.gitattributes` of `* -text` keeps every byte as written.
+- `units/`, optional: bring-in manifests; a parts file writes `@RUN@` for
+  the run dir, filled in before the run.
 - `case.json`: `about`; optional `harness`, the one selected; optional
+  `env`, the names of the variables set (none when absent); optional
   `clis`, per CLI, per exact argument string, `stdout` or `stdout_file`,
   `stderr` or `stderr_file` (paths under the case), and `exit`. A CLI not
   named is not on PATH; the PATH holds only the stubs' dir, which is also
@@ -530,7 +629,8 @@ against it):
   unless `CONFORMANCE_ALLOW_SKIPS=1` is set. `expect`:
   `exit`, `aborted` (when the report aborts), `entries` (`harness`,
   `part`, `kind`, `name`, `scope` when the entry has one, and `state`, as
-  above) and `refused` (file names), compared in any order.
+  above) `refused` (file names) and optional `bring_ins` (`part`, `name`, `state`
+  as in rule 15; none when absent), compared in any order.
 
 A reader of part lists keeps its own lenient structs beside the writer's
 strict ones (`whole.rs` beside `part.rs`), so a kind or harness it does not
@@ -588,9 +688,8 @@ codex, kiro-cli and agy reach the same servers by registration, later.
      only where version matters. -->
 
 - **Runtime:** Rust (cargo workspace) + Just for the verb
-  surface. `resources/build-tool` is today's only
-  workspace member; future Rust crates (e.g. `kaimux/`)
-  join as additional members.
+  surface. The workspace members are `resources/core` (`maid-core`,
+  the installed core), `resources/build-tool` and `kaimux/`.
 - **Isolation:** one flake, two outputs. `devShells.default`
   (loaded by `.envrc` via direnv) is the dev closure: the rust
   toolchain (rust-overlay), `just`, and `jq` (the install tests read
@@ -598,8 +697,9 @@ codex, kiro-cli and agy reach the same servers by registration, later.
   config with it). `packages.default` is
   the installable: the skills plus `chrome-devtools-mcp`
   (packaged from its npm tarball, which has no dependencies)
-  wrapped with `nodejs_22`, and `pensieve`, the memory server, from its
-  own flake (a pinned input).
+  wrapped with `nodejs_22`, `pensieve`, the memory server, from its
+  own flake (a pinned input), and `maid-core`, built from the
+  workspace's `Cargo.lock`.
 - **Dependencies.** mAId does not care how a prerequisite got
   onto PATH (host package, home-manager, nix profile), and does
   not check for it; a missing one fails in the step that needs it.
@@ -607,7 +707,7 @@ codex, kiro-cli and agy reach the same servers by registration, later.
   | Kind | What | Provided by |
   |---|---|---|
   | Runtime prerequisites | coding-agent CLIs, `git`, a graphical Chrome (browser only) | the environment |
-  | Runtime-provided | skills, node, chrome-devtools-mcp, pensieve | the mAId profile |
+  | Runtime-provided | skills, node, chrome-devtools-mcp, pensieve, maid-core | the mAId profile |
   | What the vendor document skills run | `python` with openpyxl, pandas, pypdf, pdfplumber, reportlab, pypdfium2, pdf2image, Pillow, lxml, defusedxml, python-pptx, markitdown; `node` with the `docx` and `pptxgenjs` packages; LibreOffice (`soffice`), `pandoc`, `markitdown`, `qpdf`, poppler (`pdftotext`, `pdftoppm`, `pdfimages`), ImageMagick (`magick`) | the environment; `just status` names each missing command |
   | Install and dev prerequisites | `nix` with flakes; `direnv` optional | the developer |
 - **Entrypoints:** Justfile organised as a root file with
@@ -673,7 +773,7 @@ codex, kiro-cli and agy reach the same servers by registration, later.
 
 ```
 mAId/
-├── Cargo.toml              workspace root: members = ["resources/build-tool"]
+├── Cargo.toml              workspace root: members = ["resources/core", "resources/build-tool", "kaimux"]
 ├── Cargo.lock              committed (binary-workspace policy)
 ├── Justfile                root verb surface (workspace hygiene + `mod resources` / `mod kaimux`)
 ├── install                 entry-point for setup walks: `just install`, via the dev shell if needed
@@ -681,8 +781,18 @@ mAId/
 ├── flake.nix / .envrc      dev shell (rust toolchain, just, jq) and the installable package
 ├── resources/
 │   ├── Justfile            `resources::*` verb surface (install/uninstall/status/verify)
+│   ├── core/               Rust crate maid-core, installed: entry points, map, environment
+│   │   ├── src/config.rs   where things are (parts dir, state dir)
+│   │   ├── src/contract.rs the bring-in contract, read from each standard's slot
+│   │   ├── src/parts.rs    each part's persona and bring-ins, as its list records them
+│   │   ├── src/map.rs      fusion: the harness map
+│   │   ├── src/environment.rs  each bring-in ready or not here; the PATH rule
+│   │   ├── src/delivery.rs the delivery record per session
+│   │   ├── src/entry.rs    genome, expression, experience, sleep, adaptation
+│   │   ├── src/main.rs     the CLI
+│   │   └── tests/cli.rs    the binary under a bare environment
 │   ├── build-tool/         Rust crate — the pipeline (check/install/uninstall/status/smoke)
-│   │   ├── Cargo.toml      deps: clap, anyhow, gray_matter, serde, serde_json, tempfile
+│   │   ├── Cargo.toml      deps: clap, anyhow, gray_matter, serde, serde_json, tempfile, maid-core
 │   │   ├── src/main.rs     the shim: clap surface + dispatch, in pipeline order
 │   │   ├── src/lib.rs      module wiring + the pipeline doc comment
 │   │   ├── src/shared.rs   Agent, REGISTRY, roots — what every stage speaks
@@ -743,7 +853,9 @@ Two test layers, each scoped to what they verify.
 **`just test` — workspace unit tests.** Rust unit tests
 covering the content validator and the symlink state
 machine against a `tempfile`-fake `$HOME`, plus the kaimux
-crate's 53 unit tests against a tempdir `Store`. Fast
+crate's 53 unit tests against a tempdir `Store`, and the core's
+(`maid-core`: the contract readers, fusion, readiness, the delivery
+record, the entry points, and its binary under a bare environment). Fast
 (sub-second). No real `$HOME` side effects, no API credits.
 Load-bearing — this is the kdevkit Test Gate default. `deploy.rs` carries
 the structural coverage: a full install→status→uninstall round-trip in
@@ -788,7 +900,10 @@ uninstall with no claude or codex on PATH keeping the bring-ins mAId's
 (a later uninstall still removes them), Claude's
 plugin-dir and config-dir grants (there after install, gone after uninstall), and `just
 status --whole` finding what mAId placed, then a second part's list beside
-it.
+it; the profile's `maid-core genome` under `env -i HOME=…` showing mAId's
+persona and bring-ins, the bring-ins recorded with tenure and this
+checkout's revision (dirty or not), and a spec-only commit building the
+same profile.
 It needs network for the vendor marketplace.
 Run it after any change to the profile recipes or the part list.
 
@@ -1168,7 +1283,7 @@ the claude/codex plugin and links kiro and agy at it, registers the
 vendor marketplaces it brings in (Architecture, "Bring-ins"), points
 `personal-memory` on the personal store and turns Claude's own automatic
 memory off (Architecture, "Memory"), lets Claude read mAId's skill files and read and write each skill's state
-dir (Architecture, "Skill reads", "Skill state"), and writes mAId's part list (see Architecture, "My harness");
+dir (Architecture, "Skill reads", "Skill state"), and writes mAId's part list with its persona and bring-ins (see Architecture, "My harness");
 `just uninstall` reverses it, removing the list, and removes the profile;
 `just status` reports the generation, each plugin and
 each link, and `just status --whole` checks every part's list against

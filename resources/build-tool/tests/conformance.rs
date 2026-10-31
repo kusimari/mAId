@@ -1,10 +1,10 @@
-//! The whole-status conformance set (`tests/conformance/<case>/`, format in
-//! project.md "My harness"): each case's states through `whole::check`, its
-//! exit code through the binary. One test, so no other thread forks while a
+//! The whole-status conformance set (`tests/conformance/<case>/`, format
+//! in project.md "My harness"): each case's states and bring-in states
+//! through `whole::check_in`, its exit code through the binary. One test, so no other thread forks while a
 //! stub is open for writing.
 
 use build_tool::shared::{find_on, Agent};
-use build_tool::whole::{check, Found};
+use build_tool::whole::{check_in, Found};
 use serde_json::Value;
 use std::ffi::OsString;
 use std::fs;
@@ -56,6 +56,8 @@ fn run(case: &Path, cat: &Path) -> Result<Option<String>, String> {
     );
     copy(&case.join("parts"), &parts, case);
     copy(&case.join("home"), &home, case);
+    copy(&case.join("units"), &tmp.path().join("units"), case);
+    run_dir_in(&parts, tmp.path());
     fs::create_dir_all(&home).unwrap();
     fs::create_dir_all(&bin).unwrap();
     for (cli, answers) in spec["clis"].as_object().into_iter().flatten() {
@@ -110,7 +112,13 @@ fn compare(spec: &Value, parts: &Path, home: &Path, bin: &Path) -> Result<Option
     };
     let cwd = std::env::current_dir().unwrap();
     std::env::set_current_dir(bin).unwrap();
-    let checked = check(parts, home, Some(path.clone()), agent);
+    let set = spec["env"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    let checked = check_in(parts, home, Some(path.clone()), &set, agent);
     std::env::set_current_dir(cwd).unwrap();
 
     match checked {
@@ -168,6 +176,31 @@ fn compare(spec: &Value, parts: &Path, home: &Path, bin: &Path) -> Result<Option
                     errors.push(format!("same rows, different counts: {got:?}"));
                 }
             }
+            let mut got: Vec<(String, String, String)> = whole
+                .bring_ins
+                .iter()
+                .map(|b| {
+                    (
+                        b.part.clone(),
+                        b.name.clone(),
+                        b.readiness.label().to_string(),
+                    )
+                })
+                .collect();
+            let mut want: Vec<(String, String, String)> = expect["bring_ins"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|b| {
+                    let s = |k: &str| b[k].as_str().unwrap().to_string();
+                    (s("part"), s("name"), s("state"))
+                })
+                .collect();
+            got.sort();
+            want.sort();
+            if got != want {
+                errors.push(format!("bring-ins {got:?}, want {want:?}"));
+            }
             let mut refused: Vec<&str> = whole.refused.iter().map(|r| r.file.as_str()).collect();
             refused.sort();
             let mut want_refused: Vec<&str> = expect["refused"]
@@ -191,6 +224,9 @@ fn compare(spec: &Value, parts: &Path, home: &Path, bin: &Path) -> Result<Option
         .env("MY_HARNESS_PARTS", parts)
         .env("PATH", &path)
         .env("CARGO_MANIFEST_DIR", env!("CARGO_MANIFEST_DIR"));
+    for name in &set {
+        cmd.env(name, "1");
+    }
     if let Some(a) = agent {
         cmd.args(["--agent", a.name()]);
     }
@@ -254,6 +290,19 @@ fn stub(case: &Path, tmp: &Path, cli: &str, answers: &Value, cat: &Path) {
     let at = tmp.join("bin").join(cli);
     fs::write(&at, body).unwrap();
     fs::set_permissions(&at, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// A part list names its units by absolute path, so a case writes `@RUN@`
+/// for the run dir and it is filled in here.
+fn run_dir_in(parts: &Path, run: &Path) {
+    for e in fs::read_dir(parts).into_iter().flatten().flatten() {
+        let p = e.path();
+        if let Ok(text) = fs::read_to_string(&p) {
+            if text.contains("@RUN@") {
+                fs::write(&p, text.replace("@RUN@", &run.display().to_string())).unwrap();
+            }
+        }
+    }
 }
 
 /// Copy a file or tree, keeping symlinks as links. Nothing there, nothing

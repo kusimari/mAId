@@ -1,0 +1,15 @@
+{
+  "about": "each bring-in is ready, not ready, undeclared or unreadable, and none of them changes the exit code",
+  "clis": { "tool": {} },
+  "expect": {
+    "exit": 0,
+    "entries": [],
+    "refused": [],
+    "bring_ins": [
+      { "part": "a", "name": "ready", "state": "ready" },
+      { "part": "a", "name": "needs", "state": "not ready" },
+      { "part": "a", "name": "plain", "state": "undeclared" },
+      { "part": "a", "name": "gone", "state": "unreadable" }
+    ]
+  }
+}

@@ -11,8 +11,11 @@
 # another checkout and its generation takes over.
 
 export MAID_PROFILE := env("MAID_PROFILE", env("XDG_STATE_HOME", env("HOME") / ".local/state") / "maid/profile")
-# Every part of my harness keeps its part list here; mAId's is maid-harness.json.
-export MY_HARNESS_PARTS := env("MY_HARNESS_PARTS", env("XDG_STATE_HOME", env("HOME") / ".local/state") / "my-harness/parts")
+# My harness's state (the core's delivery record and pending decisions), with
+# every part's list under it; mAId's is maid-harness.json. maid-core reads
+# the same two, with the same defaults.
+export MY_HARNESS_STATE := env("MY_HARNESS_STATE", env("XDG_STATE_HOME", env("HOME") / ".local/state") / "my-harness")
+export MY_HARNESS_PARTS := env("MY_HARNESS_PARTS", MY_HARNESS_STATE / "parts")
 # mAId's user-owned config: each skill's state dir (Claude may read and write those only), the
 # browser allowlist and the memory store's file.
 export MAID_CONFIG := env("MAID_CONFIG", env("XDG_CONFIG_HOME", env("HOME") / ".config") / "maid")

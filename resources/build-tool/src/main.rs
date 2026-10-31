@@ -235,7 +235,16 @@ fn run(cli: Cli) -> Result<u8> {
                 a.dry_run,
                 agent,
             )?;
-            Ok(rc.max(memory).max(reads))
+            // What the ghost is made of, whichever harness was selected.
+            let bring_ins = stages::cmd_install_bring_ins(
+                &parts_dir()?,
+                &profile_dir()?,
+                stages::Checkout::read(&root),
+                &memory_store_file()?,
+                BRING_INS,
+                a.dry_run,
+            )?;
+            Ok(rc.max(memory).max(reads).max(bring_ins))
         }
         Cmd::Uninstall(a) => {
             let agent = validate_agent(a.agent.as_deref())?;
@@ -254,7 +263,8 @@ fn run(cli: Cli) -> Result<u8> {
                 agent,
             )?;
             let reads = stages::cmd_uninstall_reads(&home_dir()?, &parts_dir()?, a.dry_run, agent)?;
-            Ok(rc.max(memory).max(reads))
+            let bring_ins = stages::cmd_uninstall_bring_ins(&parts_dir()?, BRING_INS, a.dry_run)?;
+            Ok(rc.max(memory).max(reads).max(bring_ins))
         }
         Cmd::Status(a) => stages::cmd_status(&deployment()?, validate_agent(a.agent.as_deref())?),
         Cmd::Whole { agent } => build_tool::whole::cmd_whole(

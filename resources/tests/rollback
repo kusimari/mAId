@@ -61,6 +61,14 @@ B=$(nix build --no-link --print-out-paths "$work/b#default" 2>/dev/null) || exit
 mkdir -p "$work/c/share/maid/skills"
 cp -rL "$A/share/maid/skills/notes" "$work/c/share/maid/skills/"
 C=$(nix store add-path --name maid-before-plugins "$work/c") || exit 1
+# The profile is addressed by its content: a commit that changes no
+# installed file builds the same store path.
+git clone -q "$here" "$work/d"
+D1=$(nix build --no-link --print-out-paths "$work/d#default" 2>/dev/null) || exit 1
+echo "spec-only change" >>"$work/d/specs/project.md"
+git -C "$work/d" -c user.name=t -c user.email=t@example.org commit -qam "docs: spec only"
+D2=$(nix build --no-link --print-out-paths "$work/d#default" 2>/dev/null) || exit 1
+check "a spec-only commit builds the same profile" test "$D1" = "$D2"
 vA=$(version_of "$A")
 vB=$(version_of "$B")
 
@@ -94,6 +102,26 @@ brought_in() {
   entries kiro-cli | grep -qx "marketplace $vendor skipped"
 }
 check "the part list names the vendor marketplace placed on claude and codex, skipped on kiro" brought_in
+
+# The core runs from the profile alone, and reads the persona and bring-ins
+# install recorded.
+core_bare() {
+  env -i HOME="$th" "$MAID_PROFILE/bin/maid-core" genome >"$work/genome" 2>&1 &&
+    grep -q '^personas: personal (maid-harness)$' "$work/genome" &&
+    grep -q '^  notes: ' "$work/genome" &&
+    grep -q 'document-skills: .*borrowed from anthropic-agent-skills' "$work/genome"
+}
+check "the profile's maid-core shows mAId's persona and bring-ins under a bare environment" core_bare
+# Install runs from this checkout, so it records this checkout's revision,
+# marked dirty when the tree has changes.
+rev=$(git -C "$here" rev-parse HEAD)
+[ -z "$(git -C "$here" status --porcelain --untracked-files=no)" ] || rev=$rev-dirty
+recorded_bring_ins() {
+  jq -e --arg rev "$rev" '.persona == "personal"
+    and (.bring_ins[] | select(.name == "notes") | .tenure.kind == "own" and .source.rev == $rev)
+    and (.bring_ins[] | select(.name == "document-skills") | .tenure.kind == "borrowed")' "$partlist" >/dev/null
+}
+check "the part list records mAId's bring-ins with tenure and revision" recorded_bring_ins
 
 # Whole-status reads each harness's own listing: everything mAId placed is
 # there, and a second part's list beside mAId's is checked the same way.

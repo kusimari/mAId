@@ -1,0 +1,16 @@
+{
+  "about": "an unset env: secret and an absent state location are not ready, a secret held as a value is unreadable, and bring-ins are reported whatever harness is selected",
+  "harness": "claude",
+  "env": ["SET_TOKEN"],
+  "expect": {
+    "exit": 0,
+    "entries": [],
+    "refused": [],
+    "bring_ins": [
+      { "part": "a", "name": "set", "state": "ready" },
+      { "part": "a", "name": "unset", "state": "not ready" },
+      { "part": "a", "name": "no-store", "state": "not ready" },
+      { "part": "a", "name": "literal", "state": "unreadable" }
+    ]
+  }
+}

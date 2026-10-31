@@ -2,12 +2,16 @@
 //! harness's own listing or config. Any part's list, not only mAId's; see
 //! project.md "My harness".
 //!
-//! Reads only: files under `$HOME` and the harnesses' listing commands.
+//! Reads only: files under `$HOME`, the harnesses' listing commands, and
+//! the unit manifests and state locations the part lists name.
+//! Each part's bring-ins are reported too, ready or not, from the core's
+//! reading of the same lists (reader rule 15).
 
 use crate::deploy::{listed_marketplaces, listed_plugins};
 use crate::part::What;
 use crate::shared::{find_on, Agent};
 use anyhow::{Context, Result};
+use maid_core::environment::{self, Host, Readiness};
 use serde::Deserialize;
 use serde_json::Value;
 use std::cell::RefCell;
@@ -145,13 +149,26 @@ pub struct Line {
     pub found: Found,
 }
 
-/// The whole report: every checked entry, then every refused file.
+/// One bring-in a part records, and whether it is ready here. `name` is
+/// `*` when the part's bring-ins could not be read at all.
+#[derive(Debug)]
+pub struct BringInLine {
+    pub part: String,
+    pub persona: Option<String>,
+    pub name: String,
+    pub readiness: Readiness,
+}
+
+/// The whole report: every checked entry, each part's bring-ins, then every
+/// refused file.
 #[derive(Debug)]
 pub struct Whole {
     pub dir: PathBuf,
     /// How many lists were read, whatever the agent selected.
     pub parts: usize,
     pub lines: Vec<Line>,
+    /// Never selected by harness: a bring-in belongs to the part.
+    pub bring_ins: Vec<BringInLine>,
     pub refused: Vec<Refused>,
 }
 
@@ -168,7 +185,7 @@ impl Whole {
 
 impl fmt::Display for Whole {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.lines.is_empty() && self.refused.is_empty() {
+        if self.lines.is_empty() && self.refused.is_empty() && self.bring_ins.is_empty() {
             return match self.parts {
                 0 => writeln!(f, "no part lists in {}", self.dir.display()),
                 _ => writeln!(f, "no entries to check"),
@@ -194,6 +211,24 @@ impl fmt::Display for Whole {
                 None => writeln!(f)?,
             }
         }
+        let mut part = None;
+        for b in &self.bring_ins {
+            if part.is_none() {
+                writeln!(f, "bring-ins")?;
+            }
+            if part != Some(&b.part) {
+                match &b.persona {
+                    Some(p) => writeln!(f, "  {} ({p})", b.part)?,
+                    None => writeln!(f, "  {}", b.part)?,
+                }
+                part = Some(&b.part);
+            }
+            write!(f, "    {:<14} {}", b.readiness.label(), b.name)?;
+            match b.readiness.why() {
+                Some(why) => writeln!(f, " ({why})")?,
+                None => writeln!(f)?,
+            }
+        }
         for r in &self.refused {
             writeln!(f, "refused  {}: {}", r.file, r.why)?;
         }
@@ -214,6 +249,18 @@ pub fn check(
     dir: &Path,
     home: &Path,
     path: Option<OsString>,
+    agent: Option<Agent>,
+) -> Result<Whole> {
+    check_in(dir, home, path, &Host::from_env().set, agent)
+}
+
+/// The same, with `set` the names of the variables a bring-in's `env:`
+/// values may name, so a test does not depend on the machine.
+pub fn check_in(
+    dir: &Path,
+    home: &Path,
+    path: Option<OsString>,
+    set: &BTreeSet<String>,
     agent: Option<Agent>,
 ) -> Result<Whole> {
     let (parts, refused) = read_parts(dir)?;
@@ -249,12 +296,51 @@ pub fn check(
             }
         }
     }
+    let host = Host {
+        path: probe.path.clone(),
+        set: set.clone(),
+    };
+    let bring_ins = bring_ins(dir, &refused, &host)?;
     Ok(Whole {
         dir: dir.to_path_buf(),
         parts: parts.len(),
         lines,
+        bring_ins,
         refused,
     })
+}
+
+/// Every bring-in of every list this reader took, with its readiness. A
+/// list taken here whose bring-ins the core cannot read gets one `*` line.
+fn bring_ins(dir: &Path, refused: &[Refused], host: &Host) -> Result<Vec<BringInLine>> {
+    let map =
+        maid_core::map::fuse(dir).with_context(|| format!("cannot read {}", dir.display()))?;
+    // No entry of a refused list is checked (rule 3), bring-ins included.
+    let taken = |part: &str| refused.iter().all(|r| r.file != format!("{part}.json"));
+    let mut out: Vec<BringInLine> = map
+        .bring_ins
+        .iter()
+        .filter(|b| taken(&b.part))
+        .map(|b| BringInLine {
+            part: b.part.clone(),
+            persona: b.persona.clone(),
+            name: b.name.clone(),
+            readiness: environment::readiness(b, host),
+        })
+        .collect();
+    // The core also refuses a list whose persona or bring-ins are not of
+    // their shape, which this reader takes: those get one `*` line.
+    for r in &map.refused {
+        if refused.iter().all(|w| w.file != r.file) {
+            out.push(BringInLine {
+                part: r.file.strip_suffix(".json").unwrap_or(&r.file).into(),
+                persona: None,
+                name: "*".into(),
+                readiness: Readiness::Unreadable(r.why.clone()),
+            });
+        }
+    }
+    Ok(out)
 }
 
 /// Where the names of one kind on one harness are read from.

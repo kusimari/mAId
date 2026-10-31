@@ -47,6 +47,27 @@
 
         pensieveServer = pensieve.packages.${system}.default;
 
+        # The core every carrier calls, from the workspace's own lock. Only
+        # the workspace's crates go in, so a content edit does not rebuild it.
+        maid-core = (pkgs.makeRustPlatform { cargo = rustToolchain; rustc = rustToolchain; }).buildRustPackage {
+          pname = "maid-core";
+          version = "0.1.0";
+          src = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = pkgs.lib.fileset.unions [
+              ./Cargo.toml
+              ./Cargo.lock
+              ./resources/core
+              ./resources/build-tool
+              ./kaimux
+            ];
+          };
+          cargoLock.lockFile = ./Cargo.lock;
+          cargoBuildFlags = [ "-p" "maid-core" ];
+          # `just test` runs the tests; this builds the binary.
+          doCheck = false;
+        };
+
         maid-browser-mcp = pkgs.writeShellApplication {
           name = "maid-browser-mcp";
           runtimeInputs = [ chrome-devtools-mcp ];
@@ -85,7 +106,7 @@
       in
       {
         packages = {
-          inherit chrome-devtools-mcp maid-browser-mcp;
+          inherit chrome-devtools-mcp maid-browser-mcp maid-core;
 
           # What `just install` puts in the mAId profile: the plugin
           # marketplace claude and codex install from, and the skills
@@ -108,6 +129,7 @@
             ln -s marketplace/plugins/maid/skills $out/share/maid/skills
             ln -s ${maid-browser-mcp}/bin/maid-browser-mcp $out/bin/maid-browser-mcp
             ln -s ${pensieveServer}/bin/pensieve $out/bin/pensieve
+            ln -s ${maid-core}/bin/maid-core $out/bin/maid-core
           '';
         };
 

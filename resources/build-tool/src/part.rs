@@ -8,6 +8,7 @@
 
 use crate::shared::Agent;
 use anyhow::{anyhow, ensure, Context, Result};
+use maid_core::parts::BringIn;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -15,6 +16,8 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 pub const PART: &str = "maid-harness";
+/// The persona mAId's part delivers.
+pub const PERSONA: &str = "personal";
 /// Why a value is not adopted: another part's list records it.
 pub const ANOTHER_PART: &str = "another part's";
 const FORMAT: u32 = 1;
@@ -80,7 +83,12 @@ impl Item {
 struct PartList {
     format: u32,
     part: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    persona: Option<String>,
     harnesses: BTreeMap<String, Vec<Item>>,
+    /// What the part brings into the ghost; read by the core.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    bring_ins: Vec<BringIn>,
 }
 
 /// The file mAId's part list lives in.
@@ -226,26 +234,51 @@ pub fn record_setting(dir: &Path, agent: Agent, name: &str, item: Option<Item>) 
     )
 }
 
+/// mAId's recorded bring-ins, so a rerun keeps what it recorded first
+/// (when a borrowed one was first brought in).
+pub fn bring_ins(dir: &Path) -> Result<Vec<BringIn>> {
+    Ok(read(dir)?.map(|l| l.bring_ins).unwrap_or_default())
+}
+
+/// Replace mAId's persona and bring-ins, keeping every harness entry. No
+/// bring-ins clears the persona too.
+pub fn record_bring_ins(dir: &Path, mut items: Vec<BringIn>) -> Result<()> {
+    items.sort_by(|a, b| a.name.cmp(&b.name));
+    items.dedup();
+    change(dir, |list| {
+        list.persona = (!items.is_empty()).then(|| PERSONA.into());
+        list.bring_ins = items;
+    })
+}
+
 fn rewrite(
     dir: &Path,
     agent: Agent,
     replaced: impl Fn(&Item) -> bool,
     items: Vec<Item>,
 ) -> Result<()> {
+    change(dir, |list| {
+        let entries = list.harnesses.entry(agent.cli().into()).or_default();
+        entries.retain(|i| !replaced(i));
+        entries.extend(items);
+        entries.sort();
+        entries.dedup();
+        list.harnesses.retain(|_, entries| !entries.is_empty());
+    })
+}
+
+fn change(dir: &Path, edit: impl FnOnce(&mut PartList)) -> Result<()> {
     let at = path(dir);
     let mut list = read(dir)?.unwrap_or_else(|| PartList {
         format: FORMAT,
         part: PART.into(),
+        persona: None,
         harnesses: BTreeMap::new(),
+        bring_ins: vec![],
     });
-    let entries = list.harnesses.entry(agent.cli().into()).or_default();
-    entries.retain(|i| !replaced(i));
-    entries.extend(items);
-    entries.sort();
-    entries.dedup();
-    list.harnesses.retain(|_, entries| !entries.is_empty());
+    edit(&mut list);
 
-    if list.harnesses.is_empty() {
+    if list.harnesses.is_empty() && list.bring_ins.is_empty() {
         return match fs::remove_file(&at) {
             Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e.into()),
             _ => Ok(()),
@@ -549,6 +582,50 @@ mod tests {
         let text = fs::read_to_string(path(dir.path())).unwrap();
         assert_eq!(text.matches("adopted").count(), 1, "{text}");
         assert!(placed(dir.path(), Agent::Claude).unwrap().contains(&found));
+    }
+
+    fn bring_in(name: &str) -> BringIn {
+        serde_json::from_value(serde_json::json!({"name": name, "values": {"k": "v"}})).unwrap()
+    }
+
+    #[test]
+    fn bring_ins_are_written_sorted_with_the_persona_and_a_rerun_is_byte_identical() {
+        let dir = TempDir::new().unwrap();
+        record_bring_ins(dir.path(), vec![bring_in("b"), bring_in("a")]).unwrap();
+        let first = fs::read(path(dir.path())).unwrap();
+        let list = read(dir.path());
+        assert_eq!(list.persona.as_deref(), Some("personal"));
+        let names: Vec<_> = list.bring_ins.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(names, ["a", "b"]);
+        record_bring_ins(dir.path(), vec![bring_in("a"), bring_in("b")]).unwrap();
+        assert_eq!(fs::read(path(dir.path())).unwrap(), first);
+        assert_eq!(bring_ins(dir.path()).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn bring_ins_and_harness_entries_leave_each_other_alone() {
+        let dir = TempDir::new().unwrap();
+        let skill = Item::placed(What::Skill, "notes");
+        record(dir.path(), Agent::Kiro, SKILL, None, vec![skill.clone()]).unwrap();
+        record_bring_ins(dir.path(), vec![bring_in("notes")]).unwrap();
+        assert_eq!(entries(dir.path(), Agent::Kiro), vec![skill]);
+        record(dir.path(), Agent::Kiro, SKILL, None, vec![]).unwrap();
+        assert_eq!(read(dir.path()).bring_ins, vec![bring_in("notes")]);
+        record_bring_ins(dir.path(), vec![]).unwrap();
+        assert!(
+            !path(dir.path()).exists(),
+            "the file goes with the last of both"
+        );
+    }
+
+    #[test]
+    fn the_core_reads_what_this_writes() {
+        let dir = TempDir::new().unwrap();
+        record_bring_ins(dir.path(), vec![bring_in("notes")]).unwrap();
+        let (parts, refused) = maid_core::parts::read_all(dir.path()).unwrap();
+        assert!(refused.is_empty());
+        assert_eq!(parts[0].persona.as_deref(), Some("personal"));
+        assert_eq!(parts[0].bring_ins, vec![Ok(bring_in("notes"))]);
     }
 
     #[test]

@@ -21,8 +21,10 @@ use crate::harvest;
 use crate::memory;
 use crate::part::{self, Item, What};
 use crate::reads;
-use crate::shared::{checkout_skill, on_path, usage, Agent};
+use crate::shared::{checkout_skill, on_path, usage, Agent, BringIn as Marketplace};
 use anyhow::{anyhow, Context, Result};
+use maid_core::contract::Standard;
+use maid_core::parts::{BringIn, Source, SourceKind, Tenure, Unit};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -276,6 +278,253 @@ pub fn cmd_record(
         None => part::record(parts, agent, &[kind], scope, items)?,
     }
     Ok(0)
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Bring-ins — what mAId's part brings into the ghost, for the core.
+// ─────────────────────────────────────────────────────────────────
+
+/// Record mAId's persona and its bring-ins in its part list: each shipped
+/// skill, the personal memory server when a store is set, and each vendor
+/// plugin, borrowed. See project.md "My harness".
+pub fn cmd_install_bring_ins(
+    parts: &Path,
+    profile: &Path,
+    checkout: Checkout,
+    store_file: &Path,
+    vendors: &[Marketplace],
+    dry_run: bool,
+) -> Result<u8> {
+    // A bring-in is recorded only while install has it placed somewhere.
+    let items = bring_ins(
+        profile,
+        &project_source(checkout),
+        memory::store(store_file)?.as_deref(),
+        vendors,
+        &placed_anywhere(parts)?,
+        &part::bring_ins(parts)?,
+        &today(),
+    )?;
+    println!(
+        "bring-ins: {} recorded for persona {}",
+        items.len(),
+        part::PERSONA
+    );
+    if !dry_run {
+        part::record_bring_ins(parts, items)?;
+    }
+    Ok(0)
+}
+
+/// Uninstall keeps only the bring-ins some harness still has placed, so a
+/// whole uninstall clears them with the persona.
+pub fn cmd_uninstall_bring_ins(parts: &Path, vendors: &[Marketplace], dry_run: bool) -> Result<u8> {
+    let placed = placed_anywhere(parts)?;
+    let mut kept = part::bring_ins(parts)?;
+    kept.retain(|b| still_placed(b, &placed, vendors));
+    if !dry_run {
+        part::record_bring_ins(parts, kept)?;
+    }
+    Ok(0)
+}
+
+fn bring_ins(
+    profile: &Path,
+    project: &Source,
+    store: Option<&Path>,
+    vendors: &[Marketplace],
+    placed: &[Item],
+    recorded: &[BringIn],
+    today: &str,
+) -> Result<Vec<BringIn>> {
+    let own = |name: &str| BringIn {
+        name: name.into(),
+        unit: None,
+        source: Some(project.clone()),
+        tenure: Tenure::Own,
+        route: None,
+        values: Default::default(),
+    };
+    let skills = profile
+        .join(crate::shared::PROFILE_CONTENT_DIR)
+        .join("skills");
+    let mut names: Vec<String> = fs::read_dir(&skills)
+        .with_context(|| format!("cannot list {}", skills.display()))?
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| skills.join(n).join("SKILL.md").is_file())
+        .collect();
+    names.sort();
+    let mut items: Vec<BringIn> = names
+        .iter()
+        .map(|n| BringIn {
+            unit: Some(Unit {
+                standard: Standard::Skill,
+                path: skills.join(n).join("SKILL.md"),
+            }),
+            ..own(n)
+        })
+        .collect();
+    if let Some(store) = store {
+        items.push(BringIn {
+            values: [("store".to_string(), store.display().to_string())].into(),
+            ..own(memory::SERVER)
+        });
+    }
+    for v in vendors {
+        for plugin in v.plugins {
+            // When it was first brought in, which a rerun keeps.
+            let since = recorded
+                .iter()
+                .find(|b| b.name == *plugin)
+                .and_then(|b| match &b.tenure {
+                    Tenure::Borrowed { since, .. } => since.clone(),
+                    Tenure::Own => None,
+                })
+                .unwrap_or_else(|| today.into());
+            items.push(BringIn {
+                name: plugin.to_string(),
+                unit: None,
+                source: Some(Source {
+                    kind: SourceKind::Vendor,
+                    at: Some(v.source.into()),
+                    rev: Some(v.rev.into()),
+                }),
+                tenure: Tenure::Borrowed {
+                    from: v.marketplace.into(),
+                    since: Some(since),
+                },
+                route: None,
+                values: Default::default(),
+            });
+        }
+    }
+    items.retain(|b| still_placed(b, placed, vendors));
+    Ok(items)
+}
+
+/// Whether some harness still has what this bring-in needs placed: the
+/// memory server, the vendor's plugin, or mAId's skills (through the plugin
+/// or as links).
+fn still_placed(b: &BringIn, placed: &[Item], vendors: &[Marketplace]) -> bool {
+    let has = |kind: What, name: &str| placed.iter().any(|i| i.kind == kind && i.name == name);
+    if b.name == memory::SERVER {
+        return has(What::Mcp, memory::SERVER);
+    }
+    if let Tenure::Borrowed { from, .. } = &b.tenure {
+        return vendors
+            .iter()
+            .filter(|v| v.marketplace == from)
+            .any(|v| has(What::Plugin, &v.plugin_id(&b.name)));
+    }
+    has(What::Plugin, crate::shared::PLUGIN_ID) || placed.iter().any(|i| i.kind == What::Skill)
+}
+
+/// Everything mAId's list records placed, on every harness.
+fn placed_anywhere(parts: &Path) -> Result<Vec<Item>> {
+    let mut placed = vec![];
+    for agent in Agent::ALL {
+        placed.extend(part::placed(parts, *agent)?);
+    }
+    Ok(placed)
+}
+
+/// What install reads from the checkout it runs from: its `origin` URL,
+/// and its revision with `-dirty` when the tree has changes. Read there,
+/// not from the profile, so the profile stays addressed by its content.
+#[derive(Debug, Default)]
+pub struct Checkout {
+    pub origin: Option<String>,
+    pub head: Option<String>,
+    pub dirty: bool,
+}
+
+impl Checkout {
+    /// Read through the `git` that PATH finds by rule 8. With no git, or
+    /// outside a repo, every field is empty.
+    pub fn read(dir: &Path) -> Checkout {
+        let Some(git) = crate::shared::find_on(std::env::var_os("PATH").as_deref(), "git") else {
+            return Checkout::default();
+        };
+        let run = |args: &[&str]| {
+            std::process::Command::new(&git)
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|s| s.trim().to_string())
+        };
+        Checkout {
+            origin: run(&["remote", "get-url", "origin"]).filter(|s| !s.is_empty()),
+            head: run(&["rev-parse", "HEAD"]).filter(|s| !s.is_empty()),
+            // Untracked files are not built, so they do not make it dirty;
+            // and status must not take the index lock, even on a dry run.
+            dirty: run(&[
+                "--no-optional-locks",
+                "status",
+                "--porcelain",
+                "--untracked-files=no",
+            ])
+            .is_some_and(|s| !s.is_empty()),
+        }
+    }
+}
+
+/// This repo as a source.
+fn project_source(c: Checkout) -> Source {
+    Source {
+        kind: SourceKind::Project,
+        at: c.origin.and_then(|u| remote(&u)),
+        rev: c.head.map(|h| match c.dirty {
+            true => format!("{h}-dirty"),
+            false => h,
+        }),
+    }
+}
+
+/// A remote as the part list may hold it: a URL or `host:path`, with any
+/// user or token taken out. A path on this machine is left out, since
+/// nothing installed names a checkout.
+fn remote(url: &str) -> Option<String> {
+    if let Some((scheme, rest)) = url.split_once("://") {
+        if scheme == "file" {
+            return None;
+        }
+        // A host holds no `@`, so everything up to the last one is user
+        // or token, even one with a `/` in it.
+        let rest = rest.rsplit_once('@').map_or(rest, |(_, r)| r);
+        return Some(format!("{scheme}://{rest}"));
+    }
+    // scp-like `[user@]host:path`: a host before the first ':' with no '/'.
+    let (host, path) = url.split_once(':')?;
+    let host = host.rsplit_once('@').map_or(host, |(_, h)| h);
+    (!host.is_empty() && !host.contains('/') && !host.starts_with('~') && !host.starts_with('.'))
+        .then(|| format!("{host}:{path}"))
+}
+
+/// Today's UTC date as `YYYY-MM-DD` (days to civil date, after Howard
+/// Hinnant's algorithm), so no date crate is needed for one stamp.
+fn today() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    civil(secs / 86_400)
+}
+
+fn civil(days: u64) -> String {
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}")
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -1532,5 +1781,298 @@ mod tests {
             "{err}"
         );
         assert!(err.to_string().contains("typo-of-real"));
+    }
+
+    // ── bring-ins ────────────────────────────────────────────────
+
+    const VENDOR: Marketplace = Marketplace {
+        marketplace: "a-vendor",
+        source: "https://example.org/skills.git",
+        rev: "abc",
+        plugins: &["docs"],
+        needs: &[],
+    };
+
+    fn profile_with(skills: &[&str]) -> TempDir {
+        let p = TempDir::new().unwrap();
+        for s in skills {
+            let d = p.path().join("share/maid/skills").join(s);
+            fs::create_dir_all(&d).unwrap();
+            fs::write(d.join("SKILL.md"), "---\nname: x\ndescription: y\n---\n").unwrap();
+        }
+        fs::create_dir_all(p.path().join("share/maid/skills/not-a-skill")).unwrap();
+        p
+    }
+
+    /// mAId's plugin, the vendor's and the memory server, placed somewhere.
+    fn all_placed() -> Vec<Item> {
+        vec![
+            Item::placed(What::Plugin, crate::shared::PLUGIN_ID),
+            Item::placed(What::Plugin, VENDOR.plugin_id("docs")),
+            Item::placed(What::Mcp, memory::SERVER),
+        ]
+    }
+
+    #[test]
+    fn uninstall_drops_a_borrowed_plugin_no_harness_still_has() {
+        let p = profile_with(&["notes"]);
+        let parts = TempDir::new().unwrap();
+        let plugins = vec![
+            Item::placed(What::Plugin, crate::shared::PLUGIN_ID),
+            Item::placed(What::Plugin, VENDOR.plugin_id("docs")),
+        ];
+        part::record(parts.path(), Agent::Codex, &[What::Plugin], None, plugins).unwrap();
+        let none = Path::new("/nowhere/memory-store");
+        cmd_install_bring_ins(
+            parts.path(),
+            p.path(),
+            Checkout::default(),
+            none,
+            &[VENDOR],
+            false,
+        )
+        .unwrap();
+        let names = || -> Vec<String> {
+            part::bring_ins(parts.path())
+                .unwrap()
+                .into_iter()
+                .map(|b| b.name)
+                .collect()
+        };
+        assert_eq!(names(), ["docs", "notes"]);
+        let mine = vec![Item::placed(What::Plugin, crate::shared::PLUGIN_ID)];
+        part::record(parts.path(), Agent::Codex, &[What::Plugin], None, mine).unwrap();
+        cmd_uninstall_bring_ins(parts.path(), &[VENDOR], false).unwrap();
+        assert_eq!(names(), ["notes"]);
+    }
+
+    #[test]
+    fn what_install_did_not_place_is_not_a_bring_in() {
+        let p = profile_with(&["notes"]);
+        let none = bring_ins(
+            p.path(),
+            &project(),
+            None,
+            &[VENDOR],
+            &[],
+            &[],
+            "2026-10-31",
+        )
+        .unwrap();
+        assert!(none.is_empty(), "{none:?}");
+        let links = [Item::placed(What::Skill, "notes")];
+        let skills = bring_ins(
+            p.path(),
+            &project(),
+            None,
+            &[VENDOR],
+            &links,
+            &[],
+            "2026-10-31",
+        )
+        .unwrap();
+        let names: Vec<_> = skills.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(names, ["notes"]);
+    }
+
+    fn project() -> Source {
+        Source {
+            kind: SourceKind::Project,
+            at: None,
+            rev: Some("r1".into()),
+        }
+    }
+
+    #[test]
+    fn install_records_each_skill_the_memory_server_and_the_vendor_borrowed() {
+        let p = profile_with(&["notes", "kdevkit"]);
+        let items = bring_ins(
+            p.path(),
+            &project(),
+            Some(Path::new("/s")),
+            &[VENDOR],
+            &all_placed(),
+            &[],
+            "2026-10-31",
+        )
+        .unwrap();
+        let names: Vec<_> = items.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(names, ["kdevkit", "notes", "personal-memory", "docs"]);
+        let notes = &items[1];
+        assert_eq!(
+            notes.unit.as_ref().unwrap().path,
+            p.path().join("share/maid/skills/notes/SKILL.md")
+        );
+        assert_eq!(
+            (&notes.tenure, notes.source.as_ref()),
+            (&Tenure::Own, Some(&project()))
+        );
+        assert_eq!(items[2].values["store"], "/s");
+        assert_eq!(
+            items[3].tenure,
+            Tenure::Borrowed {
+                from: "a-vendor".into(),
+                since: Some("2026-10-31".into())
+            }
+        );
+        assert_eq!(items[3].route(), maid_core::parts::Route::Report);
+    }
+
+    #[test]
+    fn no_store_records_no_memory_server_and_a_rerun_keeps_since() {
+        let p = profile_with(&["notes"]);
+        let first = bring_ins(
+            p.path(),
+            &project(),
+            None,
+            &[VENDOR],
+            &all_placed(),
+            &[],
+            "2026-01-01",
+        )
+        .unwrap();
+        assert!(first.iter().all(|b| b.name != "personal-memory"));
+        let again = bring_ins(
+            p.path(),
+            &project(),
+            None,
+            &[VENDOR],
+            &all_placed(),
+            &first,
+            "2026-10-31",
+        )
+        .unwrap();
+        assert_eq!(again, first);
+    }
+
+    #[test]
+    fn the_memory_server_is_a_bring_in_only_while_install_has_it_placed() {
+        let p = profile_with(&["notes"]);
+        let (parts, conf) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+        let store_file = conf.path().join("memory-store");
+        fs::write(&store_file, "/s/personal\n").unwrap();
+        let names = || -> Vec<String> {
+            part::bring_ins(parts.path())
+                .unwrap()
+                .into_iter()
+                .map(|b| b.name)
+                .collect()
+        };
+        let plugin = vec![Item::placed(What::Plugin, crate::shared::PLUGIN_ID)];
+        part::record(parts.path(), Agent::Claude, &[What::Plugin], None, plugin).unwrap();
+        let skipped = Item::skipped(What::Mcp, memory::SERVER, memory::STORE_MISSING);
+        part::record_named(
+            parts.path(),
+            Agent::Claude,
+            What::Mcp,
+            None,
+            memory::SERVER,
+            vec![skipped],
+        )
+        .unwrap();
+        cmd_install_bring_ins(
+            parts.path(),
+            p.path(),
+            Checkout::default(),
+            &store_file,
+            &[],
+            false,
+        )
+        .unwrap();
+        assert_eq!(names(), ["notes"]);
+        let placed = Item::placed(What::Mcp, memory::SERVER);
+        part::record_named(
+            parts.path(),
+            Agent::Claude,
+            What::Mcp,
+            None,
+            memory::SERVER,
+            vec![placed],
+        )
+        .unwrap();
+        cmd_install_bring_ins(
+            parts.path(),
+            p.path(),
+            Checkout::default(),
+            &store_file,
+            &[],
+            false,
+        )
+        .unwrap();
+        assert_eq!(names(), ["notes", "personal-memory"]);
+        part::record_named(
+            parts.path(),
+            Agent::Claude,
+            What::Mcp,
+            None,
+            memory::SERVER,
+            vec![],
+        )
+        .unwrap();
+        cmd_uninstall_bring_ins(parts.path(), &[], false).unwrap();
+        assert_eq!(
+            names(),
+            ["notes"],
+            "removing the memory server keeps the skills the plugin still places"
+        );
+        part::record(parts.path(), Agent::Claude, &[What::Plugin], None, vec![]).unwrap();
+        cmd_uninstall_bring_ins(parts.path(), &[], false).unwrap();
+        assert!(names().is_empty());
+        assert!(
+            !part::path(parts.path()).exists(),
+            "the list goes with its last bring-in"
+        );
+    }
+
+    #[test]
+    fn a_remote_on_this_machine_is_not_recorded() {
+        for local in [
+            "/home/me/mAId",
+            "./x",
+            "../x",
+            "~/repo",
+            "repo",
+            "file:///x",
+        ] {
+            assert_eq!(remote(local), None, "{local}");
+        }
+        assert_eq!(
+            remote("https://github.com/someone/mAId.git").as_deref(),
+            Some("https://github.com/someone/mAId.git")
+        );
+        assert_eq!(
+            remote("git@github.com:someone/mAId.git").as_deref(),
+            Some("github.com:someone/mAId.git")
+        );
+    }
+
+    #[test]
+    fn a_user_or_token_in_a_remote_is_never_recorded() {
+        let got = remote("https://me:tok3n@example.org/me/mAId.git").unwrap();
+        assert_eq!(got, "https://example.org/me/mAId.git");
+        let slashed = remote("https://me:ab/cd@example.org/x").unwrap();
+        assert_eq!(slashed, "https://example.org/x");
+    }
+
+    #[test]
+    fn the_revision_says_when_the_tree_has_changes() {
+        let at = |head: Option<&str>, dirty| {
+            project_source(Checkout {
+                origin: None,
+                head: head.map(str::to_string),
+                dirty,
+            })
+            .rev
+        };
+        assert_eq!(at(Some("abc"), false).as_deref(), Some("abc"));
+        assert_eq!(at(Some("abc"), true).as_deref(), Some("abc-dirty"));
+        assert_eq!(at(None, true), None);
+    }
+
+    #[test]
+    fn civil_dates_are_right_across_leap_days() {
+        assert_eq!(civil(0), "1970-01-01");
+        assert_eq!(civil(11_016), "2000-02-29");
+        assert_eq!(civil(20_757), "2026-10-31");
     }
 }
