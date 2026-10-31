@@ -162,15 +162,26 @@ pub const BRING_INS: &[BringIn] = &[BringIn {
 /// Where flake.nix puts the marketplace in the profile.
 pub const PROFILE_MARKETPLACE_DIR: &str = "share/maid/marketplace";
 
-/// The marketplace dir the agents are pointed at: a real dir beside the
-/// profile whose entries link into it. Codex records a marketplace by its
-/// resolved path, so registering the profile itself would pin one
-/// generation's store path.
+/// The marketplace dir codex is pointed at: a real dir beside the profile
+/// whose entries link into it. Codex records a marketplace by its resolved
+/// path, so registering the profile itself would pin one generation's
+/// store path.
 pub fn marketplace_root(profile: &Path) -> PathBuf {
     profile
         .parent()
         .unwrap_or(Path::new("/"))
         .join("marketplace")
+}
+
+/// The marketplace dir `agent` is pointed at. Claude Code refuses a plugin
+/// file that resolves outside its marketplace dir, the dir taken as
+/// resolved, so it takes the profile's own; it records the path as given,
+/// so the profile link still moves it to each generation.
+pub fn agent_marketplace(agent: Agent, profile: &Path) -> PathBuf {
+    match agent {
+        Agent::Claude => profile.join(PROFILE_MARKETPLACE_DIR),
+        _ => marketplace_root(profile),
+    }
 }
 
 impl Agent {
@@ -501,6 +512,19 @@ mod tests {
     fn the_marketplace_root_sits_beside_the_profile() {
         assert_eq!(
             marketplace_root(Path::new("/s/maid/profile")),
+            Path::new("/s/maid/marketplace")
+        );
+    }
+
+    #[test]
+    fn claude_takes_the_profiles_marketplace_and_codex_the_links_beside_it() {
+        let profile = Path::new("/s/maid/profile");
+        assert_eq!(
+            agent_marketplace(Agent::Claude, profile),
+            Path::new("/s/maid/profile/share/maid/marketplace")
+        );
+        assert_eq!(
+            agent_marketplace(Agent::Codex, profile),
             Path::new("/s/maid/marketplace")
         );
     }

@@ -148,10 +148,15 @@ in it may change with a commit alone (no revision, no build date), so a
 commit that changes no installed file makes no new generation and the
 rollback window holds only real changes.
 
-**Plugins (claude, codex).** Both agents are pointed at
-`<profile's dir>/marketplace`, a real directory of links into the
-profile path: codex records a marketplace by its resolved path, so
-registering the profile itself would pin one generation's store path.
+**Plugins (claude, codex).** codex is pointed at `<profile's
+dir>/marketplace`, a real directory of links into the profile path: it
+records a marketplace by its resolved path, so registering the profile
+itself would pin one generation's store path. claude is pointed at the
+profile's own `share/maid/marketplace`: it refuses a file the plugin
+manifest names (the manifest, `hooks`, `mcpServers`) that resolves outside
+the marketplace dir as resolved, so a dir of links loses the hooks; it
+records the path as given, so the profile link still moves it to each
+generation, a rollback included.
 The plugin's version is a hash of its content, computed in the flake
 build; both CLIs cache by version and only compare for change, so an
 install updates exactly when content changed (claude reads the
@@ -579,9 +584,10 @@ title and hook to 300, control characters dropped):
 - the reinforcement: the acting persona and its session bring-ins with
   state, when there are several personas, and the work's record (goal, state, next) when a turn bring-in's
   `record` names one here, whether or not it fits, since `signals.states`
-  match against it; a session told a persona or a record that moves to
-  where none is known is told so once (`persona: none known here`,
-  `record: none here`), and a session never told one is told nothing.
+  match against it. The persona and the record are two items, each
+  tracked on its own: a session told one that moves to where none is
+  known is told so once (`persona: none known here`, `record: none
+  here`), and a session never told one is told nothing about it.
   With the fitting bring-ins' first rules below, and the genome placed
   again at clear and compact, these are the few rules that must never
   drift; there is no other carrier for them;
@@ -1093,6 +1099,7 @@ mAId/
 │   │   ├── src/stages.rs   content → check → install → smoke
 │   │   ├── tests/integration.rs  cross-stage tests against the real repo
 │   │   ├── tests/plugins.rs  ignored: Plugins and BringIns against the real claude/codex CLIs in a temp HOME
+│   │   ├── tests/claude_installed.rs  ignored: Claude Code on the plugin as install places it, against a stub model API
 │   │   ├── tests/no_cli.rs   install with no agent CLI on PATH keeps the old links
 │   │   ├── tests/stops_on_list.rs  an unreadable part list stops install and uninstall, through the binary
 │   │   ├── tests/memory.rs   the memory verbs through the binary, temp HOME
@@ -1178,6 +1185,24 @@ answering, the plugin loading with `extensions` in its manifest, and a
 session that ends marked for sleep. Free
 (no model, no network). Run it after any change to the adapter or the
 plugin manifest, and after a Claude Code update.
+
+`cargo test -p build-tool --test claude_installed -- --ignored` starts the
+real Claude Code (`CLAUDE_BIN`, else `claude` on PATH) on the plugin as
+install places it, with no `--plugin-dir`: profile generations outside the
+state dir as nix keeps them, `Plugins::install` with the real claude CLI,
+moving an older install off the links dir, then a session against the same
+kind of stub (the MCP server connects, the genome placed once), a new
+generation and a rollback, each followed with nothing registered again. It
+builds `maid-core` (dev profile) and is free.
+
+**After any Claude Code upgrade**, run both before trusting the ghost on
+the new version, since where Claude takes its marketplace from (the path as
+given, its files checked against the dir as resolved) is undocumented:
+
+```
+cargo test -p build-tool --test claude_installed -- --ignored
+cargo test -p maid-core --test claude_live -- --ignored
+```
 
 `cargo test -p build-tool --test plugins -- --ignored` drives the real
 claude and codex CLIs in a temp HOME (install, update, a disabled
@@ -1689,7 +1714,10 @@ named here is defined under Architecture, "My harness".
    a dotfile, so a temporary one beside it while writing is safe), and
    on uninstall delete it once nothing it placed is left. It holds `format` `1`, `part` (the file's
    stem), `harnesses` (what it placed on each shell, read back from the
-   shell), and `persona`, a name only. Follow
+   shell: entries of `kind` and `name`, Architecture, "The part list"),
+   and `persona`, a name only. Place every unit on each shell yourself,
+   in that shell's own way, and list it under `harnesses`; the core loads
+   no unit. Follow
    the five part rules: no wrapper, own and remove only what it wrote,
    adopt only an identical value no other list records, set a one-value
    setting only when empty or its own, assume nothing about other parts.
@@ -1697,8 +1725,13 @@ named here is defined under Architecture, "My harness".
    standard's slot under the namespace `my-harness`: a skill's
    frontmatter `metadata` (flat keys, `my-harness.scope`, ...), a plugin
    manifest's `extensions["my-harness"]`, an MCP server's `server.json`
-   `_meta["my-harness"]`. `scope` (`session` or `turn`) and `job` are
-   required. Add what applies: `signals`, `rules` (`<file>#<heading
+   `_meta["my-harness"]`, with the standard's own fields too (a
+   `server.json` has `name`, `description` and `version`). Key and value
+   shapes per slot: Architecture, "The bring-in contract" (a skill's
+   signals are flat comma lists, `my-harness.signals.locations: garden-*`).
+   `scope` (`session` or `turn`) and `job` are
+   required. Add what applies: `signals` (what each matches, and how the
+   acting persona follows from them: Architecture, "Expression"), `rules` (`<file>#<heading
    slug>`, the file relative to the manifest's dir, at most 30 lines),
    `package`, `config` (every key it needs, secrets marked, every state
    location included), `state` (`local`, `permanent`, `promote`), `requires`, and on a turn bring-in that knows
@@ -1706,24 +1739,32 @@ named here is defined under Architecture, "My harness".
 3. **Give its persona exactly one memory.** A session bring-in that names
    its memory package in `package`, with config `store` (the persona's own
    store, a git checkout the person owns; a private one for anything that
-   names work), `index` (`<dir>/<file>` relative to `store`) and `serve`
-   (the command that serves the store over MCP stdio, a JSON array of
-   strings whose first is absolute), and `state` `{"permanent": "store",
-   "promote": "off"}`. The core takes a bring-in with a `permanent` tier
+   names work; pensieve builds its instructions from the store's
+   `about.md`, Architecture, "Memory"), `index` (`<dir>/<file>` relative
+   to `store`, lines and files as in Architecture, "The memory index, as a
+   reader such as the selector takes it") and `serve` (the command that serves the store over
+   MCP stdio: a string holding a JSON array of strings whose first is
+   absolute, `"[\"/abs/bin/server\",\"--store\",\"/abs/store\"]"`),
+   and `state` `{"permanent": "store", "promote": "off"}`. The core takes a bring-in with a `permanent` tier
    and an `index` key as a memory, and writes an accepted habit by running
    `serve` and calling the server's own memory tools. A persona with two
    memories, or none, gets no habit written: the core cannot tell where it
-   goes. Register that server with each shell yourself, and record it
+   goes. Register that server with each shell yourself (on Claude Code,
+   `claude mcp add -s user <name> -- <serve's command>`), and record it
    under `harnesses`. On Claude Code, turn Claude's own automatic memory
-   off while the server is registered, by the rules in "Memory".
+   off while the server is registered: the setting, and the `skipped`
+   record when another part holds it, are in Architecture, "Claude's own
+   automatic memory is turned off".
 4. **Record each bring-in at install** in the list's `bring_ins`: `name`;
    `unit` (`standard` `skill`, `plugin` or `mcp`, and the absolute `path`
    of the manifest whose slot holds the declaration); `source` (`kind`
    `project`, `store`, `dir` or `vendor`, `at`, never a local path or a
-   credential, and the pinned `rev`); `tenure`; `route` (`write`,
+   credential, and the pinned `rev`; with no public remote, omit `at`);
+   `tenure`; `route` (`write`,
    `backlog`, `worktree` or `report`; omit it for the default from the
-   source); and `values`, every config key bound here, every state
-   location included, a secret only as `env:<NAME>`.
+   source); and `values`, every config key bound here as a string, every
+   state location included, a secret only as `env:<NAME>`; omit `values`
+   when nothing is bound.
 5. **Mark what it borrows,** a unit someone else provides, as `tenure`
    `{"kind": "borrowed", "from": "<whom>", "since": "<date>"}`, and never
    change it. Its declaration is an overlay: a manifest in the unit's own

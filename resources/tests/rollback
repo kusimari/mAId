@@ -90,7 +90,7 @@ placed_on_all() {
   entries kiro-cli | grep -qx "skill notes" && mcp_entry kiro-cli
 }
 check "the part list names what install placed on claude, codex and kiro" placed_on_all
-grant=$(dirname "$MAID_PROFILE")/marketplace/plugins/maid
+grant=$MAID_PROFILE/share/maid/marketplace/plugins/maid
 granted() { jq -e --arg d "$grant" '.permissions.additionalDirectories | index($d)' "$th/.claude/settings.json" >/dev/null 2>&1; }
 check "install lets claude read mAId's plugin dir, and records it" \
   eval 'granted && entries claude | grep -qx "setting permissions.additionalDirectories"'

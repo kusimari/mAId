@@ -167,18 +167,21 @@ pub fn expression(ctx: &Ctx, call: &Call) -> Result<Vec<Item>> {
     let prompt = call.input["prompt"].as_str().unwrap_or_default();
     let acting = fit::persona(&map, &here);
     let record = work_record(&map, &here);
-    let mut items = vec![];
-    // Whether this session was told a persona or a record before, so that
-    // leaving them is said once.
-    let told = match (call.session.as_deref(), call.carrier, call.reset) {
+    // Whether this session was told the item before, so that leaving what
+    // it says is said once, and only to a session that was told it.
+    let told = |id: &str| match (call.session.as_deref(), call.carrier, call.reset) {
         (Some(s), Carrier::Append, false) => Record::new(ctx.config.delivery())
-            .sent_any(s, "reinforce")
+            .sent_any(s, id)
             .unwrap_or(false),
         _ => false,
     };
-    if let Some(item) = reinforce(&map, acting.as_deref(), record.as_ref(), told) {
-        items.push(item);
-    }
+    let mut items: Vec<Item> = [
+        reinforce_persona(&map, acting.as_deref(), told(PERSONA)),
+        reinforce_record(record.as_ref(), told(RECORD)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
     let state = record.as_ref().and_then(|r| r.state.as_deref());
     let mut seen_rules = std::collections::BTreeSet::new();
     let mut fitted = 0;
@@ -251,24 +254,22 @@ fn work_record(map: &Map, here: &Here) -> Option<record::Record> {
         .find_map(|d| record::find(&d.record, here).ok().flatten())
 }
 
-/// The persona is restated only where it can change: with one persona the
-/// genome has said all there is. Moving to where no persona or record is
-/// known is said in one line each, and only to a session that was told
-/// one, so a turn with nothing to say stays empty.
-fn reinforce(
-    map: &Map,
-    acting: Option<&str>,
-    record: Option<&record::Record>,
-    told: bool,
-) -> Option<Item> {
+const PERSONA: &str = "reinforce.persona";
+const RECORD: &str = "reinforce.record";
+
+/// The acting persona and its memory, restated only where it can change:
+/// with one persona the genome has said all there is. Where none is known,
+/// one line, and only to a session that was told one.
+fn reinforce_persona(map: &Map, acting: Option<&str>, told: bool) -> Option<Item> {
     let personas: std::collections::BTreeSet<&str> = map
         .personas
         .iter()
         .filter_map(|p| p.persona.as_deref())
         .collect();
-    let several = personas.len() > 1;
-    let (mut known, mut none) = (String::new(), String::new());
-    match acting.filter(|_| several) {
+    if personas.len() < 2 {
+        return None;
+    }
+    let text = match acting {
         Some(persona) => {
             let memory: Vec<String> = map
                 .bring_ins
@@ -282,41 +283,47 @@ fn reinforce(
                 })
                 .take(10)
                 .collect();
-            let _ = write!(known, "[my-harness] acting through {persona}");
             match memory.is_empty() {
-                true => known.push_str("; no memory of its own\n"),
-                false => {
-                    let _ = writeln!(known, "; its memory: {}", memory.join(", "));
-                }
+                true => format!("[my-harness] acting through {persona}; no memory of its own\n"),
+                false => format!(
+                    "[my-harness] acting through {persona}; its memory: {}\n",
+                    memory.join(", ")
+                ),
             }
         }
-        None if several => none.push_str("[my-harness] persona: none known here\n"),
-        None => {}
-    }
-    match record {
+        None if told => "[my-harness] persona: none known here\n".into(),
+        None => return None,
+    };
+    Some(Item {
+        id: PERSONA.into(),
+        text,
+        data: serde_json::json!({ "acting": acting }),
+    })
+}
+
+/// The work's record: goal, state and next. Where there is none, one line,
+/// and only to a session that was told one.
+fn reinforce_record(record: Option<&record::Record>, told: bool) -> Option<Item> {
+    let text = match record {
         Some(r) => {
-            let _ = writeln!(
-                known,
-                "[my-harness] the work's record: {}",
+            let mut text = format!(
+                "[my-harness] the work's record: {}\n",
                 clip(&r.file.display().to_string(), FIELD_BYTES)
             );
             for (label, v) in [("goal", &r.goal), ("state", &r.state), ("next", &r.next)] {
                 if let Some(v) = v {
-                    let _ = writeln!(known, "  {label}: {}", clip(v, FIELD_BYTES));
+                    let _ = writeln!(text, "  {label}: {}", clip(v, FIELD_BYTES));
                 }
             }
+            text
         }
-        None => none.push_str("[my-harness] record: none here\n"),
-    }
-    let text = match (known.is_empty(), told) {
-        (true, false) => return None,
-        (false, false) => known,
-        (_, true) => known + &none,
+        None if told => "[my-harness] record: none here\n".into(),
+        None => return None,
     };
     Some(Item {
-        id: "reinforce".into(),
+        id: RECORD.into(),
         text,
-        data: serde_json::json!({"acting": acting, "record": record}),
+        data: serde_json::json!({ "record": record }),
     })
 }
 
@@ -1205,9 +1212,9 @@ mod tests {
             ..call(Some("s"), Carrier::Append, false)
         };
         let alone = expression(&c, &at(&repo)).unwrap();
-        assert_eq!(alone[0].id, "reinforce");
+        assert_eq!(alone[0].id, "reinforce.record");
         assert!(
-            !alone[0].text.contains("acting through"),
+            !alone.iter().any(|i| i.text.contains("acting through")),
             "one persona: the genome said it"
         );
         assert!(
@@ -1222,21 +1229,30 @@ mod tests {
             ..call(Some("t"), Carrier::Append, false)
         };
         let items = expression(&c, &at(&repo)).unwrap();
+        assert_eq!(items[0].id, "reinforce.persona");
         let text = &items[0].text;
         assert!(
             text.contains("acting through personal; its memory: home-memory ("),
             "two personas, this location points at one: {text}"
         );
+        let text = &items[1].text;
         assert!(
             text.contains("goal: Feature: hooks\n  state: dev\n  next: review"),
             "{text}"
         );
         assert!(expression(&c, &at(&repo)).unwrap().is_empty());
-        let left = expression(&c, &at(dir.path())).unwrap();
-        assert_eq!(left.len(), 1, "leaving the location is said once");
+        let left: Vec<String> = expression(&c, &at(dir.path()))
+            .unwrap()
+            .into_iter()
+            .map(|i| i.text)
+            .collect();
         assert_eq!(
-            left[0].text,
-            "[my-harness] persona: none known here\n[my-harness] record: none here\n"
+            left,
+            [
+                "[my-harness] persona: none known here\n",
+                "[my-harness] record: none here\n"
+            ],
+            "leaving the location is said once"
         );
         assert!(expression(&c, &at(dir.path())).unwrap().is_empty());
         let fresh = Call {
@@ -1247,6 +1263,47 @@ mod tests {
             expression(&c, &fresh).unwrap().is_empty(),
             "a session never told a persona or record is told nothing"
         );
+    }
+
+    #[test]
+    fn a_session_told_a_persona_and_never_a_record_is_never_told_none_here() {
+        let dir = TempDir::new().unwrap();
+        turn_part(dir.path(), "home", "personal", &[], "");
+        part(dir.path(), "job", "work", json!([]));
+        let unit = dir.path().join("units/garden/SKILL.md");
+        fs::create_dir_all(unit.parent().unwrap()).unwrap();
+        fs::write(&unit, "---\nname: garden\ndescription: d\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: plan the beds\n  my-harness.signals.locations: garden-*\n---\n").unwrap();
+        let parts = dir.path().join("parts/home.json");
+        let mut v: Value = serde_json::from_str(&fs::read_to_string(&parts).unwrap()).unwrap();
+        v["bring_ins"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"name": "garden", "unit": {"standard": "skill", "path": unit}}));
+        fs::write(&parts, v.to_string()).unwrap();
+        let garden = dir.path().join("garden-planner");
+        fs::create_dir_all(&garden).unwrap();
+        let c = ctx(dir.path());
+        let at = |cwd: &Path, prompt: &str| {
+            let call = Call {
+                input: json!({"prompt": prompt, "cwd": cwd}),
+                ..call(Some("s"), Carrier::Append, false)
+            };
+            expression(&c, &call).unwrap()
+        };
+        let first = at(&garden, "what goes in the beds");
+        assert_eq!(first[0].id, "reinforce.persona", "{first:?}");
+        assert!(first[0].text.contains("acting through personal"));
+        assert!(
+            !first.iter().any(|i| i.text.contains("record:")),
+            "{first:?}"
+        );
+        assert!(
+            at(&garden, "what goes in the beds").is_empty(),
+            "a second prompt with nothing changed gets nothing"
+        );
+        let left = at(dir.path(), "and elsewhere");
+        let texts: Vec<&str> = left.iter().map(|i| i.text.as_str()).collect();
+        assert_eq!(texts, ["[my-harness] persona: none known here\n"]);
     }
 
     #[test]

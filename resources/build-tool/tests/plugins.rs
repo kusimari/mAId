@@ -95,7 +95,9 @@ fn plugins_install_update_disable_and_uninstall_with_the_real_clis() {
     generation(&b, "bbbb");
     let profile = state.join("profile");
     switch(&profile, &a);
+    // codex takes the links dir; claude the profile's own marketplace.
     let root = state.join("marketplace");
+    let claude_root = profile.join("share/maid/marketplace");
     let p = Plugins {
         home: h.to_path_buf(),
         profile: profile.clone(),
@@ -112,9 +114,9 @@ fn plugins_install_update_disable_and_uninstall_with_the_real_clis() {
     assert!(fs::symlink_metadata(h.join(".claude/skills")).is_err());
     assert_eq!(
         marketplaces(&p),
-        [State::Ok(root.clone()), State::Ok(root.clone())]
+        [State::Ok(claude_root.clone()), State::Ok(root.clone())]
     );
-    for cli in ["claude", "codex"] {
+    for (cli, root) in [("claude", &claude_root), ("codex", &root)] {
         let listed = run(h, cli, &["plugin", "marketplace", "list", "--json"]);
         assert!(
             listed.contains(&root.display().to_string()),
@@ -135,6 +137,20 @@ fn plugins_install_update_disable_and_uninstall_with_the_real_clis() {
         ]
     };
     assert_eq!(placed, [both(Agent::Claude), both(Agent::Codex)].concat());
+
+    // claude's marketplace where an older mAId pointed it, the links dir:
+    // install moves it to the profile's own.
+    run(
+        h,
+        "claude",
+        &["plugin", "marketplace", "add", root.to_str().unwrap()],
+    );
+    assert!(!p.is_deployed(Agent::Claude));
+    p.install(None, false, false).unwrap();
+    assert_eq!(
+        marketplaces(&p),
+        [State::Ok(claude_root.clone()), State::Ok(root.clone())]
+    );
 
     // A new generation: both updated; codex's cache has the new text.
     switch(&profile, &b);
@@ -163,7 +179,7 @@ fn plugins_install_update_disable_and_uninstall_with_the_real_clis() {
     assert_eq!(states(&p), [current("bbbb"), current("bbbb")]);
     assert_eq!(
         marketplaces(&p),
-        [State::Ok(root.clone()), State::Ok(root.clone())]
+        [State::Ok(claude_root.clone()), State::Ok(root.clone())]
     );
 
     // Disabled by the user (codex has no disable verb; this is its switch),
@@ -201,7 +217,7 @@ fn plugins_install_update_disable_and_uninstall_with_the_real_clis() {
     assert_eq!(states(&p), [disabled("aaaa"), disabled("bbbb")]);
     assert_eq!(
         marketplaces(&p),
-        [State::Ok(root.clone()), State::Ok(root.clone())]
+        [State::Ok(claude_root.clone()), State::Ok(root.clone())]
     );
     assert!(!p.is_deployed(Agent::Claude));
 
@@ -209,7 +225,7 @@ fn plugins_install_update_disable_and_uninstall_with_the_real_clis() {
     p.uninstall(None, false, false).unwrap();
     assert_eq!(states(&p), [State::Missing, State::Missing]);
     assert_eq!(marketplaces(&p), [State::Missing, State::Missing]);
-    for cli in ["claude", "codex"] {
+    for (cli, root) in [("claude", &claude_root), ("codex", &root)] {
         let listed = run(h, cli, &["plugin", "marketplace", "list", "--json"]);
         assert!(
             !listed.contains(&root.display().to_string()),

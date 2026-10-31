@@ -183,8 +183,8 @@ What it does:
    ([`resources/build-tool/src/shared.rs`](./resources/build-tool/src/shared.rs)
    lists which way):
    - claude and codex get a plugin, `maid@maid`, from a marketplace
-     the profile carries, through `~/.local/state/maid/marketplace`
-     (a directory of links into the profile). It shows in `claude
+     the profile carries (codex through `~/.local/state/maid/marketplace`,
+     a directory of links into the profile). It shows in `claude
      plugin list` / `codex plugin list` and can be disabled there; a
      disabled plugin stays disabled. Its version is a hash of its
      content, so an install with changed skills updates it. Skills

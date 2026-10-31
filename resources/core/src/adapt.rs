@@ -763,10 +763,7 @@ fn line(p: &Pending) -> String {
                 true => "worktree to a PR",
                 false => "backlog item",
             };
-            let on = source
-                .as_ref()
-                .and_then(|s| s.at.clone())
-                .unwrap_or_else(|| "its source".into());
+            let on = source_at(source.as_ref());
             format!("{how}, {thing} (on {on}): {}", f.change)
         }
         Action::Note { to } => format!("note for {to}, {thing}: {}", f.change),
@@ -1142,6 +1139,15 @@ fn quotes(f: &Finding) -> String {
         .collect()
 }
 
+/// Where a proposal goes, as the part list records it.
+fn source_at(source: Option<&Source>) -> String {
+    match source {
+        Some(Source { at: Some(at), .. }) => at.clone(),
+        Some(_) => "its source (no remote recorded)".into(),
+        None => "its source (not recorded)".into(),
+    }
+}
+
 /// A backlog-item shaped proposal, under the state dir, naming its source.
 fn propose(
     config: &Config,
@@ -1161,17 +1167,14 @@ fn propose(
         })
         .find(|p| !p.exists())
         .expect("a free name");
-    let on = match source {
-        Some(s) => format!(
-            "{}{}",
-            s.at.as_deref().unwrap_or("its source"),
-            s.rev
-                .as_deref()
-                .map(|r| format!(" at {r}"))
-                .unwrap_or_default()
-        ),
-        None => "its source (not recorded)".into(),
-    };
+    let on = format!(
+        "{}{}",
+        source_at(source),
+        source
+            .and_then(|s| s.rev.as_deref())
+            .map(|r| format!(" at {r}"))
+            .unwrap_or_default()
+    );
     let how = match worktree {
         true => "Work it in a worktree on the source, into a PR.",
         false => "File it as a backlog item on the source.",

@@ -10,7 +10,7 @@
 
 use crate::part::{Item, What, ANOTHER_PART};
 use crate::settings::{claude_settings, read_settings, write_settings, NO_CLI};
-use crate::shared::{marketplace_root, PLUGIN_ID};
+use crate::shared::{agent_marketplace, Agent, PLUGIN_ID};
 use anyhow::Result;
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
@@ -87,10 +87,12 @@ fn plugin() -> &'static str {
     PLUGIN_ID.split('@').next().unwrap_or(PLUGIN_ID)
 }
 
-/// mAId's plugin dir on the profile side of the marketplace. Claude reports
-/// it as each skill's base dir, so a grant here covers every module.
+/// mAId's plugin dir in Claude's marketplace. Claude reports it as each
+/// skill's base dir, so a grant here covers every module.
 pub fn plugin_dir(profile: &Path) -> PathBuf {
-    marketplace_root(profile).join("plugins").join(plugin())
+    agent_marketplace(Agent::Claude, profile)
+        .join("plugins")
+        .join(plugin())
 }
 
 pub fn plugin_grant(profile: &Path) -> Grant {
@@ -412,9 +414,9 @@ mod tests {
     }
 
     #[test]
-    fn the_element_is_the_plugin_dir_beside_the_profile() {
+    fn the_element_is_the_plugin_dir_in_claudes_marketplace() {
         let e = env();
-        assert!(mine(&e).ends_with("state/maid/marketplace/plugins/maid"));
+        assert!(mine(&e).ends_with("state/maid/profile/share/maid/marketplace/plugins/maid"));
     }
 
     #[test]

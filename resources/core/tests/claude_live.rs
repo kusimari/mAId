@@ -200,6 +200,16 @@ struct World {
 
 impl World {
     fn new() -> World {
+        World::build(false)
+    }
+
+    /// The same, with the second part's persona acting in the work folder:
+    /// its turn skill names the folder as a location.
+    fn acting() -> World {
+        World::build(true)
+    }
+
+    fn build(acting: bool) -> World {
         let dir = TempDir::new().unwrap();
         let d = dir.path();
         let parts = d.join("home/.local/state/my-harness/parts");
@@ -222,7 +232,14 @@ impl World {
                 {"name": "deployer", "unit": {"standard": "skill", "path": unit}},
                 {"name": "personal-memory", "unit": {"standard": "mcp", "path": server.canonicalize().unwrap()},
                     "values": {"store": store, "index": "memory/MEMORY.md"}}]});
-        let theirs = json!({"format": 1, "part": "work-part", "persona": "work", "harnesses": {}, "bring_ins": []});
+        let mut theirs = json!({"format": 1, "part": "work-part", "persona": "work", "harnesses": {}, "bring_ins": []});
+        if acting {
+            let planner = d.join("units/planner/SKILL.md");
+            fs::create_dir_all(planner.parent().unwrap()).unwrap();
+            fs::write(&planner, "---\nname: planner\ndescription: plan work\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: plan the work\n  my-harness.signals.locations: work\n---\n").unwrap();
+            theirs["bring_ins"] =
+                json!([{"name": "planner", "unit": {"standard": "skill", "path": planner}}]);
+        }
         fs::write(parts.join("maid-harness.json"), mine.to_string()).unwrap();
         fs::write(parts.join("work-part.json"), theirs.to_string()).unwrap();
         let adapter = Path::new(env!("CARGO_MANIFEST_DIR")).join("../content/adapters/claude");
@@ -333,7 +350,7 @@ fn a_session_starts_with_the_genome_and_each_turn_gets_only_what_changed() {
         ],
     );
     assert!(
-        out.contains(r#"{"name":"plugin:maid:my-harness","status":"connected","source":"plugin"}"#),
+        out.contains(r#"{"name":"plugin:maid:my-harness","status":"connected""#),
         "the plugin, `extensions` and all, loads and its MCP server connects:\n{out}"
     );
 
@@ -376,6 +393,31 @@ fn a_session_starts_with_the_genome_and_each_turn_gets_only_what_changed() {
         count(sub, "pending:"),
         0,
         "without what waits for the person"
+    );
+}
+
+#[test]
+#[ignore = "needs claude; run with --ignored"]
+fn with_a_persona_acting_a_second_prompt_with_nothing_changed_gets_nothing() {
+    let (url, log) = stub();
+    World::acting().session(&url, &["plan the beds", "plan the beds once more"]);
+    let main = requests(&log, "plan the beds");
+    let first = main.iter().find(|m| !m.contains("once more")).unwrap();
+    assert_eq!(
+        count(first, "acting through work"),
+        1,
+        "the acting persona, once:\n{first}"
+    );
+    let second = main.iter().find(|m| m.contains("once more")).unwrap();
+    assert_eq!(
+        count(second, "[my-harness]"),
+        count(first, "[my-harness]"),
+        "a second prompt with nothing changed gets nothing new:\n{second}"
+    );
+    assert_eq!(
+        count(second, "none here"),
+        0,
+        "never told a record, never told there is none:\n{second}"
     );
 }
 

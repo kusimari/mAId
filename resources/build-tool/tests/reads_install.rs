@@ -26,7 +26,7 @@ fn install_adds_the_plugin_dir_keeps_the_rest_and_uninstall_puts_it_back() {
         root.join("bin"),
     );
     let profile = root.join("xdg/maid/profile");
-    let plugin = root.join("xdg/maid/marketplace/plugins/maid");
+    let plugin = profile.join("share/maid/marketplace/plugins/maid");
     for d in [&home.join(".claude"), &config, &bin, &plugin] {
         fs::create_dir_all(d).unwrap();
     }
@@ -51,7 +51,7 @@ fn install_adds_the_plugin_dir_keeps_the_rest_and_uninstall_puts_it_back() {
     )
     .unwrap();
     cmd_install_reads(&home, &profile, &config.join("maid"), &parts, false, None).unwrap();
-    let mine = root.join("xdg/maid/marketplace/plugins/maid");
+    let mine = profile.join("share/maid/marketplace/plugins/maid");
     let settings: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&at).unwrap()).unwrap();
     assert_eq!(

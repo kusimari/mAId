@@ -14,8 +14,8 @@
 
 use crate::part::{self, Item, What};
 use crate::shared::{
-    marketplace_root, on_path, selected_entries, Agent, BringIn, Entry, Kind, Link, LEGACY_LINKS,
-    MARKETPLACE, PLUGIN_AGENTS, PLUGIN_ID, PROFILE_MARKETPLACE_DIR,
+    agent_marketplace, marketplace_root, on_path, selected_entries, Agent, BringIn, Entry, Kind,
+    Link, LEGACY_LINKS, MARKETPLACE, PLUGIN_AGENTS, PLUGIN_ID, PROFILE_MARKETPLACE_DIR,
 };
 use anyhow::{anyhow, Context, Result};
 use std::cell::RefCell;
@@ -475,8 +475,10 @@ impl Deploy for Plugins {
             return Ok(vec![]);
         }
         let want = self.want()?;
-        let root = self.root();
-        let mut out = vec![self.ensure_root(dry_run)?];
+        let mut out = Vec::new();
+        if agents.iter().any(|(a, ..)| self.links_for(*a)) {
+            out.push(self.ensure_root(dry_run)?);
+        }
         for (a, legacy, kind) in agents {
             // The old links stay until the plugin is in: an agent whose CLI
             // is missing, or whose install fails, keeps its skills.
@@ -486,7 +488,8 @@ impl Deploy for Plugins {
             }
             self.repair(a, dry_run)?;
             let state = self.state(a, Some(&want))?;
-            let (steps, acted) = install_steps(a, &state, self.recorded(a)?.as_deref(), &root);
+            let (steps, acted) =
+                install_steps(a, &state, self.recorded(a)?.as_deref(), &self.root(a));
             if !dry_run {
                 for step in &steps {
                     self.cli(a, step)?;
@@ -518,8 +521,10 @@ impl Deploy for Plugins {
             }
             out.push(self.report(a, state, installed));
         }
-        // The root is shared by every plugin agent, so it goes only with all.
-        if agent.is_none() {
+        if plugin_agents(agent)
+            .iter()
+            .any(|(a, ..)| self.links_for(*a))
+        {
             out.extend(self.remove_root(dry_run)?);
         }
         Ok(out)
@@ -550,7 +555,7 @@ impl Deploy for Plugins {
                     label: format!("{} marketplace {MARKETPLACE}", a.name()),
                     state: self
                         .recorded(a)
-                        .map(|r| marketplace_state(r, &self.root()))
+                        .map(|r| marketplace_state(r, &self.root(a)))
                         .unwrap_or_else(unreadable),
                     acted: false,
                 });
@@ -572,7 +577,7 @@ impl Deploy for Plugins {
                 out.push((a, Item::skipped(What::Plugin, PLUGIN_ID, why)));
                 continue;
             }
-            match marketplace_state(self.recorded(a)?, &self.root()) {
+            match marketplace_state(self.recorded(a)?, &self.root(a)) {
                 State::Ok(_) => out.push((a, Item::placed(What::Marketplace, MARKETPLACE))),
                 State::Missing => {}
                 other => out.push((
@@ -592,13 +597,26 @@ impl Deploy for Plugins {
             return false;
         };
         matches!(self.state(agent, Some(&want)), Ok(State::Current(_)))
-            && self.recorded(agent).is_ok_and(|r| r == Some(self.root()))
+            && self
+                .recorded(agent)
+                .is_ok_and(|r| r == Some(self.root(agent)))
     }
 }
 
 impl Plugins {
-    fn root(&self) -> PathBuf {
+    /// Where `agent`'s `maid` marketplace points.
+    fn root(&self, agent: Agent) -> PathBuf {
+        agent_marketplace(agent, &self.profile)
+    }
+
+    /// The real dir of links into the profile, for the agents that need one.
+    fn links(&self) -> PathBuf {
         marketplace_root(&self.profile)
+    }
+
+    /// Whether `agent`'s marketplace is the links dir.
+    fn links_for(&self, agent: Agent) -> bool {
+        self.root(agent) == self.links()
     }
 
     fn source(&self) -> PathBuf {
@@ -645,7 +663,7 @@ impl Plugins {
             agent,
             &strings(&["plugin", "marketplace", "list", "--json"]),
         )?;
-        let root = self.root();
+        let root = self.root(agent);
         Ok(
             parse_recorded(agent, &json, MARKETPLACE)?.map(|found| match same_dir(&found, &root) {
                 true => root,
@@ -664,14 +682,14 @@ impl Plugins {
             _ => false,
         };
         let recorded = self.recorded(agent)?;
-        if installed && recorded.as_deref() == Some(self.root().as_path()) {
+        if installed && recorded.as_deref() == Some(self.root(agent).as_path()) {
             return Ok(());
         }
         Err(anyhow!(
             "{} plugin {PLUGIN_ID} is {} after install, its marketplace {}",
             agent.name(),
             after.describe(),
-            marketplace_state(recorded, &self.root()).describe()
+            marketplace_state(recorded, &self.root(agent)).describe()
         ))
     }
 
@@ -699,7 +717,7 @@ impl Plugins {
 
     /// Make the root a real dir whose entries link into the profile path.
     fn ensure_root(&self, dry_run: bool) -> Result<Report> {
-        let root = self.root();
+        let root = self.links();
         let mut acted = false;
         for entry in ROOT_ENTRIES {
             let (at, want) = (root.join(entry), self.source().join(entry));
@@ -737,7 +755,7 @@ impl Plugins {
     }
 
     fn remove_root(&self, dry_run: bool) -> Result<Vec<Report>> {
-        let root = self.root();
+        let root = self.links();
         if !root.is_dir() {
             return Ok(vec![]);
         }

@@ -11,7 +11,8 @@ hand. That covers every file a skill tells the agent to read, not just
 
 ## Why
 
-The marketplace at `~/.local/state/maid/marketplace/plugins` is a symlink
+Claude's marketplace, `<profile>/share/maid/marketplace` (before
+macro-fixes, `~/.local/state/maid/marketplace`, a dir of links), resolves
 into the Nix store (`/nix/store/<hash>-maid/share/maid/marketplace/...`).
 Claude Code resolves symlinks before checking permissions, so a read
 reports "resolves through a symlink to /nix/store/...-maid/..., which is

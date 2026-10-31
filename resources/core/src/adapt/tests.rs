@@ -844,3 +844,14 @@ fn an_item_ok_took_that_now_needs_an_answer_waits() {
     assert_eq!(out[0].outcome, "waiting", "{out:?}");
     assert!(!w.log.exists());
 }
+
+#[test]
+fn a_proposal_says_when_its_source_records_no_remote() {
+    let local = Source {
+        kind: crate::parts::SourceKind::Project,
+        at: None,
+        rev: Some("abc123".into()),
+    };
+    assert_eq!(source_at(Some(&local)), "its source (no remote recorded)");
+    assert_eq!(source_at(None), "its source (not recorded)");
+}
