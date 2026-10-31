@@ -576,3 +576,16 @@ this initiative.
 - For the user at the initiative review: which lines each skill's `rules`
   pointer reinforces on every fitting turn (writing-style points at
   `## Voice`, kdevkit at its phase-gating cues, notes at its behaviour rules).
+- Ruling (ringmaster, stream 3 review): habits are written through the
+  memory server's own MCP write, started headless from the part list's
+  `serve` value; part lists are trusted as the person's own install, so
+  the core may run what they name · why: the store stays the package's,
+  and parts are what the person installed · cost if wrong: a hostile part
+  list runs a command at reflection time
+- Ruling (ringmaster, stream 3 review): an accepted habit's text is one
+  line of at most 200 characters, shown verbatim; marked sessions can be
+  dismissed; a session's full brief-time copy is deleted once decided ·
+  why: the person's one-line read must be the whole write, and nothing is
+  kept longer than it is needed
+- Paid tests: stream 3 spent 4 of 4; 1 more granted (reflector re-run).
+  15 remain.
