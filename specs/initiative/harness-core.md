@@ -388,7 +388,7 @@ coding CLIs, so the genome never depends on them.
 | 3 | sleep-and-adaptation | `sleep` (the SessionEnd mark and the explicit close), `experience` (the session-source interface and the Claude Code transcript packer), `adaptation` (the reflection skill, the reflector agent, the guards, the decision batch, routing by the map, the ledger) | 1, 4 | merged |
 | 4 | session-bring-ins | memory as a session bring-in naming the memory package, its store behind config, its index readable by the selector; the core's adapters as session bring-ins; any other session bring-in the design needs | 1 | merged |
 | 5 | turn-bring-ins | this repo's turn bring-ins (kdevkit, kyodakit, kreviewkit, writing-style with its two tiers, notes, browser, the vendor document skills) carrying the contract in their standard slots | 1 | merged |
-| 6 | fold-back | README and project.md say how mAId works with this design, in the framing: the shell, the ghost, and its genome, expression, experience, sleep and adaptation; project.md also carries "For any persona part" as its own section, so a person adding another persona repo needs only project.md | 1-5 | planned |
+| 6 | fold-back | README and project.md say how mAId works with this design, in the framing: the shell, the ghost, and its genome, expression, experience, sleep and adaptation; project.md also carries "For any persona part" as its own section, so a person adding another persona repo needs only project.md | 1-5 | running |
 
 The work part's own bring-ins take the contract in their own repo, outside
 this initiative.
