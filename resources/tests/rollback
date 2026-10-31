@@ -116,6 +116,23 @@ core_bare() {
     grep -q 'document-skills: .*borrowed from anthropic-agent-skills' "$work/genome"
 }
 check "the profile's maid-core shows mAId's persona and bring-ins under a bare environment" core_bare
+# The Claude plugin's hooks and MCP server call this profile's own core, and
+# a hook placed as Claude Code runs it answers with the genome.
+plugin="$MAID_PROFILE/share/maid/marketplace/plugins/maid"
+claude_carriers() {
+  core=$(readlink "$MAID_PROFILE/bin/maid-core") &&
+    jq -e --arg core "$core" '[.hooks[][].hooks[].command | split(" ")[0]] | length > 0 and all(. == $core)' \
+      "$plugin/hooks/claude.json" >/dev/null &&
+    jq -e --arg core "$core" '.mcpServers["my-harness"].command == $core' "$plugin/claude-mcp.json" >/dev/null &&
+    jq -e '.hooks == "./hooks/claude.json" and .mcpServers == "./claude-mcp.json"' \
+      "$plugin/.claude-plugin/plugin.json" >/dev/null &&
+    cmd=$(jq -r '.hooks.SessionStart[] | select(.matcher | split("|") | index("startup")) | .hooks[0].command' \
+      "$plugin/hooks/claude.json") &&
+    echo '{"session_id":"rollback-probe","cwd":"/","source":"startup"}' |
+      env -i HOME="$th" sh -c "$cmd" >"$work/hook" &&
+    jq -e '.hookSpecificOutput.additionalContext | startswith("personas: personal")' "$work/hook" >/dev/null
+}
+check "the Claude plugin's hooks and MCP server call this profile's core, and a start hook answers" claude_carriers
 # The genome's session bring-ins: the declared memory, with its store as
 # its state, and the core's adapter on Claude Code.
 session_bring_ins() {
@@ -211,6 +228,20 @@ rollback
 rc=$?
 check "rollback to an install the agents cannot take is refused" \
   eval '[ $rc != 0 ] && [ "$(gen)" = 2 ] && both_at "$vA" && grep -q "staying on generation 2" "$work/out"'
+
+# The Claude plugin's hooks call the core, so a generation with everything
+# else but no `bin/maid-core` is refused too. It is checked before nix is
+# called, so a profile of plain links is enough.
+mkdir -p "$work/nocore/bin" "$work/coreless"
+ln -s "$A/share" "$work/nocore/share"
+for f in "$A"/bin/*; do [ "${f##*/}" = maid-core ] || ln -s "$f" "$work/nocore/bin/"; done
+ln -s "$work/nocore" "$work/coreless/profile-1-link"
+ln -s "$A" "$work/coreless/profile-2-link"
+ln -s profile-2-link "$work/coreless/profile"
+MAID_PROFILE=$work/coreless/profile inhome just resources::rollback-profile >"$work/out" 2>&1
+rc=$?
+check "rollback to an install without the core the hooks call is refused" \
+  eval '[ $rc != 0 ] && grep -q "has no bin/maid-core" "$work/out" && [ "$(readlink "$work/coreless/profile")" = profile-2-link ]'
 
 nix profile wipe-history --profile "$MAID_PROFILE" 2>/dev/null
 rollback

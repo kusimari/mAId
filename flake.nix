@@ -100,7 +100,18 @@
           inherit description;
           author.name = "mAId";
           extensions."my-harness" = builtins.fromJSON (builtins.readFile ./resources/content/adapters/claude/my-harness.json);
+          # Not the default `hooks/hooks.json` and `.mcp.json`: codex reads
+          # those from the same plugin dir.
+          hooks = "./hooks/claude.json";
+          mcpServers = "./claude-mcp.json";
         };
+        # Every hook and server command names the core as `@maid-core@`:
+        # this build's, so the plugin and its core are one build and the
+        # plugin's version hash moves with the core.
+        withCore = name: file: pkgs.writeText name (builtins.replaceStrings
+          [ "@maid-core@" ] [ "${maid-core}/bin/maid-core" ] (builtins.readFile file));
+        claudeHooks = withCore "claude-hooks.json" ./resources/content/adapters/claude/hooks.json;
+        claudeMcp = withCore "claude-mcp.json" ./resources/content/adapters/claude/mcp.json;
         codexPlugin = manifest "codex-plugin.json" {
           name = "maid";
           version = "@version@";
@@ -119,7 +130,7 @@
           default = pkgs.runCommand "maid" { } ''
             m=$out/share/maid/marketplace
             p=$m/plugins/maid
-            mkdir -p $m/.claude-plugin $m/.agents/plugins $p/.claude-plugin $p/.codex-plugin $out/bin
+            mkdir -p $m/.claude-plugin $m/.agents/plugins $p/.claude-plugin $p/.codex-plugin $p/hooks $out/bin
             cp -r ${./resources/content/skills} $p/skills
             # Bring-in declarations outside the plugin: MCP servers', and
             # overlays for borrowed units mAId does not own.
@@ -128,6 +139,8 @@
             cp ${claudeMarketplace} $m/.claude-plugin/marketplace.json
             cp ${codexMarketplace} $m/.agents/plugins/marketplace.json
             cp ${claudePlugin} $p/.claude-plugin/plugin.json
+            cp ${claudeHooks} $p/hooks/claude.json
+            cp ${claudeMcp} $p/claude-mcp.json
             cp ${codexPlugin} $p/.codex-plugin/plugin.json
             # Both agents cache a plugin by version, so it must change
             # exactly when the plugin's content does.

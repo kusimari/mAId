@@ -5,9 +5,9 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use maid_core::config::Config;
-use maid_core::entry::{self, Call, Carrier, Ctx, Item};
+use maid_core::entry::{self, Call, Carrier, Ctx, Item, Slice};
 use maid_core::environment::{self, Host};
-use maid_core::map;
+use maid_core::{map, mcp};
 use serde_json::{json, Value};
 use std::io::Read;
 use std::process::ExitCode;
@@ -38,9 +38,17 @@ struct CallArgs {
     /// The carrier's own input as JSON; `-` reads it from stdin.
     #[arg(long)]
     input: Option<String>,
+    /// How much of the genome to give: a sub-agent takes `sub-session`.
+    #[arg(long, value_enum, default_value_t = Slice::Whole)]
+    slice: Slice,
     /// Print the items as JSON instead of their text.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "claude_event")]
     json: bool,
+    /// Answer as a Claude Code hook for this event: its JSON output with
+    /// the items as `additionalContext`, and always exit 0, since exit 2
+    /// blocks the prompt and any other failure shows the person an error.
+    #[arg(long, value_name = "EVENT")]
+    claude_event: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -62,15 +70,40 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Serve the on-demand carrier as an MCP server on stdio: the genome
+    /// as a resource and a prompt, expression as a tool.
+    Mcp {
+        /// The environment variable that holds the shell's session id.
+        #[arg(long, value_name = "NAME")]
+        session_env: Option<String>,
+    },
 }
 
 fn main() -> ExitCode {
-    match run(Cli::parse()) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("maid-core: {e:#}");
-            ExitCode::FAILURE
+    let hook = std::env::args().any(|a| a == "--claude-event" || a.starts_with("--claude-event="));
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) if hook => {
+            eprintln!("maid-core: {e}");
+            return ExitCode::SUCCESS;
         }
+        Err(e) => e.exit(),
+    };
+    match std::panic::catch_unwind(|| run(cli)) {
+        Ok(Ok(())) => ExitCode::SUCCESS,
+        Ok(Err(e)) => {
+            eprintln!("maid-core: {e:#}");
+            fail(hook)
+        }
+        // The panic message is already on stderr.
+        Err(_) => fail(hook),
+    }
+}
+
+fn fail(hook: bool) -> ExitCode {
+    match hook {
+        true => ExitCode::SUCCESS,
+        false => ExitCode::FAILURE,
     }
 }
 
@@ -86,6 +119,17 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Experience(a) => (entry::experience, a),
         Cmd::Sleep(a) => (entry::sleep, a),
         Cmd::Adaptation(a) => (entry::adaptation, a),
+        Cmd::Mcp { session_env } => {
+            let session = mcp::Session {
+                id: session_env
+                    .as_deref()
+                    .and_then(|k| std::env::var(k).ok())
+                    .filter(|v| !v.is_empty()),
+                cwd: std::env::current_dir().ok(),
+            };
+            let stdin = std::io::stdin().lock();
+            return Ok(mcp::serve(&ctx, &session, stdin, std::io::stdout().lock())?);
+        }
         Cmd::Map => {
             let m = fuse(&ctx)?;
             println!("{}", serde_json::to_string_pretty(&m)?);
@@ -110,9 +154,16 @@ fn run(cli: Cli) -> Result<()> {
         }
     };
     let items = entry(&ctx, &call(a)?)?;
-    match a.json {
-        true => println!("{}", json!({ "items": items })),
-        false => items.iter().for_each(|i| print!("{}", i.text)),
+    match (&a.claude_event, a.json) {
+        (Some(_), _) if items.is_empty() => {}
+        (Some(event), _) => {
+            let context: String = items.iter().map(|i| i.text.as_str()).collect();
+            let out = json!({"hookSpecificOutput": {
+                "hookEventName": event, "additionalContext": context}});
+            println!("{out}");
+        }
+        (None, true) => println!("{}", json!({ "items": items })),
+        (None, false) => items.iter().for_each(|i| print!("{}", i.text)),
     }
     Ok(())
 }
@@ -133,9 +184,13 @@ fn call(a: &CallArgs) -> Result<Call> {
         Some(text) => serde_json::from_str(text).context("--input is not JSON")?,
     };
     Ok(Call {
-        session: a.session.clone(),
+        session: a
+            .session
+            .clone()
+            .or_else(|| Call::session_from_input(&input)),
         carrier: a.carrier,
         reset: a.reset,
         input,
+        slice: a.slice,
     })
 }

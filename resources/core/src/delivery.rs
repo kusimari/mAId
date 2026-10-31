@@ -49,6 +49,24 @@ impl Record {
         Ok(true)
     }
 
+    /// Whether `session` already holds `text` as `item`, without claiming.
+    pub fn holds(&self, session: &str, item: &str, text: &str) -> Result<bool> {
+        let dir = self.session(session)?;
+        check_id("item", item)?;
+        Ok(dir.join(format!("{item}@{:016x}", fnv1a(text))).exists())
+    }
+
+    /// Whether `session` was sent any version of `item`.
+    pub fn sent_any(&self, session: &str, item: &str) -> Result<bool> {
+        let dir = self.session(session)?;
+        check_id("item", item)?;
+        let prefix = format!("{item}@");
+        Ok(fs::read_dir(&dir).is_ok_and(|rd| {
+            rd.flatten()
+                .any(|e| e.file_name().to_string_lossy().starts_with(&prefix))
+        }))
+    }
+
     /// Forget what `session` was sent: its next append sends everything.
     pub fn reset(&self, session: &str) -> Result<()> {
         match fs::remove_dir_all(self.session(session)?) {
@@ -86,7 +104,7 @@ pub fn check_id(what: &str, s: &str) -> Result<()> {
 
 /// FNV-1a: fixed across builds, unlike std's hasher, so an upgrade of the
 /// core does not re-send everything.
-fn fnv1a(text: &str) -> u64 {
+pub fn fnv1a(text: &str) -> u64 {
     text.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
         (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
     })
@@ -118,6 +136,23 @@ mod tests {
         assert!(r.claim("s", "genome", "b").unwrap());
         assert!(r.claim("s", "genome", "a").unwrap());
         assert!(!r.claim("s", "genome", "a").unwrap());
+    }
+
+    #[test]
+    fn holds_tells_what_was_sent_and_claims_nothing() {
+        let dir = TempDir::new().unwrap();
+        let r = Record::new(dir.path());
+        assert!(!r.holds("s", "genome", "a").unwrap());
+        assert!(
+            !r.holds("s", "genome", "a").unwrap(),
+            "asking claims nothing"
+        );
+        assert!(r.claim("s", "genome", "a").unwrap());
+        assert!(r.holds("s", "genome", "a").unwrap());
+        assert!(!r.holds("s", "genome", "b").unwrap());
+        assert!(r.sent_any("s", "genome").unwrap());
+        assert!(!r.sent_any("s", "other").unwrap());
+        assert!(!r.sent_any("t", "genome").unwrap());
     }
 
     #[test]

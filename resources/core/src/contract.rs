@@ -101,6 +101,10 @@ pub struct Declaration {
     /// Commands that must be on PATH for it to be ready.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requires: Vec<String>,
+    /// Where the work's own record is, for a turn bring-in that knows:
+    /// `<file glob>#<heading slug>`, each relative to the session's location.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub record: Vec<String>,
 }
 
 /// What a unit's slot holds.
@@ -147,7 +151,13 @@ pub fn rules(unit: &Path, pointer: &str) -> Result<String, String> {
         return Err(format!("rules {pointer:?} must stay in the unit's dir"));
     }
     let path = unit.parent().unwrap_or(Path::new("/")).join(rel);
-    let text = read_small(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    section(&path, anchor)
+}
+
+/// The section of the markdown file at `path` under the heading whose slug
+/// is `anchor`, as `rules` reads it.
+pub fn section(path: &Path, anchor: &str) -> Result<String, String> {
+    let text = read_small(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     // The open fence's marker and length: only a run of the same marker,
     // at least as long, closes it.
     let mut fence: Option<(char, usize)> = None;
@@ -168,7 +178,8 @@ pub fn rules(unit: &Path, pointer: &str) -> Result<String, String> {
             (None, _) => {}
         }
     }
-    let (_, lines) = section.ok_or_else(|| format!("no heading #{anchor} in {file}"))?;
+    let (_, lines) =
+        section.ok_or_else(|| format!("no heading #{anchor} in {}", path.display()))?;
     Ok(lines.join("\n").trim_end().to_string())
 }
 
@@ -219,7 +230,8 @@ pub fn slug(title: &str) -> String {
 /// huge file) would stall or swell the hook that reads it.
 const MAX_MANIFEST: u64 = 1 << 20;
 
-fn read_small(path: &Path) -> std::io::Result<String> {
+/// A file read whole, when it is a regular file of at most 1 MiB.
+pub fn read_small(path: &Path) -> std::io::Result<String> {
     use std::io::{Error, Read};
     if !fs::metadata(path)?.is_file() {
         return Err(Error::other("not a regular file"));
@@ -296,7 +308,7 @@ fn unflatten(flat: &BTreeMap<String, String>) -> Value {
             ("scope" | "job" | "rules" | "package", "") => {
                 obj.insert(head.into(), json!(value));
             }
-            ("requires", "") => {
+            ("requires" | "record", "") => {
                 obj.insert(head.into(), list(value));
             }
             ("signals", kind) if !kind.is_empty() => {
@@ -400,6 +412,7 @@ mod tests {
                 promote: Promote::Auto,
             }),
             requires: vec!["git".into(), "python".into()],
+            record: vec!["specs/*.md#handoff".into(), "docs/*.md#handoff".into()],
         }
     }
 
@@ -409,7 +422,7 @@ mod tests {
         let p = write(
             &dir,
             "SKILL.md",
-            "---\nname: s\ndescription: d\nmetadata:\n  other.key: kept out\n  my-harness.scope: session\n  my-harness.job: memory for the personal persona\n  my-harness.signals.jobs: recall, save\n  my-harness.rules: SKILL.md#rules\n  my-harness.package: pensieve\n  my-harness.config.store: the persona's store\n  my-harness.config.token: \"[secret] [optional] a sync token\"\n  my-harness.state.local: store\n  my-harness.state.promote: auto\n  my-harness.requires: git, python\n  my-harness.future: ignored\n---\nbody\n",
+            "---\nname: s\ndescription: d\nmetadata:\n  other.key: kept out\n  my-harness.scope: session\n  my-harness.job: memory for the personal persona\n  my-harness.signals.jobs: recall, save\n  my-harness.rules: SKILL.md#rules\n  my-harness.package: pensieve\n  my-harness.config.store: the persona's store\n  my-harness.config.token: \"[secret] [optional] a sync token\"\n  my-harness.state.local: store\n  my-harness.state.promote: auto\n  my-harness.requires: git, python\n  my-harness.record: specs/*.md#handoff, docs/*.md#handoff\n  my-harness.future: ignored\n---\nbody\n",
         );
         assert_eq!(declared(read(Standard::Skill, &p)), full());
     }

@@ -165,8 +165,8 @@ than 30 days, and nix keeps the newest one older than that, so the
 install before the live one survives (an unchanged install adds none and
 skips the wipe, which would otherwise keep only the live one). **Rollback** is `nix profile rollback` plus the plugin install
 (codex serves its cached copy until `codex plugin add` runs). It refuses
-a generation without the skills, the plugin manifest or the browser
-launcher, before switching; it does not switch back on an install
+a generation without the skills, the plugin manifest, the browser
+launcher or the core the plugin's hooks call, before switching; it does not switch back on an install
 failure, since install also exits non-zero for a link it left alone.
 nix rolls back to the next lower generation number, so install drops
 the generations above the live one (the ones a rollback returned from),
@@ -443,8 +443,9 @@ ignores it:
   `my-harness.config.<key>` (its description, after optional `[secret]`
   and `[optional]` markers), `my-harness.state.local`,
   `my-harness.state.permanent` (each a config key),
-  `my-harness.state.promote` (`auto`, `propose` or `off`) and
-  `my-harness.requires` (commands, a comma list);
+  `my-harness.state.promote` (`auto`, `propose` or `off`),
+  `my-harness.requires` (commands, a comma list) and `my-harness.record`
+  (pointers, a comma list);
 - a plugin manifest: `extensions["my-harness"]`, and an MCP server's
   `server.json`: `_meta["my-harness"]`, each the same fields as one JSON
   object (lists as arrays; `config` as `{ "<key>": { "about", "secret",
@@ -460,6 +461,20 @@ the same or a higher level, fenced code skipped; `maid_core::contract::rules`
 reads it, and content validation fails a skill whose declaration does not
 read or whose pointer names no heading. mAId keeps each to at most 30
 lines.
+
+`record`, optional, on a turn bring-in that knows where the work keeps its
+own record: one or more `<file glob>#<anchor>`, each glob relative to the
+session's location (the repo root above the folder, else the folder; never
+absolute, never through `..`). The first glob that matches names the
+record: its one file, or among several the one whose stem is a whole
+`/`-separated part of the branch name (`hooks` for `feat/hooks/work`, read
+from `.git/HEAD`), else none. A glob walk follows no link, its starting
+folders included. The record is that
+heading's section, read as `rules` is, at most 30 lines: its `Stage` (or
+`State`) line is the work's state, its `Ready for` (or `Next`) line the
+next step, and the file's `# ` title the goal. The core reads it to
+restate the goal and next step and to match `signals.states`; it never
+writes it.
 
 **Session bring-ins.** mAId's part records two: its memory (Memory,
 below) and the core's adapter on each shell it is built for. On Claude Code
@@ -504,7 +519,64 @@ both record, when there are any. The core takes the same part lists
 whole-status takes (rule 3), and never keeps or prints a secret a list
 holds as a value. It reads `MY_HARNESS_PARTS` and
 `MY_HARNESS_STATE` (default `${XDG_STATE_HOME:-$HOME/.local/state}/my-harness`,
-parts under it), so it runs from a hook with no checkout.
+parts under it), so it runs from a hook with no checkout. With no
+`--session`, the session is the input's `session_id` (with an `agent_id`,
+the sub-session `<session_id>.<agent_id>`); `--slice sub-session` gives a
+sub-agent the genome without the environment's detail and pending;
+`--claude-event <Event>` answers as a Claude Code hook and exits 0 on any
+error, a bad flag or a panic included.
+
+**Expression** answers a turn from its input's `prompt` and `cwd`, each part
+its own item so an append carrier is sent only what changed, under 9,000
+bytes in all once what the session already holds is left out (a rules
+section is cut to 30 lines and 2,000 bytes, a record line or a memory's
+title and hook to 300, control characters dropped):
+
+- the reinforcement: the acting persona and its session bring-ins with
+  state, when there are several personas, and the work's record (goal, state, next) when a turn bring-in's
+  `record` names one here, whether or not it fits, since `signals.states`
+  match against it; a session told a persona or a record that moves to
+  where none is known is told so once (`persona: none known here`,
+  `record: none here`), and a session never told one is told nothing;
+- per turn bring-in that fits (at most 3, counted after the same rules
+  text from two parts is sent once), its job and its first rules. Turn fit is derived, never
+  declared: `signals.locations` globs against the folder's path, its name
+  or its repo root's name, `signals.files`
+  globs against the files under the repo root (a bounded walk) or paths
+  named in the prompt, `jobs` and `outcomes` phrases whose words are all in
+  the prompt, `states` against the record's state; with no signals, two
+  words of its `job`. Location and file matches count 2, words 1. When
+  nothing fits, nothing is sent and the shell's own way stands;
+- per recalled memory (at most 3), a pointer: title, hook, file. A
+  `Selector` picks them; v1 is a lookup of the prompt's words against each
+  index line's title and hook, from the acting persona's memories (every
+  persona's, labelled, when none is known).
+
+The acting persona is the only one when there is one; otherwise the one
+whose turn bring-ins' location or file signals match here, or whose bound
+state location holds the folder; otherwise not known. The genome uses the
+same guess from its input's `cwd`.
+
+**The Claude Code adapter** is data in mAId's plugin: `hooks/claude.json`
+and `claude-mcp.json` (from `resources/content/adapters/claude/`), named by
+the Claude manifest's `hooks` and `mcpServers`, not codex's default
+`hooks/hooks.json` and `.mcp.json`, since codex reads the same plugin dir.
+Each command starts `@maid-core@`, which the flake replaces with this
+build's core, so the plugin and its core are one build. SessionStart
+`startup`, `resume` and `fork` call `genome` on the append carrier (a resume
+keeps its history and its id; Claude Code does not place a SessionStart
+context identical to one already there); `clear` and `compact` call it with
+`--reset`; SubagentStart calls it with `--slice sub-session`;
+UserPromptSubmit calls `expression`. `maid-core mcp --session-env
+CLAUDE_CODE_SESSION_ID` serves the on-demand carrier: resource
+`my-harness://genome`, prompt `genome`, tool `expression` (a folder under
+the server's own, else its own). Claude Code places
+a hook's `additionalContext` whole up to 10,000 characters, past that a
+2 KB preview and a file; expression stays under it, and the genome, a few
+lines per part and bring-in, is not cut, so a ghost of many parts would
+reach it first. A shell needs no
+always-loaded rules file: SessionStart covers every point where context
+drops. Another stream's hook adds its own entry to `hooks/claude.json`.
 
 The list says what is there after install, read back from each step,
 plus what install skipped. Uninstall leaves only what it could not
@@ -641,7 +713,8 @@ are free.
     whatever harness is selected, as **ready**, **not ready** (a non-optional
     config key without a value, an `env:` value whose variable is unset or
     empty, an absolute state location of a non-optional key that does
-    not exist (an optional key's is a tier not written yet), a `requires`
+    not exist (an optional key's is a tier not written yet), a memory
+    index that leaves its store (see Memory), a `requires`
     command not on PATH by rule 8, where a command with a `/` is never
     found), **undeclared** (no `unit`, or a unit whose slot holds no
     declaration) or **unreadable** (the entry is not of the shape above, the
@@ -761,7 +834,8 @@ codex, kiro-cli and agy reach the same servers by registration, later.
 
 - **Runtime:** Rust (cargo workspace) + Just for the verb
   surface. The workspace members are `resources/core` (`maid-core`,
-  the installed core), `resources/build-tool` and `kaimux/`.
+  the installed core; it matches turn-fit globs with `globset`, the
+  matcher ripgrep uses), `resources/build-tool` and `kaimux/`.
 - **Isolation:** one flake, two outputs. `devShells.default`
   (loaded by `.envrc` via direnv) is the dev closure: the rust
   toolchain (rust-overlay), `just`, and `jq` (the install tests read
@@ -860,9 +934,18 @@ mAId/
 │   │   ├── src/map.rs      fusion: the harness map
 │   │   ├── src/environment.rs  each bring-in ready or not here; the PATH rule
 │   │   ├── src/delivery.rs the delivery record per session
+│   │   ├── src/here.rs     where a session is: folder, repo root, branch, globs
+│   │   ├── src/record.rs   the work's own record a turn bring-in points at
+│   │   ├── src/fit.rs      turn fit and the persona guess
+│   │   ├── src/select.rs   recall: the memory indexes and the Selector
 │   │   ├── src/entry.rs    genome, expression, experience, sleep, adaptation
+│   │   ├── src/mcp.rs      the on-demand carrier as an MCP server on stdio
 │   │   ├── src/main.rs     the CLI
-│   │   └── tests/cli.rs    the binary under a bare environment
+│   │   ├── tests/cli.rs    the binary under a bare environment
+│   │   ├── tests/claude_hooks.rs  the shipped Claude hooks and MCP config, run as Claude Code runs them
+│   │   ├── tests/mcp.rs    the MCP server over stdio
+│   │   ├── tests/shipped_fit.rs  turn fit against this repo's own declarations
+│   │   └── tests/claude_live.rs  ignored: Claude Code against a stub model API on loopback
 │   ├── build-tool/         Rust crate — the pipeline (check/install/uninstall/status/smoke)
 │   │   ├── Cargo.toml      deps: clap, anyhow, gray_matter, serde, serde_json, tempfile, maid-core
 │   │   ├── src/main.rs     the shim: clap surface + dispatch, in pipeline order
@@ -892,7 +975,7 @@ mAId/
 │   │   ├── skills/kdevkit/  SKILL.md core + phases/, tiers/, setup.md, interviews.md
 │   │   ├── skills/kyodakit/ SKILL.md: developer judgement, any language
 │   │   ├── servers/<name>/server.json  each MCP server's declaration (copied to share/maid/servers/)
-│   │   └── adapters/claude/my-harness.json  the core's Claude Code adapter declaration (into the plugin manifest)
+│   │   └── adapters/claude/ the Claude Code adapter: my-harness.json (its declaration), hooks.json, mcp.json
 │   ├── browser/            browser-control MCP (not symlinked — runnable)
 │   │   ├── launch          allowlist-enforcing launcher; the flake wraps it as maid-browser-mcp
 │   │   └── manage          data-driven MCP registrar (MCP_AGENTS table; every agent global, kiro by editing its config)
@@ -930,7 +1013,10 @@ covering the content validator and the symlink state
 machine against a `tempfile`-fake `$HOME`, plus the kaimux
 crate's 53 unit tests against a tempdir `Store`, and the core's
 (`maid-core`: the contract readers, fusion, readiness, the delivery
-record, the entry points, and its binary under a bare environment). Fast
+record, the entry points, turn fit, the work record, recall, and its
+binary under a bare environment: the shipped Claude hooks run through
+`sh -c` with a payload, the MCP server over stdio, and turn fit against
+this repo's own declarations). Fast
 (sub-second). No real `$HOME` side effects, no API credits.
 Load-bearing — this is the kdevkit Test Gate default. `deploy.rs` carries
 the structural coverage: a full install→status→uninstall round-trip in
@@ -942,6 +1028,17 @@ plugin state leads to, and reaping the links an older install left.
 on a PATH it is handed, never the real ones, and `tests/conformance.rs`
 runs it, and the binary for the exit code, against every case of the
 conformance set (see "My harness").
+
+`cargo test -p maid-core --test claude_live -- --ignored` drives the real
+Claude Code (`CLAUDE_BIN`, else `claude` on PATH) in a temp HOME with
+`--plugin-dir` on a plugin built from the adapter files and the cargo-built
+core, against a stub of the model API on `127.0.0.1` at a port the OS
+picks, which records every request: the genome placed once at start, a
+fitting prompt's rules and memory pointer, nothing new on a second prompt,
+a sub-agent's slice, the genome again once after `/compact`, the MCP tool
+answering, and the plugin loading with `extensions` in its manifest. Free
+(no model, no network). Run it after any change to the adapter or the
+plugin manifest, and after a Claude Code update.
 
 `cargo test -p build-tool --test plugins -- --ignored` drives the real
 claude and codex CLIs in a temp HOME (install, update, a disabled
@@ -978,7 +1075,8 @@ plugin-dir and config-dir grants (there after install, gone after uninstall), an
 status --whole` finding what mAId placed, then a second part's list beside
 it; the profile's `maid-core genome` under `env -i HOME=…` showing mAId's
 persona and bring-ins, with the memory (its store as its state) and the
-core's adapter under session bring-ins, every mAId bring-in declared and
+core's adapter under session bring-ins, the Claude plugin's hooks and MCP
+server naming the profile's own core and a start hook answering, every mAId bring-in declared and
 writing-style ready with no rules file, the bring-ins recorded with
 tenure and this checkout's revision (dirty or not), the memory's source
 as pensieve at the flake's pin, and a spec-only commit building the same

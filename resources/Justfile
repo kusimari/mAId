@@ -55,7 +55,7 @@ rollback-profile:
     [ -n "$from" ] || { echo "no mAId install at $MAID_PROFILE to roll back from (run: just install)" >&2; exit 1; }
     to=$(printf '%s\n' "$MAID_PROFILE"-*-link | num | awk -v from="$from" '$1 < from' | sort -n | tail -n 1)
     [ -n "$to" ] || { echo "no install before generation $from to roll back to" >&2; exit 1; }
-    for need in share/maid/skills share/maid/marketplace/plugins/maid/.codex-plugin/plugin.json bin/maid-browser-mcp; do
+    for need in share/maid/skills share/maid/marketplace/plugins/maid/.codex-plugin/plugin.json bin/maid-browser-mcp bin/maid-core; do
         [ -e "$MAID_PROFILE-$to-link/$need" ] ||
             { echo "generation $to has no $need, so the agents cannot use it; staying on generation $from" >&2; exit 1; }
     done

@@ -7,7 +7,7 @@ use crate::map::{BringIn, Declared, Map};
 use serde::Serialize;
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// What the environment offers: a PATH, and which variables are set. Only
 /// the names are kept, so no secret's value is held or printed.
@@ -110,6 +110,9 @@ pub fn readiness(b: &BringIn, host: &Host) -> Readiness {
             }
         }
     }
+    if let Some(Err(e)) = index_of(b) {
+        why.push(e);
+    }
     for cmd in &d.requires {
         if find_on(host.path.as_deref(), cmd).is_none() {
             why.push(format!("{cmd} not on PATH"));
@@ -118,6 +121,49 @@ pub fn readiness(b: &BringIn, host: &Host) -> Readiness {
     match why.is_empty() {
         true => Readiness::Ready,
         false => Readiness::NotReady(why),
+    }
+}
+
+/// The memory index a bring-in has, if it has one: its permanent tier's
+/// bound location joined with its bound `index`. `Err` when the index
+/// would leave that location.
+pub fn index_of(b: &BringIn) -> Option<Result<(PathBuf, PathBuf), String>> {
+    let d = b.declaration()?;
+    let key = d.state.as_ref()?.permanent.as_ref()?;
+    if !d.config.contains_key("index") {
+        return None;
+    }
+    let values = &b.record.as_ref()?.values;
+    let (store, index) = (values.get(key)?, values.get("index")?);
+    Some(
+        contained(Path::new(store), Path::new(index))
+            .map(|i| (PathBuf::from(store), i))
+            .map_err(|e| format!("index: {e}")),
+    )
+}
+
+/// `rel` under `store`, when it is relative, has no `..`, and still lies
+/// under the store once links are followed.
+pub fn contained(store: &Path, rel: &Path) -> Result<PathBuf, String> {
+    if !store.is_absolute() {
+        return Err(format!("store {} is not an absolute path", store.display()));
+    }
+    let plain = rel
+        .components()
+        .all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
+    if !plain || rel.as_os_str().is_empty() {
+        return Err(format!("{} leaves its store", rel.display()));
+    }
+    let joined = store.join(rel);
+    let Ok(root) = store.canonicalize() else {
+        // No store yet: nothing to read in it or through it.
+        return Ok(joined);
+    };
+    // The deepest part of the path that is there, links followed, must
+    // still lie under the store.
+    match joined.ancestors().find_map(|a| a.canonicalize().ok()) {
+        Some(there) if there.starts_with(&root) => Ok(joined),
+        _ => Err(format!("{} leaves its store", rel.display())),
     }
 }
 

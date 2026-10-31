@@ -10,6 +10,7 @@ metadata:
   my-harness.signals.states: planning, dev, review, closure
   my-harness.signals.files: specs/project.md, specs/feature/*.md, docs/specs/project.md, .kdevkit/project.md
   my-harness.rules: SKILL.md#phase-gating-cues
+  my-harness.record: specs/feature/*.md#handoff, docs/specs/feature/*.md#handoff, .kdevkit/feature/*.md#handoff
 ---
 
 # kdevkit — spec-driven development workflow
