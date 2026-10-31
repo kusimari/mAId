@@ -518,3 +518,15 @@ this initiative.
   list keeps format 1 with `persona` and `bring_ins` added · why: one
   generic namespace, and every reader already ignores unknown keys · cost
   if wrong: renaming keys before any third-party unit carries them
+- Ruling (ringmaster, stream 4 planning): every MCP server declaration in
+  this repo lives at `resources/content/servers/<name>/server.json`; the
+  memory bring-in keeps its name `personal-memory`, names the package
+  `pensieve`, is own, and records pensieve's published repo and the
+  `flake.lock` pin as its source; one session bring-in per shell adapter,
+  declared in that shell's plugin manifest · why: the declaration travels
+  with mAId's registration, the pensieve repo stays untouched, and
+  reflections about memory route to its own repo · cost if wrong: move one
+  file per server
+- Ruling (ringmaster, stream 4 planning): the selector reads a memory's
+  index from what the bring-in states, never a hardcoded path · why: other
+  packages and tiers will have other shapes · cost if wrong: none
