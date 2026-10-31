@@ -128,6 +128,93 @@ pub fn read(standard: Standard, path: &Path) -> Result<Slot, String> {
     }
 }
 
+/// The lines a `rules` pointer names, read from the unit at `unit`. A
+/// pointer is `<file>#<anchor>`: `file` relative to the unit's dir (never
+/// absolute, never through `..`), `anchor` a heading's slug as GitHub makes
+/// it. The rules are that heading's section, up to the next heading of the
+/// same or a higher level; headings inside fenced code do not count.
+pub fn rules(unit: &Path, pointer: &str) -> Result<String, String> {
+    let (file, anchor) = pointer
+        .split_once('#')
+        .filter(|(f, a)| !f.is_empty() && !a.is_empty())
+        .ok_or_else(|| format!("rules {pointer:?} is not <file>#<anchor>"))?;
+    let rel = Path::new(file);
+    if rel.is_absolute()
+        || rel
+            .components()
+            .any(|c| c == std::path::Component::ParentDir)
+    {
+        return Err(format!("rules {pointer:?} must stay in the unit's dir"));
+    }
+    let path = unit.parent().unwrap_or(Path::new("/")).join(rel);
+    let text = read_small(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    // The open fence's marker and length: only a run of the same marker,
+    // at least as long, closes it.
+    let mut fence: Option<(char, usize)> = None;
+    let mut section: Option<(usize, Vec<&str>)> = None;
+    for line in text.lines() {
+        let heading = fence.is_none().then(|| heading(line)).flatten();
+        if let Some((c, n)) = fence_of(line) {
+            match fence {
+                None => fence = Some((c, n)),
+                Some((open, len)) if c == open && n >= len => fence = None,
+                Some(_) => {}
+            }
+        }
+        match (&mut section, heading) {
+            (Some((level, _)), Some((l, _))) if l <= *level => break,
+            (Some((_, lines)), _) => lines.push(line),
+            (None, Some((l, t))) if slug(t) == anchor => section = Some((l, vec![line])),
+            (None, _) => {}
+        }
+    }
+    let (_, lines) = section.ok_or_else(|| format!("no heading #{anchor} in {file}"))?;
+    Ok(lines.join("\n").trim_end().to_string())
+}
+
+/// Up to three leading spaces, which markdown still reads as column 0.
+fn unindent(line: &str) -> Option<&str> {
+    let indent = line.bytes().take_while(|b| *b == b' ').count();
+    (indent <= 3).then(|| &line[indent..])
+}
+
+/// A fence line's marker and run length: three or more backticks or
+/// tildes.
+fn fence_of(line: &str) -> Option<(char, usize)> {
+    let t = unindent(line)?;
+    let c = t.chars().next().filter(|c| matches!(c, '`' | '~'))?;
+    let n = t.chars().take_while(|x| *x == c).count();
+    (n >= 3).then_some((c, n))
+}
+
+/// `## Title` (closing `#`s dropped) as (2, "Title"); anything else is not
+/// a heading.
+fn heading(line: &str) -> Option<(usize, &str)> {
+    let line = unindent(line)?;
+    let level = line.bytes().take_while(|b| *b == b'#').count();
+    let rest = line.get(level..)?;
+    if !(1..=6).contains(&level) || !(rest.is_empty() || rest.starts_with(' ')) {
+        return None;
+    }
+    let title = rest.trim();
+    let closed = title.trim_end_matches('#');
+    match closed.is_empty() || closed.ends_with(' ') {
+        true => Some((level, closed.trim_end())),
+        false => Some((level, title)),
+    }
+}
+
+/// GitHub's heading anchor: lowercase, only letters, digits, spaces, `-`
+/// and `_` kept, each space a `-`.
+pub fn slug(title: &str) -> String {
+    title
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_'))
+        .map(|c| if c == ' ' { '-' } else { c })
+        .collect()
+}
+
 /// A manifest is a small regular file. Anything else (a FIFO, a device, a
 /// huge file) would stall or swell the hook that reads it.
 const MAX_MANIFEST: u64 = 1 << 20;
@@ -378,6 +465,41 @@ mod tests {
             .contains("not an object"));
         let p = write(&dir, "q.json", "not json");
         assert!(read(Standard::Mcp, &p).unwrap_err().contains("not JSON"));
+    }
+
+    #[test]
+    fn a_rules_pointer_names_one_section_of_a_file_beside_the_unit() {
+        let dir = TempDir::new().unwrap();
+        let unit = write(
+            &dir,
+            "SKILL.md",
+            "# s\n\n## Output rule 0 — announce, always\n\nfirst\n\n````\n```\n## not a heading\n````\n\n### inner\n\nkept\n\n  ## Next ##\n\nlater\n",
+        );
+        assert_eq!(
+            slug("Output rule 0 — announce, always"),
+            "output-rule-0--announce-always"
+        );
+        assert_eq!(
+            rules(&unit, "SKILL.md#output-rule-0--announce-always").unwrap(),
+            "## Output rule 0 — announce, always\n\nfirst\n\n````\n```\n## not a heading\n````\n\n### inner\n\nkept"
+        );
+        assert_eq!(
+            rules(&unit, "SKILL.md#next").unwrap(),
+            "  ## Next ##\n\nlater"
+        );
+        assert_eq!(rules(&unit, "SKILL.md#inner").unwrap(), "### inner\n\nkept");
+        for (pointer, why) in [
+            ("SKILL.md#not-a-heading", "no heading"),
+            ("SKILL.md#nowhere", "no heading"),
+            ("gone.md#next", "cannot read"),
+            ("../SKILL.md#next", "unit's dir"),
+            ("/etc/passwd#x", "unit's dir"),
+            ("SKILL.md", "<file>#<anchor>"),
+            ("#next", "<file>#<anchor>"),
+        ] {
+            let err = rules(&unit, pointer).unwrap_err();
+            assert!(err.contains(why), "{pointer}: {err}");
+        }
     }
 
     #[test]

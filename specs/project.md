@@ -196,7 +196,12 @@ user-owned files in its own dir under mAId's config dir,
 `${XDG_CONFIG_HOME:-~/.config}/maid/<skill>/` (`MAID_CONFIG` in
 `resources/Justfile`), and loads them on top of its shipped body:
 writing-style's `writing-style/learned.md` holds the pending `## Learned
-rules` and the `## Promoted rules`, both of which win over the body. No
+rules` and `writing-style/promoted.md` the `## Promoted rules`, both of
+which win over the body. They are its two state tiers, config keys
+`learned` and `promoted`, which install binds to those files (a skill's
+state key `<k>` binds to `<config dir>/<skill>/<k>.md`); an older
+`learned.md` that still holds `## Promoted rules` keeps them applying
+until the next promotion moves them. No
 skill tells the runtime to find, read or edit a checkout; content
 validation fails a skill file that says `resources/content/`, "mAId
 checkout", `just install` or `just resources::`. Changing a shipped body is
@@ -290,6 +295,9 @@ re-auth. Its shape differs from skills in two ways:
   target, with its mode, renamed over it), and uninstall needs no
   `kiro-cli`. Kiro agents get it by pulling the global config in; mAId
   writes into no kiro agent file.
+- **Its declaration** is `resources/content/servers/browser/server.json`
+  (see "My harness"): a turn bring-in, with no rules of its own, since
+  the browser skill carries them.
 - **Browser-enforced allowlist.** The agent may act only on
   sites in a user-owned allowlist file
   (`${XDG_CONFIG_HOME:-$HOME/.config}/maid/browser-allowlist`).
@@ -445,6 +453,14 @@ ignores it:
 `scope` and `job` are required. A unit with no declaration is undeclared:
 its standard's own description stands in for `job`.
 
+`rules` is `<file>#<anchor>`: `file` relative to the unit's manifest dir
+(never absolute, never through `..`), `anchor` a heading's slug as GitHub
+makes it. The rules are that heading's section, up to the next heading of
+the same or a higher level, fenced code skipped; `maid_core::contract::rules`
+reads it, and content validation fails a skill whose declaration does not
+read or whose pointer names no heading. mAId keeps each to at most 30
+lines.
+
 **Session bring-ins.** mAId's part records two: its memory (Memory,
 below) and the core's adapter on each shell it is built for. On Claude Code
 that is `claude-adapter`, declared in the Claude manifest of mAId's plugin
@@ -455,6 +471,21 @@ source this repo, own. `claude plugin validate` warns on `extensions`, and
 `--strict` refuses it; that is known and accepted, since Claude Code ignores
 the field at load time. Status needs no bring-in of its own: it is the
 genome's environment section.
+
+**Borrowed units: an overlay.** A part never changes a unit it borrows,
+so it ships an *overlay*, a manifest in the unit's own standard holding
+only `name`, `description` and the `my-harness` slot, and records that
+as the bring-in's `unit`. The lender's files are never read for the
+declaration. mAId's are `resources/content/overlays/<plugin>/plugin.json`
+(today `document-skills`, whose `requires` is the vendor row's `needs`),
+in the profile under `share/maid/overlays/`. Each MCP server mAId ships
+declares itself in `resources/content/servers/<name>/server.json`, in the
+profile under `share/maid/servers/`; content validation reads both kinds.
+
+**mAId's bring-ins.** Every skill is `turn`, as are the browser server
+(`chrome-devtools`, own, recorded while some harness has it placed: the
+browser step's `build-tool record` keeps it in step) and the document
+skills. Only writing-style keeps state (see "Skill state").
 
 **The core.** `maid-core` (`resources/core`, in the profile as
 `bin/maid-core`) reads every part list, fuses the personas and bring-ins
@@ -609,7 +640,8 @@ are free.
 15. **Bring-ins.** Every bring-in of every list not refused is reported,
     whatever harness is selected, as **ready**, **not ready** (a non-optional
     config key without a value, an `env:` value whose variable is unset or
-    empty, an absolute state location that does not exist, a `requires`
+    empty, an absolute state location of a non-optional key that does
+    not exist (an optional key's is a tier not written yet), a `requires`
     command not on PATH by rule 8, where a command with a `/` is never
     found), **undeclared** (no `unit`, or a unit whose slot holds no
     declaration) or **unreadable** (the entry is not of the shape above, the
@@ -855,6 +887,7 @@ mAId/
 │   │   ├── tests/conformance/  the whole-status conformance set, one dir per case
 │   │   └── tests/reads_install.rs   install's claude skill-reads step beside memory's
 │   ├── content/            the deployable skills (copied into the profile)
+│   │   ├── overlays/<plugin>/plugin.json  the declaration of a borrowed plugin
 │   │   ├── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
 │   │   ├── skills/kdevkit/  SKILL.md core + phases/, tiers/, setup.md, interviews.md
 │   │   ├── skills/kyodakit/ SKILL.md: developer judgement, any language
@@ -926,7 +959,8 @@ config kept, reruns byte-identical, a same-named entry that is not
 mAId's left alone, a config that is not JSON left alone, a linked
 config kept a link with its mode through an atomic rename, a link
 cycle refused, uninstall with no `kiro-cli`, the part list's entries
-and whole-status reading them, and kiro-cli never run. Run it after
+and whole-status reading them, the server's bring-in recorded and
+dropped with its entry, and kiro-cli never run. Run it after
 any change to `manage`.
 
 `nix develop -c resources/tests/rollback` drives `just rollback` and
@@ -944,7 +978,8 @@ plugin-dir and config-dir grants (there after install, gone after uninstall), an
 status --whole` finding what mAId placed, then a second part's list beside
 it; the profile's `maid-core genome` under `env -i HOME=…` showing mAId's
 persona and bring-ins, with the memory (its store as its state) and the
-core's adapter under session bring-ins, the bring-ins recorded with
+core's adapter under session bring-ins, every mAId bring-in declared and
+writing-style ready with no rules file, the bring-ins recorded with
 tenure and this checkout's revision (dirty or not), the memory's source
 as pensieve at the flake's pin, and a spec-only commit building the same
 profile. It sets a temp personal store, so the memory server is
@@ -969,8 +1004,14 @@ One test deliberately breaks the fake-`$HOME` pattern:
 without it the suite can be green while the content on disk is
 uninstallable — which is exactly what happened when two descriptions
 carried an unquoted `: ` (see "Writing a skill"). It also fails a skill
-that points the runtime at the repo ("Skill state"). It reads only, so it
-keeps the no-side-effects property.
+that points the runtime at the repo ("Skill state"), or whose bring-in
+declaration does not read or names a rules heading that is not there.
+Beside it, `shipped_skills_declare_the_contract` and
+`shipped_servers_and_overlays_declare_the_contract` hold every shipped
+unit to the contract (turn, a job, rules of at most 30 lines,
+writing-style's two optional tiers, the overlay's `requires` equal to the
+vendor's `needs`). They read only, so they keep the no-side-effects
+property.
 
 **`just resources::check-skills` / `…::smoke-skills` — AI-tool
 functional tests, on opposite sides of install.** Drives

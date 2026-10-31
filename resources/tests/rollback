@@ -132,6 +132,18 @@ memory_source() {
       and .tenure.kind == "own" and .values.index == "memory/MEMORY.md"' "$partlist" >/dev/null
 }
 check "the part list records the memory's source as its package at the flake's pin" memory_source
+# Every bring-in mAId installs declares the contract; writing-style's tiers
+# are optional, so it is ready before any rule is written.
+declared() {
+  env -i HOME="$th" "$MAID_PROFILE/bin/maid-core" environment --json >"$work/env" 2>&1 &&
+    jq -e '[.[] | select(.part == "maid-harness")] as $m
+      | ([$m[] | select(.readiness.is == "undeclared" or .readiness.is == "unreadable")] | length) == 0
+      and (["browser", "kdevkit", "kreviewkit", "kyodakit", "notes", "writing-style", "document-skills"]
+        | all(. as $n | any($m[]; .name == $n)))
+      and ($m[] | select(.name == "writing-style") | .readiness.is == "ready")' "$work/env" >/dev/null &&
+    [ ! -e "$MAID_CONFIG/writing-style/learned.md" ]
+}
+check "every mAId bring-in is declared, and writing-style is ready with no rules file" declared
 # Install runs from this checkout, so it records this checkout's revision,
 # marked dirty when the tree has changes.
 rev=$(git -C "$here" rev-parse HEAD)

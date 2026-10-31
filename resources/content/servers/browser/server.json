@@ -1,0 +1,11 @@
+{
+  "name": "io.github.kusimari/maid-browser",
+  "description": "Drives the user's logged-in Chrome over the DevTools protocol, only on sites in their allowlist.",
+  "version": "1.0.0",
+  "_meta": {
+    "my-harness": {
+      "scope": "turn",
+      "job": "the browser tools: my logged-in Chrome over DevTools, allowlisted sites only"
+    }
+  }
+}

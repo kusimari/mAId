@@ -108,6 +108,9 @@ pub const PLUGIN_AGENTS: &[(Agent, &str, Kind)] = &[
 
 /// The plugin and the marketplace it comes from, as both CLIs name them.
 pub const PLUGIN_ID: &str = "maid@maid";
+
+/// The browser-control server, as every harness lists it.
+pub const BROWSER_SERVER: &str = "chrome-devtools";
 pub const MARKETPLACE: &str = "maid";
 
 /// A vendor's plugin marketplace mAId registers with each plugin agent

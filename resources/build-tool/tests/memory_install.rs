@@ -201,6 +201,7 @@ fn the_memory_bring_in_is_declared_and_ready_by_its_store() {
     let rc = cmd_install_bring_ins(
         &e.at("state"),
         &e.at("profile"),
+        &e.at("config"),
         checkout,
         &e.at("store-file"),
         &[],

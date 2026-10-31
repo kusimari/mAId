@@ -13,7 +13,7 @@
 #
 # Tests the committed HEAD (the clones see nothing uncommitted). Touches
 # only what mAId owns. However it exits, it ends with mAId installed from
-# this checkout and the user's allowlist and learned-rules files as they
+# this checkout and the user's allowlist and style-rules files as they
 # were. Step 6 uninstalls, which removes the profile and its history, so
 # afterwards there is no earlier install to roll back to.
 set -uo pipefail
@@ -32,6 +32,7 @@ marketplace=$(dirname "$profile")/marketplace
 config=${XDG_CONFIG_HOME:-$HOME/.config}/maid
 allowlist=$config/browser-allowlist
 learned=$config/writing-style/learned.md
+promoted=$config/writing-style/promoted.md
 kiro_dir=$HOME/.kiro/skills
 work=$(mktemp -d)
 # Share the build cache, so each clone's install rebuilds rather than
@@ -243,7 +244,7 @@ asked lacks
 
 # ── 6 ────────────────────────────────────────────────────────────
 step "6. just uninstall keeps user data; then reinstall from this checkout"
-for f in "$allowlist" "$learned"; do
+for f in "$allowlist" "$learned" "$promoted"; do
   if [ ! -e "$f" ]; then
     # Comment-only, so it enables nothing; removed at the end, with any
     # directory made for it.
@@ -256,11 +257,11 @@ for f in "$allowlist" "$learned"; do
     created+=("$f")
   fi
 done
-before=$(sha256sum "$allowlist" "$learned")
+before=$(sha256sum "$allowlist" "$learned" "$promoted")
 just uninstall >"$work/uninstall.log" 2>&1 || { tail -n 20 "$work/uninstall.log"; fail "just uninstall"; }
 check "neither claude nor codex lists maid@maid" none_listed
 check "kiro's mAId skill links are gone" kiro_none
-check "the allowlist and learned-rules files are untouched" eval '[ "$(sha256sum "$allowlist" "$learned" 2>/dev/null)" = "$before" ]'
+check "the allowlist and style-rules files are untouched" eval '[ "$(sha256sum "$allowlist" "$learned" "$promoted" 2>/dev/null)" = "$before" ]'
 install_from "$here" "$work/install-here.log" && reinstall=0
 check "just install from this checkout" test "$reinstall" = 0
 check "claude and codex list this checkout's $(built_version)" listed_at "$(built_version)"

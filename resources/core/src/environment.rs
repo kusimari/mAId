@@ -96,7 +96,12 @@ pub fn readiness(b: &BringIn, host: &Host) -> Readiness {
             },
         }
     }
-    let state_keys = d.state.iter().flat_map(|s| s.keys());
+    // An optional key's location may not be written yet: an empty tier.
+    let state_keys = d
+        .state
+        .iter()
+        .flat_map(|s| s.keys())
+        .filter(|k| !d.config.get(*k).is_some_and(|spec| spec.optional));
     for key in state_keys {
         // A location that is not a path (a URL, say) is not checked here.
         if let Some(v) = value(key).filter(|v| Path::new(v).is_absolute()) {
@@ -207,6 +212,27 @@ mod tests {
             ..ok.clone()
         };
         assert_eq!(why(&bound, &no_tool), ["tool not on PATH"]);
+    }
+
+    #[test]
+    fn an_optional_tier_not_written_yet_is_empty_not_missing() {
+        let dir = TempDir::new().unwrap();
+        let skill = dir.path().join("SKILL.md");
+        fs::write(
+            &skill,
+            "---\nname: w\ndescription: d\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: write\n  my-harness.config.learned: \"[optional] pending\"\n  my-harness.config.kept: kept\n  my-harness.state.local: learned\n  my-harness.state.permanent: kept\n---\n",
+        )
+        .unwrap();
+        let list = json!({"format": 1, "part": "a", "harnesses": {}, "bring_ins": [
+            {"name": "w", "unit": {"standard": "skill", "path": skill},
+             "values": {"learned": "/nowhere/learned.md", "kept": "/nowhere/kept.md"}}
+        ]});
+        fs::write(dir.path().join("a.json"), list.to_string()).unwrap();
+        let map = fuse(dir.path()).unwrap();
+        assert_eq!(
+            why(&map, &Host::default()),
+            ["kept at /nowhere/kept.md not there"]
+        );
     }
 
     #[test]

@@ -3,6 +3,13 @@ name: kdevkit
 description: 'Spec-driven dev on a repo with specs/: plan or start a feature, run an initiative of several features (guided, or as its ringmaster), run the dev loop through quality/test/review gates, act on review comments, close one out ("ship it", "close it", "feature done", "plan this", "add to backlog"), or record a durable project fact. Four tiers (project/initiative/feature/backlog); three-phase feature branch, one squash-merge.'
 version: 4.8.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, initiative, public-repo]
+metadata:
+  my-harness.scope: turn
+  my-harness.job: spec-driven feature work on a repo with a spec tree, from plan through gates to close
+  my-harness.signals.jobs: plan a feature, run an initiative, act on review comments, close a feature, add to backlog
+  my-harness.signals.states: planning, dev, review, closure
+  my-harness.signals.files: specs/project.md, specs/feature/*.md, docs/specs/project.md, .kdevkit/project.md
+  my-harness.rules: SKILL.md#phase-gating-cues
 ---
 
 # kdevkit — spec-driven development workflow

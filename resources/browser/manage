@@ -129,7 +129,7 @@ record() {
     shift
     local args=(record --agent "$agent" --kind mcp --only "$SERVER_NAME")
     cargo run -p build-tool --release --quiet -- "${args[@]}" "$@" || {
-        skip "$(label "$agent") (part list not updated)"
+        skip "$(label "$agent") (part list not fully updated; see above)"
         RECORD_FAILED=1
     }
 }

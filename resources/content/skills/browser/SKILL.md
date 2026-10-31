@@ -3,6 +3,11 @@ name: browser
 description: Drive my logged-in Chrome — open a page, navigate, fill a form, click, or read a value off it. Attended, allowlist-enforced. Opens with `[browser] applies`.
 version: 1.0.0
 tags: [browser, chrome, mcp, automation, web, forms, navigation, safety]
+metadata:
+  my-harness.scope: turn
+  my-harness.job: drive my logged-in Chrome on allowlisted sites, attended
+  my-harness.signals.jobs: open a page, fill a form, click, read a value off a page
+  my-harness.rules: SKILL.md#safety-posture-non-negotiable
 ---
 
 # browser — drive a real browser end-to-end

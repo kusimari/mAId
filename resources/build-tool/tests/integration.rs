@@ -90,3 +90,77 @@ fn shipped_judgement_role_contract() {
         "the judgement: setting is not documented in kdevkit setup.md"
     );
 }
+
+/// Every shipped skill is a turn bring-in with a job and a rules pointer
+/// that names a few lines, not a whole skill (see project.md "My harness").
+#[test]
+fn shipped_skills_declare_the_contract() {
+    use maid_core::contract::{read, rules, Promote, Scope, Slot, Standard};
+    let skills = repo_root().unwrap().join("resources/content/skills");
+    let mut names: Vec<_> = std::fs::read_dir(&skills)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "browser",
+            "kdevkit",
+            "kreviewkit",
+            "kyodakit",
+            "notes",
+            "writing-style"
+        ]
+    );
+    for name in &names {
+        let unit = skills.join(name).join("SKILL.md");
+        let Ok(Slot::Declared(d)) = read(Standard::Skill, &unit) else {
+            panic!("{name} is not declared");
+        };
+        assert_eq!(d.scope, Scope::Turn, "{name}");
+        assert!(!d.job.is_empty(), "{name}");
+        let lines = rules(&unit, d.rules.as_deref().expect(name)).unwrap();
+        let n = lines.lines().count();
+        assert!((2..=30).contains(&n), "{name}: rules are {n} lines");
+        let state = d.state.as_ref();
+        match name.as_str() {
+            "writing-style" => {
+                let s = state.expect("writing-style keeps its rules");
+                assert_eq!(s.local.as_deref(), Some("learned"));
+                assert_eq!(s.permanent.as_deref(), Some("promoted"));
+                assert_eq!(s.promote, Promote::Propose);
+                assert!(s.keys().all(|k| d.config[k].optional));
+            }
+            _ => assert!(state.is_none(), "{name} keeps no state"),
+        }
+        // Claude's grants on state dirs go to exactly the skills with state.
+        let granted = build_tool::reads::STATEFUL_SKILLS.contains(&name.as_str());
+        assert_eq!(granted, state.is_some(), "{name}: STATEFUL_SKILLS");
+    }
+}
+
+/// The browser server's manifest and the vendor plugin's overlay declare
+/// the contract, and the overlay needs what plain status checks for.
+#[test]
+fn shipped_servers_and_overlays_declare_the_contract() {
+    use build_tool::shared::BRING_INS;
+    use maid_core::contract::{read, Scope, Slot, Standard};
+    let content = repo_root().unwrap().join("resources/content");
+    let declared = |standard, rel: &str| match read(standard, &content.join(rel)) {
+        Ok(Slot::Declared(d)) => d,
+        other => panic!("{rel}: {other:?}"),
+    };
+    let server = declared(Standard::Mcp, "servers/browser/server.json");
+    assert_eq!(server.scope, Scope::Turn);
+    for vendor in BRING_INS {
+        for plugin in vendor.plugins {
+            let d = declared(Standard::Plugin, &format!("overlays/{plugin}/plugin.json"));
+            assert_eq!(d.scope, Scope::Turn);
+            assert_eq!(
+                d.requires, vendor.needs,
+                "{plugin}: requires drifted from needs"
+            );
+        }
+    }
+}

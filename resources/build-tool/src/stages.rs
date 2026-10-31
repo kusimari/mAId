@@ -21,9 +21,11 @@ use crate::harvest;
 use crate::memory;
 use crate::part::{self, Item, What};
 use crate::reads;
-use crate::shared::{checkout_skill, on_path, usage, Agent, BringIn as Marketplace};
+use crate::shared::{
+    checkout_skill, on_path, usage, Agent, BringIn as Marketplace, BROWSER_SERVER,
+};
 use anyhow::{anyhow, Context, Result};
-use maid_core::contract::Standard;
+use maid_core::contract::{Slot, Standard};
 use maid_core::parts::{BringIn, Source, SourceKind, Tenure, Unit};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -54,11 +56,43 @@ pub fn check_content(content_dir: &Path) -> Result<usize, Vec<String>> {
                 .into_iter()
                 .chain(repo_pointers(dir))
         })
+        .chain(
+            manifests(content_dir)
+                .into_iter()
+                .filter_map(|(standard, p)| {
+                    declaration(standard, &p)
+                        .err()
+                        .map(|e| format!("{}: {e}", p.display()))
+                }),
+        )
         .collect();
     match errs.is_empty() {
         true => Ok(skills.len()),
         false => Err(errs),
     }
+}
+
+/// The bring-in manifests shipped beside the skills: each MCP server's
+/// `servers/<name>/server.json`, and each overlay's
+/// `overlays/<name>/plugin.json` (a borrowed plugin's declaration).
+fn manifests(content_dir: &Path) -> Vec<(Standard, PathBuf)> {
+    [
+        ("servers", "server.json", Standard::Mcp),
+        ("overlays", "plugin.json", Standard::Plugin),
+    ]
+    .into_iter()
+    .flat_map(|(dir, file, standard)| {
+        let mut found: Vec<_> = fs::read_dir(content_dir.join(dir))
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .map(|e| e.path().join(file))
+            .filter(|p| p.exists())
+            .collect();
+        found.sort();
+        found.into_iter().map(move |p| (standard, p))
+    })
+    .collect()
 }
 
 /// Text that sends an installed session to the mAId repo, which it never
@@ -140,9 +174,23 @@ fn check_one_skill(path: &Path) -> Result<(), String> {
         .map_err(|e| at(e.to_string()))?
         .data
         .ok_or_else(|| at("missing or unterminated YAML frontmatter".into()))?;
-    (!fm.name.trim().is_empty() && !fm.description.trim().is_empty())
-        .then_some(())
-        .ok_or_else(|| at("name and description must be non-empty".into()))
+    if fm.name.trim().is_empty() || fm.description.trim().is_empty() {
+        return Err(at("name and description must be non-empty".into()));
+    }
+    declaration(Standard::Skill, path).map_err(at)
+}
+
+/// A unit's bring-in declaration, if it has one, reads, and its rules
+/// pointer names a section that is there, so a renamed heading never ships.
+fn declaration(standard: Standard, path: &Path) -> Result<(), String> {
+    let path = std::path::absolute(path).map_err(|e| e.to_string())?;
+    match maid_core::contract::read(standard, &path)? {
+        Slot::Declared(d) => match &d.rules {
+            Some(pointer) => maid_core::contract::rules(&path, pointer).map(drop),
+            None => Ok(()),
+        },
+        Slot::Undeclared { .. } => Ok(()),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -285,19 +333,20 @@ pub fn cmd_record(
 // ─────────────────────────────────────────────────────────────────
 
 /// Record mAId's persona and its bring-ins in its part list: each shipped
-/// skill, the core's adapter on Claude Code, the personal memory server when
-/// a store is set (its source the memory package), and each vendor plugin,
-/// borrowed. See project.md "My harness".
+/// skill with its state bound under `config`, the core's adapter on Claude
+/// Code, the personal memory server when a store is set (its source the
+/// memory package), the browser server, and each vendor plugin, borrowed. See project.md "My harness".
 pub fn cmd_install_bring_ins(
     parts: &Path,
     profile: &Path,
+    config: &Path,
     checkout: Checkout,
     store_file: &Path,
     vendors: &[Marketplace],
     dry_run: bool,
 ) -> Result<u8> {
     // A bring-in is recorded only while install has it placed somewhere.
-    let items = bring_ins(
+    let mut items = bring_ins(
         profile,
         &Sources {
             pensieve: checkout.pensieve.clone(),
@@ -309,6 +358,7 @@ pub fn cmd_install_bring_ins(
         &part::bring_ins(parts)?,
         &today(),
     )?;
+    bind_state(&mut items, config);
     println!(
         "bring-ins: {} recorded for persona {}",
         items.len(),
@@ -363,6 +413,65 @@ impl Placed {
 /// The core's adapter on Claude Code, declared in mAId's plugin manifest.
 const ADAPTER: &str = "claude-adapter";
 const ADAPTER_MANIFEST: &str = "share/maid/marketplace/plugins/maid/.claude-plugin/plugin.json";
+/// The browser step records its server after install's own step, so
+/// every record of an MCP entry keeps the browser server's bring-in in
+/// step with what is placed now, and leaves the other bring-ins alone. A
+/// bring-in already recorded is kept as install recorded it.
+pub fn sync_browser_bring_in(parts: &Path, profile: &Path, checkout: Checkout) -> Result<()> {
+    let recorded = part::bring_ins(parts)?;
+    let (mut ours, mut items): (Vec<BringIn>, Vec<BringIn>) = recorded
+        .iter()
+        .cloned()
+        .partition(|b| b.name == BROWSER_SERVER);
+    let server = ours
+        .pop()
+        .unwrap_or_else(|| browser_bring_in(profile, &project_source(checkout)));
+    if still_placed(&server, &Placed::read(parts)?, &[]) {
+        items.push(server);
+    }
+    items.sort_by(|a, b| a.name.cmp(&b.name));
+    if items != recorded {
+        part::record_bring_ins(parts, items)?;
+    }
+    Ok(())
+}
+
+fn browser_bring_in(profile: &Path, project: &Source) -> BringIn {
+    let manifest = profile
+        .join(crate::shared::PROFILE_CONTENT_DIR)
+        .join("servers/browser/server.json");
+    BringIn {
+        name: BROWSER_SERVER.into(),
+        unit: manifest.is_file().then_some(Unit {
+            standard: Standard::Mcp,
+            path: manifest,
+        }),
+        source: Some(project.clone()),
+        tenure: Tenure::Own,
+        route: None,
+        values: Default::default(),
+    }
+}
+
+/// Bind each skill's state keys, each to `<config>/<skill>/<key>.md`.
+fn bind_state(items: &mut [BringIn], config: &Path) {
+    for b in items {
+        let Some(Unit {
+            standard: Standard::Skill,
+            path,
+        }) = &b.unit
+        else {
+            continue;
+        };
+        let Ok(Slot::Declared(d)) = maid_core::contract::read(Standard::Skill, path) else {
+            continue;
+        };
+        for k in d.state.iter().flat_map(|s| s.keys()) {
+            let at = config.join(&b.name).join(format!("{k}.md"));
+            b.values.insert(k.to_string(), at.display().to_string());
+        }
+    }
+}
 
 fn bring_ins(
     profile: &Path,
@@ -409,6 +518,7 @@ fn bring_ins(
         }),
         ..own(ADAPTER)
     });
+    items.push(browser_bring_in(profile, project));
     if let Some(store) = store {
         items.push(BringIn {
             unit: Some(Unit {
@@ -435,9 +545,19 @@ fn bring_ins(
                     Tenure::Own => None,
                 })
                 .unwrap_or_else(|| today.into());
+            // The vendor's files are never read for the declaration: mAId
+            // ships an overlay in the plugin's own standard that holds it.
+            let overlay = profile
+                .join(crate::shared::PROFILE_CONTENT_DIR)
+                .join("overlays")
+                .join(plugin)
+                .join("plugin.json");
             items.push(BringIn {
                 name: plugin.to_string(),
-                unit: None,
+                unit: overlay.is_file().then_some(Unit {
+                    standard: Standard::Plugin,
+                    path: overlay,
+                }),
                 source: Some(Source {
                     kind: SourceKind::Vendor,
                     at: Some(v.source.into()),
@@ -457,15 +577,16 @@ fn bring_ins(
 }
 
 /// Whether some harness still has what this bring-in needs placed: the
-/// memory server, the vendor's plugin, mAId's plugin on claude for the
-/// adapter, or mAId's skills (through the plugin or as links).
+/// memory server or the browser server, the vendor's plugin, mAId's plugin
+/// on claude for the adapter, or mAId's skills (through the plugin or as
+/// links).
 fn still_placed(b: &BringIn, placed: &Placed, vendors: &[Marketplace]) -> bool {
     let on = |items: &[Item], kind: What, name: &str| {
         items.iter().any(|i| i.kind == kind && i.name == name)
     };
     let has = |kind: What, name: &str| on(&placed.anywhere, kind, name);
-    if b.name == memory::SERVER {
-        return has(What::Mcp, memory::SERVER);
+    if b.name == memory::SERVER || b.name == BROWSER_SERVER {
+        return has(What::Mcp, &b.name);
     }
     if b.name == ADAPTER {
         return on(&placed.claude, What::Plugin, crate::shared::PLUGIN_ID);
@@ -1796,6 +1917,46 @@ mod tests {
         assert!(e.contains("description"));
     }
 
+    #[test]
+    fn a_shipped_server_or_overlay_must_declare_readably() {
+        let dir = TempDir::new().unwrap();
+        write(
+            &dir.path().join("servers/s/server.json"),
+            r#"{"name":"s","_meta":{"my-harness":{"scope":"turn","job":"j"}}}"#,
+        );
+        write(
+            &dir.path().join("overlays/o/plugin.json"),
+            r#"{"name":"o"}"#,
+        );
+        assert_eq!(check_content(dir.path()).unwrap(), 0);
+        write(
+            &dir.path().join("servers/s/server.json"),
+            r#"{"name":"s","_meta":{"my-harness":{"scope":"turn","job":"j","rules":"README.md#x"}}}"#,
+        );
+        let errs = check_content(dir.path()).unwrap_err();
+        assert!(errs[0].contains("cannot read"), "{errs:?}");
+        write(&dir.path().join("servers/s/README.md"), "## X\n\nfirst\n");
+        assert_eq!(check_content(dir.path()).unwrap(), 0);
+        write(&dir.path().join("overlays/o/plugin.json"), "not json");
+        let errs = check_content(dir.path()).unwrap_err();
+        assert!(
+            errs[0].contains("overlays/o/plugin.json") && errs[0].contains("not JSON"),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn a_declaration_must_read_and_its_rules_resolve() {
+        let decl = |rules: &str| {
+            format!("---\nname: foo\ndescription: bar\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: j\n  my-harness.rules: {rules}\n---\n## Rules\n\nfirst\n")
+        };
+        assert!(frontmatter_of(&decl("SKILL.md#rules")).is_ok());
+        let e = frontmatter_of(&decl("SKILL.md#renamed")).unwrap_err();
+        assert!(e.contains("no heading"), "{e}");
+        let e = frontmatter_of("---\nname: foo\ndescription: bar\nmetadata:\n  my-harness.scope: always\n  my-harness.job: j\n---\n").unwrap_err();
+        assert!(e.contains("declaration"), "{e}");
+    }
+
     /// A malformed fixture fails itself; the sweep continues. Bash did
     /// this, and aborting would let one typo cost a whole paid run.
     #[test]
@@ -1918,6 +2079,7 @@ mod tests {
         cmd_install_bring_ins(
             parts.path(),
             p.path(),
+            Path::new("/c"),
             Checkout::default(),
             none,
             &[VENDOR],
@@ -2073,6 +2235,172 @@ mod tests {
         assert_eq!(items[4].route(), maid_core::parts::Route::Report);
     }
 
+    /// A profile with a stateful skill, the browser server's manifest and
+    /// the vendor plugin's overlay, as the flake lays them out.
+    fn declared_profile() -> TempDir {
+        let p = profile_with(&["notes"]);
+        let at = |rel: &str, text: &str| {
+            let f = p.path().join("share/maid").join(rel);
+            fs::create_dir_all(f.parent().unwrap()).unwrap();
+            fs::write(f, text).unwrap();
+        };
+        at(
+            "skills/style/SKILL.md",
+            "---\nname: style\ndescription: d\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: j\n  my-harness.config.learned: \"[optional] p\"\n  my-harness.config.promoted: \"[optional] k\"\n  my-harness.state.local: learned\n  my-harness.state.permanent: promoted\n---\n",
+        );
+        at("servers/browser/server.json", "{}");
+        at("overlays/docs/plugin.json", "{}");
+        p
+    }
+
+    #[test]
+    fn install_binds_skill_tiers_and_records_the_overlay_and_the_browser_server() {
+        let p = declared_profile();
+        let mut placed = all_placed();
+        placed.push(Item::placed(What::Mcp, BROWSER_SERVER));
+        let mut items = bring_ins(
+            p.path(),
+            &sources(),
+            None,
+            &[VENDOR],
+            &anywhere(placed),
+            &[],
+            "2026-10-31",
+        )
+        .unwrap();
+        bind_state(&mut items, Path::new("/c"));
+        let by = |n: &str| items.iter().find(|b| b.name == n).expect(n);
+        let style = by("style");
+        assert_eq!(style.values["learned"], "/c/style/learned.md");
+        assert_eq!(style.values["promoted"], "/c/style/promoted.md");
+        assert!(by("notes").values.is_empty());
+        let docs = by("docs").unit.as_ref().unwrap();
+        assert_eq!(
+            (docs.standard, &docs.path),
+            (
+                Standard::Plugin,
+                &p.path().join("share/maid/overlays/docs/plugin.json")
+            )
+        );
+        assert!(matches!(by("docs").tenure, Tenure::Borrowed { .. }));
+        let server = by(BROWSER_SERVER);
+        assert_eq!(
+            server.unit.as_ref().unwrap().path,
+            p.path().join("share/maid/servers/browser/server.json")
+        );
+        assert_eq!(server.tenure, Tenure::Own);
+        let unplaced = bring_ins(
+            p.path(),
+            &sources(),
+            None,
+            &[VENDOR],
+            &anywhere(all_placed()),
+            &[],
+            "2026-10-31",
+        )
+        .unwrap();
+        assert!(unplaced.iter().all(|b| b.name != BROWSER_SERVER));
+    }
+
+    #[test]
+    fn recording_the_browser_server_keeps_its_bring_in_in_step() {
+        let p = declared_profile();
+        let parts = TempDir::new().unwrap();
+        let plugin = vec![Item::placed(What::Plugin, crate::shared::PLUGIN_ID)];
+        part::record(parts.path(), Agent::Claude, &[What::Plugin], None, plugin).unwrap();
+        let none = Path::new("/nowhere/memory-store");
+        let install = || {
+            cmd_install_bring_ins(
+                parts.path(),
+                p.path(),
+                Path::new("/c"),
+                Checkout::default(),
+                none,
+                &[],
+                false,
+            )
+            .unwrap()
+        };
+        install();
+        let names = || -> Vec<String> {
+            part::bring_ins(parts.path())
+                .unwrap()
+                .into_iter()
+                .map(|b| b.name)
+                .collect()
+        };
+        assert_eq!(names(), [ADAPTER, "notes", "style"]);
+        let server = |names: &[&str]| {
+            let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+            cmd_record(
+                parts.path(),
+                Agent::Kiro,
+                What::Mcp,
+                None,
+                None,
+                Some(BROWSER_SERVER),
+                &names,
+            )
+            .unwrap();
+            sync_browser_bring_in(parts.path(), p.path(), Checkout::default()).unwrap();
+        };
+        server(&[BROWSER_SERVER]);
+        assert_eq!(names(), [BROWSER_SERVER, ADAPTER, "notes", "style"]);
+        // A later record from another checkout keeps install's record.
+        let elsewhere = Checkout {
+            head: Some("other".into()),
+            ..Checkout::default()
+        };
+        let kept = part::bring_ins(parts.path()).unwrap();
+        cmd_record(
+            parts.path(),
+            Agent::Codex,
+            What::Mcp,
+            None,
+            None,
+            Some(BROWSER_SERVER),
+            &[BROWSER_SERVER.to_string()],
+        )
+        .unwrap();
+        sync_browser_bring_in(parts.path(), p.path(), elsewhere).unwrap();
+        assert_eq!(part::bring_ins(parts.path()).unwrap(), kept);
+        cmd_record(
+            parts.path(),
+            Agent::Codex,
+            What::Mcp,
+            None,
+            None,
+            Some(BROWSER_SERVER),
+            &[],
+        )
+        .unwrap();
+        let before = fs::read(part::path(parts.path())).unwrap();
+        install();
+        assert_eq!(
+            fs::read(part::path(parts.path())).unwrap(),
+            before,
+            "a rerun keeps it"
+        );
+        server(&[]);
+        assert_eq!(names(), [ADAPTER, "notes", "style"]);
+        let skipped = Item::skipped(What::Mcp, BROWSER_SERVER, "no graphical Chrome");
+        part::record_named(
+            parts.path(),
+            Agent::Claude,
+            What::Mcp,
+            None,
+            BROWSER_SERVER,
+            vec![skipped],
+        )
+        .unwrap();
+        sync_browser_bring_in(parts.path(), p.path(), Checkout::default()).unwrap();
+        assert_eq!(
+            names(),
+            [ADAPTER, "notes", "style"],
+            "a skipped server is no bring-in"
+        );
+    }
+
     #[test]
     fn no_store_records_no_memory_server_and_a_rerun_keeps_since() {
         let p = profile_with(&["notes"]);
@@ -2128,6 +2456,7 @@ mod tests {
         cmd_install_bring_ins(
             parts.path(),
             p.path(),
+            Path::new("/c"),
             Checkout::default(),
             &store_file,
             &[],
@@ -2148,6 +2477,7 @@ mod tests {
         cmd_install_bring_ins(
             parts.path(),
             p.path(),
+            Path::new("/c"),
             Checkout::default(),
             &store_file,
             &[],

@@ -15,7 +15,7 @@
 //! coding agent (the verification verbs take a comma list); the default
 //! is all of them.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use build_tool::deploy::{BringIns, Deployment, NoDeploy, Plugins, Symlinks};
 use build_tool::harness::{Selection, Stage};
 use build_tool::memory;
@@ -239,6 +239,7 @@ fn run(cli: Cli) -> Result<u8> {
             let bring_ins = stages::cmd_install_bring_ins(
                 &parts_dir()?,
                 &profile_dir()?,
+                &config_dir()?,
                 stages::Checkout::read(&root),
                 &memory_store_file()?,
                 BRING_INS,
@@ -285,15 +286,27 @@ fn run(cli: Cli) -> Result<u8> {
             skipped,
             only,
             names,
-        } => stages::cmd_record(
-            &parts_dir()?,
-            Agent::parse(&agent)?,
-            What::parse(&kind).map_err(|e| usage(e.to_string()))?,
-            scope.as_deref(),
-            skipped.as_deref(),
-            only.as_deref(),
-            &names,
-        ),
+        } => {
+            let kind = What::parse(&kind).map_err(|e| usage(e.to_string()))?;
+            // Resolved before anything is written, so a missing one fails
+            // the call with the list untouched.
+            let (parts, profile) = (parts_dir()?, profile_dir()?);
+            let rc = stages::cmd_record(
+                &parts,
+                Agent::parse(&agent)?,
+                kind,
+                scope.as_deref(),
+                skipped.as_deref(),
+                only.as_deref(),
+                &names,
+            )?;
+            if kind == What::Mcp {
+                let checkout = stages::Checkout::read(&root);
+                stages::sync_browser_bring_in(&parts, &profile, checkout)
+                    .context("the entry is recorded; the browser server's bring-in is not")?;
+            }
+            Ok(rc)
+        }
         Cmd::Memory(m) => match m {
             MemoryCmd::SetStore { path } => {
                 println!("{}", memory::set_store(&memory_store_file()?, &path)?);

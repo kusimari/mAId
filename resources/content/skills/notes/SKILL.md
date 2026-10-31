@@ -3,6 +3,12 @@ name: notes
 description: Capture a note, reminder, insight, 1:1, or transcript into my vault ("add note for", "jot this down", "remind me to", "close notes"). Opens with `[notes] applies`.
 version: 1.3.0
 tags: [notes, knowledge, obsidian, capture]
+metadata:
+  my-harness.scope: turn
+  my-harness.job: capture and find notes, reminders and transcripts in my vault
+  my-harness.signals.jobs: add a note, set a reminder, capture a transcript, find notes, close notes
+  my-harness.rules: SKILL.md#behaviour-rules
+  my-harness.requires: git
 ---
 
 # notes — capture into a personal knowledge vault

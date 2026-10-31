@@ -1,8 +1,18 @@
 ---
 name: writing-style
 description: Rewrite, format, clean up, tighten, or reword prose in my voice; draft an email or doc as me; "new rule:" to teach a style rule. Opens with `[writing-style] applies`.
-version: 1.1.0
+version: 1.2.0
 tags: [narrative, writing, email, announcement, formatter, learning]
+metadata:
+  my-harness.scope: turn
+  my-harness.job: write and rewrite prose in my voice, and keep the style rules I teach
+  my-harness.signals.jobs: rewrite, draft an email, draft a doc, teach a style rule
+  my-harness.rules: SKILL.md#voice
+  my-harness.config.learned: "[optional] pending style rules, taught and not yet promoted"
+  my-harness.config.promoted: "[optional] promoted style rules, applied in every session"
+  my-harness.state.local: learned
+  my-harness.state.permanent: promoted
+  my-harness.state.promote: propose
 ---
 
 # writing-style — how I write
@@ -35,18 +45,18 @@ keep.
 
 ### Pending learned rules
 
-When you load this skill at session start, read the user's
-rules file (see Learning loop). Its `## Promoted rules` and
-`## Learned rules` apply now, on top of the sections below, and
-win where they conflict with them. If `## Learned rules` has
+When you load this skill at session start, read the user's two
+rules files (see Learning loop). The `## Promoted rules` and
+`## Learned rules` they hold apply now, on top of the sections
+below, and win where they conflict with them. If `## Learned rules` has
 entries, offer promotion — *"You have N learned rules pending promotion. Want
 to review them now? &lt;list&gt;"*. If the user declines or
 ignores the offer, proceed normally.
 
 If `## Promoted rules` has entries, also say in one line how
 many apply and quote the newest three — *"N promoted rules
-apply; newest: &lt;list&gt;"*. Any session can write that
-file, so a rule nobody taught must never steer unseen.
+apply; newest: &lt;list&gt;"*. Any session can write those
+files, so a rule nobody taught must never steer unseen.
 
 **A task that fixes its own opening defers the offer** (and
 the promoted-rules line). When
@@ -186,13 +196,18 @@ Phrases like "I prefer X" or "stop using Y" are **not**
 triggers — they're conversational and would generate
 false-positive captures.
 
-On a prefix match: append a dated entry under the
-`## Learned rules` heading of the user's rules file,
-`${XDG_CONFIG_HOME:-~/.config}/maid/writing-style/learned.md`,
-newest at top. Create the file with that heading if it is
-missing. That file is the only place rules are written: never
+The user's rules live in two files, in
+`${XDG_CONFIG_HOME:-~/.config}/maid/writing-style/`: the pending
+tier, `learned.md` (`## Learned rules`), and the permanent tier,
+`promoted.md` (`## Promoted rules`). When your session names other
+locations for writing-style's `learned` and `promoted` tiers, use
+those. These files are the only place rules are written: never
 edit this `SKILL.md` or any copy of it. The installed copy is
-read-only, and the file is the user's own data.
+read-only, and the files are the user's own data.
+
+On a prefix match: append a dated entry under the
+`## Learned rules` heading of `learned.md`, newest at top. Create
+the file with that heading if it is missing.
 
 Entry shape:
 
@@ -224,11 +239,11 @@ patterns). Promote them via two paths:
    proposed target sections; ask the user to confirm
    each.
 
-On confirmation, in the same file: remove the entry from
-`## Learned rules` and add it under `## Promoted rules`
-(create the heading if missing), newest at top, dated, rewritten
-in the body's voice (terse, declarative) and prefixed with its
-target section, keeping its example:
+On confirmation: remove the entry from `## Learned rules` in
+`learned.md` and add it under `## Promoted rules` in `promoted.md`
+(create the file and heading if missing), newest at top, dated,
+rewritten in the body's voice (terse, declarative) and prefixed
+with its target section, keeping its example:
 
 ```markdown
 - 2026-05-22 · Vocabulary: "to", not "in order to"
@@ -236,6 +251,11 @@ target section, keeping its example:
 ```
 
 Then confirm with one short line naming the file.
+
+An older `learned.md` may still hold a `## Promoted rules`
+section. Those rules apply as promoted rules; the next time you
+promote, move them into `promoted.md` with the new one, keeping
+their order.
 
 ## Known limits (v1)
 
