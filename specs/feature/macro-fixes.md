@@ -287,7 +287,11 @@ Part of initiative: [[harness-core]]
   refuses to record a local path, and the route is unchanged; a person
   who wants a place sets a public origin.
 - Ruling (ringmaster, review gate): keep the two layouts; codex moves only
-  if it starts refusing too. The three upgrade side effects are accepted.
+  if it starts refusing too. The three upgrade side effects are accepted: a session
+  running at upgrade gets the reinforcement once more; an install without
+  codex selected leaves an older install's links dir on disk; uninstalling
+  codex alone removes a dir an older, not yet reinstalled, Claude install
+  may still point at.
   The gap 10, 11 and 13 answers are ratified.
 - Decision (amendment): `claude_live.rs`'s MCP check drops
   `"source":"plugin"` · why: 2.1.169 omits it, and the brief runs the live

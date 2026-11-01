@@ -328,9 +328,12 @@ core, as plain standard units.
 5. **Mark what it borrows** (servers, skills or packages someone else
    provides) as borrowed, and never change them; what it learns about them
    goes to their lender.
-6. **Leave the core's carriers alone:** the core owns the always-loaded
-   context file and the start, turn and end hooks; a part adds bring-ins,
-   never a second copy of those.
+6. **Leave the core's carriers alone:** the core owns the start, turn and
+   end hooks (and, on shells that have one, the always-loaded context
+   file); a part adds bring-ins, never a second copy of those.
+
+The operative copy of this checklist is project.md's "For any persona
+part", which later rulings and the macro test refined.
 7. **Keep its own copy** of the contract and the reader rules in its own
    docs, kept in step by the person, and name no other part.
 8. **Install from one canonical clone**; a second checkout installing
@@ -350,7 +353,7 @@ for all.
 
 | Entry point | Claude Code (built here) | codex | kiro-cli | Antigravity / Gemini CLI |
 |---|---|---|---|---|
-| `genome`, static | rules file without path scope, rendered at install | user AGENTS.md block | `always` steering | always-on rule |
+| `genome`, static | none: SessionStart covers it (superseded, see the stream 2 ruling) | user AGENTS.md block | `always` steering | always-on rule |
 | `genome`, dynamic | SessionStart (startup, resume, clear, compact) | SessionStart (hooks need trust) | agentSpawn *(test)* | SessionStart |
 | sub-sessions | SubagentStart | SubagentStart | agent resources *(test)* | *(test)* |
 | `expression` | UserPromptSubmit | UserPromptSubmit | userPromptSubmit | PreInvocation (truly per call) |
