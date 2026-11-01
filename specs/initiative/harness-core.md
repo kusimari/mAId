@@ -616,3 +616,8 @@ this initiative.
   at the initiative's end with the Macro test, since they need the user's
   model credentials in a scratch HOME · why: no stream handles the user's
   credentials
+- Ruling (user, 2026-11-01): the initiative lands on main as a squash.
+- Ruling (user, 2026-11-01): a test that needs a model uses the shell's
+  own model access, as the ghost does; no credential is handed to a test.
+  Isolation comes from a scratch `CLAUDE_CONFIG_DIR` and the ghost's own
+  state and config locations, not a scratch HOME.
