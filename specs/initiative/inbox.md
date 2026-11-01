@@ -100,10 +100,9 @@ What must happen, whatever the shell.
   other: it sleeps, and adaptation learns from it under the same guards.
 - A routine or reflex never runs twice over the same thing, and a burst of
   arrivals is handled as one.
-- A routine or reflex may hand a piece of work to a session of its own
-  (a ticket assigned to me, best worked in a spawned session) through
-  os-mode where it is present; that session reports back into the inbox,
-  either done or needing me.
+- An item best worked in a session of its own (a ticket assigned to me)
+  may signal os-mode, where it is present, to spawn a session to achieve
+  it; that session reports back into the item, either done or needing me.
 
 ### 4. Attention
 
