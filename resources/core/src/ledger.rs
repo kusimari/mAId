@@ -34,6 +34,9 @@ pub enum Record {
         thing: String,
         outcome: String,
         change: String,
+        /// For a move into a bring-in's text: the keys of what it moved.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        moved: Vec<String>,
     },
 }
 
@@ -92,20 +95,39 @@ pub fn seen(config: &Config, bundle: &Bundle, corrections: &[Correction]) -> Res
     )
 }
 
-pub fn decided(config: &Config, session: &str, out: &[(Outcome, String)]) -> Result<()> {
+/// One record per decided item: its outcome, the change it named, and
+/// what a move into a bring-in's text moved.
+pub fn decided(
+    config: &Config,
+    session: &str,
+    out: &[(Outcome, String, Vec<String>)],
+) -> Result<()> {
     let at = crate::time::now();
     let records: Vec<Record> = out
         .iter()
-        .filter(|(o, _)| matches!(o.outcome.as_str(), "accepted" | "declined" | "already"))
-        .map(|(o, change)| Record::Decided {
+        .filter(|(o, ..)| matches!(o.outcome.as_str(), "accepted" | "declined" | "already"))
+        .map(|(o, change, moved)| Record::Decided {
             at: at.clone(),
             session: session.into(),
             thing: o.thing.clone(),
             outcome: o.outcome.clone(),
             change: change.clone(),
+            moved: moved.clone(),
         })
         .collect();
     append(config, &records)
+}
+
+/// Every key a decided move holds, accepted or declined: what is not
+/// offered again.
+pub fn moved(config: &Config) -> Result<std::collections::BTreeSet<String>> {
+    Ok(read(config)?
+        .into_iter()
+        .flat_map(|r| match r {
+            Record::Decided { moved, .. } => moved,
+            _ => vec![],
+        })
+        .collect())
 }
 
 /// Record that the person left a session out.
@@ -296,7 +318,7 @@ mod tests {
         }
     }
 
-    fn outcome(thing: &str, outcome: &str) -> (Outcome, String) {
+    fn outcome(thing: &str, outcome: &str) -> (Outcome, String, Vec<String>) {
         (
             Outcome {
                 n: 1,
@@ -305,6 +327,7 @@ mod tests {
                 text: String::new(),
             },
             format!("change to {thing}"),
+            vec![],
         )
     }
 

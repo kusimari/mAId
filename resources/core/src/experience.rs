@@ -46,6 +46,9 @@ pub struct Did {
     pub truncated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<Entry>,
+    /// Its result was an error.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub failed: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -204,6 +207,7 @@ mod tests {
         let b = Bundle {
             said: vec![entry(Who::Person, "p")],
             did: vec![Did {
+                failed: false,
                 at: "t:2".into(),
                 tool: "Read".into(),
                 input: "{}".into(),

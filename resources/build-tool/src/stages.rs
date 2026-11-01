@@ -454,7 +454,9 @@ fn browser_bring_in(profile: &Path, project: &Source) -> BringIn {
     }
 }
 
-/// Bind each skill's state keys, each to `<config>/<skill>/<key>.md`.
+/// Bind each skill's config keys, each to `<config>/<skill>/<key>.md`: a
+/// skill's config key is a file in its own dir under the config dir (today
+/// only writing-style's older rules files), never a secret or a value.
 fn bind_state(items: &mut [BringIn], config: &Path) {
     for b in items {
         let Some(Unit {
@@ -467,7 +469,7 @@ fn bind_state(items: &mut [BringIn], config: &Path) {
         let Ok(Slot::Declared(d)) = maid_core::contract::read(Standard::Skill, path) else {
             continue;
         };
-        for k in d.state.iter().flat_map(|s| s.keys()) {
+        for k in d.config.keys() {
             let at = config.join(&b.name).join(format!("{k}.md"));
             b.values.insert(k.to_string(), at.display().to_string());
         }
@@ -2247,7 +2249,7 @@ mod tests {
         };
         at(
             "skills/style/SKILL.md",
-            "---\nname: style\ndescription: d\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: j\n  my-harness.config.learned: \"[optional] p\"\n  my-harness.config.promoted: \"[optional] k\"\n  my-harness.state.local: learned\n  my-harness.state.permanent: promoted\n---\n",
+            "---\nname: style\ndescription: d\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: j\n  my-harness.config.learned: \"[optional] p\"\n  my-harness.config.promoted: \"[optional] k\"\n---\n",
         );
         at("servers/browser/server.json", "{}");
         at("overlays/docs/plugin.json", "{}");
@@ -2255,7 +2257,7 @@ mod tests {
     }
 
     #[test]
-    fn install_binds_skill_tiers_and_records_the_overlay_and_the_browser_server() {
+    fn install_binds_skill_config_and_records_the_overlay_and_the_browser_server() {
         let p = declared_profile();
         let mut placed = all_placed();
         placed.push(Item::placed(What::Mcp, BROWSER_SERVER));

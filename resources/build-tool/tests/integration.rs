@@ -95,7 +95,7 @@ fn shipped_judgement_role_contract() {
 /// that names a few lines, not a whole skill (see project.md "My harness").
 #[test]
 fn shipped_skills_declare_the_contract() {
-    use maid_core::contract::{read, rules, Promote, Scope, Slot, Standard};
+    use maid_core::contract::{read, rules, Scope, Slot, Standard};
     let skills = repo_root().unwrap().join("resources/content/skills");
     let mut names: Vec<_> = std::fs::read_dir(&skills)
         .unwrap()
@@ -124,20 +124,22 @@ fn shipped_skills_declare_the_contract() {
         let lines = rules(&unit, d.rules.as_deref().expect(name)).unwrap();
         let n = lines.lines().count();
         assert!((2..=30).contains(&n), "{name}: rules are {n} lines");
-        let state = d.state.as_ref();
+        // No skill keeps a file tier: writing-style keeps its rules in the
+        // persona's memory, and reads its older rules files until moved.
+        assert!(d.state.is_none(), "{name} keeps no file tier");
+        let keys: Vec<&str> = d.config.keys().map(String::as_str).collect();
         match name.as_str() {
             "writing-style" => {
-                let s = state.expect("writing-style keeps its rules");
-                assert_eq!(s.local.as_deref(), Some("learned"));
-                assert_eq!(s.permanent.as_deref(), Some("promoted"));
-                assert_eq!(s.promote, Promote::Propose);
-                assert!(s.keys().all(|k| d.config[k].optional));
+                assert_eq!(keys, ["learned", "promoted"]);
+                assert!(d.config.values().all(|k| k.optional));
+                assert!(d.job.contains("persona's memory"), "{}", d.job);
             }
-            _ => assert!(state.is_none(), "{name} keeps no state"),
+            _ => assert!(keys.is_empty(), "{name} binds no config"),
         }
-        // Claude's grants on state dirs go to exactly the skills with state.
+        // Claude's grants on state dirs go to exactly the skills with
+        // files to read there.
         let granted = build_tool::reads::STATEFUL_SKILLS.contains(&name.as_str());
-        assert_eq!(granted, state.is_some(), "{name}: STATEFUL_SKILLS");
+        assert_eq!(granted, !keys.is_empty(), "{name}: STATEFUL_SKILLS");
     }
 }
 

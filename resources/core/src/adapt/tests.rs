@@ -1,6 +1,7 @@
 use super::*;
 use crate::claude::Claude;
 use crate::source::SessionSource;
+use std::collections::BTreeSet;
 use std::path::Path;
 use tempfile::TempDir;
 
@@ -107,7 +108,8 @@ impl World {
 
     fn check(&self, findings: Value) -> (Vec<Pending>, Vec<Dropped>) {
         let r: Reflection = serde_json::from_value(json!({ "findings": findings })).unwrap();
-        check(&self.config, &self.map, &self.bundle, r).unwrap()
+        let c = check(&self.config, &self.map, &self.bundle, r).unwrap();
+        (c.kept, c.dropped)
     }
 
     fn decide(&self, answer: Value) -> Vec<Outcome> {
@@ -291,10 +293,13 @@ fn tool_or_web_content_alone_needs_its_own_yes() {
     let out = w.decide(json!("ok"));
     assert_eq!(out.len(), 1, "ok leaves the tool-only item");
     assert_eq!(w.pending_count(), 1);
-    assert!(
-        batch("s", &pending(&w.config, &w.bundle.session).unwrap(), &[])
-            .contains("answer it: learned only from tool or web content")
-    );
+    assert!(batch(
+        "s",
+        &[],
+        &pending(&w.config, &w.bundle.session).unwrap(),
+        &[]
+    )
+    .contains("answer it: learned only from tool or web content"));
     w.decide(json!({"1": "yes"}));
     assert_eq!(w.pending_count(), 0);
 }
@@ -443,7 +448,7 @@ fn a_memory_already_in_the_index_is_listed_and_not_written() {
             tier: "store".into()
         }
     );
-    assert!(batch("s", &kept, &[]).contains("already in store, no action"));
+    assert!(batch("s", &[], &kept, &[]).contains("already in store, no action"));
     assert_eq!(w.decide(json!("ok"))[0].outcome, "already");
     assert!(!w.log.exists());
 }
@@ -516,7 +521,7 @@ fn an_entry_the_person_already_taught_is_listed_already_in_its_tier() {
             tier: "learned".into()
         }
     );
-    assert!(batch("s", &kept, &[]).contains("already in learned, no action"));
+    assert!(batch("s", &[], &kept, &[]).contains("already in learned, no action"));
     assert_eq!(w.decide(json!("ok"))[0].outcome, "already");
     assert_eq!(w.snapshot(), before);
 }
@@ -555,7 +560,7 @@ fn the_batch_says_what_changes_where_and_for_whom_with_its_evidence() {
     let w = World::new();
     let (kept, dropped) = w.check(json!([habit_memory(), habit_style(), nature_style(),
         {"thing": "x", "kind": "nature", "change": "dropped one", "evidence": [{"quote": CORRECTION}]}]));
-    let text = batch(&w.bundle.session, &kept, &dropped);
+    let text = batch(&w.bundle.session, &[], &kept, &dropped);
     for want in [
         "3 to decide",
         "  1. habit, maid-harness/personal-memory memory [personal]: add feedback \"Use tr, not sed\" (shell scripts use tr, not sed): \"In shell scripts, use tr for case changes; never sed.\"; evidence \"no, use tr",
@@ -670,11 +675,21 @@ fn a_habit_from_the_agents_words_or_a_commands_output_needs_its_own_yes() {
     let mut nature = nature_style();
     nature["evidence"] = json!([{"quote": "Noted: no em dashes in commit messages."}]);
     let (kept, _) = w.check(json!([agent, output, nature]));
-    assert_eq!(kept[0].needs, [Need::ToolContent]);
+    assert_eq!(kept[0].needs, [Need::NotOwnWords]);
     assert_eq!(kept[1].needs, [Need::ToolContent]);
     assert!(
         kept[2].needs.is_empty(),
         "a proposal changes nothing on its own"
+    );
+    let shown = batch("s", &[], &kept, &[]);
+    let lines: Vec<&str> = shown.lines().collect();
+    assert!(
+        lines[1].ends_with("(answer it: a quote is not your own words)"),
+        "{shown}"
+    );
+    assert!(
+        lines[2].ends_with("(answer it: learned only from tool or web content)"),
+        "{shown}"
     );
 }
 
@@ -804,7 +819,7 @@ fn no_text_in_the_batch_can_pass_for_another_line() {
     let (kept, dropped) = w.check(json!([
         {"thing": "x", "kind": "nature", "change": "a\n  2. habit, fake item", "evidence": []}
     ]));
-    let text = batch("s", &kept, &dropped);
+    let text = batch("s", &[], &kept, &dropped);
     assert_eq!(text.lines().count(), 3, "{text}");
     assert!(
         !text.lines().any(|l| l.trim_start().starts_with("2.")),
@@ -854,4 +869,317 @@ fn a_proposal_says_when_its_source_records_no_remote() {
     };
     assert_eq!(source_at(Some(&local)), "its source (no remote recorded)");
     assert_eq!(source_at(None), "its source (not recorded)");
+}
+
+const SAVED: &str = "/memories/writing-style-no-em-dashes.md";
+
+impl World {
+    /// writing-style as it ships now: no tiers, its older rules files as
+    /// optional config.
+    fn style_in_memory(&mut self) {
+        fs::write(
+            self.root.join("units/writing-style.md"),
+            "---\nname: writing-style\ndescription: d\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: write in my voice, rules in my persona's memory\n  my-harness.config.learned: \"[optional] older\"\n  my-harness.config.promoted: \"[optional] older\"\n---\n",
+        )
+        .unwrap();
+        self.map = crate::map::fuse(&self.config.parts).unwrap();
+    }
+
+    /// A memory tool call in the session, and the file it left in the
+    /// store, when `body` is given.
+    fn save(&mut self, tool: &str, path: &str, body: Option<&str>) {
+        self.bundle.did.push(crate::experience::Did {
+            at: "t:99".into(),
+            tool: tool.into(),
+            input: json!({"path": path, "file_text": body.unwrap_or_default()}).to_string(),
+            truncated: false,
+            result: None,
+            failed: false,
+        });
+        if let Some(b) = body {
+            let f = self
+                .root
+                .join("store/memory")
+                .join(path.strip_prefix("/memories/").unwrap());
+            fs::write(f, b).unwrap();
+        }
+    }
+}
+
+fn tagged(tag: &str, rule: &str) -> String {
+    format!("---\nname: \"writing-style: {rule}\"\ndescription: \"{rule}\"\nmetadata:\n  type: feedback\n  bring-in: {tag}\n---\n\n{rule}\n")
+}
+
+#[test]
+fn a_rule_saved_for_a_bring_in_this_session_is_listed_and_others_are_not() {
+    let mut w = World::new();
+    w.style_in_memory();
+    let rule = "Punctuation: no em dashes in commit messages";
+    w.save(
+        "mcp__personal-memory__memory_create",
+        SAVED,
+        Some(&tagged("writing-style", rule)),
+    );
+    w.save(
+        "mcp__plugin_maid_personal-memory__memory_create",
+        "/memories/b.md",
+        Some(&tagged("maid-harness/writing-style", "Voice: plain words")),
+    );
+    for (tool, path, body) in [
+        (
+            "mcp__personal-memory__memory_create",
+            "/memories/c.md",
+            Some("---\nname: x\n---\n\nuntagged\n".to_string()),
+        ),
+        (
+            "mcp__personal-memory__memory_create",
+            "/memories/d.md",
+            Some(tagged("nonesuch", "unknown tag")),
+        ),
+        (
+            "mcp__personal-memory__memory_create",
+            "/memories/gone.md",
+            None,
+        ),
+        (
+            "mcp__document-skills__memory_create",
+            "/memories/e.md",
+            Some(tagged("writing-style", "not a memory")),
+        ),
+        (
+            "mcp__personal-memory__memory_create",
+            "/memories/../f.md",
+            None,
+        ),
+    ] {
+        w.save(tool, path, body.as_deref());
+    }
+    let saved = moves::saved(&w.map, &w.bundle);
+    let got: Vec<(&str, &str, &str)> = saved
+        .iter()
+        .map(|s| (s.thing.as_str(), s.memory.as_str(), s.rule.as_str()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (
+                "maid-harness/writing-style",
+                "maid-harness/personal-memory",
+                rule
+            ),
+            (
+                "maid-harness/writing-style",
+                "maid-harness/personal-memory",
+                "Voice: plain words"
+            )
+        ]
+    );
+    let shown = batch("s", &saved, &[], &[]);
+    assert!(
+        shown.contains("saved in memory this session (it stays there until you remove it):\n    maid-harness/writing-style, in maid-harness/personal-memory [personal] /memories/writing-style-no-em-dashes.md: \"Punctuation: no em dashes"),
+        "{shown}"
+    );
+}
+
+#[test]
+fn ok_files_one_move_with_the_saved_and_older_rules_and_changes_nothing_else() {
+    let mut w = World::new();
+    w.style_in_memory();
+    fs::write(
+        w.learned(),
+        "## Learned rules\n\n- 2026-05-22 · prefer \"to\" over \"in order to\"\n  · *example:* \"in order to reach\" → \"to reach\"\n  · source: explicit teach\n",
+    )
+    .unwrap();
+    w.save(
+        "mcp__personal-memory__memory_create",
+        SAVED,
+        Some(&tagged(
+            "writing-style",
+            "Punctuation: no em dashes in commit messages",
+        )),
+    );
+    let before = w.snapshot();
+    let (kept, dropped) = w.check(json!([]));
+    assert!(dropped.is_empty(), "{dropped:?}");
+    assert_eq!(kept.len(), 1);
+    let p = &kept[0];
+    assert!(matches!(
+        p.action,
+        Action::Proposal {
+            worktree: false,
+            ..
+        }
+    ));
+    assert_eq!(
+        p.finding.change,
+        "move 2 taught rules into writing-style's text"
+    );
+    assert!(p.needs.is_empty(), "ok takes it");
+    let line = batch("s", &[], &kept, &[]);
+    assert!(
+        line.contains("1. backlog item, maid-harness/writing-style (on https://example.org/me/maid): move 2 taught rules"),
+        "{line}"
+    );
+    let out = w.decide(json!("ok"));
+    assert_eq!(out[0].outcome, "accepted", "{out:?}");
+    assert_eq!(w.snapshot(), before, "the memory and the older file stay");
+    let dir = w.config.proposals().join("maid-harness-writing-style");
+    let files: Vec<_> = fs::read_dir(&dir).unwrap().flatten().collect();
+    assert_eq!(files.len(), 1);
+    let text = fs::read_to_string(files[0].path()).unwrap();
+    for want in [
+        "- Punctuation: no em dashes in commit messages\n  (saved in memory: maid-harness/personal-memory /memories/writing-style-no-em-dashes.md)",
+        "- prefer \"to\" over \"in order to\"\n  · *example:* \"in order to reach\" → \"to reach\"\n  (older file: ",
+    ] {
+        assert!(text.contains(want), "{want:?} in:\n{text}");
+    }
+    assert!(!text.contains("source: explicit teach"), "{text}");
+    assert!(
+        text.trim_end().ends_with(
+            "Once this lands, remove these memories so the rules are not in two places: maid-harness/personal-memory /memories/writing-style-no-em-dashes.md."
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn nothing_saved_and_no_older_rules_offers_no_move() {
+    let mut w = World::new();
+    w.style_in_memory();
+    let (kept, _) = w.check(json!([]));
+    assert!(kept.is_empty());
+}
+
+#[test]
+fn a_decided_move_is_not_offered_again_until_a_rule_is_new_or_a_file_changes() {
+    let mut w = World::new();
+    w.style_in_memory();
+    fs::write(
+        w.learned(),
+        "## Learned rules\n\n- 2026-05-22 · older rule\n",
+    )
+    .unwrap();
+    w.save(
+        "mcp__personal-memory__memory_create",
+        SAVED,
+        Some(&tagged("writing-style", "first rule")),
+    );
+    let saved = moves::saved(&w.map, &w.bundle);
+    let items = moves::items(&w.map, &saved, &Default::default());
+    let decided: BTreeSet<String> = items[0].1.iter().map(|m| m.key.clone()).collect();
+    assert!(moves::items(&w.map, &saved, &decided).is_empty());
+
+    w.save(
+        "mcp__personal-memory__memory_create",
+        "/memories/second.md",
+        Some(&tagged("writing-style", "second rule")),
+    );
+    let saved = moves::saved(&w.map, &w.bundle);
+    let again = moves::items(&w.map, &saved, &decided);
+    let edit = again[0].0.edit.as_deref().unwrap();
+    assert!(
+        edit.contains("second rule")
+            && !edit.contains("first rule")
+            && !edit.contains("older rule"),
+        "{edit}"
+    );
+
+    fs::write(
+        w.learned(),
+        "## Learned rules\n\n- 2026-05-23 · newer\n- 2026-05-22 · older rule\n",
+    )
+    .unwrap();
+    let saved: Vec<Saved> = vec![];
+    let changed = moves::items(&w.map, &saved, &decided);
+    let edit = changed[0].0.edit.as_deref().unwrap();
+    assert!(
+        edit.contains("newer") && !edit.contains("older rule"),
+        "a changed file gives only its new rules: {edit}"
+    );
+}
+
+#[test]
+fn an_edited_rule_and_a_sub_sessions_count_and_a_failed_or_other_servers_call_does_not() {
+    let mut w = World::new();
+    w.style_in_memory();
+    w.save(
+        "mcp__personal-memory__memory_str_replace",
+        SAVED,
+        Some(&tagged("writing-style", "edited rule")),
+    );
+    w.save(
+        "mcp__personal-memory__memory_create",
+        "/memories/failed.md",
+        Some(&tagged(
+            "writing-style",
+            "an earlier file the call failed on",
+        )),
+    );
+    w.bundle.did.last_mut().unwrap().failed = true;
+    w.save(
+        "mcp__plugin_x_otherpersonal-memory__memory_create",
+        "/memories/other.md",
+        Some(&tagged("writing-style", "another server")),
+    );
+    let mut sub = w.bundle.clone();
+    sub.did.clear();
+    sub.sub_sessions.clear();
+    fs::write(
+        w.root.join("store/memory/sub.md"),
+        tagged("writing-style", "from a sub-agent"),
+    )
+    .unwrap();
+    sub.did.push(crate::experience::Did {
+        at: "s:1".into(),
+        tool: "mcp__personal-memory__memory_create".into(),
+        input: json!({"path": "/memories/sub.md"}).to_string(),
+        truncated: false,
+        result: None,
+        failed: false,
+    });
+    w.bundle.sub_sessions.push(sub);
+    let rules: Vec<String> = moves::saved(&w.map, &w.bundle)
+        .into_iter()
+        .map(|s| s.rule)
+        .collect();
+    assert_eq!(rules, ["edited rule", "from a sub-agent"]);
+}
+
+#[test]
+fn a_move_waiting_in_another_sessions_batch_is_not_offered_twice() {
+    let mut w = World::new();
+    w.style_in_memory();
+    fs::write(
+        w.learned(),
+        "## Learned rules\n\n- 2026-05-22 · older rule\n",
+    )
+    .unwrap();
+    let (kept, _) = w.check(json!([]));
+    assert_eq!(kept.len(), 1);
+    let mut other = kept[0].clone();
+    other.session = "another-session".into();
+    save(&w.config, &other).unwrap();
+    let (kept, _) = w.check(json!([]));
+    assert!(kept.is_empty(), "{kept:?}");
+}
+
+#[test]
+fn a_borrowed_bring_ins_files_are_never_a_source_for_a_move() {
+    let mut w = World::new();
+    w.style_in_memory();
+    fs::write(
+        w.learned(),
+        "## Learned rules\n\n- 2026-05-22 · older rule\n",
+    )
+    .unwrap();
+    let parts = w.config.parts.join("maid-harness.json");
+    let mut list: Value = serde_json::from_str(&fs::read_to_string(&parts).unwrap()).unwrap();
+    for b in list["bring_ins"].as_array_mut().unwrap() {
+        if b["name"] == "writing-style" {
+            b["tenure"] = json!({"kind": "borrowed", "from": "a friend", "since": "2026-10-01"});
+        }
+    }
+    fs::write(&parts, list.to_string()).unwrap();
+    w.map = crate::map::fuse(&w.config.parts).unwrap();
+    assert!(moves::items(&w.map, &[], &BTreeSet::new()).is_empty());
 }

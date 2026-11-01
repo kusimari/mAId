@@ -574,15 +574,16 @@ pub fn adaptation(ctx: &Ctx, call: &Call) -> Result<Vec<Item>> {
             .ok_or_else(|| anyhow::anyhow!("name the session the decisions are for"))?;
         let before = adapt::pending(&ctx.config, session)?;
         let out = adapt::decide(&ctx.config, &map, session, &input["decide"])?;
-        let changes: Vec<(adapt::Outcome, String)> = out
+        let changes: Vec<(adapt::Outcome, String, Vec<String>)> = out
             .iter()
             .map(|o| {
-                let change = before
-                    .iter()
-                    .find(|p| p.n == o.n)
-                    .map(|p| p.finding.change.clone())
-                    .unwrap_or_default();
-                (o.clone(), change)
+                let p = before.iter().find(|p| p.n == o.n);
+                (
+                    o.clone(),
+                    p.map(|p| p.finding.change.clone()).unwrap_or_default(),
+                    p.map(|p| p.moves.iter().map(|m| m.key.clone()).collect())
+                        .unwrap_or_default(),
+                )
             })
             .collect();
         ledger::decided(&ctx.config, session, &changes)?;
@@ -603,15 +604,15 @@ pub fn adaptation(ctx: &Ctx, call: &Call) -> Result<Vec<Item>> {
             .context("the reflector's answer is not findings of the stated shape")?;
         let corrections = reflection.corrections.clone();
         let bundle = briefed(ctx, call)?;
-        let (kept, dropped) = adapt::check(&ctx.config, &map, &bundle, reflection)?;
+        let c = adapt::check(&ctx.config, &map, &bundle, reflection)?;
         ledger::seen(&ctx.config, &bundle, &corrections)?;
-        if kept.is_empty() {
+        if c.kept.is_empty() {
             adapt::done(&ctx.config, &bundle.session)?;
         }
         Item {
             id: "batch".into(),
-            text: adapt::batch(&bundle.session, &kept, &dropped),
-            data: serde_json::json!({ "items": kept, "dropped": dropped }),
+            text: adapt::batch(&bundle.session, &c.saved, &c.kept, &c.dropped),
+            data: serde_json::json!({ "items": c.kept, "dropped": c.dropped, "saved": c.saved }),
         }
     } else {
         let (at, bundle, path) = pack(ctx, call)?;

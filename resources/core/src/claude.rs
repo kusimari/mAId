@@ -372,8 +372,9 @@ impl Packer<'_> {
                 true => Struggle::Refusal,
                 false => Struggle::Error,
             };
-            if let Some((_, key)) = &call {
+            if let Some((i, key)) = &call {
                 self.failed.insert(key.clone());
+                self.b.did[*i].failed = true;
             }
             let at = self.at(n);
             self.b.friction.push(Friction {
@@ -458,6 +459,7 @@ impl Packer<'_> {
             input: input.to_string(),
             truncated: false,
             result: None,
+            failed: false,
         });
     }
 }
@@ -570,6 +572,17 @@ mod tests {
                 (Struggle::Retry, Some("Bash")),
                 (Struggle::Error, Some("Bash")),
             ]
+        );
+        let failed: Vec<&str> = b
+            .did
+            .iter()
+            .filter(|d| d.failed)
+            .map(|d| d.tool.as_str())
+            .collect();
+        assert_eq!(
+            failed,
+            ["Edit", "Bash", "Bash"],
+            "the call keeps that it failed"
         );
     }
 

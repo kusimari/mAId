@@ -2,73 +2,43 @@
 
 ## What
 
-Promote the v1.1 `writing-style` skill (markdown-only,
-agent follows the contract using its own Edit tool) into a
-typed MCP server consumed by every harness mAId deploys
-to.
+Give the `writing-style` skill a small typed MCP server, consumed by
+every harness mAId deploys to, for the parts that are still prose the
+agent follows by hand:
 
-Tools the server would expose:
+- `format_passage(text, mode?)`: returns `{ rewritten, changes: [{ rule,
+  before, after, section }] }`, a typed change log instead of free-form
+  bullets.
+- `lint_passage(text)`: returns `[{ rule, span, suggestion }]`, the
+  strict-mode check.
+- `set_strict(enabled)`: a strict-mode flag that persists across
+  sessions.
 
-- `format_passage(text, mode?)` — returns `{ rewritten,
-  changes: [{ rule, before, after, section }] }`. Typed
-  change log instead of free-form bullets.
-- `lint_passage(text)` — returns
-  `[{ rule, span, suggestion }]`. The strict-mode hook.
-- `set_strict(enabled)` — server-side persistent flag at
-  `$XDG_CONFIG_HOME/writing-style/state.json`.
-- `teach_rule(rule, example?, source?)` — appends to
-  `## Learned rules` under a POSIX `flock`. Returns the
-  resulting diff hunk so the agent can show it.
-- `list_pending()` — lists current `## Learned rules`
-  entries with proposed target sections.
-- `promote_rule(entry_id, target_section)` — atomically
-  moves the entry from `## Learned rules` to `## Promoted
-  rules` in the user's rules file. Never touches
-  `SKILL.md`.
+Taught rules are out of scope: they are saved to the persona's memory
+through the memory server's own tools, and a reflection offers to move
+them into the skill's text (project.md, "Skill state" and Adaptation).
 
 ## Why
 
-Five wins over v1.1:
-
-1. **File-locked teach writes.** Two parallel sessions
-   teaching at once is a race in v1; the server takes a
-   `flock` so writes serialize. v1 documents this as a
-   known limit.
-2. **Persistent strict mode.** v1 is session-scoped — the
-   user must re-enable each session. Server persists the
-   flag.
-3. **Typed change log.** v1 returns prose bullets; the
-   typed shape is renderable as a UI diff in harnesses
-   that support it (Slack reactions, Claude Desktop UI).
-4. **Atomic promotion.** Editing the body section AND
-   removing the learned-rules entry as one write removes
-   the can-promote-but-not-clean-up failure mode.
-5. **Cross-harness uniformity.** Same server, same flag
-   state, same teach store across Claude Code, Kiro, and
-   any future harness that loads MCP servers from a JSON
-   config.
+1. **Persistent strict mode.** Today it is session-scoped; the user
+   re-enables it every session.
+2. **Typed change log.** Structured changes can be rendered as a diff in
+   harnesses that support it.
+3. **Cross-harness uniformity.** The same server and flag state in every
+   harness that loads MCP servers.
 
 ## Open questions
 
-- **Embedding hook.** The v3 vision is "writing-style
-  learns from notes". An MCP server is the natural place
-  to embed `#style`-tagged notes from the notes vault and
-  pull them as in-context examples for `format_passage`.
-  Worth designing the hook now or punt to v3?
-- **Diff-rendering for change log.** Returning structured
-  changes opens UI possibilities (Slack message with
-  reactions to accept/reject each fix). Define the
-  rendering contract per harness or punt?
-- **Promotion target inference.** v1 has the agent guess
-  which section a rule belongs in. Server can do this
-  too, but should it ask for confirmation? Default to
-  "ask"; flag for "auto-promote" if user opts in.
+- **Embedding hook.** Should the server pull `#style`-tagged notes from
+  the notes vault as in-context examples for `format_passage`, or is
+  that later?
+- **Diff rendering.** Define a rendering contract per harness for the
+  typed change log, or leave it to each harness?
+- **Where the flag lives.** A file in writing-style's config dir, or the
+  persona's memory like the taught rules?
 
 ## Trigger to promote
 
-- Two simultaneous teach turns lose data (race
-  documented in v1 known limits actually fires).
-- User keeps re-enabling strict mode every session and
-  wants it to stick.
-- A new harness without good Edit-tool support but with
-  MCP support arrives (e.g. a phone app).
+- The user keeps re-enabling strict mode every session and wants it to
+  stick.
+- A harness without good edit-tool support but with MCP support arrives.

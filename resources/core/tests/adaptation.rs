@@ -6,7 +6,8 @@
 //!
 //! The fixture session: the person asks for a flag, refuses an edit,
 //! corrects the agent ("use tr, not sed"), teaches writing-style a rule,
-//! and the agent fetches a style guide.
+//! which the skill saves to the persona's memory, and the agent fetches a
+//! style guide. The HOME also holds an older writing-style rules file.
 
 use serde_json::{json, Value};
 use std::fs;
@@ -77,8 +78,43 @@ impl Home {
         self.path().join("store")
     }
 
-    fn learned(&self) -> PathBuf {
-        self.path().join(".config/maid/writing-style/learned.md")
+    fn transcript(&self) -> PathBuf {
+        self.path()
+            .join(format!(".claude/projects/-work/{SESSION}.jsonl"))
+    }
+
+    /// What writing-style does on "new rule:": the memory tool call in the
+    /// session's transcript, and the memory file and index line the server
+    /// leaves in the store.
+    fn save_rule(&self, slug: &str, rule: &str) {
+        let path = format!("/memories/writing-style-{slug}.md");
+        let body = format!(
+            "---\nname: \"writing-style: {rule}\"\ndescription: \"{rule}\"\nmetadata:\n  type: feedback\n  bring-in: writing-style\n---\n\n{rule}\n"
+        );
+        let id = format!("toolu_{slug}");
+        let lines = [
+            json!({"type": "assistant", "isSidechain": false, "sessionId": SESSION, "cwd": "/work",
+                "message": {"role": "assistant", "content": [{"type": "tool_use", "id": id,
+                    "name": "mcp__personal-memory__memory_create",
+                    "input": {"path": path, "file_text": body}}]}}),
+            json!({"type": "user", "isSidechain": false, "sessionId": SESSION, "cwd": "/work",
+                "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": id,
+                    "content": format!("Created {path}")}]}}),
+        ];
+        let mut t = fs::read_to_string(self.transcript()).unwrap();
+        for l in lines {
+            t.push_str(&format!("{l}\n"));
+        }
+        fs::write(self.transcript(), t).unwrap();
+        let dir = self.store().join("memory");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(format!("writing-style-{slug}.md")), body).unwrap();
+        let index = dir.join("MEMORY.md");
+        let mut i = fs::read_to_string(&index).unwrap_or_default();
+        i.push_str(&format!(
+            "- [writing-style: {rule}](writing-style-{slug}.md) - {rule}\n"
+        ));
+        fs::write(index, i).unwrap();
     }
 
     /// A HOME with mAId's part (its memory on a store that is a clone of a
@@ -101,6 +137,11 @@ impl Home {
         git(&h.join("store"), &["commit", "-qm", "start"]);
         git(&h.join("store"), &["push", "-q", "origin", "HEAD"]);
         fs::create_dir_all(h.join(".config/maid/writing-style")).unwrap();
+        fs::write(
+            h.join(".config/maid/writing-style/learned.md"),
+            "## Learned rules\n\n- 2026-05-22 · prefer \"to\" over \"in order to\"\n  · source: explicit teach\n",
+        )
+        .unwrap();
         let adapter = h.join("units/claude-plugin.json");
         fs::create_dir_all(adapter.parent().unwrap()).unwrap();
         let decl: Value = serde_json::from_str(
@@ -156,7 +197,12 @@ impl Home {
         fs::create_dir_all(&parts).unwrap();
         fs::write(parts.join("maid-harness.json"), mine.to_string()).unwrap();
         fs::write(parts.join("work-part.json"), theirs.to_string()).unwrap();
-        Home { dir }
+        let home = Home { dir };
+        home.save_rule(
+            "no-em-dashes",
+            "Punctuation: no em dashes in commit messages",
+        );
+        home
     }
 
     fn core(&self, args: &[&str], stdin: Option<&str>) -> Output {
@@ -210,8 +256,9 @@ fn walk(dir: &Path, out: &mut Vec<(PathBuf, Vec<u8>)>) {
     }
 }
 
-/// What a reflector returns for the fixture session: a persona habit, a
-/// writing-style entry and a skill edit as a backlog item.
+/// What a reflector returns for the fixture session: the persona habit
+/// from the correction. The taught rule is already in memory, so the core
+/// lists it and offers its move into the skill.
 fn reflection() -> String {
     json!({
         "findings": [
@@ -219,14 +266,7 @@ fn reflection() -> String {
              "title": "Use tr, not sed", "type": "feedback",
              "change": "shell scripts use tr, not sed",
              "entry": "In shell scripts, use tr for case changes; never sed.",
-             "evidence": [{"quote": "no, use tr, not sed: we never use sed in these scripts"}]},
-            {"thing": "maid-harness/writing-style", "kind": "habit", "tier": "local",
-             "change": "no em dashes in commit messages",
-             "entry": "no em dashes in commit messages",
-             "evidence": [{"quote": "new rule: no em dashes in commit messages"}]},
-            {"thing": "maid-harness/writing-style", "kind": "nature",
-             "change": "say in the skill that its rules cover commit messages",
-             "evidence": [{"quote": "new rule: no em dashes in commit messages"}]}
+             "evidence": [{"quote": "no, use tr, not sed: we never use sed in these scripts"}]}
         ],
         "corrections": [{"thing": "maid-harness/personal-memory"}]
     })
@@ -253,9 +293,10 @@ fn reflect(home: &Home, reason: &str) -> String {
         .concat(),
         None,
     );
-    assert_eq!(
-        marked,
-        format!("session {SESSION} marked for sleep ({reason})\n")
+    // A session closed again keeps its first mark and adds the reason.
+    assert!(
+        marked.starts_with(&format!("session {SESSION} marked for sleep ({reason}")),
+        "{marked}"
     );
     let brief = home.text(&[&["adaptation"][..], &s].concat(), None);
     assert!(
@@ -269,26 +310,35 @@ fn reflect(home: &Home, reason: &str) -> String {
     )
 }
 
+/// Macro step 3, as ruled: the persona habit from the correction, the rule
+/// taught to writing-style shown as saved in memory, and its move into the
+/// skill as a backlog item.
 #[test]
-fn close_proposes_one_batch_and_ok_writes_the_habit_and_the_entry_and_nothing_else() {
+fn close_proposes_one_batch_and_ok_writes_the_habit_and_files_the_move_and_nothing_else() {
     let home = Home::new();
     let before = home.snapshot();
     let batch = reflect(&home, "close");
     for want in [
-        "3 to decide",
+        "2 to decide",
+        "  saved in memory this session (it stays there until you remove it):\n    maid-harness/writing-style, in maid-harness/personal-memory [personal] /memories/writing-style-no-em-dashes.md: \"Punctuation: no em dashes in commit messages\"\n",
         "1. habit, maid-harness/personal-memory memory [personal]: add feedback \"Use tr, not sed\" (shell scripts use tr, not sed): \"In shell scripts",
-        "2. habit, maid-harness/writing-style learned [personal]: add \"no em dashes in commit messages\"",
-        "3. backlog item, maid-harness/writing-style (on https://example.org/me/maid)",
+        "2. backlog item, maid-harness/writing-style (on https://example.org/me/maid): move 2 taught rules into writing-style's text",
     ] {
         assert!(batch.contains(want), "{want:?} in:\n{batch}");
     }
+    assert!(
+        !batch
+            .lines()
+            .any(|l| l.starts_with("  ") && l.contains("(answer it")),
+        "ok takes both:\n{batch}"
+    );
     assert_eq!(
         home.snapshot(),
         before,
         "nothing changes before the person decides"
     );
     let genome = home.text(&["genome"], None);
-    assert!(genome.contains("pending: 3 decisions"), "{genome}");
+    assert!(genome.contains("pending: 2 decisions"), "{genome}");
 
     let applied = home.text(
         &[
@@ -300,7 +350,7 @@ fn close_proposes_one_batch_and_ok_writes_the_habit_and_the_entry_and_nothing_el
         ],
         None,
     );
-    assert_eq!(applied.matches("accepted").count(), 3, "{applied}");
+    assert_eq!(applied.matches("accepted").count(), 2, "{applied}");
     assert_eq!(pending(&home), 0);
     let genome = home.text(&["genome"], None);
     assert!(
@@ -315,13 +365,10 @@ fn close_proposes_one_batch_and_ok_writes_the_habit_and_the_entry_and_nothing_el
         "{text}"
     );
     let index = fs::read_to_string(home.store().join("memory/MEMORY.md")).unwrap();
-    assert_eq!(
-        index,
-        "- [Use tr, not sed](use-tr-not-sed.md) - shell scripts use tr, not sed\n"
+    assert!(
+        index.ends_with("- [Use tr, not sed](use-tr-not-sed.md) - shell scripts use tr, not sed\n"),
+        "{index}"
     );
-    let learned = fs::read_to_string(home.learned()).unwrap();
-    assert!(learned.starts_with("## Learned rules\n\n- "), "{learned}");
-    assert!(learned.contains(" · no em dashes in commit messages\n"));
 
     let after = home.snapshot();
     let changed: Vec<&PathBuf> = after
@@ -331,17 +378,26 @@ fn close_proposes_one_batch_and_ok_writes_the_habit_and_the_entry_and_nothing_el
         .collect();
     assert_eq!(
         changed,
-        [
-            &home.learned(),
-            &home.store().join("memory/MEMORY.md"),
-            &memory
-        ],
-        "only the habit and the entry are written"
+        [&home.store().join("memory/MEMORY.md"), &memory],
+        "only the habit is written; the saved rule and the older file stay"
     );
     let proposals = home
         .path()
         .join(".local/state/my-harness/proposals/maid-harness-writing-style");
-    assert_eq!(fs::read_dir(proposals).unwrap().count(), 1);
+    let files: Vec<_> = fs::read_dir(proposals).unwrap().flatten().collect();
+    assert_eq!(files.len(), 1);
+    let proposal = fs::read_to_string(files[0].path()).unwrap();
+    for want in [
+        "- Punctuation: no em dashes in commit messages\n",
+        "- prefer \"to\" over \"in order to\"\n",
+        "https://example.org/me/maid at abc123",
+    ] {
+        assert!(proposal.contains(want), "{want:?} in:\n{proposal}");
+    }
+    assert!(
+        proposal.trim_end().ends_with("remove these memories so the rules are not in two places: maid-harness/personal-memory /memories/writing-style-no-em-dashes.md."),
+        "{proposal}"
+    );
 
     let state = home.path().join(".local/state/my-harness");
     assert!(
@@ -352,13 +408,44 @@ fn close_proposes_one_batch_and_ok_writes_the_habit_and_the_entry_and_nothing_el
     let ledger = home.text(&["ledger"], None);
     assert!(ledger.contains("findings decided/accepted"), "{ledger}");
     assert!(
-        ledger.contains("  maid-harness/writing-style: 1, 0, 0, 0, 0, 0, 2/2"),
+        ledger.contains("  maid-harness/writing-style: 1, 0, 0, 0, 0, 0, 1/1"),
         "{ledger}"
     );
     assert!(
         ledger.contains("  tool:Edit: 1, 0, 1, 0, 0, 0, 0/0"),
         "{ledger}"
     );
+}
+
+fn decide(home: &Home, answer: &str) -> String {
+    home.text(
+        &["adaptation", "--session", SESSION, "--input", answer],
+        None,
+    )
+}
+
+#[test]
+fn a_declined_move_is_not_offered_again_until_a_new_rule_is_saved() {
+    let home = Home::new();
+    let first = reflect(&home, "close");
+    assert!(first.contains("2. backlog item"), "{first}");
+    decide(&home, r#"{"decide": {"1": "yes", "2": "no"}}"#);
+
+    let again = reflect(&home, "close");
+    assert!(
+        !again.contains("backlog item") && !again.contains("taught rule"),
+        "a second close after the decline offers no move:\n{again}"
+    );
+    decide(&home, r#"{"decide": "none"}"#);
+
+    home.save_rule("oxford-comma", "Punctuation: Oxford comma, always");
+    let third = reflect(&home, "close");
+    assert!(
+        third.contains("backlog item, maid-harness/writing-style (on https://example.org/me/maid): move 1 taught rule into writing-style's text"),
+        "a new rule brings the move back, with only what is new:\n{third}"
+    );
+    let proposals = home.path().join(".local/state/my-harness/proposals");
+    assert!(!proposals.exists(), "a decline files nothing");
 }
 
 #[test]
@@ -477,7 +564,7 @@ fn a_quote_only_in_what_came_after_the_brief_is_not_evidence() {
         Some(&findings.to_string()),
     );
     assert!(
-        batch.contains("nothing to decide") && batch.contains("is not in the session"),
+        !batch.contains(". habit") && batch.contains("is not in the session"),
         "{batch}"
     );
 }
@@ -515,7 +602,11 @@ fn skip_leaves_the_session_out_and_dismiss_clears_the_waiting_ones() {
         genome.contains("pending: 0 decisions") && !genome.contains("to reflect on"),
         "{genome}"
     );
-    assert!(!home.learned().exists() && !home.store().join("memory/MEMORY.md").exists());
+    assert!(!home.store().join("memory/use-tr-not-sed.md").exists());
+    assert!(!home
+        .path()
+        .join(".local/state/my-harness/proposals")
+        .exists());
     let state = home.path().join(".local/state/my-harness");
     assert!(!state.join(format!("briefed/{SESSION}.json")).exists());
     assert!(home

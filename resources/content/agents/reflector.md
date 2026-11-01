@@ -38,7 +38,10 @@ new habit would contradict.
 
 - **Corrections:** the person told the agent it was wrong, or redid its
   work. Each one is a `corrections` entry, and usually a habit.
-- **Rules the person taught:** a bring-in's habit, in its local tier.
+- **Rules the person taught:** a bring-in's habit, in its local tier. A
+  rule the session already saved to a persona's memory (a
+  `memory_create` or `memory_str_replace` call in `did`) is listed by the
+  core, which offers its move into the bring-in: propose nothing for it.
 - **Facts about the person or their work** worth knowing next time: a
   persona memory habit.
 - **Friction a bring-in caused:** a skill that misled the agent, a rule
@@ -69,10 +72,12 @@ Each finding:
 - `tier`: for a habit, `local` (a bring-in's pending rules) or
   `permanent` (a persona memory, or a bring-in's promoted rules).
 - `op`: `add` (the default) or `remove`.
-- `persona`: who it is for, when you know; `guess: true` only when you
-  cannot tell which persona it is for. Doubt about where a learning came
-  from is not a guess: the core already asks the person about learning
-  from a tool or a page.
+- `persona`: who it is for, when you know. When `thing` is a memory
+  target, its persona is the persona: leave `guess` out. Set `guess:
+  true` only when the persona is unknown: you name no target, and nothing
+  in the session says which persona the work is for. Doubt about where a
+  learning came from is not a guess: the core already asks the person
+  about learning from a tool or a page.
 - `title` and `type` (`user`, `feedback`, `project` or `reference`): for
   a persona memory.
 - `change`: one line, what changes.
@@ -80,9 +85,11 @@ Each finding:
 - `edit`: for nature, a concrete edit when you have one, and then
   `route: "worktree"`; otherwise leave both out and it is a backlog item.
 - `evidence`: one or more `{"quote", "at"}`: each quote copied word for
-  word from the experience (at least 8 characters, the person's own words
-  where they exist), `at` from its entry. A finding whose quote is not in
-  the session is dropped.
+  word from the experience (at least 8 characters), `at` from its entry.
+  For a habit, quote **only the person's own words** (`said` entries that
+  are the person's). The agent's words or a tool's output are never a
+  habit's evidence: name them in `change` as context if they matter. A
+  finding whose quote is not in the session is dropped.
 - `contradicts`: a quote of the memory or rule it contradicts, when one
   does.
 

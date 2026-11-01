@@ -215,17 +215,21 @@ removing either on uninstall; any other element is left alone, and a recorded va
 that shape is not mAId's. claude not on PATH, or no plugin in the profile,
 writes nothing; a value that is not a list is left and recorded skipped.
 
-**Skill state (claude).** A skill that keeps user state keeps it in
-user-owned files in its own dir under mAId's config dir,
-`${XDG_CONFIG_HOME:-~/.config}/maid/<skill>/` (`MAID_CONFIG` in
-`resources/Justfile`), and loads them on top of its shipped body:
-writing-style's `writing-style/learned.md` holds the pending `## Learned
-rules` and `writing-style/promoted.md` the `## Promoted rules`, both of
-which win over the body. They are its two state tiers, config keys
-`learned` and `promoted`, which install binds to those files (a skill's
-state key `<k>` binds to `<config dir>/<skill>/<k>.md`); an older
-`learned.md` that still holds `## Promoted rules` keeps them applying
-until the next promotion moves them. No
+**Skill state (claude).** writing-style keeps the style rules a person
+teaches in the persona's memory: on "new rule: …" it saves one memory
+through that memory server's own tools during the session, tagged
+`metadata.bring-in: writing-style` (Memory, below), and at session start
+it finds them with `memory_search` and applies them on top of its shipped
+body. That memory is its temporary tier; its permanent home is its own
+checked-in text, reached by the move a reflection offers (Adaptation).
+Its older files in its dir under mAId's config dir,
+`${XDG_CONFIG_HOME:-~/.config}/maid/writing-style/` (`MAID_CONFIG` in
+`resources/Justfile`), `learned.md` (`## Learned rules`) and `promoted.md`
+(`## Promoted rules`), are the user's data: still read and applied, never
+written or deleted, and their rules go with that move. They are its
+optional config keys `learned` and `promoted`, which install binds to those
+files (a skill's config key `<k>` binds to `<config dir>/<skill>/<k>.md`).
+No
 skill tells the runtime to find, read or edit a checkout; content
 validation fails a skill file that says `resources/content/`, "mAId
 checkout", `just install` or `just resources::`. Changing a shipped body is
@@ -247,8 +251,8 @@ characters) is not mAId's, and a config path whose rule would not be of it
 is granted nothing and recorded skipped, and mAId's earlier rules are
 removed. Install does not create the dirs. The rules are user settings, so
 they hold in every session in every repo: content a session reads there can
-write rules a later session loads, so at session start writing-style lists
-the pending rules and the count and newest three of the promoted ones.
+write rules a later session loads, so at session start writing-style says
+how many saved rules apply and quotes the newest three.
 
 **Bring-ins (claude, codex).** A vendor's plugin marketplace mAId
 brings in is a `BRING_INS` row in the registry: the name both CLIs list
@@ -554,7 +558,8 @@ profile under `share/maid/servers/`; content validation reads both kinds.
 **mAId's bring-ins.** Every skill is `turn`, as are the browser server
 (`chrome-devtools`, own, recorded while some harness has it placed: the
 browser step's `build-tool record` keeps it in step) and the document
-skills. Only writing-style keeps state (see "Skill state").
+skills. None declares a file tier: writing-style keeps its rules in the
+persona's memory and says so in its `job` (see "Skill state").
 
 **The core.** `maid-core` (`resources/core`, in the profile as
 `bin/maid-core`) reads every part list, fuses the personas and bring-ins
@@ -684,6 +689,26 @@ the map (or `harness`); a habit's tier is declared and bound. A
 sub-agent's prompt is its dispatcher's words, and a command's output in
 the person's turn is tool content.
 
+**Rules saved in memory, moved into the bring-in.** The batch also lists
+what this session saved for a bring-in in a persona's memory: a
+`memory_create` or `memory_str_replace` call that did not fail, in the
+session or a sub-session, on a memory bring-in's server
+(`mcp__<name>__<tool>`, or a plugin's `mcp__plugin_<p>_<name>__<tool>`),
+whose file is in that store now and tagged `metadata.bring-in` with a
+declared bring-in. Each is a "saved in memory" line, saying it stays
+there until the person removes it. For each such bring-in, the core
+offers one item: move those rules, and the `- ` entries of its older
+rules files (on an own bring-in, each bound config value, not a state
+tier, that is a file with a `## ` heading; a borrowed one's files are
+never moved), into its text: a nature finding carrying the text
+to add, routed like any other (a backlog item on an own project source).
+The proposal ends with the memories to remove once it lands; the core
+never removes them. A decided move, accepted or declined, records what it
+moved in its ledger record (`rule:<thing>:<text>` per rule,
+`file:<path>#<hash>` per older file), and nothing recorded, or waiting in
+another session's batch, is offered again: a new rule saved, or an older
+file changed, brings the move back with only what is new.
+
 Then the route, from the map: a **habit** (a persona memory, or a bring-in's tier) is
 written (a persona memory through its own server, see "Memory"); **nature** (a bring-in, a skill, the harness) becomes a
 proposal under `<state>/proposals/<thing>/`, backlog-item shaped, naming
@@ -694,7 +719,9 @@ an own bring-in with route `report` gets a note too. A habit not placed
 on a persona is asked, never written, and a persona with no memory, or
 more than one, takes none. A habit with a quote not in the
 person's own words, a contradiction, or a persona guess leaves the item
-out of "ok", for its own answer. Every answer is checked before any is
+out of "ok", for its own answer; the first says "learned only from tool
+or web content" when such a quote is also in tool or told text, else "a
+quote is not your own words". Every answer is checked before any is
 applied, and each accepted item is placed again on the map as it is
 then. A habit's entry is at most 200 characters, read whole in the
 batch. "skip" leaves the session out with nothing applied, and
@@ -939,7 +966,9 @@ takes the path from those values, never a literal. The index is markdown,
 one memory per line, `- [Title](file.md) - hook`, each file relative to
 the index's dir; each memory file has frontmatter `name`, `description`
 and `metadata.type` (`user`, `feedback`, `project` or `reference`), then
-its body (Claude Code's auto-memory format). The memory's persona is the
+its body (Claude Code's auto-memory format). A memory a bring-in saved
+for itself also carries `metadata.bring-in: <its name>`, and its body is
+the rule (Adaptation, "Rules saved in memory"). The memory's persona is the
 one of the part that records the bring-in. A bring-in with no `index` key
 has no index in this shape.
 
@@ -1083,6 +1112,7 @@ mAId/
 │   │   ├── src/experience.rs  a session as said, told, did, touched, friction
 │   │   ├── src/sleep.rs    sleep marks: sessions waiting to be reflected on
 │   │   ├── src/adapt.rs    findings, the guards, the decision batch, the routes (tests in adapt/)
+│   │   ├── src/adapt/moves.rs  rules a bring-in saved in memory, and their move into its text
 │   │   ├── src/memory.rs   a persona memory written through its server, MCP over stdio
 │   │   ├── src/ledger.rs   what reflections saw and the person decided
 │   │   ├── src/files.rs, src/time.rs  whole-file writes; UTC stamps
@@ -1175,7 +1205,8 @@ environment: the shipped Claude hooks run through `sh -c` with a
 payload, the MCP server over stdio, turn fit against this repo's own
 declarations, and `tests/adaptation.rs`, which closes, reflects and
 decides through the binary with a stub reflector and the real memory
-server, `MAID_TEST_PENSIEVE`, which the dev shell sets to the profile's
+server (Macro step 3 as ruled: the habit, the rule writing-style saved in
+memory, and its move into the skill; a declined move not offered again), `MAID_TEST_PENSIEVE`, which the dev shell sets to the profile's
 pinned pensieve, then syncs the store to a second clone). Fast
 (sub-second). No real `$HOME` side effects, no API credits.
 Load-bearing — this is the kdevkit Test Gate default. `deploy.rs` carries
@@ -1264,7 +1295,7 @@ it; the profile's `maid-core genome` under `env -i HOME=…` showing mAId's
 persona and bring-ins, with the memory (its store as its state) and the
 core's adapter under session bring-ins, the Claude plugin's hooks and MCP
 server naming the profile's own core and a start hook answering, every mAId bring-in declared and
-writing-style ready with no rules file, the bring-ins recorded with
+writing-style ready with no older rules file, the bring-ins recorded with
 tenure and this checkout's revision (dirty or not), the memory's source
 as pensieve at the flake's pin and its `serve` the profile's pensieve on
 the store, the reflector agent in the plugin, the reflect skill naming a
@@ -1295,8 +1326,8 @@ that points the runtime at the repo ("Skill state"), or whose bring-in
 declaration does not read or names a rules heading that is not there.
 Beside it, `shipped_skills_declare_the_contract` and
 `shipped_servers_and_overlays_declare_the_contract` hold every shipped
-unit to the contract (turn, a job, rules of at most 30 lines,
-writing-style's two optional tiers, the overlay's `requires` equal to the
+unit to the contract (turn, a job, rules of at most 30 lines, no file
+tier, writing-style's two optional older-file keys, the overlay's `requires` equal to the
 vendor's `needs`). They read only, so they keep the no-side-effects
 property.
 
@@ -1758,7 +1789,11 @@ named here is defined under Architecture, "My harness".
    slug>`, the file relative to the manifest's dir, at most 30 lines),
    `package`, `config` (every key it needs, secrets marked, every state
    location included), `state` (`local`, `permanent`, `promote`), `requires`, and on a turn bring-in that knows
-   where the work keeps its record, `record`.
+   where the work keeps its record, `record`. A bring-in may instead keep
+   what it learns in the persona's memory: it declares no `state`, says so
+   in its `job`, and saves each memory through the memory's own tools
+   with `metadata.bring-in: <its name>`, so a reflection can offer to move
+   them into its source (Architecture, "Adaptation").
 3. **Give its persona exactly one memory.** A session bring-in that names
    its memory package in `package`, with config `store` (the persona's own
    store, a git checkout the person owns; a private one for anything that

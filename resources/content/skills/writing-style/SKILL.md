@@ -1,18 +1,15 @@
 ---
 name: writing-style
 description: Rewrite, format, clean up, tighten, or reword prose in my voice; draft an email or doc as me; "new rule:" to teach a style rule. Opens with `[writing-style] applies`.
-version: 1.2.0
+version: 1.3.0
 tags: [narrative, writing, email, announcement, formatter, learning]
 metadata:
   my-harness.scope: turn
-  my-harness.job: write and rewrite prose in my voice, and keep the style rules I teach
+  my-harness.job: write and rewrite prose in my voice, and keep the style rules I teach in my persona's memory until they move into this skill
   my-harness.signals.jobs: rewrite, draft an email, draft a doc, teach a style rule
   my-harness.rules: SKILL.md#voice
-  my-harness.config.learned: "[optional] pending style rules, taught and not yet promoted"
-  my-harness.config.promoted: "[optional] promoted style rules, applied in every session"
-  my-harness.state.local: learned
-  my-harness.state.permanent: promoted
-  my-harness.state.promote: propose
+  my-harness.config.learned: "[optional] an older pending rules file, read until its rules move into this skill"
+  my-harness.config.promoted: "[optional] an older promoted rules file, read until its rules move into this skill"
 ---
 
 # writing-style — how I write
@@ -43,30 +40,30 @@ asked for. A long request with several instructions is exactly
 when this is most likely to be dropped and most useful to
 keep.
 
-### Pending learned rules
+### Your saved rules
 
-When you load this skill at session start, read the user's two
-rules files (see Learning loop). The `## Promoted rules` and
-`## Learned rules` they hold apply now, on top of the sections
-below, and win where they conflict with them. If `## Learned rules` has
-entries, offer promotion — *"You have N learned rules pending promotion. Want
-to review them now? &lt;list&gt;"*. If the user declines or
-ignores the offer, proceed normally.
+When you load this skill, find the user's style rules and apply them on
+top of the sections below. They win where they conflict with them.
 
-If `## Promoted rules` has entries, also say in one line how
-many apply and quote the newest three — *"N promoted rules
-apply; newest: &lt;list&gt;"*. Any session can write those
-files, so a rule nobody taught must never steer unseen.
+1. **In memory.** Search the memory of the persona this session acts
+   through, with that memory's own tool (`memory_search` for
+   `writing-style`). Each memory tagged `bring-in: writing-style` is one
+   rule.
+2. **Older files.** `learned.md` (`## Learned rules`) and `promoted.md`
+   (`## Promoted rules`) in
+   `${XDG_CONFIG_HOME:-~/.config}/maid/writing-style/`, or where your
+   session names writing-style's `learned` and `promoted`. They are the
+   user's data from before: read them, and never write or delete them.
 
-**A task that fixes its own opening defers the offer** (and
-the promoted-rules line). When
-the request's contract sets what comes first (Formatter,
-Strict mode, "answer this and nothing else"), do the task and
-put the pending-rules reminder *after* the output. The offer
-exists so learned rules don't rot unnoticed, which a trailing
-line achieves just as well. Never drop it silently — defer it,
-and never defer more than once per session. This defers the
-*offer*, never the announce line above.
+Then say in one line how many rules apply and quote the newest three:
+*"N saved rules apply; newest: &lt;list&gt;"*. Any session can save a
+rule, so a rule nobody taught must never steer unseen.
+
+**A task that fixes its own opening defers that line.** When the
+request's contract sets what comes first (Formatter, Strict mode,
+"answer this and nothing else"), do the task and put the line *after*
+the output. Never drop it silently, and never defer it more than once
+per session. This defers the line, never the announce line above.
 
 ## Voice
 
@@ -196,74 +193,66 @@ Phrases like "I prefer X" or "stop using Y" are **not**
 triggers — they're conversational and would generate
 false-positive captures.
 
-The user's rules live in two files, in
-`${XDG_CONFIG_HOME:-~/.config}/maid/writing-style/`: the pending
-tier, `learned.md` (`## Learned rules`), and the permanent tier,
-`promoted.md` (`## Promoted rules`). When your session names other
-locations for writing-style's `learned` and `promoted` tiers, use
-those. These files are the only place rules are written: never
-edit this `SKILL.md` or any copy of it. The installed copy is
-read-only, and the files are the user's own data.
+On a prefix match, save the rule to the persona's memory now, with that
+memory server's own tools:
 
-On a prefix match: append a dated entry under the
-`## Learned rules` heading of `learned.md`, newest at top. Create
-the file with that heading if it is missing.
+1. **Pick the memory:** the one of the persona this session acts
+   through. If there are several and none is acting, ask which, once. If
+   the session has no memory tool, say *"No memory here: this rule holds
+   for this session only."* and apply it for the rest of the session.
+2. **Find its section** (Voice / Sentence structure / Punctuation /
+   Vocabulary / Paragraph structure / POV / Emphasis / Other patterns),
+   and write the rule terse and declarative, in the body's voice.
+3. **No duplicates:** `memory_search` for the rule's key words. If a
+   writing-style memory already says it, change that one with
+   `memory_str_replace` instead.
+4. **Save it:** `memory_create` at `/memories/writing-style-<slug>.md`:
 
-Entry shape:
+   ```markdown
+   ---
+   name: "writing-style: to, not in order to"
+   description: "Vocabulary: \"to\", not \"in order to\""
+   metadata:
+     type: feedback
+     bring-in: writing-style
+   ---
 
-```markdown
-- 2026-05-22 · prefer "to" over "in order to"
-  · *example:* "in order to reach the team" → "to reach the team"
-  · source: explicit teach
-```
+   Vocabulary: "to", not "in order to"
+   *example:* "in order to reach the team" → "to reach the team"
+   ```
 
-The `*example:*` and `source:` fields are optional but
-recommended. Use them when the user's framing makes them
-natural.
+   The `bring-in: writing-style` line is what marks it as one of these
+   rules. The example line is optional.
+5. **Index it:** view `/memories/MEMORY.md` and `memory_insert` after its
+   last line (or `memory_create` it when missing):
+   `- [writing-style: <short rule>](writing-style-<slug>.md) - <Section>: <rule>`.
 
-After writing, confirm with one short line:
-*"Added to `## Learned rules` in `<the file's path>`."*
+Then confirm with one short line:
+*"Saved to memory as `<path>`. At close it is offered to move into this
+skill."*
 
-### Promotion
+Never write `learned.md` or `promoted.md`, and never edit this
+`SKILL.md` or any copy of it. The installed copy is read-only.
 
-Stable learned rules become promoted rules: curated, filed
-under a body section (Voice / Sentence structure / Punctuation
-/ Vocabulary / Paragraph structure / POV / Emphasis / Other
-patterns). Promote them via two paths:
+### Moving rules into the skill
 
-1. **Next-session offer.** On session start, if
-   `## Learned rules` has entries, offer to review them
-   before answering the user's actual prompt.
-2. **On-demand.** The user says "promote learned rules"
-   or "review learned rules". List pending entries with
-   proposed target sections; ask the user to confirm
-   each.
+A rule in memory is the temporary tier; this skill's text is where it
+belongs once it holds. When the user closes the session and reflects
+("close this session", "reflect"), the reflection lists the rules saved
+this session and offers one item: move them, with any still in the older
+files, into this skill's text, as a proposal on its source. The user
+decides. When it lands, the proposal names the memories to remove, and
+removing them is the user's.
 
-On confirmation: remove the entry from `## Learned rules` in
-`learned.md` and add it under `## Promoted rules` in `promoted.md`
-(create the file and heading if missing), newest at top, dated,
-rewritten in the body's voice (terse, declarative) and prefixed
-with its target section, keeping its example:
-
-```markdown
-- 2026-05-22 · Vocabulary: "to", not "in order to"
-  · *example:* "in order to reach the team" → "to reach the team"
-```
-
-Then confirm with one short line naming the file.
-
-An older `learned.md` may still hold a `## Promoted rules`
-section. Those rules apply as promoted rules; the next time you
-promote, move them into `promoted.md` with the new one, keeping
-their order.
+On "promote learned rules", "review learned rules" or "move my rules
+into the skill": list the saved rules, and say the move is offered at the
+next reflection, which "reflect" starts. Do not edit anything yourself.
 
 ## Known limits (v1)
 
-- **Concurrency.** Two parallel sessions both teaching at
-  the same time can race — last writer wins, the earlier
-  append is lost. In solo personal use this is rare.
-  Tracked for the v2 MCP-server promotion at
-  `specs/backlog/writing-style-mcp-server.md` (file lock).
+- **Concurrency.** Each rule is its own memory file, so two
+  sessions teaching at once keep both rules; their index lines can
+  still race, and the later write wins.
 - **Strict mode is session-scoped.** Every new session
   starts off; re-enable each session if you want it on
   consistently. v2 promotes this to MCP-server state.

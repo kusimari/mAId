@@ -51,7 +51,11 @@ After your yes, a habit is written: to the persona's memory through its
 own memory server, or to a bring-in's local tier. A change to a skill, a
 bring-in or the harness itself only becomes a proposal (a backlog item,
 or a worktree to turn into a PR), or a note when its route is report
-only. A bring-in you borrowed is never changed;
+only. A style rule you teach writing-style ("new rule: …") is saved to
+your persona's memory right away; the batch lists it as saved, and
+offers to move it, with any rules in writing-style's older files, into
+the skill's own text as a proposal. A move you decline is not offered
+again until you teach a new rule or an older rules file changes. A bring-in you borrowed is never changed;
 what is learned about it becomes a note for its lender. A persona
 habit needs that persona's store: set yours with `just memory-store
 <path>` (see Verbs).

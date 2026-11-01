@@ -157,6 +157,8 @@ pub enum Action {
 pub enum Need {
     /// Learned only from tool or web content.
     ToolContent,
+    /// A quote is the agent's words, not the person's.
+    NotOwnWords,
     Contradiction,
     /// A guess about which persona it is for.
     Persona,
@@ -177,6 +179,9 @@ pub struct Pending {
     /// The last time applying it failed, and why.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// For a move into a bring-in's text: what it moves.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub moves: Vec<Move>,
 }
 
 #[derive(Serialize, Debug, Clone, PartialEq)]
@@ -309,7 +314,7 @@ pub fn check(
     map: &Map,
     bundle: &Bundle,
     reflection: Reflection,
-) -> Result<(Vec<Pending>, Vec<Dropped>)> {
+) -> Result<Checked> {
     let session = &bundle.session;
     check_id("session id", session)?;
     let texts: Vec<(Who, String)> = bundle
@@ -327,8 +332,8 @@ pub fn check(
             dropped.push(drop(format!("over the batch cap of {CAP}")));
             continue;
         }
-        // Whether each quote is somewhere in the person's own words.
-        let mut persons = vec![];
+        // Who said each quote: every source it is found in.
+        let mut sources: Vec<Vec<Who>> = vec![];
         let mut bad = None;
         if f.evidence.is_empty() {
             bad = Some("no evidence".to_string());
@@ -348,7 +353,7 @@ pub fn check(
                 bad = Some(format!("quote {:?} is not in the session", e.quote));
                 break;
             }
-            persons.push(whos.contains(&Who::Person));
+            sources.push(whos);
         }
         if let Some(why) = bad.or_else(|| shape(&f).err()) {
             dropped.push(drop(why));
@@ -358,11 +363,10 @@ pub fn check(
             Err(why) => dropped.push(drop(why)),
             Ok((target, persona, action, mut needs)) => {
                 // Only the person's own words make a habit without its
-                // own yes: the agent's words may only repeat what a tool
-                // or a page said. Every quote, so one harmless quote of
-                // the person cannot carry the rest.
-                if f.kind == Kind::Habit && !persons.iter().all(|p| *p) {
-                    needs.push(Need::ToolContent);
+                // own yes. Every quote, so one harmless quote of the person
+                // cannot carry the rest.
+                if f.kind == Kind::Habit {
+                    needs.extend(not_own_words(&sources));
                 }
                 if f.contradicts.is_some() {
                     needs.push(Need::Contradiction);
@@ -376,15 +380,51 @@ pub fn check(
                     action,
                     needs,
                     error: None,
+                    moves: vec![],
                 });
             }
+        }
+    }
+    let saved = moves::saved(map, bundle);
+    // What a decided move moved, or another session's move waits with,
+    // is not offered here.
+    let mut held = crate::ledger::moved(config)?;
+    held.extend(waiting_moves(config, session)?);
+    for (f, moves) in moves::items(map, &saved, &held) {
+        match place(map, &f) {
+            Err(why) => dropped.push(Dropped {
+                change: f.change.clone(),
+                why,
+            }),
+            Ok((target, persona, action, needs)) => kept.push(Pending {
+                session: session.clone(),
+                n: kept.len() + 1,
+                finding: f,
+                target,
+                persona,
+                action,
+                needs,
+                error: None,
+                moves,
+            }),
         }
     }
     clear(config, session)?;
     for p in &kept {
         save(config, p)?;
     }
-    Ok((kept, dropped))
+    Ok(Checked {
+        kept,
+        dropped,
+        saved,
+    })
+}
+
+/// What a reflection's check keeps, drops, and found saved in memory.
+pub struct Checked {
+    pub kept: Vec<Pending>,
+    pub dropped: Vec<Dropped>,
+    pub saved: Vec<Saved>,
 }
 
 /// What the batch shows and a write puts in later context is one plain
@@ -418,6 +458,26 @@ fn shape(f: &Finding) -> Result<(), String> {
             Err(format!("type {t} is not one of {}", TYPES.join(", ")))
         }
         _ => Ok(()),
+    }
+}
+
+/// Why a habit's quotes are not all the person's: a quote also found in
+/// tool or told text is tool content (the agent may only be repeating
+/// it); one found only in the agent's words is not the person's.
+fn not_own_words(sources: &[Vec<Who>]) -> Option<Need> {
+    let others: Vec<&Vec<Who>> = sources
+        .iter()
+        .filter(|w| !w.contains(&Who::Person))
+        .collect();
+    if others.is_empty() {
+        None
+    } else if others
+        .iter()
+        .any(|w| w.iter().any(|x| matches!(x, Who::Tool | Who::Told)))
+    {
+        Some(Need::ToolContent)
+    } else {
+        Some(Need::NotOwnWords)
     }
 }
 
@@ -692,6 +752,28 @@ pub fn pending(config: &Config, session: &str) -> Result<Vec<Pending>> {
     Ok(out)
 }
 
+/// The keys of every move waiting in another session's batch.
+fn waiting_moves(config: &Config, session: &str) -> Result<Vec<String>> {
+    let dir = config.pending();
+    let rd = match fs::read_dir(&dir) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) => return Err(e).with_context(|| format!("cannot list {}", dir.display())),
+    };
+    let mut out = vec![];
+    for e in rd.flatten() {
+        let Ok(text) = fs::read_to_string(e.path()) else {
+            continue;
+        };
+        if let Ok(p) = serde_json::from_str::<Pending>(&text) {
+            if p.session != session {
+                out.extend(p.moves.into_iter().map(|m| m.key));
+            }
+        }
+    }
+    Ok(out)
+}
+
 fn clear(config: &Config, session: &str) -> Result<()> {
     for p in pending(config, session)? {
         remove(&pending_path(config, session, p.n))?;
@@ -706,8 +788,9 @@ fn remove(p: &Path) -> io::Result<()> {
     }
 }
 
-/// The decision batch: one line per item, then what was dropped.
-pub fn batch(session: &str, items: &[Pending], dropped: &[Dropped]) -> String {
+/// The decision batch: what this session saved in memory, one line per
+/// item, then what was dropped.
+pub fn batch(session: &str, saved: &[Saved], items: &[Pending], dropped: &[Dropped]) -> String {
     let mut s = String::new();
     match items.len() {
         0 => {
@@ -722,6 +805,27 @@ pub fn batch(session: &str, items: &[Pending], dropped: &[Dropped]) -> String {
     }
     // Each item and each drop is one line, whatever its texts hold, so no
     // text can pass for another item.
+    if !saved.is_empty() {
+        let _ = writeln!(
+            s,
+            "  saved in memory this session (it stays there until you remove it):"
+        );
+        for v in saved {
+            let who = v
+                .persona
+                .as_deref()
+                .map(|x| format!(" [{x}]"))
+                .unwrap_or_default();
+            let _ = writeln!(
+                s,
+                "    {}",
+                squash(&format!(
+                    "{}, in {}{who} {}: \"{}\"",
+                    v.thing, v.memory, v.path, v.rule
+                ))
+            );
+        }
+    }
     for p in items {
         let _ = writeln!(s, "  {}. {}", p.n, squash(&line(p)));
     }
@@ -779,6 +883,7 @@ fn line(p: &Pending) -> String {
         .iter()
         .map(|n| match n {
             Need::ToolContent => "answer it: learned only from tool or web content",
+            Need::NotOwnWords => "answer it: a quote is not your own words",
             Need::Contradiction => "answer it: contradicts what is there",
             Need::Persona => "answer it: which persona?",
         })
@@ -1193,6 +1298,9 @@ fn propose(
         p.session,
         quotes(f)
     );
+    if let Some(line) = moves::remove_line(&p.moves) {
+        let _ = write!(text, "\n{line}\n");
+    }
     write_atomic(&at, text.as_bytes()).with_context(|| format!("cannot write {}", at.display()))?;
     Ok(at)
 }
@@ -1258,6 +1366,9 @@ pub fn brief(
     );
     s
 }
+
+mod moves;
+pub use moves::{Move, Saved};
 
 #[cfg(test)]
 mod tests;
