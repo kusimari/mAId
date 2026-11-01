@@ -1,11 +1,22 @@
 # Initiative: inbox
 
 - Branch: `initiative/inbox` (cut from `main` at 0881e13)
-- Status: draft for the person's review, at the framing and experience
-  layer. The design layers (technical concepts, mapping per shell, streams)
-  are written only once framing and experience are agreed.
+- Status: framing and experience agreed by the person (PR #61 review).
+  Design layers not yet written.
 - Research: channels, connectors, jobs and inbox UIs (kept outside the
   repo; drawn on when the design layers are written).
+
+## Next (pick up here in any session)
+
+1. Write the design layers on this branch, one PR #61 revision each, for
+   the person's review: the items under "To design" below, then the
+   technical concepts, the mapping per shell and the streams. Keep to the
+   Constraints; any new assumption goes to the person as a question, not
+   into the spec.
+2. Keep in step with initiative `os-mode` (PR #62): the home may start and
+   keep the inbox session running; neither spec may assume the other.
+3. Once the design is agreed and harness-core (PR #60) is merged: rebase
+   onto `main`, then a build session builds the streams.
 
 - **Build gate: do not build until initiative `harness-core` (PR #60) is
   merged to `main`.** Planned in parallel with it; the build session's first
@@ -160,7 +171,7 @@ designed:
 - **Public repo, environment-independent:** names nothing private and
   assumes no particular machine.
 
-## To design, once framing and experience are agreed
+## To design
 
 - The channel contract: what a channel declares and reports.
 - How a running inbox keeps rhythm and reflexes inside a session.
