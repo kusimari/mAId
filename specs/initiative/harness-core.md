@@ -393,6 +393,7 @@ coding CLIs, so the genome never depends on them.
 | 5 | turn-bring-ins | this repo's turn bring-ins (kdevkit, kyodakit, kreviewkit, writing-style with its two tiers, notes, browser, the vendor document skills) carrying the contract in their standard slots | 1 | merged |
 | 6 | fold-back | README and project.md say how mAId works with this design, in the framing: the shell, the ghost, and its genome, expression, experience, sleep and adaptation; project.md also carries "For any persona part" as its own section, so a person adding another persona repo needs only project.md | 1-5 | merged |
 | 7 | macro-fixes | defects from Macro test run 1: the installed plugin's hooks refused by current Claude Code (D1), the second prompt re-sending the reinforcement (D2), and "For any persona part" made followable alone (D3 and the dry-run gaps) | 1-6 | merged |
+| 8 | claude-config-dir | from Macro test run 3: install, uninstall and status read and write Claude's user config at `$HOME/.claude` even when `CLAUDE_CONFIG_DIR` is set; the paid tests isolate through `CLAUDE_CONFIG_DIR`, not a scratch HOME | 7 | running |
 
 The work part's own bring-ins take the contract in their own repo, outside
 this initiative.
@@ -621,3 +622,7 @@ this initiative.
   own model access, as the ghost does; no credential is handed to a test.
   Isolation comes from a scratch `CLAUDE_CONFIG_DIR` and the ghost's own
   state and config locations, not a scratch HOME.
+- Macro test run 3 (real model, through the shell's own access): stopped
+  before install, 0 model sessions spent; with `CLAUDE_CONFIG_DIR` set,
+  install would still write Claude's settings under the real HOME (R3-1)
+  · Ruling: fix stream 8, claude-config-dir
