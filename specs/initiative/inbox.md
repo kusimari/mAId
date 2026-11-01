@@ -148,6 +148,12 @@ designed:
   starting and keeping the session, or running with no harness started)
   changes how it starts, not how it works.
 - **One inbox across personas.** Every item is labelled with its persona.
+- **Routines and reflexes can come from any part.** A part (or the core)
+  may declare its own, because only it knows what to do: a brief before a
+  meeting, a reply to a review comment, a nightly sleep, a store sync. The
+  inbox session runs every declared one and is the one place their results
+  reach me; the inbox's own sweep is just the first, declared by the core.
+  How they are declared is designed later.
 - **Carrier-neutral.** Rhythm, reflexes and attention reach the ghost
   through the existing entry points; Claude Code first, other shells
   mapped.
@@ -158,17 +164,14 @@ designed:
 
 - The channel contract: what a channel declares and reports.
 - How a running inbox keeps rhythm and reflexes inside a session.
+- How a part declares a routine or reflex (its trigger, a cadence or a
+  channel event; its outcome; its guards) in the bring-in contract.
 - Where channel setup, credentials and gathered data live, per
   environment.
 - The inbox store, the item shape, and the inbox views in and beside the
   shell.
 - The first channels, and which part brings each.
 - Then the technical concepts, the mapping per shell, and the streams.
-
-## Open questions
-
-1. Do routines and reflexes come only from the inbox, or may parts declare
-   their own?
 
 ## Decision Log
 
@@ -187,6 +190,10 @@ designed:
   the design stays open to other starts (OS mode keeping the session up,
   or running with no harness started) · why: running without the harness
   is not yet in reach · cost if wrong: none, the start is kept separate
+- Ruling (person): parts may declare their own routines and reflexes; the
+  inbox session runs them all and surfaces their results · why: the domain
+  knowledge lives in the part, not the inbox · cost if wrong: the
+  declaration moves back into the inbox
 - Superseded: the first draft's personal-persona-only channels, ingest
   service, draft-only sending and connector table; they assumed design
   that is now deferred.
