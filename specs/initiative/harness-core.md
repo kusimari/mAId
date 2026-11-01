@@ -1,8 +1,8 @@
 # Initiative: harness-core
 
 - Branch: `initiative/harness-core` (cut from `main` at 0881e13)
-- Status: spec final, ready to run. The build runs in its own session from
-  this spec alone.
+- Status: closed. Every stream merged; the Macro test passes (runs 5 and
+  6). Waiting on the user: ratify the briefing's calls, push, PR, squash.
 - Builds on initiative `my-harness` (parts, part lists, whole-status, the
   memory server as a bring-in), which is not on `main` yet. See
   Constraints > Build base.
@@ -672,3 +672,10 @@ this initiative.
   ringmaster removed those two dirs (made by this initiative). Two
   reflector findings filed as backlog (writing-style-saves-rule-verbatim,
   recall-on-first-turn)
+- Macro test run 6 (free, at 40784f1, real Claude Code 2.1.314 against a
+  loopback stub, every location under /tmp including the cache): step 2
+  (turn) and step 5 (travel) PASS; the real HOME unchanged at five
+  snapshots. With run 5, every Macro step passes on the current branch
+- Close: streams 1-10 merged; 15 of 30 paid runs spent; the initiative
+  review briefing is written; the stream worktrees and branches are
+  removed (their history is in the squash commits on this branch)
