@@ -658,3 +658,13 @@ this initiative.
   user ruled memory is the temporary tier that a session writes and the
   close reports · cost if wrong: the memory server's instructions change
   to leave corrections to reflection
+- Macro test run 5 (real model, 6 sessions; 15 of 30 spent): step 1 to 5
+  PASS end to end. Steps 3 and 4 with the real reflector: the persona
+  habit and the taught rule shown as saved in memory, the move into the
+  skill proposed, and after "ok" only the memory and one proposal changed;
+  stream 2's R1-R4 PASS; the real HOME's agent config unchanged and the
+  real rules file not read (transcript check). The test setup had left
+  Claude Code's MCP logs for these runs in the real HOME's cache; the
+  ringmaster removed those two dirs (made by this initiative). Two
+  reflector findings filed as backlog (writing-style-saves-rule-verbatim,
+  recall-on-first-turn)
