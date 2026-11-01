@@ -13,7 +13,7 @@
    technical concepts, the mapping per shell and the streams. Keep to the
    Constraints; any new assumption goes to the person as a question, not
    into the spec.
-2. Keep in step with initiative `os-mode` (PR #62): the home may start and
+2. Keep in step with initiative `os-mode` (PR #62): os-mode may launch and
    keep the inbox session running; neither spec may assume the other.
 3. Once the design is agreed and harness-core (PR #60) is merged: rebase
    onto `main`, then a build session builds the streams.
