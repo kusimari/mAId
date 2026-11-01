@@ -129,7 +129,9 @@ scheduled work that starts the same shell with the same ghost.
 ## Macro test
 
 In a scratch HOME with the personal part installed and a fixture second
-part beside it, on Claude Code:
+part beside it, on Claude Code (since the user's 2026-11-01 ruling, a
+scratch `CLAUDE_CONFIG_DIR` and scratch ghost locations stand in for the
+scratch HOME wherever the real model is used):
 
 1. **Start:** a fresh session's startup report shows the genome
    (personas, session and turn bring-ins with where their state lives,
@@ -186,6 +188,7 @@ part beside it, on Claude Code:
   this branch then carries everything, `my-harness` included, and goes to
   `main` with a merge commit so each stream stays its own commit; the
   stream history also stays on the forge after branches are deleted.
+  (Superseded by the user's 2026-11-01 ruling: it lands as a squash.)
 - **Finish:** one review brief for the whole initiative, by design area,
   not stream by stream, with where to focus first.
 
@@ -332,14 +335,15 @@ core, as plain standard units.
    end hooks (and, on shells that have one, the always-loaded context
    file); a part adds bring-ins, never a second copy of those.
 
-The operative copy of this checklist is project.md's "For any persona
-part", which later rulings and the macro test refined.
 7. **Keep its own copy** of the contract and the reader rules in its own
    docs, kept in step by the person, and name no other part.
 8. **Install from one canonical clone**; a second checkout installing
    replaces the first.
 9. **Report ready, not just registered:** status checks each bring-in's
    `requires`.
+
+The operative copy of this checklist is project.md's "For any persona
+part", which later rulings and the macro test refined.
 
 ## System design: mapping per base harness
 
@@ -658,8 +662,8 @@ this initiative.
   user ruled memory is the temporary tier that a session writes and the
   close reports · cost if wrong: the memory server's instructions change
   to leave corrections to reflection
-- Macro test run 5 (real model, 6 sessions; 15 of 30 spent): step 1 to 5
-  PASS end to end. Steps 3 and 4 with the real reflector: the persona
+- Macro test run 5 (real model, 6 sessions; 15 of 30 spent): install and
+  step 1's genome check PASS. Steps 3 and 4 with the real reflector: the persona
   habit and the taught rule shown as saved in memory, the move into the
   skill proposed, and after "ok" only the memory and one proposal changed;
   stream 2's R1-R4 PASS; the real HOME's agent config unchanged and the
