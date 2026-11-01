@@ -394,6 +394,7 @@ coding CLIs, so the genome never depends on them.
 | 6 | fold-back | README and project.md say how mAId works with this design, in the framing: the shell, the ghost, and its genome, expression, experience, sleep and adaptation; project.md also carries "For any persona part" as its own section, so a person adding another persona repo needs only project.md | 1-5 | merged |
 | 7 | macro-fixes | defects from Macro test run 1: the installed plugin's hooks refused by current Claude Code (D1), the second prompt re-sending the reinforcement (D2), and "For any persona part" made followable alone (D3 and the dry-run gaps) | 1-6 | merged |
 | 8 | claude-config-dir | from Macro test run 3: install, uninstall and status read and write Claude's user config at `$HOME/.claude` even when `CLAUDE_CONFIG_DIR` is set; the paid tests isolate through `CLAUDE_CONFIG_DIR`, not a scratch HOME | 7 | merged |
+| 9 | writing-style-memory | from Macro test run 3: writing-style's taught rules live in persona memory, not a file tier; the close batch says what was saved and offers to move them into the skill on its source; the reflector quotes only the person's words for a habit; the guard's label says what it checks | 8 | running |
 
 The work part's own bring-ins take the contract in their own repo, outside
 this initiative.
@@ -626,3 +627,19 @@ this initiative.
   before install, 0 model sessions spent; with `CLAUDE_CONFIG_DIR` set,
   install would still write Claude's settings under the real HOME (R3-1)
   · Ruling: fix stream 8, claude-config-dir
+- Macro test run 3 (real model, 1 of 8 sessions): install and uninstall
+  wrote nothing under the real HOME; step 3 FAIL: writing-style wrote the
+  taught rule to its file tier mid-session, so the batch never proposed
+  it (F1); the reflector quoted the agent's words and guessed the persona,
+  so "ok" could not accept the habit (F2); the guard's label misnamed the
+  cause (F3); no skill edit proposed (0 of 5 real runs)
+- Ruling (user, 2026-11-01): writing-style drops its file tiers. A taught
+  rule is saved to persona memory during the session (the temporary
+  tier); at close the batch says what was saved, and the person can have
+  them moved into the right place, the skill's checked-in text, as a
+  proposal on its source · Macro step 3 is read that way: the "bring-in
+  local-tier entry" is the rule in memory, and the "skill edit as a
+  backlog item" is the move into the skill (ringmaster's reading, to
+  ratify)
+- Ruling (ringmaster): fix stream 9; the Macro test session runs in a
+  location where one persona is acting, so no persona guess is expected
