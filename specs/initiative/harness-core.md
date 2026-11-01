@@ -394,7 +394,7 @@ coding CLIs, so the genome never depends on them.
 | 6 | fold-back | README and project.md say how mAId works with this design, in the framing: the shell, the ghost, and its genome, expression, experience, sleep and adaptation; project.md also carries "For any persona part" as its own section, so a person adding another persona repo needs only project.md | 1-5 | merged |
 | 7 | macro-fixes | defects from Macro test run 1: the installed plugin's hooks refused by current Claude Code (D1), the second prompt re-sending the reinforcement (D2), and "For any persona part" made followable alone (D3 and the dry-run gaps) | 1-6 | merged |
 | 8 | claude-config-dir | from Macro test run 3: install, uninstall and status read and write Claude's user config at `$HOME/.claude` even when `CLAUDE_CONFIG_DIR` is set; the paid tests isolate through `CLAUDE_CONFIG_DIR`, not a scratch HOME | 7 | merged |
-| 9 | writing-style-memory | from Macro test run 3: writing-style's taught rules live in persona memory, not a file tier; the close batch says what was saved and offers to move them into the skill on its source; the reflector quotes only the person's words for a habit; the guard's label says what it checks | 8 | running |
+| 9 | writing-style-memory | from Macro test run 3: writing-style's taught rules live in persona memory, not a file tier; the close batch says what was saved and offers to move them into the skill on its source; the reflector quotes only the person's words for a habit; the guard's label says what it checks | 8 | merged |
 
 The work part's own bring-ins take the contract in their own repo, outside
 this initiative.
