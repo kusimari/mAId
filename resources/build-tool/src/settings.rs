@@ -5,13 +5,9 @@ use crate::part::Item;
 use anyhow::{bail, Context, Result};
 use std::fs;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub const NO_CLI: &str = "claude not on PATH";
-
-pub fn claude_settings(home: &Path) -> PathBuf {
-    home.join(".claude/settings.json")
-}
 
 /// The outcome of one pass over the setting: the line to print, and the
 /// part-list entry (none once mAId holds nothing there).

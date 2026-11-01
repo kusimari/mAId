@@ -4,6 +4,7 @@
 use build_tool::deploy::{Deploy, Plugins, State};
 use build_tool::part::{Item, What};
 use build_tool::shared::Agent;
+use maid_core::config::ClaudeConfig;
 use std::fs;
 use tempfile::TempDir;
 
@@ -27,6 +28,7 @@ fn old_links_stay_when_the_agents_cli_is_missing() {
     std::env::set_var("PATH", empty.path());
     let p = Plugins {
         home: h.to_path_buf(),
+        claude: ClaudeConfig::new(h, None),
         profile,
     };
     let reports = p.install(None, false, false).unwrap();
@@ -63,6 +65,7 @@ fn bring_ins_are_skipped_naming_the_missing_cli() {
     let b = &BRING_INS[0];
     let target = BringIns::new(
         home.path().to_path_buf(),
+        ClaudeConfig::new(home.path(), None),
         BRING_INS,
         &home.path().join("parts"),
     )
@@ -98,7 +101,13 @@ fn bring_ins_maid_placed_stay_its_own_with_no_cli() {
     part::record(&parts, Agent::Claude, kinds, None, ours.to_vec()).unwrap();
     let empty = TempDir::new().unwrap();
     std::env::set_var("PATH", empty.path());
-    let target = BringIns::new(home.path().to_path_buf(), BRING_INS, &parts).unwrap();
+    let target = BringIns::new(
+        home.path().to_path_buf(),
+        ClaudeConfig::new(home.path(), None),
+        BRING_INS,
+        &parts,
+    )
+    .unwrap();
     let placed = target.placed(None).unwrap();
     for item in ours {
         assert!(placed.contains(&(Agent::Claude, item)), "{placed:?}");

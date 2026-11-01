@@ -14,10 +14,12 @@
 
 use crate::part::{self, Item, What};
 use crate::shared::{
-    agent_marketplace, marketplace_root, on_path, selected_entries, Agent, BringIn, Entry, Kind,
-    Link, LEGACY_LINKS, MARKETPLACE, PLUGIN_AGENTS, PLUGIN_ID, PROFILE_MARKETPLACE_DIR,
+    agent_marketplace, claude_env, marketplace_root, on_path, selected_entries, Agent, BringIn,
+    Entry, Kind, Link, LEGACY_LINKS, MARKETPLACE, PLUGIN_AGENTS, PLUGIN_ID,
+    PROFILE_MARKETPLACE_DIR,
 };
 use anyhow::{anyhow, Context, Result};
+use maid_core::config::ClaudeConfig;
 use std::cell::RefCell;
 use std::fs;
 use std::io;
@@ -455,6 +457,8 @@ impl Deploy for Deployment {
 /// only asks it to add, update and remove `maid@maid`.
 pub struct Plugins {
     pub home: PathBuf,
+    /// Claude's config, which every `claude` started here is given.
+    pub claude: ClaudeConfig,
     pub profile: PathBuf,
 }
 
@@ -644,7 +648,7 @@ impl Plugins {
     }
 
     fn cli(&self, agent: Agent, args: &[String]) -> Result<String> {
-        run_cli(&self.home, agent, args)
+        run_cli(&self.home, &self.claude, agent, args)
     }
 
     fn state(&self, agent: Agent, want: Option<&str>) -> Result<State> {
@@ -794,6 +798,8 @@ impl Plugins {
 /// left as it is.
 pub struct BringIns {
     pub home: PathBuf,
+    /// Claude's config, which every `claude` started here is given.
+    pub claude: ClaudeConfig,
     pub list: &'static [BringIn],
     owned: RefCell<Vec<(Agent, What, String)>>,
     failed: RefCell<Vec<(Agent, What, String)>>,
@@ -855,7 +861,7 @@ impl Deploy for BringIns {
                     }
                     let done = match dry_run {
                         true => Ok(String::new()),
-                        false => run_cli(&self.home, a, args),
+                        false => run_cli(&self.home, &self.claude, a, args),
                     };
                     match done {
                         Ok(_) => {
@@ -922,7 +928,7 @@ impl Deploy for BringIns {
                 {
                     let done = match dry_run {
                         true => Ok(String::new()),
-                        false => run_cli(&self.home, a, &args),
+                        false => run_cli(&self.home, &self.claude, a, &args),
                     };
                     out.push(match done {
                         Ok(_) => {
@@ -1078,7 +1084,12 @@ const NO_MARKETPLACE: &str = "no plugin marketplace";
 
 impl BringIns {
     /// Ownership is read once from mAId's part list in `parts`.
-    pub fn new(home: PathBuf, list: &'static [BringIn], parts: &Path) -> Result<BringIns> {
+    pub fn new(
+        home: PathBuf,
+        claude: ClaudeConfig,
+        list: &'static [BringIn],
+        parts: &Path,
+    ) -> Result<BringIns> {
         let mut owned = Vec::new();
         for (a, ..) in PLUGIN_AGENTS {
             owned.extend(
@@ -1089,6 +1100,7 @@ impl BringIns {
         }
         Ok(BringIns {
             home,
+            claude,
             list,
             owned: RefCell::new(owned),
             failed: RefCell::default(),
@@ -1098,9 +1110,15 @@ impl BringIns {
 
     /// For reporting only: a part list that cannot be read leaves nothing
     /// owned, and `status` says so instead of stopping.
-    pub fn reporting(home: PathBuf, list: &'static [BringIn], parts: &Path) -> BringIns {
-        BringIns::new(home.clone(), list, parts).unwrap_or_else(|e| BringIns {
+    pub fn reporting(
+        home: PathBuf,
+        claude: ClaudeConfig,
+        list: &'static [BringIn],
+        parts: &Path,
+    ) -> BringIns {
+        BringIns::new(home.clone(), claude.clone(), list, parts).unwrap_or_else(|e| BringIns {
             home,
+            claude,
             list,
             owned: RefCell::default(),
             failed: RefCell::default(),
@@ -1130,9 +1148,15 @@ impl BringIns {
     }
 
     fn seen(&self, agent: Agent, b: &BringIn) -> Result<Seen> {
-        let plugins = run_cli(&self.home, agent, &strings(&["plugin", "list", "--json"]))?;
+        let plugins = run_cli(
+            &self.home,
+            &self.claude,
+            agent,
+            &strings(&["plugin", "list", "--json"]),
+        )?;
         let markets = run_cli(
             &self.home,
+            &self.claude,
             agent,
             &strings(&["plugin", "marketplace", "list", "--json"]),
         )?;
@@ -1423,11 +1447,20 @@ pub fn listed_marketplaces(
     }
 }
 
-/// Run an agent's CLI with `home` as HOME, returning stdout.
-fn run_cli(home: &Path, agent: Agent, args: &[String]) -> Result<String> {
-    let out = Command::new(agent.cli())
+/// An agent's CLI with `home` as HOME; claude also gets `claude`'s config dir.
+fn cli_command(home: &Path, claude: &ClaudeConfig, agent: Agent) -> Command {
+    let mut cmd = Command::new(agent.cli());
+    cmd.env("HOME", home);
+    if agent == Agent::Claude {
+        claude_env(&mut cmd, claude);
+    }
+    cmd
+}
+
+/// Run an agent's CLI (see `cli_command`), returning stdout.
+fn run_cli(home: &Path, claude: &ClaudeConfig, agent: Agent, args: &[String]) -> Result<String> {
+    let out = cli_command(home, claude, agent)
         .args(args)
-        .env("HOME", home)
         .output()
         .with_context(|| format!("cannot run {}", agent.cli()))?;
     if !out.status.success() {
@@ -2385,8 +2418,8 @@ mod tests {
         let text = r#"{"format":2,"part":"maid-harness","harnesses":{}}"#;
         fs::write(part::path(parts.path()), text).unwrap();
         let home = PathBuf::from("/nowhere");
-        assert!(BringIns::new(home.clone(), &[VENDOR], parts.path()).is_err());
-        let b = BringIns::reporting(home, &[VENDOR], parts.path());
+        assert!(BringIns::new(home.clone(), cc(&home), &[VENDOR], parts.path()).is_err());
+        let b = BringIns::reporting(home.clone(), cc(&home), &[VENDOR], parts.path());
         // kiro has no plugin CLI, so no CLI runs here.
         let lines = b.status(Some(Agent::Kiro)).unwrap();
         assert_eq!(lines.len(), 1);
@@ -2401,7 +2434,13 @@ mod tests {
     #[test]
     fn agents_without_a_plugin_cli_record_the_bring_in_skipped() {
         let parts = TempDir::new().unwrap();
-        let b = BringIns::new(PathBuf::from("/nowhere"), &[VENDOR], parts.path()).unwrap();
+        let b = BringIns::new(
+            PathBuf::from("/nowhere"),
+            cc(Path::new("/nowhere")),
+            &[VENDOR],
+            parts.path(),
+        )
+        .unwrap();
         for agent in [Agent::Kiro, Agent::Agy] {
             assert_eq!(
                 b.placed(Some(agent)).unwrap(),
@@ -2428,7 +2467,13 @@ mod tests {
             Item::skipped(What::Plugin, "docs@vend", "not mAId's"),
         ];
         part::record(parts.path(), Agent::Claude, kinds, None, mine).unwrap();
-        let b = BringIns::new(PathBuf::from("/nowhere"), &[VENDOR], parts.path()).unwrap();
+        let b = BringIns::new(
+            PathBuf::from("/nowhere"),
+            cc(Path::new("/nowhere")),
+            &[VENDOR],
+            parts.path(),
+        )
+        .unwrap();
         assert!(b.ours(Agent::Claude, What::Marketplace, "vend"));
         assert!(!b.ours(Agent::Claude, What::Plugin, "docs@vend"));
         assert!(!b.ours(Agent::Codex, What::Marketplace, "vend"));
@@ -2465,9 +2510,31 @@ mod tests {
         assert_eq!(parse_recorded(Agent::Claude, claude, "vend").unwrap(), None);
     }
 
+    /// Claude's config under `home`, the variable unset.
+    fn cc(home: &Path) -> ClaudeConfig {
+        ClaudeConfig::new(home, None)
+    }
+
+    #[test]
+    fn a_plugin_call_gives_claude_only_the_config_dir_its_value_names() {
+        let var = |cmd: &Command| {
+            cmd.get_envs()
+                .find(|(k, _)| *k == "CLAUDE_CONFIG_DIR")
+                .map(|(_, v)| v.map(PathBuf::from))
+        };
+        let home = Path::new("/h");
+        let unset = cli_command(home, &cc(home), Agent::Claude);
+        assert_eq!(var(&unset), Some(None), "removed, not inherited");
+        let set = ClaudeConfig::new(home, Some(Path::new("/c")));
+        let cmd = cli_command(home, &set, Agent::Claude);
+        assert_eq!(var(&cmd), Some(Some(PathBuf::from("/c"))));
+        assert_eq!(var(&cli_command(home, &set, Agent::Codex)), None);
+    }
+
     fn plugins(home: &Path, profile: &Path) -> Plugins {
         Plugins {
             home: home.to_path_buf(),
+            claude: ClaudeConfig::new(home, None),
             profile: profile.to_path_buf(),
         }
     }

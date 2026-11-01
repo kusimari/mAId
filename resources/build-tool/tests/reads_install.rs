@@ -7,6 +7,7 @@ use build_tool::stages::{
     cmd_install_memory, cmd_install_reads, cmd_uninstall_memory, cmd_uninstall_reads,
 };
 use build_tool::whole;
+use maid_core::config::ClaudeConfig;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use tempfile::TempDir;
@@ -33,6 +34,7 @@ fn install_adds_the_plugin_dir_keeps_the_rest_and_uninstall_puts_it_back() {
     fs::write(bin.join("claude"), "#!/bin/sh\n").unwrap();
     fs::set_permissions(bin.join("claude"), fs::Permissions::from_mode(0o755)).unwrap();
     std::env::set_var("PATH", &bin);
+    let cc = ClaudeConfig::new(&home, None);
 
     let at = home.join(".claude/settings.json");
     let hand_rule = "Read(//elsewhere/marketplace/plugins/**)";
@@ -42,7 +44,7 @@ fn install_adds_the_plugin_dir_keeps_the_rest_and_uninstall_puts_it_back() {
     fs::write(&at, &before).unwrap();
 
     cmd_install_memory(
-        &home,
+        &cc,
         &config.join("memory-store"),
         &profile,
         &parts,
@@ -50,7 +52,7 @@ fn install_adds_the_plugin_dir_keeps_the_rest_and_uninstall_puts_it_back() {
         None,
     )
     .unwrap();
-    cmd_install_reads(&home, &profile, &config.join("maid"), &parts, false, None).unwrap();
+    cmd_install_reads(&cc, &profile, &config.join("maid"), &parts, false, None).unwrap();
     let mine = profile.join("share/maid/marketplace/plugins/maid");
     let settings: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&at).unwrap()).unwrap();
@@ -89,6 +91,7 @@ fn install_adds_the_plugin_dir_keeps_the_rest_and_uninstall_puts_it_back() {
         whole::check(
             &parts,
             &home,
+            &cc,
             Some(bin.clone().into_os_string()),
             Some(Agent::Claude),
         )
@@ -109,10 +112,10 @@ fn install_adds_the_plugin_dir_keeps_the_rest_and_uninstall_puts_it_back() {
         report.contains("missing        setting permissions.additionalDirectories"),
         "{report}"
     );
-    cmd_install_reads(&home, &profile, &config.join("maid"), &parts, false, None).unwrap();
+    cmd_install_reads(&cc, &profile, &config.join("maid"), &parts, false, None).unwrap();
 
-    cmd_uninstall_reads(&home, &parts, false, None).unwrap();
-    cmd_uninstall_memory(&home, &profile, &parts, false, None).unwrap();
+    cmd_uninstall_reads(&cc, &parts, false, None).unwrap();
+    cmd_uninstall_memory(&cc, &profile, &parts, false, None).unwrap();
     assert_eq!(fs::read_to_string(&at).unwrap(), before);
     assert!(!parts.join("maid-harness.json").exists());
 
@@ -128,11 +131,11 @@ fn install_adds_the_plugin_dir_keeps_the_rest_and_uninstall_puts_it_back() {
         .to_string(),
     )
     .unwrap();
-    cmd_install_reads(&home, &profile, &config.join("maid"), &parts, false, None).unwrap();
+    cmd_install_reads(&cc, &profile, &config.join("maid"), &parts, false, None).unwrap();
     let list = fs::read_to_string(parts.join("maid-harness.json")).unwrap();
     assert!(list.contains("\"skipped\": \"another part's\""), "{list}");
     assert!(!list.contains("adopted"), "{list}");
-    cmd_uninstall_reads(&home, &parts, false, None).unwrap();
+    cmd_uninstall_reads(&cc, &parts, false, None).unwrap();
     // mAId's config rule came and went, so the file was rewritten: compare
     // values.
     let after: serde_json::Value = serde_json::from_str(&fs::read_to_string(&at).unwrap()).unwrap();

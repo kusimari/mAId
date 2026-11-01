@@ -17,6 +17,7 @@ const INDEX_LINES: usize = 200;
 const INDEX_BYTES: usize = 25 * 1024;
 
 use maid_core::claude::project_dir_name;
+use maid_core::config::ClaudeConfig;
 
 const INDEX: &str = "MEMORY.md";
 
@@ -101,12 +102,12 @@ fn generated_line(bytes: &[u8], stem: &str) -> String {
 /// when given. The name is lossy (`a-b` and `a/b` look alike), so a prefix
 /// may take a sibling too; harvest prints every project it takes.
 fn claude_candidates(
-    home: &Path,
+    claude: &ClaudeConfig,
     target: &Path,
     project: Option<&str>,
     report: &mut Harvest,
 ) -> Result<Vec<Candidate>> {
-    let projects = home.join(".claude/projects");
+    let projects = claude.projects();
     let target = fs::canonicalize(target).ok();
     let prefix = project.map(project_dir_name);
     let mut dirs: Vec<PathBuf> = match fs::read_dir(&projects) {
@@ -195,7 +196,7 @@ fn codex_candidates(codex_home: &Path) -> Result<Vec<Candidate>> {
 /// `project` prefix, only Claude's projects under it, and nothing of
 /// codex, which keeps no projects. `dir` must exist; it is never created.
 pub fn harvest(
-    home: &Path,
+    claude: &ClaudeConfig,
     codex_home: &Path,
     dir: &Path,
     project: Option<&str>,
@@ -212,7 +213,7 @@ pub fn harvest(
         fs::create_dir_all(&target)?;
         report.notes.push(format!("created  {}", target.display()));
     }
-    let mut candidates = claude_candidates(home, &target, project, &mut report)?;
+    let mut candidates = claude_candidates(claude, &target, project, &mut report)?;
     if project.is_none() {
         candidates.extend(codex_candidates(codex_home)?);
     }
@@ -277,6 +278,11 @@ mod tests {
     use std::collections::BTreeMap;
     use tempfile::TempDir;
 
+    /// Claude's config under `home`, the variable unset.
+    fn cc(home: &Path) -> ClaudeConfig {
+        ClaudeConfig::new(home, None)
+    }
+
     struct Env {
         _tmp: TempDir,
         home: PathBuf,
@@ -338,7 +344,7 @@ mod tests {
         );
         let before = snapshot(&e.home);
         let r = harvest(
-            &e.home,
+            &cc(&e.home),
             &e.home.join(".codex"),
             &e.stores.join("personal"),
             None,
@@ -360,11 +366,32 @@ mod tests {
     }
 
     #[test]
+    fn with_claudes_config_dir_set_its_projects_are_harvested_not_homes() {
+        let e = env();
+        seed_project(&e, "-home", &[("h.md", &memory("h", "H"))], None);
+        let dir = e.home.with_file_name("claude-config");
+        let mem = dir.join("projects/-cfg/memory");
+        fs::create_dir_all(&mem).unwrap();
+        fs::write(mem.join("c.md"), memory("c", "C")).unwrap();
+        let claude = ClaudeConfig::new(&e.home, Some(&dir));
+        let r = harvest(
+            &claude,
+            &e.home.join(".codex"),
+            &e.stores.join("personal"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(r.copied.len(), 1);
+        let got = e.stores.join("personal/memory");
+        assert!(got.join("c.md").is_file() && !got.join("h.md").exists());
+    }
+
+    #[test]
     fn a_second_harvest_changes_nothing() {
         let e = env();
         seed_project(&e, "-p1", &[("a.md", &memory("a", "A"))], None);
         harvest(
-            &e.home,
+            &cc(&e.home),
             &e.home.join(".codex"),
             &e.stores.join("personal"),
             None,
@@ -372,7 +399,7 @@ mod tests {
         .unwrap();
         let first = snapshot(&e.stores);
         let r = harvest(
-            &e.home,
+            &cc(&e.home),
             &e.home.join(".codex"),
             &e.stores.join("personal"),
             None,
@@ -399,7 +426,7 @@ mod tests {
             Some("- [X2](x.md) - two\n"),
         );
         let r = harvest(
-            &e.home,
+            &cc(&e.home),
             &e.home.join(".codex"),
             &e.stores.join("personal"),
             None,
@@ -427,7 +454,7 @@ mod tests {
         fs::write(mem.join("a.md"), "other bytes").unwrap();
         seed_project(&e, "-p1", &[("b.md", &memory("b", "B"))], None);
         harvest(
-            &e.home,
+            &cc(&e.home),
             &e.home.join(".codex"),
             &e.stores.join("personal"),
             None,
@@ -446,7 +473,7 @@ mod tests {
         std::os::unix::fs::symlink(&mem, e.home.join(".claude/projects/-p1/memory")).unwrap();
         fs::write(mem.join("a.md"), memory("a", "A")).unwrap();
         let r = harvest(
-            &e.home,
+            &cc(&e.home),
             &e.home.join(".codex"),
             &e.stores.join("personal"),
             None,
@@ -463,7 +490,7 @@ mod tests {
         fs::write(codex.join("MEMORY.md"), "# Task Group\n- fact\n").unwrap();
         fs::write(codex.join("raw_memories.md"), "queue").unwrap();
         let r = harvest(
-            &e.home,
+            &cc(&e.home),
             &e.home.join(".codex"),
             &e.stores.join("personal"),
             None,
@@ -482,7 +509,7 @@ mod tests {
         let e = env();
         seed_project(&e, "-p1", &[("a.md", &memory("a", "A"))], None);
         harvest(
-            &e.home,
+            &cc(&e.home),
             &e.home.join(".codex"),
             &e.stores.join("personal"),
             None,
@@ -491,7 +518,7 @@ mod tests {
         let mem = e.stores.join("personal/memory");
         fs::remove_file(mem.join(INDEX)).unwrap();
         let r = harvest(
-            &e.home,
+            &cc(&e.home),
             &e.home.join(".codex"),
             &e.stores.join("personal"),
             None,
@@ -525,7 +552,7 @@ mod tests {
         std::os::unix::fs::symlink(&real, mem.join(INDEX)).unwrap();
         seed_project(&e, "-p1", &[("a.md", &memory("a", "A"))], None);
         harvest(
-            &e.home,
+            &cc(&e.home),
             &e.home.join(".codex"),
             &e.stores.join("personal"),
             None,
@@ -554,7 +581,7 @@ mod tests {
         fs::write(mem.join(INDEX), [0xff, 0xfe, b'\n']).unwrap();
         seed_project(&e, "-p1", &[("a.md", &memory("a", "A"))], None);
         assert!(harvest(
-            &e.home,
+            &cc(&e.home),
             &e.home.join(".codex"),
             &e.stores.join("personal"),
             None
@@ -571,7 +598,7 @@ mod tests {
         fs::write(mem.join(INDEX), "- line\n".repeat(INDEX_LINES)).unwrap();
         seed_project(&e, "-p1", &[("a.md", &memory("a", "A"))], None);
         let r = harvest(
-            &e.home,
+            &cc(&e.home),
             &e.home.join(".codex"),
             &e.stores.join("personal"),
             None,
@@ -590,7 +617,7 @@ mod tests {
         fs::create_dir_all(&codex).unwrap();
         fs::write(codex.join("MEMORY.md"), "- fact\n").unwrap();
         let r = harvest(
-            &e.home,
+            &cc(&e.home),
             &e.home.join(".codex"),
             &e.stores.join("personal"),
             Some("/work/api"),
@@ -614,7 +641,7 @@ mod tests {
     fn a_store_dir_that_is_not_there_is_refused_and_not_created() {
         let e = env();
         let gone = e.stores.join("gone");
-        let err = harvest(&e.home, &e.home.join(".codex"), &gone, None).unwrap_err();
+        let err = harvest(&cc(&e.home), &e.home.join(".codex"), &gone, None).unwrap_err();
         assert!(err.to_string().contains("clone the store first"), "{err}");
         assert!(!gone.exists());
     }

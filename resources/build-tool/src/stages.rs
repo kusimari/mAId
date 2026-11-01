@@ -25,6 +25,7 @@ use crate::shared::{
     checkout_skill, on_path, usage, Agent, BringIn as Marketplace, BROWSER_SERVER,
 };
 use anyhow::{anyhow, Context, Result};
+use maid_core::config::ClaudeConfig;
 use maid_core::contract::{Slot, Standard};
 use maid_core::parts::{BringIn, Source, SourceKind, Tenure, Unit};
 use std::fs;
@@ -745,7 +746,7 @@ fn launcher(profile: &Path) -> PathBuf {
 /// personal store, turn Claude's own automatic memory off, and take away
 /// the memory dir an older mAId set. Each is recorded in the part list.
 pub fn cmd_install_memory(
-    home: &Path,
+    claude: &ClaudeConfig,
     store_file: &Path,
     profile: &Path,
     parts: &Path,
@@ -767,12 +768,12 @@ pub fn cmd_install_memory(
     let memory::ServerOutcome {
         out: server,
         failed,
-    } = memory::install_server(home, &plan, dry_run)?;
+    } = memory::install_server(claude, &plan, dry_run)?;
     println!("{}", server.line);
     let registered = server.item.as_ref().is_some_and(|i| i.skipped.is_none());
-    let off = memory::install_off(home, &ownership(parts)?, registered, cli_present, dry_run)?;
+    let off = memory::install_off(claude, &ownership(parts)?, registered, cli_present, dry_run)?;
     println!("{}", off.line);
-    let legacy = legacy_setting(home, parts, dry_run)?;
+    let legacy = legacy_setting(claude, parts, dry_run)?;
     if !dry_run {
         // mAId owns only what it recorded, so an unrecorded change is the user's to undo.
         let unrecorded =
@@ -796,7 +797,7 @@ pub fn cmd_install_memory(
 }
 
 pub fn cmd_uninstall_memory(
-    home: &Path,
+    claude: &ClaudeConfig,
     profile: &Path,
     parts: &Path,
     dry_run: bool,
@@ -809,16 +810,16 @@ pub fn cmd_uninstall_memory(
         out: server,
         failed,
     } = memory::uninstall_server(
-        home,
+        claude,
         &launcher(profile),
         part::placed_by_others(parts, Agent::Claude, What::Mcp, memory::SERVER),
         on_path(Agent::Claude.cli()),
         dry_run,
     )?;
     println!("{}", server.line);
-    let off = memory::uninstall_off(home, &ownership(parts)?, dry_run)?;
+    let off = memory::uninstall_off(claude, &ownership(parts)?, dry_run)?;
     println!("{}", off.line);
-    let legacy = legacy_setting(home, parts, dry_run)?;
+    let legacy = legacy_setting(claude, parts, dry_run)?;
     if !dry_run {
         part::record_named(
             parts,
@@ -839,12 +840,12 @@ pub fn cmd_uninstall_memory(
 /// Remove the memory dir an older mAId set, while it is the value mAId
 /// recorded. Whether the part list holds an entry for it to clear: one
 /// recorded as skipped has no value and nothing to remove, but still goes.
-fn legacy_setting(home: &Path, parts: &Path, dry_run: bool) -> Result<bool> {
+fn legacy_setting(claude: &ClaudeConfig, parts: &Path, dry_run: bool) -> Result<bool> {
     let Some(item) = part::recorded(parts, Agent::Claude, What::Setting, memory::LEGACY_SETTING)?
     else {
         return Ok(false);
     };
-    if let Some(line) = memory::remove_legacy(home, item.value.as_deref(), dry_run)? {
+    if let Some(line) = memory::remove_legacy(claude, item.value.as_deref(), dry_run)? {
         println!("{line}");
     }
     Ok(true)
@@ -854,7 +855,7 @@ fn legacy_setting(home: &Path, parts: &Path, dry_run: bool) -> Result<bool> {
 /// skill state: grant mAId's plugin dir and config dir, and record each
 /// element.
 pub fn cmd_install_reads(
-    home: &Path,
+    claude: &ClaudeConfig,
     profile: &Path,
     config: &Path,
     parts: &Path,
@@ -867,7 +868,7 @@ pub fn cmd_install_reads(
     for grant in [reads::plugin_grant(profile), reads::config_grant(config)] {
         let setting = grant.list.setting();
         let out = reads::install_claude(
-            home,
+            claude,
             &grant,
             &recorded_settings(parts, setting)?,
             &part::claimed_by_others(parts, Agent::Claude, setting),
@@ -890,7 +891,7 @@ pub fn cmd_install_reads(
 /// Uninstall's claude step for skill reads and skill state: remove mAId's
 /// recorded elements only.
 pub fn cmd_uninstall_reads(
-    home: &Path,
+    claude: &ClaudeConfig,
     parts: &Path,
     dry_run: bool,
     agent: Option<Agent>,
@@ -901,7 +902,7 @@ pub fn cmd_uninstall_reads(
     for list in reads::List::ALL {
         let setting = list.setting();
         let own = recorded_settings(parts, setting)?;
-        reads::uninstall_claude(home, list, &own, dry_run)?
+        reads::uninstall_claude(claude, list, &own, dry_run)?
             .iter()
             .for_each(|l| println!("{l}"));
         if !dry_run {
@@ -939,14 +940,14 @@ fn ownership(parts: &Path) -> Result<memory::Ownership> {
 }
 
 pub fn cmd_memory_status(
-    home: &Path,
+    claude: &ClaudeConfig,
     store_file: &Path,
     profile: &Path,
     parts: &Path,
 ) -> Result<u8> {
     let store = memory::store(store_file)?;
     memory::status(
-        home,
+        claude,
         store.as_deref(),
         &launcher(profile),
         &ownership(parts)?,
@@ -958,7 +959,12 @@ pub fn cmd_memory_status(
 
 /// Copy each harness's native memory into `<to>/memory/`. Refuses, before
 /// writing anything, a `to` that is not a directory.
-pub fn cmd_harvest(home: &Path, codex_home: &Path, to: &Path, project: Option<&str>) -> Result<u8> {
+pub fn cmd_harvest(
+    claude: &ClaudeConfig,
+    codex_home: &Path,
+    to: &Path,
+    project: Option<&str>,
+) -> Result<u8> {
     if !to.is_dir() {
         return Err(usage(format!(
             "{} is not a directory; clone the store first",
@@ -966,7 +972,7 @@ pub fn cmd_harvest(home: &Path, codex_home: &Path, to: &Path, project: Option<&s
         )));
     }
     println!("harvest  into {}", to.join("memory").display());
-    harvest::harvest(home, codex_home, to, project)?
+    harvest::harvest(claude, codex_home, to, project)?
         .lines()
         .iter()
         .for_each(|l| println!("{l}"));

@@ -7,6 +7,7 @@ use build_tool::stages::{
     cmd_install_bring_ins, cmd_install_memory, cmd_uninstall_memory, Checkout,
 };
 use build_tool::whole;
+use maid_core::config::ClaudeConfig;
 use maid_core::parts::{Source, SourceKind};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -63,9 +64,13 @@ impl Env {
     fn at(&self, p: &str) -> PathBuf {
         self.root.join(p)
     }
+    /// Claude's config under HOME, the variable unset.
+    fn cc(&self) -> ClaudeConfig {
+        ClaudeConfig::new(&self.at("home"), None)
+    }
     fn install(&self) -> u8 {
         cmd_install_memory(
-            &self.at("home"),
+            &self.cc(),
             &self.at("store-file"),
             &self.at("profile"),
             &self.at("state"),
@@ -76,7 +81,7 @@ impl Env {
     }
     fn uninstall(&self) {
         cmd_uninstall_memory(
-            &self.at("home"),
+            &self.cc(),
             &self.at("profile"),
             &self.at("state"),
             false,
@@ -100,6 +105,7 @@ impl Env {
         whole::check(
             &self.at("state"),
             &self.at("home"),
+            &self.cc(),
             Some(self.at("bin").into_os_string()),
             Some(Agent::Claude),
         )
@@ -371,7 +377,7 @@ fn an_unreadable_claude_json_fails_install() {
     let e = Env::new(true);
     fs::write(e.at("home/.claude.json"), "not json").unwrap();
     let err = cmd_install_memory(
-        &e.at("home"),
+        &e.cc(),
         &e.at("store-file"),
         &e.at("profile"),
         &e.at("state"),
@@ -394,8 +400,7 @@ fn a_failed_remove_keeps_the_entry_recorded_and_fails_the_run() {
     let e = Env::new(true);
     e.install();
     fs::write(e.at("fail-remove"), "").unwrap();
-    let rc =
-        cmd_uninstall_memory(&e.at("home"), &e.at("profile"), &e.at("state"), false, None).unwrap();
+    let rc = cmd_uninstall_memory(&e.cc(), &e.at("profile"), &e.at("state"), false, None).unwrap();
     assert_eq!(rc, 1);
     assert!(e.list().contains("\"name\": \"personal-memory\""));
     // A store move that cannot remove the old entry keeps it, and says so.

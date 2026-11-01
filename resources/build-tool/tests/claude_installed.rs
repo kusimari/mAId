@@ -12,6 +12,7 @@
 
 use build_tool::deploy::{Deploy, Plugins};
 use build_tool::shared::Agent;
+use maid_core::config::ClaudeConfig;
 use serde_json::{json, Value};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -267,6 +268,7 @@ fn claude_code_runs_the_installed_plugins_hooks_and_follows_a_rollback() {
     switch(&profile, &a);
     let p = Plugins {
         home: home.clone(),
+        claude: ClaudeConfig::new(&home, None),
         profile: profile.clone(),
     };
     let run = |args: &[&str]| {

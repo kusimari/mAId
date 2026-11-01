@@ -27,10 +27,12 @@ Part of initiative: [[harness-core]]
 - **Ready for:** squash-merge into `initiative/harness-core` by the
   ringmaster
 - **Carry forward:** paid R1-R4 run at the initiative's end, beside the
-  Macro test, with the person's model credentials:
-  `MAID_PAID=1 MAID_PAID_ENV="<auth variable names>" CLAUDE_BIN=<claude>
-  nix develop -c cargo test -p maid-core --test claude_paid -- --ignored
-  --test-threads 1` (4 model calls, stops at the first failure). The
+  Macro test, from the shell whose model access Claude Code uses (stream
+  8 moved its isolation to a scratch `CLAUDE_CONFIG_DIR` and the ghost's
+  own locations):
+  `MAID_PAID=1 CLAUDE_BIN=<claude> nix develop -c cargo test -p maid-core
+  --test claude_paid -- --ignored --test-threads 1` (4 model calls, stops
+  at the first failure). The
   live test (`--ignored`, needs `claude`) is the tripwire for Claude Code
   changes and for `extensions` being ignored at load.
 - **Deliberately left:** the rules file (superseded for Claude Code); glob

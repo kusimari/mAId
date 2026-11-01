@@ -53,6 +53,7 @@ impl Env {
             .env("MY_HARNESS_PARTS", self.at("parts"))
             .env("MAID_MEMORY_STORE", self.at("memory-store"))
             .env_remove("CODEX_HOME")
+            .env_remove("CLAUDE_CONFIG_DIR")
             .output()
             .unwrap()
     }

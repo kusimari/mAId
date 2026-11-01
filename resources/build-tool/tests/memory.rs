@@ -29,6 +29,7 @@ impl Env {
             .env("MAID_PROFILE", self.at("profile"))
             .env("MY_HARNESS_PARTS", self.at("state"))
             .env_remove("CODEX_HOME")
+            .env_remove("CLAUDE_CONFIG_DIR")
             .output()
             .unwrap()
     }

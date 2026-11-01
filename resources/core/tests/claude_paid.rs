@@ -2,20 +2,28 @@
 //! show, that the model acts on what the adapter places. Four runs in all,
 //! two per test, each stopping at its first failure.
 //!
-//! Never run by `just test`. Run by hand, and only as granted:
+//! The model tests are ignored, so `just test` runs only the free guard
+//! test. Run them by hand, and only as granted, from the shell whose model
+//! access Claude Code should use:
 //!
 //! ```text
-//! MAID_PAID=1 MAID_PAID_ENV="<auth variable names>" \
+//! MAID_PAID=1 CLAUDE_BIN=<claude> \
 //!   cargo test -p maid-core --test claude_paid -- --ignored --test-threads 1
 //! ```
 //!
-//! `MAID_PAID_ENV` names the variables Claude Code needs for its model
-//! (an API key, or a provider's settings), passed through by name only.
-//! Claude Code runs in a temp HOME, so nothing real is read or written.
+//! Claude Code keeps the shell's HOME and environment, so its model access
+//! is the shell's own and no credential is handed over. Four locations go to
+//! a temp world: `CLAUDE_CONFIG_DIR`, `MY_HARNESS_STATE`, `MY_HARNESS_PARTS`,
+//! and `XDG_CACHE_HOME`, where Claude Code keeps its MCP logs whatever its
+//! config dir. A run refuses to start if any of them, or the world, would
+//! land under HOME. On a stub of the model API, nothing else was written
+//! under HOME; other inherited locations are not redirected. A login kept
+//! only in the real Claude config dir is not seen there; model access from
+//! the environment is.
 
 use serde_json::{json, Value};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 
@@ -23,14 +31,17 @@ const CORE: &str = env!("CARGO_BIN_EXE_maid-core");
 const RUNS: usize = 2;
 const MARKER: &str = "DEPLOY-MARKER-7";
 
-/// A temp HOME with mAId's part (a memory on a store, a turn skill whose
+/// A temp world with Claude's config dir, the ghost's state and parts holding
+/// mAId's part (a memory on a store, a turn skill whose
 /// first rule asks for a marker) and a plugin built from the repo's Claude
 /// adapter files with the cargo-built core.
 fn world() -> TempDir {
     let dir = TempDir::new().unwrap();
     let d = dir.path();
-    let parts = d.join("home/.local/state/my-harness/parts");
+    let parts = d.join("state/parts");
     fs::create_dir_all(&parts).unwrap();
+    fs::create_dir_all(d.join("claude-config")).unwrap();
+    fs::create_dir_all(d.join("cache")).unwrap();
     fs::create_dir_all(d.join("work")).unwrap();
     let unit = d.join("units/deployer/SKILL.md");
     fs::create_dir_all(unit.parent().unwrap()).unwrap();
@@ -74,34 +85,57 @@ fn world() -> TempDir {
     dir
 }
 
+/// Every place a run writes, each refused if it is or resolves under
+/// `home`: a run keeps the real HOME, so nothing may land there.
+fn outside(home: &Path, places: &[PathBuf]) -> Result<(), String> {
+    let home = home
+        .canonicalize()
+        .map_err(|e| format!("HOME {}: {e}", home.display()))?;
+    for p in places {
+        let at = p
+            .canonicalize()
+            .map_err(|e| format!("{}: {e}", p.display()))?;
+        if at.starts_with(&home) {
+            return Err(format!("{} is under HOME {}", at.display(), home.display()));
+        }
+    }
+    Ok(())
+}
+
 fn ask(world: &Path, prompt: &str) -> String {
     assert_eq!(
         std::env::var("MAID_PAID").as_deref(),
         Ok("1"),
         "paid: set MAID_PAID=1"
     );
+    let (config, state, cache) = (
+        world.join("claude-config"),
+        world.join("state"),
+        world.join("cache"),
+    );
+    let home = std::env::var_os("HOME").expect("paid: HOME is the shell's own");
+    if let Err(why) = outside(
+        Path::new(&home),
+        &[world.into(), config.clone(), state.clone(), cache.clone()],
+    ) {
+        panic!("paid: refused before any model call: {why}");
+    }
     let claude = std::env::var("CLAUDE_BIN").unwrap_or_else(|_| "claude".into());
     let mut cmd = Command::new(claude);
     cmd.args(["-p", prompt, "--output-format", "text"])
         .arg("--plugin-dir")
         .arg(world.join("plugin"))
         .current_dir(world.join("work"))
-        .env_clear()
-        .env("HOME", world.join("home"))
-        .env("PATH", std::env::var("PATH").unwrap_or_default());
-    for name in std::env::var("MAID_PAID_ENV")
-        .unwrap_or_default()
-        .split_whitespace()
-    {
-        if let Ok(v) = std::env::var(name) {
-            cmd.env(name, v);
-        }
-    }
+        .env("CLAUDE_CONFIG_DIR", &config)
+        .env("MY_HARNESS_STATE", &state)
+        .env("MY_HARNESS_PARTS", state.join("parts"))
+        .env("XDG_CACHE_HOME", &cache);
     let out = cmd.output().unwrap();
     assert!(
         out.status.success(),
-        "claude: {}",
-        String::from_utf8_lossy(&out.stderr)
+        "claude: {}{}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
     );
     String::from_utf8(out.stdout).unwrap()
 }
@@ -134,4 +168,18 @@ fn a_fitting_bring_ins_first_rule_is_followed() {
         );
         assert!(reply.trim_start().starts_with(MARKER), "run {run}: {reply}");
     }
+}
+
+#[test]
+fn a_place_under_home_is_refused_and_one_outside_passes() {
+    let (home, away) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+    let inside = home.path().join("claude-config");
+    fs::create_dir(&inside).unwrap();
+    // A link from outside into HOME resolves under it.
+    let link = away.path().join("state");
+    std::os::unix::fs::symlink(&inside, &link).unwrap();
+    assert!(outside(home.path(), &[away.path().into()]).is_ok());
+    assert!(outside(home.path(), &[away.path().into(), inside]).is_err());
+    assert!(outside(home.path(), &[link]).is_err());
+    assert!(outside(home.path(), &[home.path().into()]).is_err());
 }

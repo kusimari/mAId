@@ -184,6 +184,19 @@ the generations above the live one (the ones a rollback returned from),
 after its build succeeds; otherwise a rollback after rollback-then-install would land on
 them rather than on the install before.
 
+**Claude's config dir.** Every `~/.claude/…` and `~/.claude.json` path in
+this file is Claude Code's default. With `CLAUDE_CONFIG_DIR` set, Claude
+Code (checked on 2.1.314) keeps all of it in that dir, `.claude.json`
+included, and reads nothing from `~/.claude`; empty is unset. One resolver,
+`maid_core::config::ClaudeConfig`, places those paths for the core and
+build-tool alike. build-tool resolves it once, in `main`, and passes it as a
+value: nothing deeper reads the variable, so a test with a temp HOME can
+never reach a config dir the shell sets. Every `claude` build-tool starts
+gets the variable exactly as the value has it, removed when unset
+(`shared::claude_env`). Claude Code writes its MCP logs under
+`$XDG_CACHE_HOME`, not its config dir. The one path left at HOME is the
+reap of an old `~/.claude/skills` link, where older mAId made it.
+
 **Skill reads (claude).** Claude loads a plugin of a `directory`
 marketplace live from the marketplace path, so it reports each mAId skill's
 base dir as `<marketplace>/plugins/maid/skills/<skill>`, and a Read of a
@@ -1081,6 +1094,7 @@ mAId/
 │   │   ├── tests/mcp.rs    the MCP server over stdio
 │   │   ├── tests/shipped_fit.rs  turn fit against this repo's own declarations
 │   │   ├── tests/claude_live.rs  ignored: Claude Code against a stub model API on loopback
+│   │   ├── tests/claude_paid.rs  ignored, paid: Claude Code with a real model, on the shell's HOME and model access
 │   │   ├── tests/adaptation.rs  close, reflect and decide through the binary, the real memory server, a store's travel
 │   │   └── tests/fixtures/claude/  a real-shaped Claude Code session and sub-agent
 │   ├── build-tool/         Rust crate — the pipeline (check/install/uninstall/status/smoke)
@@ -1100,6 +1114,7 @@ mAId/
 │   │   ├── tests/integration.rs  cross-stage tests against the real repo
 │   │   ├── tests/plugins.rs  ignored: Plugins and BringIns against the real claude/codex CLIs in a temp HOME
 │   │   ├── tests/claude_installed.rs  ignored: Claude Code on the plugin as install places it, against a stub model API
+│   │   ├── tests/claude_config_dir.rs  install, status and uninstall with CLAUDE_CONFIG_DIR set, a stub claude, nothing under HOME
 │   │   ├── tests/no_cli.rs   install with no agent CLI on PATH keeps the old links
 │   │   ├── tests/stops_on_list.rs  an unreadable part list stops install and uninstall, through the binary
 │   │   ├── tests/memory.rs   the memory verbs through the binary, temp HOME
@@ -1194,6 +1209,14 @@ moving an older install off the links dir, then a session against the same
 kind of stub (the MCP server connects, the genome placed once), a new
 generation and a rollback, each followed with nothing registered again. It
 builds `maid-core` (dev profile) and is free.
+
+`cargo test -p maid-core --test claude_paid -- --ignored --test-threads 1`
+with `MAID_PAID=1` (and `CLAUDE_BIN`) runs Claude Code with a real model:
+four model calls, only as granted. It keeps the shell's HOME and
+environment, so the model access is the shell's own and no credential is
+handed to it; Claude's config dir, the ghost's state and parts, and
+`XDG_CACHE_HOME` go to a temp world, and it refuses to start if any of them
+would land under HOME. Its free guard test runs in `just test`.
 
 **After any Claude Code upgrade**, run both before trusting the ghost on
 the new version, since where Claude takes its marketplace from (the path as

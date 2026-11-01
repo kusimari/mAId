@@ -21,8 +21,8 @@ use build_tool::harness::{Selection, Stage};
 use build_tool::memory;
 use build_tool::part::What;
 use build_tool::shared::{
-    codex_home, config_dir, home_dir, memory_store_file, parts_dir, profile_dir, repo_root, usage,
-    validate_agent, validate_agents, Agent, UsageError, BRING_INS, CONTENT_DIR,
+    claude_config, codex_home, config_dir, home_dir, memory_store_file, parts_dir, profile_dir,
+    repo_root, usage, validate_agent, validate_agents, Agent, UsageError, BRING_INS, CONTENT_DIR,
     PROFILE_CONTENT_DIR,
 };
 use build_tool::stages;
@@ -196,11 +196,14 @@ fn run(cli: Cli) -> Result<u8> {
             },
             plugins: Plugins {
                 home: home_dir()?,
+                claude: claude_config()?,
                 profile: profile_dir()?,
             },
             bring_ins: match acting {
-                true => BringIns::new(home_dir()?, BRING_INS, &parts_dir()?)?,
-                false => BringIns::reporting(home_dir()?, BRING_INS, &parts_dir()?),
+                true => BringIns::new(home_dir()?, claude_config()?, BRING_INS, &parts_dir()?)?,
+                false => {
+                    BringIns::reporting(home_dir()?, claude_config()?, BRING_INS, &parts_dir()?)
+                }
             },
         })
     };
@@ -220,7 +223,7 @@ fn run(cli: Cli) -> Result<u8> {
                 agent,
             )?;
             let memory = stages::cmd_install_memory(
-                &home_dir()?,
+                &claude_config()?,
                 &memory_store_file()?,
                 &profile_dir()?,
                 &parts_dir()?,
@@ -228,7 +231,7 @@ fn run(cli: Cli) -> Result<u8> {
                 agent,
             )?;
             let reads = stages::cmd_install_reads(
-                &home_dir()?,
+                &claude_config()?,
                 &profile_dir()?,
                 &config_dir()?,
                 &parts_dir()?,
@@ -257,13 +260,14 @@ fn run(cli: Cli) -> Result<u8> {
                 agent,
             )?;
             let memory = stages::cmd_uninstall_memory(
-                &home_dir()?,
+                &claude_config()?,
                 &profile_dir()?,
                 &parts_dir()?,
                 a.dry_run,
                 agent,
             )?;
-            let reads = stages::cmd_uninstall_reads(&home_dir()?, &parts_dir()?, a.dry_run, agent)?;
+            let reads =
+                stages::cmd_uninstall_reads(&claude_config()?, &parts_dir()?, a.dry_run, agent)?;
             let bring_ins = stages::cmd_uninstall_bring_ins(&parts_dir()?, BRING_INS, a.dry_run)?;
             Ok(rc.max(memory).max(reads).max(bring_ins))
         }
@@ -271,6 +275,7 @@ fn run(cli: Cli) -> Result<u8> {
         Cmd::Whole { agent } => build_tool::whole::cmd_whole(
             &parts_dir()?,
             &home_dir()?,
+            &claude_config()?,
             validate_agent(agent.as_deref())?,
         ),
         Cmd::Smoke(args) => verify(Stage::Smoke, args, &deployment()?, &root, false),
@@ -313,13 +318,13 @@ fn run(cli: Cli) -> Result<u8> {
                 Ok(0)
             }
             MemoryCmd::Status => stages::cmd_memory_status(
-                &home_dir()?,
+                &claude_config()?,
                 &memory_store_file()?,
                 &profile_dir()?,
                 &parts_dir()?,
             ),
             MemoryCmd::Harvest { to, project } => {
-                stages::cmd_harvest(&home_dir()?, &codex_home()?, &to, project.as_deref())
+                stages::cmd_harvest(&claude_config()?, &codex_home()?, &to, project.as_deref())
             }
         },
     }

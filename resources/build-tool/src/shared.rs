@@ -5,8 +5,10 @@
 //! order (`stages` → `harness` → `shared`).
 
 use anyhow::{anyhow, Context, Result};
+use maid_core::config::ClaudeConfig;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// The PATH rule every reader shares; see `maid_core::environment`.
 pub use maid_core::environment::find_on;
@@ -404,6 +406,23 @@ pub fn codex_home() -> Result<PathBuf> {
     }
 }
 
+/// Claude Code's user config, as the environment places it.
+pub fn claude_config() -> Result<ClaudeConfig> {
+    ClaudeConfig::from_env()?.ok_or_else(|| anyhow!("HOME is not set"))
+}
+
+/// Start `claude` for `config`: its HOME, and `CLAUDE_CONFIG_DIR` exactly
+/// as `config` has it, so the CLI and the files mAId reads agree.
+pub fn claude_env<'a>(cmd: &'a mut Command, config: &ClaudeConfig) -> &'a mut Command {
+    if let Some(h) = config.home() {
+        cmd.env("HOME", h);
+    }
+    match config.var() {
+        Some(v) => cmd.env("CLAUDE_CONFIG_DIR", v),
+        None => cmd.env_remove("CLAUDE_CONFIG_DIR"),
+    }
+}
+
 /// Whether a program is on PATH. Scans PATH directly: `command -v` is a
 /// shell builtin, so spawning it always fails.
 pub fn on_path(program: &str) -> bool {
@@ -425,6 +444,24 @@ pub fn home_dir() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_started_claude_gets_the_config_dir_exactly_as_resolved() {
+        let var = |cmd: &Command| {
+            cmd.get_envs()
+                .find(|(k, _)| *k == "CLAUDE_CONFIG_DIR")
+                .map(|(_, v)| v.map(PathBuf::from))
+        };
+        let mut cmd = Command::new("claude");
+        cmd.env("CLAUDE_CONFIG_DIR", "/elsewhere");
+        claude_env(&mut cmd, &ClaudeConfig::new(Path::new("/h"), None));
+        assert_eq!(var(&cmd), Some(None), "removed, not inherited");
+        claude_env(
+            &mut cmd,
+            &ClaudeConfig::new(Path::new("/h"), Some(Path::new("/c"))),
+        );
+        assert_eq!(var(&cmd), Some(Some(PathBuf::from("/c"))));
+    }
 
     // ── agent selector (--agent) ─────────────────────────────────
 

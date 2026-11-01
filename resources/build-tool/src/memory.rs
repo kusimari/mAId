@@ -3,10 +3,10 @@
 //! project.md "My harness", Memory.
 
 use crate::part::{Item, What, ANOTHER_PART};
-use crate::settings::{
-    claude_settings, read_settings, write_atomic, write_settings, Outcome, NO_CLI,
-};
+use crate::settings::{read_settings, write_atomic, write_settings, Outcome, NO_CLI};
+use crate::shared::claude_env;
 use anyhow::{anyhow, bail, Context, Result};
+use maid_core::config::ClaudeConfig;
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 use std::fs;
@@ -79,14 +79,10 @@ pub fn set_store(file: &Path, path: &Path) -> Result<String> {
 // claude is changed only through its own `mcp add/remove`.
 // ─────────────────────────────────────────────────────────────────
 
-fn claude_json(home: &Path) -> PathBuf {
-    home.join(".claude.json")
-}
-
 /// The registered entry, if any. A config that cannot be read stops the
 /// step: whether mAId's entry is there is unknown.
-fn registered(home: &Path) -> Result<Option<Value>> {
-    let at = claude_json(home);
+fn registered(claude: &ClaudeConfig) -> Result<Option<Value>> {
+    let at = claude.global();
     let map = read_settings(&at)?;
     match map.get("mcpServers") {
         None | Some(Value::Null) => Ok(None),
@@ -111,10 +107,9 @@ fn same_args(entry: &Value, want: &[String]) -> bool {
     })
 }
 
-/// Run `claude mcp <args>` on `home`; `Err` carries claude's first line.
-fn claude_mcp(home: &Path, args: &[&str]) -> std::result::Result<(), String> {
-    let out = Command::new("claude")
-        .env("HOME", home)
+/// Run `claude mcp <args>` on `claude`; `Err` carries claude's first line.
+fn claude_mcp(claude: &ClaudeConfig, args: &[&str]) -> std::result::Result<(), String> {
+    let out = claude_env(&mut Command::new("claude"), claude)
         .arg("mcp")
         .args(args)
         .output()
@@ -129,15 +124,15 @@ fn claude_mcp(home: &Path, args: &[&str]) -> std::result::Result<(), String> {
     }
 }
 
-fn remove_server(home: &Path) -> std::result::Result<(), String> {
-    claude_mcp(home, &["remove", "-s", "user", SERVER])
+fn remove_server(claude: &ClaudeConfig) -> std::result::Result<(), String> {
+    claude_mcp(claude, &["remove", "-s", "user", SERVER])
 }
 
 /// Remove the entry, or on a dry run report that it would be.
-fn remove_unless(home: &Path, dry_run: bool) -> std::result::Result<(), String> {
+fn remove_unless(claude: &ClaudeConfig, dry_run: bool) -> std::result::Result<(), String> {
     match dry_run {
         true => Ok(()),
-        false => remove_server(home),
+        false => remove_server(claude),
     }
 }
 
@@ -173,14 +168,18 @@ fn failed(line: String, item: Option<Item>) -> ServerOutcome {
     }
 }
 
-pub fn install_server(home: &Path, plan: &ServerPlan, dry_run: bool) -> Result<ServerOutcome> {
+pub fn install_server(
+    claude: &ClaudeConfig,
+    plan: &ServerPlan,
+    dry_run: bool,
+) -> Result<ServerOutcome> {
     let tag = if dry_run { "(dry-run) " } else { "" };
     let placed = || Some(Item::placed(What::Mcp, SERVER));
     let skipped = |why: &str| Some(Item::skipped(What::Mcp, SERVER, why));
     let skip = |why: &str| format!("{tag}skip          claude mcp {SERVER} ({why})");
     if !plan.cli_present {
         // Nothing can change; an entry mAId placed stays recorded as placed.
-        let kept = registered(home)
+        let kept = registered(claude)
             .ok()
             .flatten()
             .is_some_and(|e| is_ours(&e, plan.launcher));
@@ -189,7 +188,7 @@ pub fn install_server(home: &Path, plan: &ServerPlan, dry_run: bool) -> Result<S
             if kept { placed() } else { skipped(NO_CLI) },
         ));
     }
-    let entry = registered(home)?;
+    let entry = registered(claude)?;
     let ours = entry.as_ref().is_some_and(|e| is_ours(e, plan.launcher));
     if plan.claimed {
         return Ok(ok(skip(ANOTHER_PART), skipped(ANOTHER_PART)));
@@ -210,7 +209,7 @@ pub fn install_server(home: &Path, plan: &ServerPlan, dry_run: bool) -> Result<S
             if !ours {
                 return Ok(ok(skip(&said), skipped(why)));
             }
-            if let Err(first) = remove_unless(home, dry_run) {
+            if let Err(first) = remove_unless(claude, dry_run) {
                 return Ok(failed(
                     skip(&format!("{said}; {REMOVE_FAILED}: {first}")),
                     placed(),
@@ -232,14 +231,14 @@ pub fn install_server(home: &Path, plan: &ServerPlan, dry_run: bool) -> Result<S
     }
     // `mcp add` refuses a name that is there: an older store path goes first.
     if ours {
-        if let Err(first) = remove_server(home) {
+        if let Err(first) = remove_server(claude) {
             return Ok(failed(skip(&format!("{REMOVE_FAILED}: {first}")), placed()));
         }
     }
     let launcher = plan.launcher.display().to_string();
     let mut add = vec!["add", "-s", "user", SERVER, "--", launcher.as_str()];
     add.extend(want.iter().map(String::as_str));
-    Ok(match claude_mcp(home, &add) {
+    Ok(match claude_mcp(claude, &add) {
         Ok(()) => ok(done, placed()),
         Err(first) => failed(skip(&format!("{ADD_FAILED}: {first}")), skipped(ADD_FAILED)),
     })
@@ -249,14 +248,14 @@ pub fn install_server(home: &Path, plan: &ServerPlan, dry_run: bool) -> Result<S
 /// list records it. Without claude, or when claude fails to remove it, it
 /// stays recorded.
 pub fn uninstall_server(
-    home: &Path,
+    claude: &ClaudeConfig,
     launcher: &Path,
     claimed: bool,
     cli_present: bool,
     dry_run: bool,
 ) -> Result<ServerOutcome> {
     let tag = if dry_run { "(dry-run) " } else { "" };
-    let entry = registered(home)?;
+    let entry = registered(claude)?;
     let ours = entry.as_ref().is_some_and(|e| is_ours(e, launcher)) && !claimed;
     let kept = |why: &str| format!("{tag}kept          claude mcp {SERVER} ({why})");
     Ok(match (entry.is_some(), ours, cli_present) {
@@ -267,7 +266,7 @@ pub fn uninstall_server(
         (true, false, _) if claimed => ok(kept(ANOTHER_PART), None),
         (true, false, _) => ok(kept(OTHER_VALUE), None),
         (true, true, false) => ok(kept(NO_CLI), Some(Item::placed(What::Mcp, SERVER))),
-        (true, true, true) => match remove_unless(home, dry_run) {
+        (true, true, true) => match remove_unless(claude, dry_run) {
             Ok(()) => ok(format!("{tag}removed       claude mcp {SERVER}"), None),
             Err(first) => failed(
                 kept(&format!("{REMOVE_FAILED}: {first}")),
@@ -331,14 +330,14 @@ fn set_var(map: &mut Map<String, Value>, value: Option<Value>) {
 /// A part with a server that follows the same rules takes the value on at
 /// its next install.
 pub fn install_off(
-    home: &Path,
+    claude: &ClaudeConfig,
     own: &Ownership,
     server: bool,
     cli_present: bool,
     dry_run: bool,
 ) -> Result<Outcome> {
     let tag = if dry_run { "(dry-run) " } else { "" };
-    let at = claude_settings(home);
+    let at = claude.settings();
     let off = Value::String(OFF.into());
     let mine = |v: &Value| own.recorded.is_some() && v.as_str() == own.recorded.as_deref();
     let placed = |adopted| Item {
@@ -406,9 +405,9 @@ pub fn install_off(
 }
 
 /// Uninstall: remove the value only while it is mAId's.
-pub fn uninstall_off(home: &Path, own: &Ownership, dry_run: bool) -> Result<Outcome> {
+pub fn uninstall_off(claude: &ClaudeConfig, own: &Ownership, dry_run: bool) -> Result<Outcome> {
     let tag = if dry_run { "(dry-run) " } else { "" };
-    let at = claude_settings(home);
+    let at = claude.settings();
     let mut map = read_settings(&at)?;
     let line = match current(&map) {
         Some(v) if own.recorded.is_some() && v.as_str() == own.recorded.as_deref() => {
@@ -426,12 +425,16 @@ pub fn uninstall_off(home: &Path, own: &Ownership, dry_run: bool) -> Result<Outc
 
 /// Remove the memory dir an older mAId set, when it is still exactly the
 /// value mAId recorded; anything else is left. `None` when nothing to say.
-pub fn remove_legacy(home: &Path, recorded: Option<&str>, dry_run: bool) -> Result<Option<String>> {
+pub fn remove_legacy(
+    claude: &ClaudeConfig,
+    recorded: Option<&str>,
+    dry_run: bool,
+) -> Result<Option<String>> {
     let Some(recorded) = recorded else {
         return Ok(None);
     };
     let tag = if dry_run { "(dry-run) " } else { "" };
-    let at = claude_settings(home);
+    let at = claude.settings();
     let mut map = read_settings(&at)?;
     Ok(Some(
         match map.get(LEGACY_SETTING).and_then(Value::as_str) {
@@ -453,7 +456,7 @@ pub fn remove_legacy(home: &Path, recorded: Option<&str>, dry_run: bool) -> Resu
 // ─────────────────────────────────────────────────────────────────
 
 pub fn status(
-    home: &Path,
+    claude: &ClaudeConfig,
     store: Option<&Path>,
     launcher: &Path,
     own: &Ownership,
@@ -466,7 +469,7 @@ pub fn status(
             if s.is_dir() { "" } else { " (MISSING)" }
         ),
     }];
-    lines.push(match registered(home)? {
+    lines.push(match registered(claude)? {
         None => format!("memory   claude mcp {SERVER} not registered"),
         Some(e) => {
             let whose = if is_ours(&e, launcher) {
@@ -484,7 +487,7 @@ pub fn status(
             )
         }
     });
-    let map = read_settings(&claude_settings(home))?;
+    let map = read_settings(&claude.settings())?;
     lines.push(match current(&map) {
         None => format!("memory   claude {SETTING} not set (Claude's automatic memory is on)"),
         Some(v) => {
@@ -504,6 +507,11 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// Claude's config under `home`, the variable unset.
+    fn cc(home: &Path) -> ClaudeConfig {
+        ClaudeConfig::new(home, None)
+    }
+
     fn home() -> (TempDir, PathBuf) {
         let tmp = TempDir::new().unwrap();
         let home = fs::canonicalize(tmp.path()).unwrap();
@@ -512,11 +520,11 @@ mod tests {
     }
 
     fn seed(home: &Path, text: &str) {
-        fs::write(claude_settings(home), text).unwrap();
+        fs::write(cc(home).settings(), text).unwrap();
     }
 
     fn read(home: &Path) -> Value {
-        serde_json::from_str(&fs::read_to_string(claude_settings(home)).unwrap()).unwrap()
+        serde_json::from_str(&fs::read_to_string(cc(home).settings()).unwrap()).unwrap()
     }
 
     fn own(recorded: Option<&str>, claimed: &[&str]) -> Ownership {
@@ -558,7 +566,7 @@ mod tests {
     fn off_is_set_keeping_other_keys_and_env_vars() {
         let (_t, home) = home();
         seed(&home, r#"{"theme":"dark","env":{"FOO":"x"}}"#);
-        let out = install_off(&home, &own(None, &[]), true, true, false).unwrap();
+        let out = install_off(&cc(&home), &own(None, &[]), true, true, false).unwrap();
         let s = read(&home);
         assert_eq!(s["env"], serde_json::json!({"FOO": "x", VAR: "1"}));
         assert_eq!(s["theme"], "dark");
@@ -570,9 +578,9 @@ mod tests {
     fn an_identical_value_is_adopted_unless_another_part_records_it() {
         let (_t, home) = home();
         seed(&home, r#"{"env":{"CLAUDE_CODE_DISABLE_AUTO_MEMORY":"1"}}"#);
-        let out = install_off(&home, &own(None, &[]), true, true, false).unwrap();
+        let out = install_off(&cc(&home), &own(None, &[]), true, true, false).unwrap();
         assert!(out.item.unwrap().adopted);
-        let out = install_off(&home, &own(None, &["1"]), true, true, false).unwrap();
+        let out = install_off(&cc(&home), &own(None, &["1"]), true, true, false).unwrap();
         assert_eq!(why(&out), Some(ANOTHER_PART));
     }
 
@@ -580,7 +588,7 @@ mod tests {
     fn a_value_another_part_records_is_never_written() {
         let (_t, home) = home();
         seed(&home, "{}");
-        let out = install_off(&home, &own(None, &["1"]), true, true, false).unwrap();
+        let out = install_off(&cc(&home), &own(None, &["1"]), true, true, false).unwrap();
         assert_eq!(why(&out), Some(ANOTHER_PART));
         assert_eq!(read(&home), serde_json::json!({}));
     }
@@ -589,11 +597,11 @@ mod tests {
     fn another_value_or_a_non_object_env_is_left_alone() {
         let (_t, home) = home();
         seed(&home, r#"{"env":{"CLAUDE_CODE_DISABLE_AUTO_MEMORY":"0"}}"#);
-        let out = install_off(&home, &own(None, &[]), true, true, false).unwrap();
+        let out = install_off(&cc(&home), &own(None, &[]), true, true, false).unwrap();
         assert_eq!(why(&out), Some(OTHER_VALUE));
         assert_eq!(read(&home)["env"][VAR], "0");
         seed(&home, r#"{"env":"x"}"#);
-        let out = install_off(&home, &own(None, &[]), true, true, false).unwrap();
+        let out = install_off(&cc(&home), &own(None, &[]), true, true, false).unwrap();
         assert_eq!(why(&out), Some(ENV_NOT_OBJECT));
         assert_eq!(read(&home)["env"], "x");
     }
@@ -602,24 +610,24 @@ mod tests {
     fn without_claude_or_on_a_dry_run_nothing_is_written() {
         let (_t, home) = home();
         seed(&home, "{}");
-        let out = install_off(&home, &own(None, &[]), true, false, false).unwrap();
+        let out = install_off(&cc(&home), &own(None, &[]), true, false, false).unwrap();
         assert_eq!(why(&out), Some(NO_CLI));
-        install_off(&home, &own(None, &[]), true, true, true).unwrap();
-        assert_eq!(fs::read_to_string(claude_settings(&home)).unwrap(), "{}");
+        install_off(&cc(&home), &own(None, &[]), true, true, true).unwrap();
+        assert_eq!(fs::read_to_string(cc(&home).settings()).unwrap(), "{}");
     }
 
     #[test]
     fn without_maids_server_the_setting_is_left_or_given_back() {
         let (_t, home) = home();
         seed(&home, r#"{"env":{"CLAUDE_CODE_DISABLE_AUTO_MEMORY":"1"}}"#);
-        let out = install_off(&home, &own(None, &[]), false, true, false).unwrap();
+        let out = install_off(&cc(&home), &own(None, &[]), false, true, false).unwrap();
         assert_eq!(why(&out), Some(NO_SERVER));
         assert_eq!(read(&home)["env"][VAR], "1");
-        let out = install_off(&home, &own(Some("1"), &[]), false, true, false).unwrap();
+        let out = install_off(&cc(&home), &own(Some("1"), &[]), false, true, false).unwrap();
         assert_eq!(why(&out), Some(NO_SERVER));
         assert_eq!(read(&home), serde_json::json!({}));
         seed(&home, "{}");
-        install_off(&home, &own(None, &[]), false, true, false).unwrap();
+        install_off(&cc(&home), &own(None, &[]), false, true, false).unwrap();
         assert_eq!(read(&home), serde_json::json!({}));
     }
 
@@ -630,9 +638,9 @@ mod tests {
             &home,
             r#"{"theme":"dark","env":{"CLAUDE_CODE_DISABLE_AUTO_MEMORY":"1"}}"#,
         );
-        uninstall_off(&home, &own(None, &[]), false).unwrap();
+        uninstall_off(&cc(&home), &own(None, &[]), false).unwrap();
         assert_eq!(read(&home)["env"][VAR], "1");
-        uninstall_off(&home, &own(Some("1"), &[]), false).unwrap();
+        uninstall_off(&cc(&home), &own(Some("1"), &[]), false).unwrap();
         assert_eq!(read(&home), serde_json::json!({"theme": "dark"}));
     }
 
@@ -642,10 +650,10 @@ mod tests {
     fn the_old_memory_dir_goes_only_while_it_is_the_recorded_value() {
         let (_t, home) = home();
         seed(&home, r#"{"autoMemoryDirectory":"/s/memory"}"#);
-        assert_eq!(remove_legacy(&home, None, false).unwrap(), None);
-        remove_legacy(&home, Some("/other"), false).unwrap();
+        assert_eq!(remove_legacy(&cc(&home), None, false).unwrap(), None);
+        remove_legacy(&cc(&home), Some("/other"), false).unwrap();
         assert_eq!(read(&home)["autoMemoryDirectory"], "/s/memory");
-        remove_legacy(&home, Some("/s/memory"), false).unwrap();
+        remove_legacy(&cc(&home), Some("/s/memory"), false).unwrap();
         assert_eq!(read(&home), serde_json::json!({}));
     }
 
@@ -665,9 +673,9 @@ mod tests {
     #[test]
     fn a_non_object_server_list_stops_the_step() {
         let (_t, home) = home();
-        fs::write(claude_json(&home), r#"{"mcpServers":[]}"#).unwrap();
-        assert!(registered(&home).is_err());
-        fs::write(claude_json(&home), r#"{"mcpServers":null}"#).unwrap();
-        assert_eq!(registered(&home).unwrap(), None);
+        fs::write(cc(&home).global(), r#"{"mcpServers":[]}"#).unwrap();
+        assert!(registered(&cc(&home)).is_err());
+        fs::write(cc(&home).global(), r#"{"mcpServers":null}"#).unwrap();
+        assert_eq!(registered(&cc(&home)).unwrap(), None);
     }
 }

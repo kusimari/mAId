@@ -9,8 +9,9 @@
 
 use crate::deploy::{listed_marketplaces, listed_plugins};
 use crate::part::What;
-use crate::shared::{find_on, Agent};
+use crate::shared::{claude_env, find_on, Agent};
 use anyhow::{Context, Result};
+use maid_core::config::ClaudeConfig;
 use maid_core::environment::{self, Host, Readiness};
 use serde::Deserialize;
 use serde_json::Value;
@@ -237,25 +238,33 @@ impl fmt::Display for Whole {
 }
 
 /// Every part's list, checked against the harnesses on this PATH.
-pub fn cmd_whole(parts: &Path, home: &Path, agent: Option<Agent>) -> Result<u8> {
-    let whole = check(parts, home, std::env::var_os("PATH"), agent)?;
+pub fn cmd_whole(
+    parts: &Path,
+    home: &Path,
+    claude: &ClaudeConfig,
+    agent: Option<Agent>,
+) -> Result<u8> {
+    let whole = check(parts, home, claude, std::env::var_os("PATH"), agent)?;
     print!("{whole}");
     Ok(u8::from(whole.failed()))
 }
 
 /// Check every part list in `dir` against the harnesses under `home`,
-/// running their CLIs from `path`. `agent` scopes to one harness.
+/// Claude's in `claude`, running their CLIs from `path`. `agent` scopes to
+/// one harness.
 pub fn check(
     dir: &Path,
     home: &Path,
+    claude: &ClaudeConfig,
     path: Option<OsString>,
     agent: Option<Agent>,
 ) -> Result<Whole> {
-    check_in(dir, home, path, &Host::from_env().set, agent)
+    check_at(dir, home, claude, path, &Host::from_env().set, agent)
 }
 
 /// The same, with `set` the names of the variables a bring-in's `env:`
-/// values may name, so a test does not depend on the machine.
+/// values may name, so a test does not depend on the machine, and Claude's
+/// config under `home` with `CLAUDE_CONFIG_DIR` unset.
 pub fn check_in(
     dir: &Path,
     home: &Path,
@@ -263,9 +272,21 @@ pub fn check_in(
     set: &BTreeSet<String>,
     agent: Option<Agent>,
 ) -> Result<Whole> {
+    check_at(dir, home, &ClaudeConfig::new(home, None), path, set, agent)
+}
+
+fn check_at(
+    dir: &Path,
+    home: &Path,
+    claude: &ClaudeConfig,
+    path: Option<OsString>,
+    set: &BTreeSet<String>,
+    agent: Option<Agent>,
+) -> Result<Whole> {
     let (parts, refused) = read_parts(dir)?;
     let probe = Probe {
         home: home.to_path_buf(),
+        claude: claude.clone(),
         path,
         seen: RefCell::default(),
     };
@@ -353,15 +374,15 @@ enum Source {
     /// `codex mcp list --json`.
     CodexMcp,
     /// Each `<name>/SKILL.md` in this dir.
-    Skills(&'static str),
+    Skills(PathBuf),
     /// The frontmatter `name` of each `*.md` in this dir.
-    MarkdownAgents(&'static str),
+    MarkdownAgents(PathBuf),
     /// The `name` (or file name) of each `*.json` in this dir.
-    JsonAgents(&'static str),
+    JsonAgents(PathBuf),
     /// The keys of one object in a JSON file.
-    Keys(&'static str, &'static str),
+    Keys(PathBuf, &'static str),
     /// A settings file, read per entry (rule 14).
-    Settings(&'static str),
+    Settings(PathBuf),
     /// The `mcpServers` keys of every kiro agent file with this name.
     KiroAgentMcp(String),
 }
@@ -369,7 +390,14 @@ enum Source {
 const KIRO_AGENTS: &str = ".kiro/agents";
 
 /// How a kind is read on a harness, or why it cannot be.
-fn source(agent: Agent, kind: What, scope: Option<&str>) -> Result<Source, String> {
+/// Every path is absolute: Claude's from `claude`, the rest under `home`.
+fn source(
+    agent: Agent,
+    kind: What,
+    scope: Option<&str>,
+    home: &Path,
+    claude: &ClaudeConfig,
+) -> Result<Source, String> {
     use Agent::{Claude, Codex, Kiro};
     use What::{Marketplace, Mcp, Plugin, Setting, Skill};
     let one_place = |src: Source| match scope {
@@ -387,20 +415,21 @@ fn source(agent: Agent, kind: What, scope: Option<&str>) -> Result<Source, Strin
         )),
         // `claude mcp list` and `get` start each server to health-check it.
         (Claude, Mcp) if matches!(scope, None | Some("user")) => {
-            Ok(Source::Keys(".claude.json", "mcpServers"))
+            Ok(Source::Keys(claude.global(), "mcpServers"))
         }
         (Kiro, Mcp) => Ok(match scope {
             Some(s) => Source::KiroAgentMcp(s.into()),
-            None => Source::Keys(".kiro/settings/mcp.json", "mcpServers"),
+            None => Source::Keys(home.join(".kiro/settings/mcp.json"), "mcpServers"),
         }),
-        (_, Skill) => one_place(Source::Skills(agent.user_skills_dir())),
+        (Claude, Skill) => one_place(Source::Skills(claude.dir().join("skills"))),
+        (_, Skill) => one_place(Source::Skills(home.join(agent.user_skills_dir()))),
         (Claude, Marketplace) | (Codex, Marketplace) => one_place(Source::Marketplaces(agent)),
         (Codex, Plugin) => one_place(Source::Plugins(Codex, None)),
         (Codex, Mcp) => one_place(Source::CodexMcp),
-        (Claude, What::Agent) => one_place(Source::MarkdownAgents(".claude/agents")),
-        (Kiro, What::Agent) => one_place(Source::JsonAgents(KIRO_AGENTS)),
-        (Claude, Setting) => one_place(Source::Settings(".claude/settings.json")),
-        (Kiro, Setting) => one_place(Source::Settings(".kiro/settings/cli.json")),
+        (Claude, What::Agent) => one_place(Source::MarkdownAgents(claude.dir().join("agents"))),
+        (Kiro, What::Agent) => one_place(Source::JsonAgents(home.join(KIRO_AGENTS))),
+        (Claude, Setting) => one_place(Source::Settings(claude.settings())),
+        (Kiro, Setting) => one_place(Source::Settings(home.join(".kiro/settings/cli.json"))),
         _ => Err(match scope {
             Some(s) if agent == Claude && kind == Mcp => {
                 format!("claude {s} MCP servers are not read")
@@ -421,6 +450,7 @@ fn kind_name(kind: What) -> String {
 /// Reads each source at most once per run.
 struct Probe {
     home: PathBuf,
+    claude: ClaudeConfig,
     path: Option<OsString>,
     seen: RefCell<HashMap<Source, Result<Listing, Found>>>,
 }
@@ -439,7 +469,13 @@ impl Probe {
                 entry.kind
             ));
         };
-        let src = match source(agent, kind, entry.scope.as_deref()) {
+        let src = match source(
+            agent,
+            kind,
+            entry.scope.as_deref(),
+            &self.home,
+            &self.claude,
+        ) {
             Ok(src) => src,
             Err(why) => return Found::NotCheckable(why),
         };
@@ -495,9 +531,10 @@ impl Probe {
                 .iter()
                 .filter_map(|p| match frontmatter_name(p) {
                     Ok(name) => name.map(|n| (n, Seen::On)),
-                    Err(why) => {
-                        Some((stem(p), Seen::Broken(format!("~/{dir}/{}: {why}", file(p)))))
-                    }
+                    Err(why) => Some((
+                        stem(p),
+                        Seen::Broken(format!("{}/{}: {why}", self.shown(dir), file(p))),
+                    )),
                 })
                 .collect()),
             Source::JsonAgents(dir) => Ok(self
@@ -509,23 +546,24 @@ impl Probe {
                 })
                 .collect()),
             Source::Keys(file, object) => {
-                let v = match fs::read_to_string(self.home.join(file)) {
+                let shown = self.shown(file);
+                let v = match fs::read_to_string(file) {
                     Ok(text) => serde_json::from_str::<Value>(&text)
-                        .map_err(|e| unreadable(format!("~/{file}: not JSON: {e}")))?,
+                        .map_err(|e| unreadable(format!("{shown}: not JSON: {e}")))?,
                     Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Listing::default()),
-                    Err(e) => return Err(unreadable(format!("~/{file}: {e}"))),
+                    Err(e) => return Err(unreadable(format!("{shown}: {e}"))),
                 };
                 let Value::Object(top) = &v else {
-                    return Err(unreadable(format!("~/{file}: not a JSON object")));
+                    return Err(unreadable(format!("{shown}: not a JSON object")));
                 };
-                members(top, object).map_err(|why| unreadable(format!("~/{file}: {why}")))
+                members(top, object).map_err(|why| unreadable(format!("{shown}: {why}")))
             }
             Source::Settings(_) => unreachable!("a setting is read per entry, by setting()"),
             // Every agent file of that name counts, and one that cannot be
             // read could hold any server.
             Source::KiroAgentMcp(agent) => {
                 let mut listing = Listing::default();
-                for (name, parsed) in self.json_agents(KIRO_AGENTS)? {
+                for (name, parsed) in self.json_agents(&self.home.join(KIRO_AGENTS))? {
                     if name != *agent {
                         continue;
                     }
@@ -546,23 +584,24 @@ impl Probe {
     /// A setting: `name` is a top-level key, or, with no such key, a dotted
     /// path to a nested one (kiro's own keys hold dots). With a `value`, the
     /// setting, or one element of a list setting, must be that string.
-    fn setting(&self, file: &str, entry: &Entry) -> Found {
+    fn setting(&self, file: &Path, entry: &Entry) -> Found {
         // Strings only: readers in other languages disagree on numbers.
         let want = match &entry.value {
             None => None,
             Some(Value::String(s)) => Some(s.as_str()),
             Some(_) => return Found::NotCheckable("a setting's value is not a string".into()),
         };
-        let v = match fs::read_to_string(self.home.join(file)) {
+        let shown = self.shown(file);
+        let v = match fs::read_to_string(file) {
             Ok(text) => match serde_json::from_str::<Value>(&text) {
                 Ok(v) => v,
-                Err(e) => return Found::Unreadable(format!("~/{file}: not JSON: {e}")),
+                Err(e) => return Found::Unreadable(format!("{shown}: not JSON: {e}")),
             },
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Found::Missing,
-            Err(e) => return Found::Unreadable(format!("~/{file}: {e}")),
+            Err(e) => return Found::Unreadable(format!("{shown}: {e}")),
         };
         let Some(top) = v.as_object() else {
-            return Found::Unreadable(format!("~/{file}: not an object"));
+            return Found::Unreadable(format!("{shown}: not an object"));
         };
         let at = top.get(&entry.name).or_else(|| {
             entry
@@ -591,6 +630,9 @@ impl Probe {
             .ok_or_else(|| Found::NotCheckable(format!("{cli} not on PATH")))?;
         let mut cmd = Command::new(at);
         cmd.args(args).env("HOME", &self.home);
+        if agent == Agent::Claude {
+            claude_env(&mut cmd, &self.claude);
+        }
         if let Some(p) = &self.path {
             cmd.env("PATH", p);
         }
@@ -604,10 +646,18 @@ impl Probe {
         serde_json::from_slice(&out.stdout).map_err(|e| said(format!("not JSON: {e}")))
     }
 
-    /// The entries of a dir under `$HOME`; none when it is not there.
-    fn dir(&self, dir: &str) -> Result<Vec<PathBuf>, Found> {
-        let unreadable = |e: io::Error| Found::Unreadable(format!("~/{dir}: {e}"));
-        match fs::read_dir(self.home.join(dir)) {
+    /// A path as messages show it: `~/` for one under HOME.
+    fn shown(&self, p: &Path) -> String {
+        match p.strip_prefix(&self.home) {
+            Ok(rel) => format!("~/{}", rel.display()),
+            Err(_) => p.display().to_string(),
+        }
+    }
+
+    /// The entries of a dir; none when it is not there.
+    fn dir(&self, dir: &Path) -> Result<Vec<PathBuf>, Found> {
+        let unreadable = |e: io::Error| Found::Unreadable(format!("{}: {e}", self.shown(dir)));
+        match fs::read_dir(dir) {
             Ok(rd) => rd
                 .map(|e| e.map(|e| e.path()))
                 .collect::<io::Result<_>>()
@@ -617,7 +667,7 @@ impl Probe {
         }
     }
 
-    fn files(&self, dir: &str, ext: &str) -> Result<Vec<PathBuf>, Found> {
+    fn files(&self, dir: &Path, ext: &str) -> Result<Vec<PathBuf>, Found> {
         let mut files = self.dir(dir)?;
         files.retain(|p| p.extension() == Some(OsStr::new(ext)) && p.is_file());
         Ok(files)
@@ -625,7 +675,7 @@ impl Probe {
 
     /// Each `*.json` agent in a dir, by its `name` or, with none, its
     /// stem; one that is not a JSON object goes by its stem.
-    fn json_agents(&self, dir: &str) -> Result<Vec<(String, Parsed)>, Found> {
+    fn json_agents(&self, dir: &Path) -> Result<Vec<(String, Parsed)>, Found> {
         let agent = |p: PathBuf| {
             let parsed = fs::read_to_string(&p)
                 .map_err(|e| e.to_string())
@@ -636,7 +686,7 @@ impl Probe {
                     Value::Object(o) => Ok(o),
                     _ => Err("not a JSON object".into()),
                 })
-                .map_err(|why| format!("~/{dir}/{}: {why}", file(&p)));
+                .map_err(|why| format!("{}/{}: {why}", self.shown(dir), file(&p)));
             let name = match &parsed {
                 Ok(o) => o.get("name").and_then(Value::as_str).map(str::to_string),
                 Err(_) => None,
@@ -831,7 +881,14 @@ mod tests {
 
         fn run(&self, agent: Option<Agent>) -> Whole {
             let path = Some(self.bin.path().as_os_str().to_owned());
-            check(self.parts.path(), self.home.path(), path, agent).unwrap()
+            check(
+                self.parts.path(),
+                self.home.path(),
+                &ClaudeConfig::new(self.home.path(), None),
+                path,
+                agent,
+            )
+            .unwrap()
         }
 
         fn found(&self) -> Vec<(String, Found)> {
@@ -930,7 +987,14 @@ mod tests {
     #[test]
     fn no_parts_dir_is_no_parts() {
         let w = World::new();
-        let whole = check(&w.parts.path().join("none"), w.home.path(), None, None).unwrap();
+        let whole = check(
+            &w.parts.path().join("none"),
+            w.home.path(),
+            &ClaudeConfig::new(w.home.path(), None),
+            None,
+            None,
+        )
+        .unwrap();
         assert!(!whole.failed());
         assert!(whole.to_string().starts_with("no part lists in"));
     }

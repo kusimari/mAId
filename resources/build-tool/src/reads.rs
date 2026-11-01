@@ -9,9 +9,10 @@
 //! found there (adopted); any other element is left alone.
 
 use crate::part::{Item, What, ANOTHER_PART};
-use crate::settings::{claude_settings, read_settings, write_settings, NO_CLI};
+use crate::settings::{read_settings, write_settings, NO_CLI};
 use crate::shared::{agent_marketplace, Agent, PLUGIN_ID};
 use anyhow::Result;
+use maid_core::config::ClaudeConfig;
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 use std::fs;
@@ -199,7 +200,7 @@ fn recorded(list: List, own: &[Item]) -> Vec<&str> {
 /// there unless another part's list records it (`claimed`). `own` is what
 /// mAId's part list recorded for this setting.
 pub fn install_claude(
-    home: &Path,
+    claude: &ClaudeConfig,
     grant: &Grant,
     own: &[Item],
     claimed: &BTreeSet<String>,
@@ -208,7 +209,7 @@ pub fn install_claude(
 ) -> Result<Placed> {
     let tag = if dry_run { "(dry-run) " } else { "" };
     let (list, setting) = (grant.list, grant.list.setting());
-    let at = claude_settings(home);
+    let at = claude.settings();
     let recorded = recorded(list, own);
     let skipped = |why: &str, items: Vec<Item>| Placed {
         lines: vec![format!("{tag}skip          claude {setting} ({why})")],
@@ -303,14 +304,14 @@ pub fn install_claude(
 
 /// Uninstall: remove the elements mAId recorded (placed or adopted), only.
 pub fn uninstall_claude(
-    home: &Path,
+    claude: &ClaudeConfig,
     list: List,
     own: &[Item],
     dry_run: bool,
 ) -> Result<Vec<String>> {
     let tag = if dry_run { "(dry-run) " } else { "" };
     let setting = list.setting();
-    let at = claude_settings(home);
+    let at = claude.settings();
     let mut map = read_settings(&at)?;
     let recorded = recorded(list, own);
     let Ok(mut found) = elements(&map, list.key()) else {
@@ -350,6 +351,11 @@ mod tests {
         profile: PathBuf,
     }
 
+    /// Claude's config under `home`, the variable unset.
+    fn cc(home: &Path) -> ClaudeConfig {
+        ClaudeConfig::new(home, None)
+    }
+
     fn env() -> Env {
         let tmp = TempDir::new().unwrap();
         let profile = tmp.path().join("state/maid/profile");
@@ -367,11 +373,11 @@ mod tests {
 
     fn seed(e: &Env, v: Value) {
         fs::create_dir_all(e.home.join(".claude")).unwrap();
-        fs::write(claude_settings(&e.home), v.to_string()).unwrap();
+        fs::write(cc(&e.home).settings(), v.to_string()).unwrap();
     }
 
     fn settings(e: &Env) -> Value {
-        serde_json::from_str(&fs::read_to_string(claude_settings(&e.home)).unwrap()).unwrap()
+        serde_json::from_str(&fs::read_to_string(cc(&e.home).settings()).unwrap()).unwrap()
     }
 
     /// One pass of the plugin grant, which holds one element.
@@ -389,7 +395,7 @@ mod tests {
     ) -> One {
         let own: Vec<Item> = own.into_iter().cloned().collect();
         let p = install_claude(
-            &e.home,
+            &cc(&e.home),
             &plugin_grant(&e.profile),
             &own,
             claimed,
@@ -410,7 +416,7 @@ mod tests {
 
     fn unplug(e: &Env, own: Option<&Item>, dry_run: bool) {
         let own: Vec<Item> = own.into_iter().cloned().collect();
-        uninstall_claude(&e.home, List::Dirs, &own, dry_run).unwrap();
+        uninstall_claude(&cc(&e.home), List::Dirs, &own, dry_run).unwrap();
     }
 
     #[test]
@@ -454,9 +460,9 @@ mod tests {
     fn a_rerun_leaves_the_bytes_alone() {
         let e = env();
         let first = install(&e, None).item;
-        let bytes = fs::read(claude_settings(&e.home)).unwrap();
+        let bytes = fs::read(cc(&e.home).settings()).unwrap();
         let again = install(&e, first.as_ref());
-        assert_eq!(fs::read(claude_settings(&e.home)).unwrap(), bytes);
+        assert_eq!(fs::read(cc(&e.home).settings()).unwrap(), bytes);
         assert_eq!(again.item, first);
     }
 
@@ -464,14 +470,14 @@ mod tests {
     fn an_identical_element_found_there_is_adopted_and_uninstall_removes_it() {
         let e = env();
         seed(&e, serde_json::json!({"permissions": {DIRS: [mine(&e)]}}));
-        let bytes = fs::read(claude_settings(&e.home)).unwrap();
+        let bytes = fs::read(cc(&e.home).settings()).unwrap();
         let out = install(&e, None);
         assert!(
             out.line.contains("already present, adopted"),
             "{}",
             out.line
         );
-        assert_eq!(fs::read(claude_settings(&e.home)).unwrap(), bytes);
+        assert_eq!(fs::read(cc(&e.home).settings()).unwrap(), bytes);
         let item = out.item.unwrap();
         assert!(item.adopted && item.skipped.is_none());
         // Stays adopted on the next install.
@@ -504,7 +510,7 @@ mod tests {
         let theirs = BTreeSet::from([mine(&e)]);
         let out = grant_plugin(&e, None, &theirs, true, false);
         assert_eq!(out.item.unwrap().skipped.as_deref(), Some(ANOTHER_PART));
-        assert!(!claude_settings(&e.home).exists());
+        assert!(!cc(&e.home).settings().exists());
         let item = install(&e, None).item.unwrap();
         let again = grant_plugin(&e, Some(&item), &theirs, true, false);
         assert_eq!(again.item, Some(item));
@@ -543,9 +549,9 @@ mod tests {
     fn uninstall_with_nothing_recorded_changes_nothing() {
         let e = env();
         seed(&e, serde_json::json!({"permissions": {DIRS: [mine(&e)]}}));
-        let bytes = fs::read(claude_settings(&e.home)).unwrap();
+        let bytes = fs::read(cc(&e.home).settings()).unwrap();
         unplug(&e, None, false);
-        assert_eq!(fs::read(claude_settings(&e.home)).unwrap(), bytes);
+        assert_eq!(fs::read(cc(&e.home).settings()).unwrap(), bytes);
     }
 
     #[test]
@@ -606,7 +612,7 @@ mod tests {
         fs::remove_dir(plugin_dir(&e.profile)).unwrap();
         let item = install(&e, None).item.unwrap();
         assert_eq!(item.skipped.as_deref(), Some(NO_PLUGIN));
-        assert!(!claude_settings(&e.home).exists());
+        assert!(!cc(&e.home).settings().exists());
     }
 
     #[test]
@@ -644,10 +650,10 @@ mod tests {
         ] {
             let e = env();
             fs::create_dir_all(e.home.join(".claude")).unwrap();
-            fs::write(claude_settings(&e.home), text).unwrap();
+            fs::write(cc(&e.home).settings(), text).unwrap();
             let item = install(&e, None).item.unwrap();
             assert_eq!(item.skipped.as_deref(), Some(NOT_A_LIST));
-            assert_eq!(fs::read_to_string(claude_settings(&e.home)).unwrap(), text);
+            assert_eq!(fs::read_to_string(cc(&e.home).settings()).unwrap(), text);
         }
     }
 
@@ -656,23 +662,23 @@ mod tests {
         let e = env();
         let none = grant_plugin(&e, None, &BTreeSet::new(), false, false);
         assert_eq!(none.item.unwrap().skipped.as_deref(), Some(NO_CLI));
-        assert!(!claude_settings(&e.home).exists());
+        assert!(!cc(&e.home).settings().exists());
         let item = install(&e, None).item.unwrap();
-        let bytes = fs::read(claude_settings(&e.home)).unwrap();
+        let bytes = fs::read(cc(&e.home).settings()).unwrap();
         let out = grant_plugin(&e, Some(&item), &BTreeSet::new(), false, false);
         assert_eq!(out.item, Some(item));
-        assert_eq!(fs::read(claude_settings(&e.home)).unwrap(), bytes);
+        assert_eq!(fs::read(cc(&e.home).settings()).unwrap(), bytes);
     }
 
     #[test]
     fn dry_run_writes_nothing() {
         let e = env();
         grant_plugin(&e, None, &BTreeSet::new(), true, true);
-        assert!(!claude_settings(&e.home).exists());
+        assert!(!cc(&e.home).settings().exists());
         let item = install(&e, None).item.unwrap();
-        let bytes = fs::read(claude_settings(&e.home)).unwrap();
+        let bytes = fs::read(cc(&e.home).settings()).unwrap();
         unplug(&e, Some(&item), true);
-        assert_eq!(fs::read(claude_settings(&e.home)).unwrap(), bytes);
+        assert_eq!(fs::read(cc(&e.home).settings()).unwrap(), bytes);
     }
 
     // ── the config grant ────────────────────────────────────────
@@ -689,7 +695,7 @@ mod tests {
 
     fn grant_config(e: &Env, own: &[Item], claimed: &BTreeSet<String>) -> Placed {
         install_claude(
-            &e.home,
+            &cc(&e.home),
             &config_grant(&config(e)),
             own,
             claimed,
@@ -729,13 +735,13 @@ mod tests {
         let given = link.join("maid");
         let g = config_grant(&given);
         assert_eq!(g.want, vec![rule(&given), rule(&real.join("maid"))]);
-        let out = install_claude(&e.home, &g, &[], &BTreeSet::new(), true, false).unwrap();
+        let out = install_claude(&cc(&e.home), &g, &[], &BTreeSet::new(), true, false).unwrap();
         assert_eq!(out.items.len(), 2);
         assert_eq!(
             settings(&e)["permissions"]["allow"],
             serde_json::json!([rule(&given), rule(&real.join("maid"))])
         );
-        uninstall_claude(&e.home, List::Allow, &out.items, false).unwrap();
+        uninstall_claude(&cc(&e.home), List::Allow, &out.items, false).unwrap();
         assert_eq!(settings(&e), serde_json::json!({}));
     }
 
@@ -747,11 +753,11 @@ mod tests {
             serde_json::json!({"permissions": {"allow": ["Bash(ls)"]}}),
         );
         let first = grant_config(&e, &[], &BTreeSet::new()).items;
-        let bytes = fs::read(claude_settings(&e.home)).unwrap();
+        let bytes = fs::read(cc(&e.home).settings()).unwrap();
         let again = grant_config(&e, &first, &BTreeSet::new());
-        assert_eq!(fs::read(claude_settings(&e.home)).unwrap(), bytes);
+        assert_eq!(fs::read(cc(&e.home).settings()).unwrap(), bytes);
         assert_eq!(again.items, first);
-        uninstall_claude(&e.home, List::Allow, &first, false).unwrap();
+        uninstall_claude(&cc(&e.home), List::Allow, &first, false).unwrap();
         assert_eq!(
             settings(&e),
             serde_json::json!({"permissions": {"allow": ["Bash(ls)"]}})
@@ -768,7 +774,7 @@ mod tests {
         let theirs = BTreeSet::from([want.clone()]);
         let out = grant_config(&e, &[], &theirs);
         assert_eq!(out.items[0].skipped.as_deref(), Some(ANOTHER_PART));
-        uninstall_claude(&e.home, List::Allow, &out.items, false).unwrap();
+        uninstall_claude(&cc(&e.home), List::Allow, &out.items, false).unwrap();
         assert_eq!(
             settings(&e),
             serde_json::json!({"permissions": {"allow": [want]}})
@@ -813,7 +819,7 @@ mod tests {
                 value: Some(forged.into()),
                 ..Item::placed(What::Setting, List::Allow.setting())
             };
-            uninstall_claude(&e.home, List::Allow, &[item], false).unwrap();
+            uninstall_claude(&cc(&e.home), List::Allow, &[item], false).unwrap();
             assert_eq!(settings(&e), theirs);
         }
         assert!(List::Allow.ours("Edit(//c/maid/writing-style/**)"));
@@ -839,10 +845,10 @@ mod tests {
         let e = env();
         let items = grant_config(&e, &[], &BTreeSet::new()).items;
         let g = config_grant(&config(&e));
-        let out = install_claude(&e.home, &g, &items, &BTreeSet::new(), false, false).unwrap();
+        let out = install_claude(&cc(&e.home), &g, &items, &BTreeSet::new(), false, false).unwrap();
         assert_eq!(out.items, items);
         seed(&e, serde_json::json!({}));
-        let out = install_claude(&e.home, &g, &items, &BTreeSet::new(), false, false).unwrap();
+        let out = install_claude(&cc(&e.home), &g, &items, &BTreeSet::new(), false, false).unwrap();
         assert_eq!(out.items[0].skipped.as_deref(), Some(NO_CLI));
     }
 
@@ -873,9 +879,9 @@ mod tests {
         ] {
             let e = env();
             let g = config_grant(Path::new(bad));
-            let out = install_claude(&e.home, &g, &[], &BTreeSet::new(), true, false).unwrap();
+            let out = install_claude(&cc(&e.home), &g, &[], &BTreeSet::new(), true, false).unwrap();
             assert_eq!(out.items[0].skipped.as_deref(), Some(NOT_OURS), "{bad}");
-            assert!(!claude_settings(&e.home).exists(), "{bad}");
+            assert!(!cc(&e.home).settings().exists(), "{bad}");
         }
     }
 
@@ -891,7 +897,7 @@ mod tests {
         let old = rule(&config(&e));
         let items = grant_config(&e, &[], &BTreeSet::new()).items;
         let g = config_grant(Path::new("/a/b*/maid"));
-        let out = install_claude(&e.home, &g, &items, &BTreeSet::new(), true, false).unwrap();
+        let out = install_claude(&cc(&e.home), &g, &items, &BTreeSet::new(), true, false).unwrap();
         assert_eq!(out.items.len(), 1);
         assert_eq!(out.items[0].skipped.as_deref(), Some(NOT_OURS));
         assert!(!settings(&e).to_string().contains(&old));
