@@ -1,10 +1,12 @@
-//! Rules a bring-in keeps in the persona's memory, moved into its own
-//! text. A bring-in that learns during a session (writing-style's "new
-//! rule:") saves to the persona's memory through the memory's own server,
-//! tagging the memory `metadata.bring-in: <name>`. At the batch the core
-//! lists what this session saved, and offers one item per bring-in: move
-//! those rules, and any in its older rules files, into its text, as a
-//! proposal on its source. See project.md "My harness", Adaptation.
+//! What a session saved in a persona's memory, and the rules a bring-in
+//! keeps there, moved into its own text. A bring-in that learns during a
+//! session (writing-style's "new rule:") saves to the persona's memory
+//! through the memory's own server, tagging the memory
+//! `metadata.bring-in: <name>`; the agent may save other memories there on
+//! its own. At the batch the core lists every memory this session saved,
+//! and offers one item per bring-in with tagged rules: move those rules,
+//! and any in its older rules files, into its text, as a proposal on its
+//! source. See project.md "My harness", Adaptation.
 
 use super::{id, is_memory, resolve, Evidence, Finding, Kind, Op};
 use crate::environment::{contained, index_of};
@@ -16,17 +18,25 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::path::{Component, Path};
 
-/// One rule this session saved to a persona's memory for a bring-in.
+/// One memory this session saved to a persona's memory.
 #[derive(Serialize, Debug, Clone, PartialEq)]
 pub struct Saved {
-    /// The bring-in the rule is for (`<part>/<name>`).
-    pub thing: String,
+    /// The bring-in a tagged rule is for (`<part>/<name>`); none for a
+    /// memory with no tag, or a tag no declared bring-in has.
+    pub thing: Option<String>,
     /// The memory it is in (`<part>/<name>`), and its persona.
     pub memory: String,
     pub persona: Option<String>,
     /// The memory tool's path, `/memories/...`.
     pub path: String,
+    /// A tagged rule's body; else the memory's description, name or first
+    /// line.
     pub rule: String,
+    /// Its name and body, which a habit proposed again is matched on.
+    #[serde(skip)]
+    pub name: Option<String>,
+    #[serde(skip)]
+    pub body: String,
     /// The tool call that saved it, `<file>:<line>`.
     pub at: String,
 }
@@ -54,8 +64,8 @@ fn writes_on(tool: &str, memory: &str) -> bool {
                 .is_some_and(|p| p.len() > 1 && p.ends_with('_')))
 }
 
-/// Every rule a memory tool call in the session or its sub-sessions saved
-/// for a declared bring-in, that is in its store now.
+/// Every memory a memory tool call in the session or its sub-sessions
+/// saved, that is in its store now.
 pub fn saved(map: &Map, bundle: &Bundle) -> Vec<Saved> {
     let mut out: Vec<Saved> = vec![];
     saved_into(map, bundle, &mut out);
@@ -80,21 +90,22 @@ fn saved_into(map: &Map, bundle: &Bundle, out: &mut Vec<Saved>) {
         let Some(text) = in_store(m, path) else {
             continue;
         };
-        let Some((tag, rule)) = tagged(&text) else {
-            continue;
-        };
-        let Some(b) = resolve(map, &tag) else {
-            continue;
+        let (name, body) = parts(&text);
+        let (thing, rule) = match tagged(&text).and_then(|(t, r)| Some((resolve(map, &t)?, r))) {
+            Some((b, rule)) => (Some(id(b)), rule),
+            None => (None, summary(&text)),
         };
         if out.iter().any(|s| s.path == path && s.memory == id(m)) {
             continue;
         }
         out.push(Saved {
-            thing: id(b),
+            thing,
             memory: id(m),
             persona: m.persona.clone(),
             path: path.into(),
             rule,
+            name,
+            body,
             at: d.at.clone(),
         });
     }
@@ -116,6 +127,10 @@ fn in_store(m: &BringIn, path: &str) -> Option<String> {
     let (store, index) = index_of(m)?.ok()?;
     let dir = index.parent()?.strip_prefix(&store).ok()?.to_path_buf();
     let file = contained(&store, &dir.join(rel)).ok()?;
+    // The index lists memories; it is not one.
+    if Some(Path::new(rel).as_os_str()) == index.file_name() {
+        return None;
+    }
     crate::contract::read_small(&file).ok()
 }
 
@@ -127,6 +142,37 @@ fn tagged(text: &str) -> Option<(String, String)> {
     let tag = parsed.data?["metadata"]["bring-in"].as_str()?.to_string();
     let body = parsed.content.trim().to_string();
     (!body.is_empty()).then_some((tag, body))
+}
+
+/// A memory's frontmatter and body.
+fn split(text: &str) -> (Value, String) {
+    match gray_matter::Matter::<gray_matter::engine::YAML>::new().parse::<Value>(text) {
+        Ok(p) => (p.data.unwrap_or_default(), p.content),
+        Err(_) => (Value::Null, text.to_string()),
+    }
+}
+
+/// A memory's name and trimmed body.
+fn parts(text: &str) -> (Option<String>, String) {
+    let (data, body) = split(text);
+    (
+        data["name"].as_str().map(str::to_string),
+        body.trim().to_string(),
+    )
+}
+
+/// What an untagged memory says in one line: its description, its name,
+/// or its body's first line.
+fn summary(text: &str) -> String {
+    let (data, body) = split(text);
+    ["description", "name"]
+        .iter()
+        .filter_map(|k| data[*k].as_str())
+        .chain(body.lines())
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// One older rules file: its path, its key, and its rules.
@@ -217,7 +263,10 @@ pub fn items(map: &Map, saved: &[Saved], held: &BTreeSet<String>) -> Vec<(Findin
         let thing = id(b);
         let mine: Vec<&Saved> = saved
             .iter()
-            .filter(|s| s.thing == thing && !held.contains(&rule_key(&thing, &s.rule)))
+            .filter(|s| {
+                s.thing.as_deref() == Some(thing.as_str())
+                    && !held.contains(&rule_key(&thing, &s.rule))
+            })
             .collect();
         let files: Vec<Older> = older(b)
             .into_iter()

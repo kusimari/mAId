@@ -126,6 +126,10 @@ pub struct Line {
     /// Where its state lives: each state key's bound value, or that the
     /// key is not bound, so a bring-in with memory always says so.
     pub state: Vec<String>,
+    /// Its other bound file and dir locations, by key, so a skill never
+    /// needs a default path: each config key, not a state tier and not
+    /// secret, whose value is an absolute path.
+    pub locations: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Serialize, Debug, Clone, PartialEq)]
@@ -736,6 +740,12 @@ pub fn picture_at(ctx: &Ctx, here: &Here) -> Result<Picture> {
 fn line(b: &BringIn) -> Line {
     let record = b.record.as_ref();
     let values = record.map(|r| &r.values);
+    let tiers: Vec<&str> = b
+        .declaration()
+        .and_then(|d| d.state.as_ref())
+        .into_iter()
+        .flat_map(|s| s.keys())
+        .collect();
     Line {
         part: b.part.clone(),
         name: b.name.clone(),
@@ -745,14 +755,21 @@ fn line(b: &BringIn) -> Line {
             Tenure::Borrowed { from, .. } => Some(from.clone()),
             Tenure::Own => None,
         }),
-        state: b
-            .declaration()
-            .and_then(|d| d.state.as_ref())
-            .into_iter()
-            .flat_map(|s| s.keys())
-            .map(|k| match values.and_then(|v| v.get(k)) {
+        state: tiers
+            .iter()
+            .map(|k| match values.and_then(|v| v.get(*k)) {
                 Some(v) => v.clone(),
                 None => format!("{k} not bound"),
+            })
+            .collect(),
+        locations: b
+            .declaration()
+            .into_iter()
+            .flat_map(|d| &d.config)
+            .filter(|(k, key)| !key.secret && !tiers.contains(&k.as_str()))
+            .filter_map(|(k, _)| {
+                let v = values?.get(k)?;
+                Path::new(v).is_absolute().then(|| (k.clone(), v.clone()))
             })
             .collect(),
     }
@@ -828,6 +845,14 @@ pub fn render_slice(p: &Picture, slice: Slice) -> String {
             );
             if !l.state.is_empty() {
                 let _ = write!(s, "; state: {}", l.state.join(", "));
+            }
+            if !l.locations.is_empty() {
+                let at: Vec<String> = l
+                    .locations
+                    .iter()
+                    .map(|(k, v)| format!("{k} {v}"))
+                    .collect();
+                let _ = write!(s, "; locations: {}", at.join(", "));
             }
             s.push('\n');
         }
@@ -1005,6 +1030,44 @@ mod tests {
                 .unwrap()
                 .len(),
             1
+        );
+    }
+
+    #[test]
+    fn the_genome_names_a_bring_ins_bound_files_but_no_secret_command_or_relative_value() {
+        let dir = TempDir::new().unwrap();
+        let skill = dir.path().join("style/SKILL.md");
+        fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        fs::write(&skill, "---\nname: style\ndescription: d\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: write\n  my-harness.config.learned: \"[optional] older\"\n  my-harness.config.promoted: \"[optional] older\"\n  my-harness.config.token: \"[secret] a token\"\n  my-harness.config.serve: a command\n  my-harness.config.index: relative\n---\n").unwrap();
+        part(
+            dir.path(),
+            "home",
+            "personal",
+            json!([{"name": "style", "unit": {"standard": "skill", "path": skill},
+                "values": {"learned": "/c/style/learned.md", "promoted": "/c/style/promoted.md",
+                    "token": "env:TOKEN", "serve": "[\"/bin/x\"]", "index": "memory/MEMORY.md"}}]),
+        );
+        let p = picture(&ctx(dir.path())).unwrap();
+        assert_eq!(
+            serde_json::to_value(&p.turn[0].locations).unwrap(),
+            json!({"learned": "/c/style/learned.md", "promoted": "/c/style/promoted.md"})
+        );
+        let text = render(&p);
+        assert!(
+            text.contains("  style: write [personal, own]; locations: learned /c/style/learned.md, promoted /c/style/promoted.md\n"),
+            "{text}"
+        );
+        let mem = memory(dir.path());
+        part(
+            dir.path(),
+            "home",
+            "personal",
+            json!([{"name": "mem", "unit": {"standard": "mcp", "path": mem}, "values": {"store": "/s/personal"}}]),
+        );
+        let text = render(&picture(&ctx(dir.path())).unwrap());
+        assert!(
+            text.contains("; state: /s/personal\n") && !text.contains("locations"),
+            "a state tier is named once, as state:\n{text}"
         );
     }
 

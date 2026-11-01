@@ -1,7 +1,7 @@
 ---
 name: browser
 description: Drive my logged-in Chrome — open a page, navigate, fill a form, click, or read a value off it. Attended, allowlist-enforced. Opens with `[browser] applies`.
-version: 1.0.0
+version: 1.0.1
 tags: [browser, chrome, mcp, automation, web, forms, navigation, safety]
 metadata:
   my-harness.scope: turn
@@ -101,16 +101,16 @@ tool's own description when unsure of its arguments.
 The agent may act **only** on sites the user has allow-listed.
 This is enforced by the browser at the connection, not by this
 prose — navigation to an off-list site is refused before it
-loads. The allowlist is a **plain-text file the user owns**
-(default `~/.config/maid/browser-allowlist`); one pattern per
-line, `#` comments and blank lines ignored.
+loads. The allowlist is a **plain-text file the user owns**, set when
+the browser server was installed: one pattern per line, `#`
+comments and blank lines ignored. You never read or look for it.
 
 What this means for you:
 
 - **Assume the allowlist is the boundary.** If a task needs a
   site that is not allow-listed, the navigation will fail. Don't
   try to route around it — tell the user the site is not on
-  their allowlist and let *them* add it to that file. Adding a
+  their allowlist and let *them* add it there. Adding a
   site is the user's decision, never yours.
 - **An edit takes effect on the next connection.** The browser
   server re-reads the file when it reconnects; the user's Chrome

@@ -87,11 +87,31 @@ impl Home {
     /// session's transcript, and the memory file and index line the server
     /// leaves in the store.
     fn save_rule(&self, slug: &str, rule: &str) {
-        let path = format!("/memories/writing-style-{slug}.md");
         let body = format!(
             "---\nname: \"writing-style: {rule}\"\ndescription: \"{rule}\"\nmetadata:\n  type: feedback\n  bring-in: writing-style\n---\n\n{rule}\n"
         );
-        let id = format!("toolu_{slug}");
+        self.save(
+            &format!("writing-style-{slug}"),
+            &body,
+            &format!("writing-style: {rule}"),
+            rule,
+        );
+    }
+
+    /// What the agent does on its own when the memory server's instructions
+    /// say to save a correction: the same, with no tag.
+    fn save_correction(&self) {
+        self.save(
+            "use-tr-not-sed",
+            "---\nname: Use tr, not sed\ndescription: shell scripts use tr, not sed\nmetadata:\n  type: feedback\n---\n\nIn shell scripts, use tr for case changes; never sed.\n",
+            "Use tr, not sed",
+            "shell scripts use tr, not sed",
+        );
+    }
+
+    fn save(&self, file: &str, body: &str, name: &str, hook: &str) {
+        let path = format!("/memories/{file}.md");
+        let id = format!("toolu_{file}");
         let lines = [
             json!({"type": "assistant", "isSidechain": false, "sessionId": SESSION, "cwd": "/work",
                 "message": {"role": "assistant", "content": [{"type": "tool_use", "id": id,
@@ -108,12 +128,10 @@ impl Home {
         fs::write(self.transcript(), t).unwrap();
         let dir = self.store().join("memory");
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join(format!("writing-style-{slug}.md")), body).unwrap();
+        fs::write(dir.join(format!("{file}.md")), body).unwrap();
         let index = dir.join("MEMORY.md");
         let mut i = fs::read_to_string(&index).unwrap_or_default();
-        i.push_str(&format!(
-            "- [writing-style: {rule}](writing-style-{slug}.md) - {rule}\n"
-        ));
+        i.push_str(&format!("- [{name}]({file}.md) - {hook}\n"));
         fs::write(index, i).unwrap();
     }
 
@@ -312,7 +330,8 @@ fn reflect(home: &Home, reason: &str) -> String {
 
 /// Macro step 3, as ruled: the persona habit from the correction, the rule
 /// taught to writing-style shown as saved in memory, and its move into the
-/// skill as a backlog item.
+/// skill as a backlog item. The other shape, the correction saved during
+/// the session, follows.
 #[test]
 fn close_proposes_one_batch_and_ok_writes_the_habit_and_files_the_move_and_nothing_else() {
     let home = Home::new();
@@ -415,6 +434,42 @@ fn close_proposes_one_batch_and_ok_writes_the_habit_and_files_the_move_and_nothi
         ledger.contains("  tool:Edit: 1, 0, 1, 0, 0, 0, 0/0"),
         "{ledger}"
     );
+}
+
+/// Macro step 3, the other shape: the agent saved the correction to the
+/// persona's memory during the session. The batch lists it as saved in
+/// memory beside the taught rule, the reflector's habit for it is dropped,
+/// and "ok" files only the move.
+#[test]
+fn a_correction_saved_in_the_session_is_listed_and_ok_files_only_the_move() {
+    let home = Home::new();
+    home.save_correction();
+    let before = home.snapshot();
+    let batch = reflect(&home, "close");
+    for want in [
+        "1 to decide",
+        "  saved in memory this session (it stays there until you remove it):\n    maid-harness/writing-style, in maid-harness/personal-memory [personal] /memories/writing-style-no-em-dashes.md: \"Punctuation: no em dashes in commit messages\"\n    maid-harness/personal-memory [personal] /memories/use-tr-not-sed.md: \"shell scripts use tr, not sed\"\n",
+        "1. backlog item, maid-harness/writing-style (on https://example.org/me/maid): move 2 taught rules into writing-style's text",
+        "shell scripts use tr, not sed: saved in memory this session (maid-harness/personal-memory /memories/use-tr-not-sed.md)",
+    ] {
+        assert!(batch.contains(want), "{want:?} in:\n{batch}");
+    }
+    assert!(!batch.contains(". habit"), "{batch}");
+    let applied = decide(&home, r#"{"decide": "ok"}"#);
+    assert_eq!(applied.matches("accepted").count(), 1, "{applied}");
+    assert_eq!(pending(&home), 0);
+    assert_eq!(
+        home.snapshot(),
+        before,
+        "the saved memories and the older file stay as they are"
+    );
+    let proposals = home
+        .path()
+        .join(".local/state/my-harness/proposals/maid-harness-writing-style");
+    let files: Vec<_> = fs::read_dir(proposals).unwrap().flatten().collect();
+    assert_eq!(files.len(), 1);
+    let proposal = fs::read_to_string(files[0].path()).unwrap();
+    assert!(!proposal.contains("use-tr-not-sed"), "{proposal}");
 }
 
 fn decide(home: &Home, answer: &str) -> String {

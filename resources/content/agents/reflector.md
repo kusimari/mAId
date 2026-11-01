@@ -38,10 +38,12 @@ new habit would contradict.
 
 - **Corrections:** the person told the agent it was wrong, or redid its
   work. Each one is a `corrections` entry, and usually a habit.
-- **Rules the person taught:** a bring-in's habit, in its local tier. A
-  rule the session already saved to a persona's memory (a
-  `memory_create` or `memory_str_replace` call in `did`) is listed by the
-  core, which offers its move into the bring-in: propose nothing for it.
+- **Rules the person taught:** a bring-in's habit, in its local tier.
+- **Saved already:** anything the session already saved to a persona's
+  memory (a `memory_create` or `memory_str_replace` call in `did`), a
+  correction or a taught rule, is listed by the core as saved in memory,
+  and a taught rule gets its move into the bring-in: propose nothing for
+  it.
 - **Facts about the person or their work** worth knowing next time: a
   persona memory habit.
 - **Friction a bring-in caused:** a skill that misled the agent, a rule

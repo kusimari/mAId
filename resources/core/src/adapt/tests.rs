@@ -911,7 +911,7 @@ fn tagged(tag: &str, rule: &str) -> String {
 }
 
 #[test]
-fn a_rule_saved_for_a_bring_in_this_session_is_listed_and_others_are_not() {
+fn every_memory_saved_this_session_is_listed_and_a_tagged_rule_names_its_bring_in() {
     let mut w = World::new();
     w.style_in_memory();
     let rule = "Punctuation: no em dashes in commit messages";
@@ -942,6 +942,11 @@ fn a_rule_saved_for_a_bring_in_this_session_is_listed_and_others_are_not() {
             None,
         ),
         (
+            "mcp__personal-memory__memory_str_replace",
+            "/memories/MEMORY.md",
+            Some("- [x](c.md) - x\n".to_string()),
+        ),
+        (
             "mcp__document-skills__memory_create",
             "/memories/e.md",
             Some(tagged("writing-style", "not a memory")),
@@ -955,25 +960,24 @@ fn a_rule_saved_for_a_bring_in_this_session_is_listed_and_others_are_not() {
         w.save(tool, path, body.as_deref());
     }
     let saved = moves::saved(&w.map, &w.bundle);
-    let got: Vec<(&str, &str, &str)> = saved
+    let got: Vec<(Option<&str>, &str, &str)> = saved
         .iter()
-        .map(|s| (s.thing.as_str(), s.memory.as_str(), s.rule.as_str()))
+        .map(|s| (s.thing.as_deref(), s.path.as_str(), s.rule.as_str()))
         .collect();
+    let style = Some("maid-harness/writing-style");
     assert_eq!(
         got,
         [
-            (
-                "maid-harness/writing-style",
-                "maid-harness/personal-memory",
-                rule
-            ),
-            (
-                "maid-harness/writing-style",
-                "maid-harness/personal-memory",
-                "Voice: plain words"
-            )
-        ]
+            (style, SAVED, rule),
+            (style, "/memories/b.md", "Voice: plain words"),
+            (None, "/memories/c.md", "x"),
+            (None, "/memories/d.md", "unknown tag"),
+        ],
+        "the index, a missing file, another server's and a path out of the store are not"
     );
+    assert!(saved
+        .iter()
+        .all(|s| s.memory == "maid-harness/personal-memory"));
     let shown = batch("s", &saved, &[], &[]);
     assert!(
         shown.contains("saved in memory this session (it stays there until you remove it):\n    maid-harness/writing-style, in maid-harness/personal-memory [personal] /memories/writing-style-no-em-dashes.md: \"Punctuation: no em dashes"),
@@ -1182,4 +1186,119 @@ fn a_borrowed_bring_ins_files_are_never_a_source_for_a_move() {
     fs::write(&parts, list.to_string()).unwrap();
     w.map = crate::map::fuse(&w.config.parts).unwrap();
     assert!(moves::items(&w.map, &[], &BTreeSet::new()).is_empty());
+}
+
+/// The agent saved the person's correction to memory itself, untagged.
+const AWK: &str = "/memories/use-tr-not-sed.md";
+
+fn untagged() -> String {
+    "---\nname: Use tr, not sed\ndescription: shell scripts use tr, not sed\nmetadata:\n  type: feedback\n---\n\nIn shell scripts, use tr for case changes; never sed.\n".into()
+}
+
+#[test]
+fn an_untagged_save_is_saved_in_memory_with_no_move_and_no_second_habit() {
+    let mut w = World::new();
+    w.style_in_memory();
+    w.save(
+        "mcp__personal-memory__memory_create",
+        AWK,
+        Some(&untagged()),
+    );
+    let saved = moves::saved(&w.map, &w.bundle);
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].thing, None);
+    let shown = batch("s", &saved, &[], &[]);
+    assert!(
+        shown.contains("saved in memory this session (it stays there until you remove it):\n    maid-harness/personal-memory [personal] /memories/use-tr-not-sed.md: \"shell scripts use tr, not sed\"\n"),
+        "{shown}"
+    );
+    // The same habit again, by its file; the same text under another title;
+    // and the same text with no memory named: each is dropped.
+    let mut retitled = habit_memory();
+    retitled["title"] = json!("Prefer tr");
+    let mut unnamed = habit_memory();
+    unnamed["thing"] = Value::Null;
+    unnamed["persona"] = json!("personal");
+    unnamed["title"] = json!("Prefer tr");
+    let (kept, dropped) = w.check(json!([habit_memory(), retitled, unnamed]));
+    assert!(kept.is_empty(), "no move and no second habit: {kept:?}");
+    assert_eq!(dropped.len(), 3, "{dropped:?}");
+    assert!(
+        dropped.iter().all(|d| d.why
+            == "saved in memory this session (maid-harness/personal-memory /memories/use-tr-not-sed.md)"),
+        "{dropped:?}"
+    );
+    assert_eq!(w.pending_count(), 0);
+}
+
+#[test]
+fn a_habit_saved_in_another_memory_or_new_in_this_one_is_still_proposed() {
+    let mut w = World::new();
+    w.save(
+        "mcp__personal-memory__memory_create",
+        AWK,
+        Some(&untagged()),
+    );
+    let mut other = habit_memory();
+    other["thing"] = json!("work-part/work-memory");
+    let mut new = habit_memory();
+    new["title"] = json!("Quote paths");
+    new["entry"] = json!("Quote every path in shell scripts.");
+    new["change"] = json!("shell scripts quote paths");
+    let (kept, dropped) = w.check(json!([other, new]));
+    assert!(dropped.is_empty(), "{dropped:?}");
+    assert_eq!(kept.len(), 2);
+}
+
+#[test]
+fn a_habit_is_matched_to_a_saved_memory_by_its_body_or_name_and_only_on_its_persona() {
+    let mut w = World::new();
+    // At a file its title's slug does not name, so only the name or body
+    // can match it.
+    w.save(
+        "mcp__personal-memory__memory_create",
+        "/memories/feedback_tr.md",
+        Some(&untagged()),
+    );
+    // One with no body, which an empty entry must not match.
+    w.save(
+        "mcp__personal-memory__memory_create",
+        "/memories/empty.md",
+        Some("---\nname: empty\n---\n"),
+    );
+    // Only the entry repeats the saved body; only the title its name; and
+    // an empty thing with the persona named.
+    let mut body = habit_memory();
+    body["title"] = json!("Prefer tr");
+    body["change"] = json!("prefer tr in scripts");
+    let mut name = habit_memory();
+    name["title"] = json!("use tr, NOT sed");
+    name["change"] = json!("prefer tr in scripts");
+    name["entry"] = json!("Prefer tr.");
+    let mut empty = body.clone();
+    empty["thing"] = json!("");
+    empty["persona"] = json!("personal");
+    let mut blank = habit_memory();
+    blank["title"] = json!("Blank");
+    blank["entry"] = json!("");
+    blank["change"] = json!("");
+    let (_, dropped) = w.check(json!([body, name, empty, blank]));
+    assert_eq!(dropped.len(), 4, "{dropped:?}");
+    assert!(
+        dropped[..3]
+            .iter()
+            .all(|d| d.why.starts_with("saved in memory"))
+            && dropped[3].why == "a habit with no entry to write",
+        "{dropped:?}"
+    );
+    // The same text for the work persona, or for no persona named, is its
+    // own: the person places it.
+    let mut work = habit_memory();
+    work["thing"] = Value::Null;
+    work["persona"] = json!("work");
+    let mut nobody = habit_memory();
+    nobody["thing"] = Value::Null;
+    let (kept, dropped) = w.check(json!([work, nobody]));
+    assert!(dropped.is_empty(), "{dropped:?}");
+    assert_eq!(kept.len(), 2);
 }

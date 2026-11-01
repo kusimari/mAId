@@ -229,7 +229,8 @@ Its older files in its dir under mAId's config dir,
 written or deleted, and their rules go with that move. They are its
 optional config keys `learned` and `promoted`, which install binds to those
 files (a skill's config key `<k>` binds to `<config dir>/<skill>/<k>.md`).
-No
+The skill reads them only at the paths the genome names for those keys,
+and no skill text carries a default location (a content test holds it). No
 skill tells the runtime to find, read or edit a checkout; content
 validation fails a skill file that says `resources/content/`, "mAId
 checkout", `just install` or `just resources::`. Changing a shipped body is
@@ -585,7 +586,12 @@ panic included.
 **Genome** is the session's picture, a few lines per section: the
 personas (each with its part) and the one this session acts through, or
 "not known; ask"; each session bring-in with its job, own or borrowed, and
-where its state lives; the turn bring-ins as a catalog, none loaded; the
+where its state lives; the turn bring-ins as a catalog, none loaded; on
+every bring-in's line, session or turn, its other bound file and dir
+locations by key (`locations: learned
+<path>, ...`: a config value, not a state tier or a secret, that is an
+absolute path), so a skill reads a location only where the session names
+it and never through a default path; the
 environment, how many bring-ins are ready and why each other one is not;
 and the pending count, with how many sessions wait to be reflected on. It
 adds a line for part lists it refused and for bring-in names two parts
@@ -689,14 +695,19 @@ the map (or `harness`); a habit's tier is declared and bound. A
 sub-agent's prompt is its dispatcher's words, and a command's output in
 the person's turn is tool content.
 
-**Rules saved in memory, moved into the bring-in.** The batch also lists
-what this session saved for a bring-in in a persona's memory: a
+**Saved in memory, and rules moved into the bring-in.** The batch also
+lists every memory this session saved in a persona's memory: a
 `memory_create` or `memory_str_replace` call that did not fail, in the
 session or a sub-session, on a memory bring-in's server
 (`mcp__<name>__<tool>`, or a plugin's `mcp__plugin_<p>_<name>__<tool>`),
-whose file is in that store now and tagged `metadata.bring-in` with a
-declared bring-in. Each is a "saved in memory" line, saying it stays
-there until the person removes it. For each such bring-in, the core
+whose file is in that store now. Each is a "saved in memory" line with
+its memory and persona, saying it stays there until the person removes
+it: a memory tagged `metadata.bring-in` with a declared bring-in names
+that bring-in and its rule; any other shows its description. A habit
+finding that would add a memory saved this session again (on the memory
+it names, the same file or the same text) is dropped as saved in memory
+this session, so a correction the agent saved itself is reported, not
+proposed twice. For each bring-in with tagged rules, the core
 offers one item: move those rules, and the `- ` entries of its older
 rules files (on an own bring-in, each bound config value, not a state
 tier, that is a file with a `## ` heading; a borrowed one's files are
@@ -968,7 +979,7 @@ the index's dir; each memory file has frontmatter `name`, `description`
 and `metadata.type` (`user`, `feedback`, `project` or `reference`), then
 its body (Claude Code's auto-memory format). A memory a bring-in saved
 for itself also carries `metadata.bring-in: <its name>`, and its body is
-the rule (Adaptation, "Rules saved in memory"). The memory's persona is the
+the rule (Adaptation, "Saved in memory"). The memory's persona is the
 one of the part that records the bring-in. A bring-in with no `index` key
 has no index in this shape.
 
@@ -1112,7 +1123,7 @@ mAId/
 │   │   ├── src/experience.rs  a session as said, told, did, touched, friction
 │   │   ├── src/sleep.rs    sleep marks: sessions waiting to be reflected on
 │   │   ├── src/adapt.rs    findings, the guards, the decision batch, the routes (tests in adapt/)
-│   │   ├── src/adapt/moves.rs  rules a bring-in saved in memory, and their move into its text
+│   │   ├── src/adapt/moves.rs  what a session saved in memory, and a bring-in's rules moved into its text
 │   │   ├── src/memory.rs   a persona memory written through its server, MCP over stdio
 │   │   ├── src/ledger.rs   what reflections saw and the person decided
 │   │   ├── src/files.rs, src/time.rs  whole-file writes; UTC stamps
@@ -1327,8 +1338,9 @@ declaration does not read or names a rules heading that is not there.
 Beside it, `shipped_skills_declare_the_contract` and
 `shipped_servers_and_overlays_declare_the_contract` hold every shipped
 unit to the contract (turn, a job, rules of at most 30 lines, no file
-tier, writing-style's two optional older-file keys, the overlay's `requires` equal to the
-vendor's `needs`). They read only, so they keep the no-side-effects
+tier, writing-style's two optional older-file keys, no default location
+such as `~/.config` in any file a skill ships, the overlay's `requires`
+equal to the vendor's `needs`). They read only, so they keep the no-side-effects
 property.
 
 **`just resources::check-skills` / `…::smoke-skills` — AI-tool

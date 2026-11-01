@@ -1,7 +1,7 @@
 ---
 name: writing-style
 description: Rewrite, format, clean up, tighten, or reword prose in my voice; draft an email or doc as me; "new rule:" to teach a style rule. Opens with `[writing-style] applies`.
-version: 1.3.0
+version: 1.3.1
 tags: [narrative, writing, email, announcement, formatter, learning]
 metadata:
   my-harness.scope: turn
@@ -49,11 +49,11 @@ top of the sections below. They win where they conflict with them.
    through, with that memory's own tool (`memory_search` for
    `writing-style`). Each memory tagged `bring-in: writing-style` is one
    rule.
-2. **Older files.** `learned.md` (`## Learned rules`) and `promoted.md`
-   (`## Promoted rules`) in
-   `${XDG_CONFIG_HOME:-~/.config}/maid/writing-style/`, or where your
-   session names writing-style's `learned` and `promoted`. They are the
-   user's data from before: read them, and never write or delete them.
+2. **Older files.** The files your session's startup report names for
+   writing-style, as `locations: learned <path>, promoted <path>`: rules
+   under `## Learned rules` and `## Promoted rules`. When it names none,
+   there are none: never look for them anywhere else. They are the user's
+   data from before: read them, and never write or delete them.
 
 Then say in one line how many rules apply and quote the newest three:
 *"N saved rules apply; newest: &lt;list&gt;"*. Any session can save a

@@ -91,6 +91,18 @@ fn shipped_judgement_role_contract() {
     );
 }
 
+fn files_under(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = vec![];
+    for e in std::fs::read_dir(dir).unwrap().flatten() {
+        let p = e.path();
+        match p.is_dir() {
+            true => out.extend(files_under(&p)),
+            false => out.push(p),
+        }
+    }
+    out
+}
+
 /// Every shipped skill is a turn bring-in with a job and a rules pointer
 /// that names a few lines, not a whole skill (see project.md "My harness").
 #[test]
@@ -121,6 +133,23 @@ fn shipped_skills_declare_the_contract() {
         };
         assert_eq!(d.scope, Scope::Turn, "{name}");
         assert!(!d.job.is_empty(), "{name}");
+        // A skill reads a location only where the session names it, so no
+        // run reaches the person's real config through a default.
+        for file in files_under(&skills.join(name)) {
+            let text = std::fs::read_to_string(&file).unwrap_or_default();
+            for default in [
+                "XDG_CONFIG_HOME",
+                "~/.config",
+                "$HOME/.config",
+                "${HOME}/.config",
+            ] {
+                assert!(
+                    !text.contains(default),
+                    "{} names {default}",
+                    file.display()
+                );
+            }
+        }
         let lines = rules(&unit, d.rules.as_deref().expect(name)).unwrap();
         let n = lines.lines().count();
         assert!((2..=30).contains(&n), "{name}: rules are {n} lines");

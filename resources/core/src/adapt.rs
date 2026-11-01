@@ -322,6 +322,7 @@ pub fn check(
         .into_iter()
         .map(|(w, t)| (w, squash(t)))
         .collect();
+    let saved = moves::saved(map, bundle);
     let (mut kept, mut dropped) = (vec![], vec![]);
     for (i, f) in reflection.findings.into_iter().enumerate() {
         let drop = |why: String| Dropped {
@@ -359,6 +360,13 @@ pub fn check(
             dropped.push(drop(why));
             continue;
         }
+        if let Some(s) = saved_already(map, &saved, &f) {
+            dropped.push(drop(format!(
+                "saved in memory this session ({} {})",
+                s.memory, s.path
+            )));
+            continue;
+        }
         match place(map, &f) {
             Err(why) => dropped.push(drop(why)),
             Ok((target, persona, action, mut needs)) => {
@@ -385,7 +393,6 @@ pub fn check(
             }
         }
     }
-    let saved = moves::saved(map, bundle);
     // What a decided move moved, or another session's move waits with,
     // is not offered here.
     let mut held = crate::ledger::moved(config)?;
@@ -417,6 +424,44 @@ pub fn check(
         kept,
         dropped,
         saved,
+    })
+}
+
+/// The memory this session already saved that a habit would add again:
+/// on the memory it goes to (its persona's, when it names none), the same
+/// file, name or text.
+fn saved_already<'a>(map: &Map, saved: &'a [Saved], f: &Finding) -> Option<&'a Saved> {
+    if f.kind != Kind::Habit || f.op != Op::Add {
+        return None;
+    }
+    let memory = match f.thing.as_deref().filter(|t| !t.is_empty()) {
+        Some(t) => Some(id(resolve(map, t).filter(|b| is_memory(b))?)),
+        None => memory_of(map, f.persona.as_deref()).map(id),
+    };
+    let file = f
+        .title
+        .as_deref()
+        .map(|t| format!("{}/{}.md", memory::ROOT, slug(t)));
+    let same = |a: &str, b: &str| {
+        let a = squash(a).to_lowercase();
+        !a.is_empty() && a == squash(b).to_lowercase()
+    };
+    let texts: Vec<&str> = [f.entry.as_deref(), Some(f.change.as_str())]
+        .into_iter()
+        .flatten()
+        .collect();
+    saved.iter().find(|s| {
+        let on = match &memory {
+            Some(m) => *m == s.memory,
+            // With no persona either, the person places it, so it stays.
+            None => f.persona.is_some() && s.persona == f.persona,
+        };
+        on && (file.as_deref() == Some(s.path.as_str())
+            || f.title
+                .as_deref()
+                .zip(s.name.as_deref())
+                .is_some_and(|(a, b)| same(a, b))
+            || texts.iter().any(|t| same(t, &s.rule) || same(t, &s.body)))
     })
 }
 
@@ -816,12 +861,17 @@ pub fn batch(session: &str, saved: &[Saved], items: &[Pending], dropped: &[Dropp
                 .as_deref()
                 .map(|x| format!(" [{x}]"))
                 .unwrap_or_default();
+            let thing = v
+                .thing
+                .as_deref()
+                .map(|t| format!("{t}, in "))
+                .unwrap_or_default();
             let _ = writeln!(
                 s,
                 "    {}",
                 squash(&format!(
-                    "{}, in {}{who} {}: \"{}\"",
-                    v.thing, v.memory, v.path, v.rule
+                    "{thing}{}{who} {}: \"{}\"",
+                    v.memory, v.path, v.rule
                 ))
             );
         }

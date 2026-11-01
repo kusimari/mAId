@@ -122,7 +122,8 @@ fn kdevkit_points_at_the_feature_spec_for_the_branch() {
 
 /// Claude Code places a hook's context whole only up to 10,000 characters,
 /// and the genome is not cut, so its size for this repo's own install, with
-/// a second part beside it, is held well under that.
+/// a second part beside it and writing-style's files bound, is held well
+/// under that.
 const GENOME_BYTES: usize = 8_000;
 
 #[test]
@@ -145,6 +146,11 @@ fn the_genome_of_this_repos_install_with_a_second_part_stays_small() {
     let mine = parts.join("maid-harness.json");
     let mut list: Value = serde_json::from_str(&fs::read_to_string(&mine).unwrap()).unwrap();
     let more = list["bring_ins"].as_array_mut().unwrap();
+    let conf = dir.path().join("config/maid/writing-style");
+    for b in more.iter_mut().filter(|b| b["name"] == "writing-style") {
+        b["values"] =
+            json!({"learned": conf.join("learned.md"), "promoted": conf.join("promoted.md")});
+    }
     more.push(json!({"name": "personal-memory",
         "unit": {"standard": "mcp", "path": c.join("servers/personal-memory/server.json")},
         "values": {"store": store, "index": "memory/MEMORY.md"}}));
@@ -177,6 +183,20 @@ fn the_genome_of_this_repos_install_with_a_second_part_stays_small() {
     assert!(
         text.contains("personal-memory") && text.contains("work-review"),
         "{text}"
+    );
+    // writing-style's older files are named where they are bound, so the
+    // skill never reads a default path.
+    let style = text
+        .lines()
+        .find(|l| l.starts_with("  writing-style: "))
+        .unwrap_or_default();
+    assert!(
+        style.ends_with(&format!(
+            "; locations: learned {}, promoted {}",
+            conf.join("learned.md").display(),
+            conf.join("promoted.md").display()
+        )),
+        "{style}"
     );
     assert!(text.len() <= GENOME_BYTES, "{} bytes:\n{text}", text.len());
 }
