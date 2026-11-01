@@ -395,6 +395,7 @@ coding CLIs, so the genome never depends on them.
 | 7 | macro-fixes | defects from Macro test run 1: the installed plugin's hooks refused by current Claude Code (D1), the second prompt re-sending the reinforcement (D2), and "For any persona part" made followable alone (D3 and the dry-run gaps) | 1-6 | merged |
 | 8 | claude-config-dir | from Macro test run 3: install, uninstall and status read and write Claude's user config at `$HOME/.claude` even when `CLAUDE_CONFIG_DIR` is set; the paid tests isolate through `CLAUDE_CONFIG_DIR`, not a scratch HOME | 7 | merged |
 | 9 | writing-style-memory | from Macro test run 3: writing-style's taught rules live in persona memory, not a file tier; the close batch says what was saved and offers to move them into the skill on its source; the reflector quotes only the person's words for a habit; the guard's label says what it checks | 8 | merged |
+| 10 | saved-in-session | from Macro test run 4: the genome names where a bring-in's bound files are, so a skill never falls back to a default path (R4-1); a persona memory saved during the session is shown in the close batch as saved in memory (R4-2) | 9 | running |
 
 The work part's own bring-ins take the contract in their own repo, outside
 this initiative.
@@ -643,3 +644,17 @@ this initiative.
   ratify)
 - Ruling (ringmaster): fix stream 9; the Macro test session runs in a
   location where one persona is acting, so no persona guess is expected
+- Macro test run 4 (real model, 1 session; 9 of 30 spent): personal
+  persona acting; the taught rule saved to memory with its tag and the
+  move-into-the-skill item proposed; FAIL: writing-style read the real
+  HOME's older rules file because the genome no longer names its bound
+  locations (R4-1; nothing written; copies only under /tmp); the
+  correction was saved to persona memory in the session by the memory
+  server's own instructions, so no habit reached the batch (R4-2)
+- Ruling (ringmaster, to ratify; extends the user's 2026-11-01 ruling): a
+  persona memory saved during the session counts, like a taught rule; the
+  close batch lists it as saved in memory. Macro step 3's "persona-memory
+  habit" is then either a batch item or a saved-in-memory line · why: the
+  user ruled memory is the temporary tier that a session writes and the
+  close reports · cost if wrong: the memory server's instructions change
+  to leave corrections to reflection
