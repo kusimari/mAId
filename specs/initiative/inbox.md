@@ -66,8 +66,10 @@ What must happen, whatever the shell.
   inbox.
 - It knows which channels are present from the bring-ins the installed
   parts declare; a part with no channel adds none.
-- Asking a running inbox to stop stops its rhythm and reflexes; the inbox
-  itself stays.
+- Rhythm and reflexes run while the inbox session is up; asking it to
+  stop stops them, and the inbox itself stays.
+- What started the session does not matter to it: today I start it; later
+  something else may (OS mode starting it and keeping it running).
 
 ### 2. Sensing
 
@@ -140,6 +142,12 @@ designed:
   it.
 - **Personas stay separate.** An item keeps the persona of the part that
   brought its channel; memory and adaptation stay per persona.
+- **Session up first, start-agnostic.** For now rhythm and reflexes run
+  only while the inbox session is up. Nothing may assume who started that
+  session or that it is the only way they run, so a later choice (OS mode
+  starting and keeping the session, or running with no harness started)
+  changes how it starts, not how it works.
+- **One inbox across personas.** Every item is labelled with its persona.
 - **Carrier-neutral.** Rhythm, reflexes and attention reach the ghost
   through the existing entry points; Claude Code first, other shells
   mapped.
@@ -149,8 +157,7 @@ designed:
 ## To design, once framing and experience are agreed
 
 - The channel contract: what a channel declares and reports.
-- How a running inbox keeps rhythm and reflexes inside a session, and
-  whether they also run with no session open.
+- How a running inbox keeps rhythm and reflexes inside a session.
 - Where channel setup, credentials and gathered data live, per
   environment.
 - The inbox store, the item shape, and the inbox views in and beside the
@@ -160,11 +167,7 @@ designed:
 
 ## Open questions
 
-1. One inbox across personas with each item labelled (my recommendation),
-   or one inbox per persona?
-2. Is the inbox session the only place rhythm and reflexes run, or may
-   they also run with no session open?
-3. Do routines and reflexes come only from the inbox, or may parts declare
+1. Do routines and reflexes come only from the inbox, or may parts declare
    their own?
 
 ## Decision Log
@@ -177,6 +180,13 @@ designed:
   separated the channels from the autonomic side and asked for framing and
   experience before design · cost if wrong: the channel contract reshapes
   when the design layer is written
+- Ruling (person): one inbox across personas, each item labelled with its
+  persona · why: one place to attend to · cost if wrong: views split per
+  persona
+- Ruling (person): rhythm and reflexes run while the inbox session is up;
+  the design stays open to other starts (OS mode keeping the session up,
+  or running with no harness started) · why: running without the harness
+  is not yet in reach · cost if wrong: none, the start is kept separate
 - Superseded: the first draft's personal-persona-only channels, ingest
   service, draft-only sending and connector table; they assumed design
   that is now deferred.
