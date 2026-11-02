@@ -679,3 +679,7 @@ this initiative.
 - Close: streams 1-10 merged; 15 of 30 paid runs spent; the initiative
   review briefing is written; the stream worktrees and branches are
   removed (their history is in the squash commits on this branch)
+- Macro test run 7 (real model, at a78bbac, 5 sessions; 20 of 30 spent):
+  all five steps PASS on the real model (start, turn, close, reflect,
+  travel); the real HOME unchanged. Claude Code moved to 2.1.316 on this
+  machine; `claude_live` 6/6 and `claude_installed` 1/1 pass on it
