@@ -1,6 +1,7 @@
-# Initiative: os-mode
+# Initiative: spawns
 
-- Branch: `initiative/os-mode` (cut from `main` at 0881e13)
+- Branch: `initiative/os-mode` (cut from `main` at 0881e13; the branch
+  keeps the initiative's first name, `os-mode`)
 - Status: draft for the person's review, at the framing and experience
   layer. The design layers (technical concepts, mapping per shell, streams)
   are written only once framing and experience are agreed.
@@ -33,11 +34,11 @@ session, carrying the same ghost, is started for a piece of work. The
 work may come with an outcome (an inbox item that needs doing) or only
 with what it is about ("work on this code"), the outcome taking shape in
 the spawn as I instruct it; either way it may run for a long time, and I
-can see from os-mode whether the outcome was achieved. Spawns run
+can see from the spawner whether the outcome was achieved. Spawns run
 independently but stay linked; when one needs me it signals me to pay
 attention. The inbox can start spawns too: an item that is
 best worked in a session of its own (a ticket assigned to me) signals
-os-mode to spawn one to achieve it, and that spawn either finishes and
+the spawner to spawn one to achieve it, and that spawn either finishes and
 updates the item or signals me. The
 inbox session itself is one of the things I launch this way.
 
@@ -45,19 +46,20 @@ inbox session itself is one of the things I launch this way.
 
 The inbox is the ghost's autonomic side. This is its deliberate side: the
 ghost shelling out into sessions of its own for pieces of work, and
-keeping track of all of them from one place. For each spawn os-mode knows
+keeping track of all of them from one place, the **spawner**: the
+session I ask to manage my spawns. For each spawn the spawner knows
 what it is about, its outcome when there is one, who started it, its
 state, whether the outcome was achieved, and when it needs me.
 
 | Function | What it does, and why |
 |---|---|
 | **spawning** (shelling out for a piece of work) | Starts a new session carrying the same ghost, with what the work is about, its outcome when there is one, and a pointer to where it came from (my ask, an inbox item), so the work runs on its own, with its own experience and its own sleep. |
-| **working in a spawn** | I instruct the spawn in its own session, for as long as the work takes, so os-mode never stands between me and the work. |
-| **signalling** (pay attention) | A spawn that needs input signals me: it shows as waiting in os-mode and as an item in my inbox, so I learn of it wherever I am. |
+| **working in a spawn** | I instruct the spawn in its own session, for as long as the work takes, so the spawner never stands between me and the work. |
+| **signalling** (pay attention) | A spawn that needs input signals me: it shows as waiting in the spawner and as an item in my inbox, so I learn of it wherever I am. |
 | **finishing** | A spawn whose work is done says so, with its result where it came from (the inbox item it started from), and ends, so every spawn closes what it opened. |
-| **spawning from the inbox** | An inbox item that needs a session of its own signals os-mode to spawn one to achieve it, under my guards, so work that arrives can start before I look. |
-| **standing spawns** | Spawns that keep running rather than finish, such as the inbox session, so os-mode is how the ghost's long-running sessions are launched too. |
-| **links** (information between sessions) | Open between os-mode and each spawn, and possibly between spawns, carrying state, signals, results and "stop". Links carry information, never authority. |
+| **spawning from the inbox** | An inbox item that needs a session of its own signals the spawner to spawn one to achieve it, under my guards, so work that arrives can start before I look. |
+| **standing spawns** | Spawns that keep running rather than finish, such as the inbox session, so the spawner is how the ghost's long-running sessions are launched too. |
+| **links** (information between sessions) | Open between the spawner and each spawn, and possibly between spawns, carrying state, signals, results and "stop". Links carry information, never authority. |
 | **merging** (one piece of work, one spawn) | Notices when a launch is about work a spawn already has, tells me, and offers to stop the launch or merge, so duplicates are deliberate, never accidental. |
 | **presence** (where I meet a spawn) | How I meet any spawn: a window, a page, a chat thread. Separate from where it runs, so how I reach spawns can change without changing them. |
 
@@ -74,44 +76,44 @@ What must happen, whatever the shell.
   actually is (working, waiting for me, done, failed), what it is about,
   its outcome and whether it was achieved when there is one, who started
   it, and where to meet it; it resumes nothing without my yes.
-- What started os-mode does not matter to it: today I start it; later it
+- What started the spawner does not matter to it: today I start it; later it
   may be started for me.
 
 ### 2. Launching the inbox
 
-- From os-mode I launch "run my inbox" as a standing spawn; os-mode keeps
-  it up and offers to start it again if it stops.
+- From the spawner I launch "run my inbox" as a standing spawn; the spawner
+  keeps it up and offers to start it again if it stops.
 
 ### 3. Spawning and working
 
-- I say what I want to work on; os-mode spawns a session carrying the same
-  ghost, with what it is about and where it came from, and the guards for
-  that work, and tells me where to meet it.
+- I say what I want to work on; the spawner spawns a session carrying the
+  same ghost, with what it is about and where it came from, and the guards
+  for that work, and tells me where to meet it.
 - I go to the spawn and instruct it there; it runs as long as the work
   takes. Its genome at start, its expression while it works.
 
 ### 4. Spawning from the inbox
 
 - An inbox item best worked in a session of its own (a ticket assigned to
-  me) signals os-mode, which spawns a session to achieve it, carrying the
-  item's ask as the outcome, if my guards allow; otherwise the spawn waits
-  in the inbox as a proposal.
+  me) signals the spawner, which spawns a session to achieve it, carrying
+  the item's ask as the outcome, if my guards allow; otherwise the spawn
+  waits in the inbox as a proposal.
 - That spawn either finishes, updating the inbox item it came from, or
   signals me.
 
 ### 5. Signalling and finishing
 
-- A spawn that needs input signals me: it shows as waiting for me in
-  os-mode and raises an item in my inbox; meeting it takes me straight to
+- A spawn that needs input signals me: it shows as waiting for me in the
+  spawner and raises an item in my inbox; meeting it takes me straight to
   the question.
-- A spawn whose work is done reports its result where it came from and
-  ends; what it learned stays in its own experience and sleep.
-- os-mode can ask a spawn to stop.
+- A spawn whose work is done reports its result where it came from and ends;
+  what it learned stays in its own experience and sleep.
+- The spawner can ask a spawn to stop.
 
 ### 6. Merging
 
 - When a launch, mine or the inbox's, is about work a spawn already has
-  (the same ticket, the same code), os-mode tells me which spawn and
+  (the same ticket, the same code), the spawner tells me which spawn and
   offers: launch anyway, stop the launch, or merge.
 - Merging: the new launch's ask is sent to the running spawn; once that
   spawn acknowledges it and acts on it, the duplicate shuts itself down.
@@ -120,7 +122,7 @@ What must happen, whatever the shell.
 ### 7. Presence
 
 - I can meet any spawn, through whichever presence is available, and come
-  back to os-mode.
+  back to the spawner.
 
 ### 8. Guards
 
@@ -138,48 +140,49 @@ In a scratch HOME with the core installed and one test channel:
 
 1. Asking a session to manage my spawns shows none.
 2. Launching "run my inbox" from it starts the inbox as a standing spawn.
-3. Asking to work on some code spawns a session, listed as working with
-   what it is about and where to meet it; instructing it there works.
-4. The spawn signals that it needs input: os-mode shows it waiting and the
-   inbox has an item; meeting it shows the question.
-5. A test item arriving on the channel that needs its own session
-   signals os-mode, which spawns one with the item's ask as its outcome;
-   the spawn finishes, os-mode shows the outcome achieved, and the item
-   is updated.
+3. Asking to work on some code spawns a session, listed as working with what
+   it is about and where to meet it; instructing it there works.
+4. The spawn signals that it needs input: the spawner shows it waiting and
+   the inbox has an item; meeting it shows the question.
+5. A test item arriving on the channel that needs its own session signals
+   the spawner, which spawns one with the item's ask as its outcome; the
+   spawn finishes, the spawner shows the outcome achieved, and the item is
+   updated.
 6. Launching again for the same work is noticed; choosing merge sends the
-   ask to the running spawn, which acknowledges and acts, and the
-   duplicate shuts down.
-7. A spawn asking os-mode to approve something it was denied is refused.
+   ask to the running spawn, which acknowledges and acts, and the duplicate
+   shuts down.
+7. A spawn asking the spawner to approve something it was denied is refused.
 
 ## Constraints
 
 How this must be architected, given how the harness and its parts are
 designed:
 
-- **Embedded in a base harness.** os-mode is a session of a base harness
+- **Embedded in a base harness.** The spawner is a session of a base harness
   carrying the ghost; every spawn is a plain session of a base harness
   carrying the same ghost, which I can work in directly. Nothing outside
   the shells runs the agent loop.
-- **A core bring-in.** os-mode ships with the core; it names no part, no
+- **A core bring-in.** spawns ships with the core; it names no part, no
   channel and no particular work tracker.
 - **Outcome optional, never required.** A spawn may start with an outcome
-  or without one; os-mode tracks an outcome and whether it was achieved
+  or without one; the spawner tracks an outcome and whether it was achieved
   when there is one, and works the same when there is none.
-- **Start-agnostic.** Nothing may assume who started os-mode or a spawn
+- **Start-agnostic.** Nothing may assume who started the spawner or a spawn
   (me, the inbox, later something else).
-- **Spawns are independent.** A spawn keeps working if os-mode stops;
+- **Spawns are independent.** A spawn keeps working if the spawner stops;
   links inform, they do not hold spawns together.
-- **Links open to more than os-mode.** Designed so links between spawns
-  can be added without changing spawns.
+- **Links open to more than the spawner.** Designed so links
+  between spawns can be added without changing spawns, leaving room for a
+  swarm later (spawns working together on one piece of work).
 - **Running separate from presence.** A spawn's run never depends on how I
   am meeting it.
 - **Shell-agnostic.** Nothing may assume a spawn runs in the same base
-  harness as os-mode.
+  harness as the spawner.
 - **Links carry no authority.** Guards come from the person and the
   harness, never from a message.
-- **One source of truth.** What os-mode shows comes from the spawns as
+- **One source of truth.** What the spawner shows comes from the spawns as
   they are; it never keeps a second account that can drift.
-- **The inbox is used, not assumed.** os-mode launches, raises to and
+- **The inbox is used, not assumed.** The spawner launches, raises to and
   spawns from the inbox when it is there; it still works without it.
 - **Personas as in harness-core.** A spawn carries the whole fused ghost;
   what it remembers goes to the persona it belongs to.
@@ -189,14 +192,14 @@ designed:
 ## To design
 
 - What a spawn starts with: what it is about and where it came from.
-- How os-mode knows its spawns and their state, from each shell's own
+- How the spawner knows its spawns and their state, from each shell's own
   records.
 - How a spawn's guards are chosen at launch, by me or by the inbox.
 - Signalling: how a spawn says it needs me, and how that reaches the
   inbox.
 - Links: how messages travel, per shell; whether and how spawns link to
   each other.
-- Same-work detection: how os-mode tells two launches are about the same
+- Same-work detection: how the spawner tells two launches are about the same
   work.
 - Merge: the hand-off, the acknowledgement, and the shutdown.
 - Standing spawns: keeping the inbox up.
@@ -206,31 +209,37 @@ designed:
 ## Open questions
 
 1. Links between spawns: needed, and when?
-2. May a spawn spawn, or only os-mode and the inbox?
+2. May a spawn spawn, or only the spawner and the inbox?
 3. Bounds: how many spawns at once, a budget per spawn, when idle spawns
    are ended.
 4. Which presences matter after the first: a page, a chat thread, a
    phone?
+5. Swarm: should spawns later work together on one piece of work, and is
+   that this initiative or its own?
 
 ## Decision Log
 
-- Ruling (person): the framing is spawning and managing spawns, not a
-  home; a spawn shells out, achieves an outcome and returns; os-mode
-  launches the inbox; spawns raise to the inbox; same-outcome launches are
-  noticed and can be stopped or merged (the ask passed on, acknowledged
-  and acted on, then the duplicate shuts down) · why: the person's review
-  on PR #62
-- Ruling (person): a spawn is started for a piece of work, not an
-  outcome; I instruct it in its own session and it may run long; it
-  signals me (in os-mode and the inbox) when it needs input; the inbox's
-  reflexes may spawn sessions for work they find, which finish into the
-  inbox or signal me; os-mode may know a spawn's outcome and whether it was
-  achieved, and an inbox item signals os-mode to spawn for it · why: the
-  person's second and third reviews on PR #62 · cost if
-  wrong: none, os-mode only knows less
-- Ruling (ringmaster, to ratify): "links" for information between
-  sessions, so it does not collide with the inbox's channels · cost if
-  wrong: a rename in the spec
-- Superseded: the first draft's tmux-first binding, depth-1 spawning,
-  caps and per-shell mapping move to design or open questions; the
-  "home" naming of the second draft.
+- Ruling (person): the framing is spawning and managing spawns, not a home;
+  a spawn shells out, achieves an outcome and returns; the spawner launches
+  the inbox; spawns raise to the inbox; same-outcome launches are noticed
+  and can be stopped or merged (the ask passed on, acknowledged and acted
+  on, then the duplicate shuts down) · why: the person's review on PR #62
+- Ruling (person): a spawn is started for a piece of work, not an outcome; I
+  instruct it in its own session and it may run long; it signals me (in the
+  spawner and the inbox) when it needs input; the inbox's reflexes may spawn
+  sessions for work they find, which finish into the inbox or signal me; the
+  spawner may know a spawn's outcome and whether it was achieved, and an
+  inbox item signals the spawner to spawn for it · why: the person's second
+  and third reviews on PR #62 · cost if wrong: none, the spawner only knows
+  less
+- Ruling (ringmaster, to ratify): "links" for information between sessions,
+  so it does not collide with the inbox's channels · cost if wrong: a rename
+  in the spec
+- Ruling (person): the initiative is named **spawns** ("manage my spawns",
+  beside "run my inbox"), and the session that manages them the
+  spawner; the branch keeps `initiative/os-mode`; swarm is kept in view for
+  later · why: the person's own word, fitting both the
+  organism and the operating system · cost if wrong: a rename
+- Superseded: the first draft's tmux-first binding, depth-1 spawning, caps
+  and per-shell mapping move to design or open questions; the "home" naming
+  of the second draft.
