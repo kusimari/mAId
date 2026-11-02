@@ -13,8 +13,8 @@
    technical concepts, the mapping per shell and the streams. Keep to the
    Constraints; any new assumption goes to the person as a question, not
    into the spec.
-2. Keep in step with initiative `os-mode` (PR #62): os-mode may launch and
-   keep the inbox session running; neither spec may assume the other.
+2. Keep in step with initiative `spawns` (PR #62): the spawner may launch
+   and keep the inbox session running; neither spec may assume the other.
 3. Once the design is agreed and harness-core (PR #60) is merged: rebase
    onto `main`, then a build session builds the streams.
 
@@ -80,7 +80,8 @@ What must happen, whatever the shell.
 - Rhythm and reflexes run while the inbox session is up; asking it to
   stop stops them, and the inbox itself stays.
 - What started the session does not matter to it: today I start it; later
-  something else may (OS mode starting it and keeping it running).
+  something else may (the spawner, from initiative `spawns`, starting it
+  and keeping it running).
 
 ### 2. Sensing
 
@@ -101,8 +102,8 @@ What must happen, whatever the shell.
 - A routine or reflex never runs twice over the same thing, and a burst of
   arrivals is handled as one.
 - An item best worked in a session of its own (a ticket assigned to me)
-  may signal os-mode, where it is present, to spawn a session to achieve
-  it; that session reports back into the item, either done or needing me.
+  may signal the spawner (initiative `spawns`), where it is present, to
+  spawn a session to achieve it; that session reports back into the item, either done or needing me.
 
 ### 4. Attention
 
@@ -158,9 +159,9 @@ designed:
   brought its channel; memory and adaptation stay per persona.
 - **Session up first, start-agnostic.** For now rhythm and reflexes run
   only while the inbox session is up. Nothing may assume who started that
-  session or that it is the only way they run, so a later choice (OS mode
-  starting and keeping the session, or running with no harness started)
-  changes how it starts, not how it works.
+  session or that it is the only way they run, so a later choice (the
+  spawner starting and keeping the session, or running with no harness
+  started) changes how it starts, not how it works.
 - **One inbox across personas.** Every item is labelled with its persona.
 - **Routines and reflexes can come from any part.** A part (or the core)
   may declare its own, because only it knows what to do: a brief before a
@@ -201,7 +202,7 @@ designed:
   persona · why: one place to attend to · cost if wrong: views split per
   persona
 - Ruling (person): rhythm and reflexes run while the inbox session is up;
-  the design stays open to other starts (OS mode keeping the session up,
+  the design stays open to other starts (the spawner keeping the session up,
   or running with no harness started) · why: running without the harness
   is not yet in reach · cost if wrong: none, the start is kept separate
 - Ruling (person): parts may declare their own routines and reflexes; the
