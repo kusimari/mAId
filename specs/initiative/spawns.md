@@ -10,15 +10,20 @@
 
 ## Next (pick up here in any session)
 
-1. Agree framing and experience with the person on PR #62 (open questions
-   below), then write the design layers on this branch, one PR revision
-   each: the items under "To design", then the technical concepts, the
-   mapping per shell and the streams. Keep to the Constraints; any new
+1. Work through the open questions with the person first, the shape of
+   the spawner before the rest. The Constraints and the experience are
+   provisional until then: the answers may reshape them. This needs
+   research and the person's judgement together; neither alone knows
+   enough yet.
+2. Agree framing and experience with the person on PR #62, then write
+   the design layers on this branch, one PR revision each: the items under
+   "To design", then the technical concepts, the mapping per shell and the
+   streams. Keep to the Constraints; any new
    assumption goes to the person as a question, not into the spec.
-2. Independent of initiative `inbox` (PR #61): each works without the
+3. Independent of initiative `inbox` (PR #61): each works without the
    other. The suggested order is the inbox first, then spawns; if the
    inbox lands first, use it rather than assume it.
-3. Once the design is agreed and harness-core (PR #60) is merged: rebase
+4. Once the design is agreed and harness-core (PR #60) is merged: rebase
    onto `main`, then a build session builds the streams.
 
 - **Build gate: do not build until initiative `harness-core` (PR #60) is
@@ -71,7 +76,7 @@ state, whether the outcome was achieved, and when it needs me.
 | **signalling** (pay attention) | A spawn that needs input signals me: it shows as waiting in the spawner and as an item in my inbox, so I learn of it wherever I am. |
 | **finishing** | A spawn whose work is done says so, with its result where it came from (the inbox item it started from), and ends, so every spawn closes what it opened. |
 | **spawning from the inbox** | An inbox item that needs a session of its own signals the spawner to spawn one to achieve it, under my guards, so work that arrives can start before I look. |
-| **the one spawner** (made sure of at launch) | When I launch any session on a machine, the spawner is made sure of: started if none runs, never a second one; with it start the standing spawns I chose. It stays up while any spawn lives, the inbox included, so there is always one place that knows them all. |
+| **the spawner at launch** | When I launch a session, the spawner is made sure of and the standing spawns I chose start with it; it stays up while any spawn lives, the inbox included, so there is always a place that knows them all. Whether that is one spawner or spawns collaborating without one is open. |
 | **standing spawns** | Spawns that keep running rather than finish, such as the inbox session, so the spawner is how the ghost's long-running sessions are launched too. |
 | **links** (information between sessions) | Open between the spawner and each spawn, and possibly between spawns, carrying state, signals, results and "stop". Links carry information, never authority. |
 | **merging** (one piece of work, one spawn) | Notices when a launch is about work a spawn already has, tells me, and offers to stop the launch or merge, so duplicates are deliberate, never accidental. |
@@ -86,9 +91,9 @@ What must happen, whatever the shell.
 
 ### 1. Launching a session
 
-- When I launch any session on a machine, the spawner is made sure of: if
-  none runs, it starts; if one runs, it is used; there is never a second
-  one on the machine.
+- When I launch a session, the spawner is made sure of: started if it is
+  not running, used if it is (one spawner or several collaborating is
+  open).
 - With the spawner start what I chose to start at launch (the inbox as a
   standing spawn, others later); what starts is my choice, never decided
   by content.
@@ -165,9 +170,8 @@ What must happen, whatever the shell.
 
 In a scratch HOME with the core installed and one test channel:
 
-1. Launching a session starts the spawner; launching a second session
-   starts no second spawner; asking either to manage my spawns shows the
-   same spawner.
+1. Launching a session makes sure of the spawner; launching a second
+   session and asking either to manage my spawns shows the same spawns.
 2. Launching "run my inbox" from it starts the inbox as a standing spawn.
 3. Asking to work on some code spawns a session, listed as working with what
    it is about and where to meet it; instructing it there works.
@@ -201,8 +205,6 @@ designed:
   when there is one, and works the same when there is none.
 - **Start-agnostic.** Nothing may assume who started the spawner or a spawn
   (me, the inbox, later something else).
-- **One spawner per machine.** Nothing may start a second; how the one is
-  found and made sure of is designed later.
 - **Launch is a light touch.** Making sure of the spawner never blocks or
   changes the session being launched, and works through the existing entry
   points.
@@ -240,7 +242,7 @@ designed:
   work.
 - Merge: the hand-off, the acknowledgement, and the shutdown.
 - Standing spawns: keeping the inbox up.
-- The launch: how a session launch makes sure of the one spawner, where my
+- The launch: how a session launch makes sure of the spawner, where my
   choice of what starts at launch lives, and how the spawner stays up
   while spawns live and ends after.
 - Presences: which first, and which later.
@@ -248,18 +250,45 @@ designed:
 
 ## Open questions
 
-1. Links between spawns: needed, and when?
-2. May a spawn spawn, or only the spawner and the inbox?
-3. Bounds: how many spawns at once, a budget per spawn, when idle spawns
-   are ended.
-4. Which presences matter after the first: a page, a chat thread, a
-   phone?
-5. Swarm: should spawns later work together on one piece of work, and is
-   that this initiative or its own?
-6. Is a session I launch directly (not spawned) known to the spawner too,
-   as a spawn I started by hand?
-7. When the last spawn ends, does the spawner end, or stay until I stop
+The shape of the spawner, to settle first in the pickup session:
+
+1. One spawner, or spawns collaborating with no central one (each knowing
+   the others, any of them able to spawn)?
+2. A session I launch directly, not spawned: is it registered as a spawn,
+   one I started by hand?
+3. A session that does not carry the ghost (not from the fused install):
+   can it be a spawn at all, and what does it lose?
+4. A session launched entirely outside all of this: can it be attached
+   later, and what does attaching give it (being seen, links, signalling)?
+5. When the last spawn ends, does the spawner end, or stay until I stop
    it?
+
+Starting points (ringmaster leanings, not rulings):
+
+- The harness already leans away from a central record ("one source of
+  truth": what is shown comes from the sessions as they are). That fits
+  spawns that each make themselves known and read each other, with the
+  spawner as any session doing the managing, rather than one process
+  every spawn depends on.
+- What a session gains depends on what it carries. With the ghost it has
+  the entry points, so it can make itself known, link and signal. Without
+  it, it can at most be seen (from its shell's own records) and met
+  through a presence; it can join fully only if a ghost bring-in is loaded
+  into it on demand.
+- So "attach" may be one act at three depths: seen, linked, carrying the
+  ghost. Whether every session I launch makes itself known by default is
+  for the person to choose.
+
+The rest:
+
+6. Links between spawns: needed, and when?
+7. May a spawn spawn, or only the spawner and the inbox?
+8. Bounds: how many spawns at once, a budget per spawn, when idle spawns
+   are ended.
+9. Which presences matter after the first: a page, a chat thread, a
+   phone?
+10. Swarm: should spawns later work together on one piece of work, and
+    is that this initiative or its own?
 
 ## Decision Log
 
@@ -284,9 +313,11 @@ designed:
   spawner; the branch keeps `initiative/os-mode`; swarm is kept in view for
   later · why: the person's own word, fitting both the
   organism and the operating system · cost if wrong: a rename
-- Ruling (ringmaster, to ratify): what starts at launch, the one spawner
-  per machine, and keeping it up while spawns live belong to this
-  initiative, not a new one · why: they are the spawner's own lifecycle,
+- Ruling (person): what starts at launch and keeping the spawner up while
+  spawns live belong to this initiative, not a new one; whether there is
+  one spawner, which sessions count as spawns, and whether outside sessions
+  can be attached are settled in the pickup session, so the constraints
+  stay provisional until then · why: they are the spawner's own lifecycle,
   and the inbox already stays start-agnostic · cost if wrong: split into
   its own initiative later
 - Superseded: the first draft's tmux-first binding, depth-1 spawning, caps
