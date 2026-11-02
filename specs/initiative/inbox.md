@@ -15,6 +15,8 @@
    into the spec.
 2. Keep in step with initiative `spawns` (PR #62): the spawner may launch
    and keep the inbox session running; neither spec may assume the other.
+   The two are picked up independently; the suggested order is this one
+   first, then spawns.
 3. Once the design is agreed and harness-core (PR #60) is merged: rebase
    onto `main`, then a build session builds the streams.
 
