@@ -1,8 +1,9 @@
 # Initiative: harness-core
 
 - Branch: `initiative/harness-core` (cut from `main` at 0881e13)
-- Status: closed. Every stream merged; the Macro test passes (runs 5 and
-  6). Waiting on the user: ratify the briefing's calls, push, PR, squash.
+- Status: closed. Every stream merged; every Macro step passes on the real
+  model (run 7) and in the user's own manual run. PR #60 is open; waiting
+  on the user: ratify the briefing's calls, then squash.
 - Builds on initiative `my-harness` (parts, part lists, whole-status, the
   memory server as a bring-in), which is not on `main` yet. See
   Constraints > Build base.
@@ -683,3 +684,6 @@ this initiative.
   all five steps PASS on the real model (start, turn, close, reflect,
   travel); the real HOME unchanged. Claude Code moved to 2.1.316 on this
   machine; `claude_live` 6/6 and `claude_installed` 1/1 pass on it
+- Manual run (user, 2026-11-03, the kit at /tmp/ghost-manual/, real model
+  calls through the user's own `claude`): steps 1, 2, 3 and 5 PASS; step 4
+  skipped, covered by runs 5 and 7; the kit's cleanup ran
