@@ -2,7 +2,7 @@
 
 - Branch: `initiative/harness-core` (cut from `main` at 0881e13)
 - Status: closed. Every stream merged; every Macro step passes on the real
-  model (run 7) and in the user's own manual run. PR #60 is open; waiting
+  model (run 7); steps 1, 2, 3 and 5 also in the user's manual run. PR #60 is open; waiting
   on the user: ratify the briefing's calls, then squash.
 - Builds on initiative `my-harness` (parts, part lists, whole-status, the
   memory server as a bring-in), which is not on `main` yet. See
