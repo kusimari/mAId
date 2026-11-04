@@ -1,8 +1,10 @@
 # How the ghost works: harness-core in pictures
 
-A companion to `harness-core.md` for review. It shows the system from
-three sides: a session, the install, and the build. Once reviewed, its
-pictures fold into project.md's "My harness" section, and this file goes.
+The system design of the core harness, kept alongside `harness-core.md`
+for future reference. It shows the system from three sides (a session,
+the install, the build) and records each design decision with the
+options weighed and the one chosen. project.md's "My harness" points
+here for the pictures.
 
 ## The pieces, and why there are this many Rust files
 
@@ -168,7 +170,7 @@ skills and servers; they just don't fit turns or take part in adaptation.
 Code holds the profile path as typed, so it follows the link with no
 re-registration.
 
-## 3. The build: what each command builds
+## 3. The build: what each command builds (as first built; D3 changes it)
 
 There are three kinds of build. People mean different ones when they say
 "the build".
@@ -197,6 +199,60 @@ There are three kinds of build. People mean different ones when they say
    claude_paid                       real Claude Code and a real model (paid; refuses to write under HOME)
    resources/tests/rollback          full install / rollback / uninstall in a temp HOME (free)
 ```
+
+## Design decisions
+
+### D1 · Who makes the judgement on a prompt (expression)
+
+The prompt hook decides which turn bring-ins fit, what of them to repeat,
+and which memories bear on the work. Built first as Rust alone (declared
+signals scored, word overlap for recall), which is deterministic but blind
+to meaning: Macro run 5 missed a saved habit on the first turn of a shell
+question.
+
+| Option | What it means | Trade |
+|---|---|---|
+| A. Rust alone (as first built) | signals and word overlap decide | cheap, predictable; blind to meaning |
+| **B. Rust gathers, the agent judges (chosen)** | Rust keeps what is deterministic (location and file signals, caps, timing) and widens the net where meaning matters: the prefix offers short candidates ("may bear on this: no-awk-in-scripts (shell habit)") and the model already in the session decides what to open | no extra model call, inside the hook's time limit; a few prefix lines; relies on the agent reading them |
+| C. A local model in the hook | the `Selector` interface already allows it | real judgement, no outside call; latency every prompt, a model to install |
+| D. A hosted model from the hook | | good judgement; money and latency every prompt |
+
+What to repeat stays the bring-in author's choice: the `rules` section it
+declares. The agent may load the whole bring-in on its own; the prefix
+carries only the essentials.
+
+### D2 · How often the prefix goes
+
+The prefix is a prompt context in front of the prompt: it reinforces the
+essentials so they are not lost, whatever the agent loaded earlier.
+
+| Option | Trade |
+|---|---|
+| a. Once a session, then on change (as first built) | smallest context; rules from turn 3 drift out of reach by turn 40 |
+| b. Every prompt | matches the prefix model; the history fills with copies |
+| **c. On change, and again once it has drifted (chosen)** | a short form of the essentials goes again when the fit changes, after a number of turns, or when the last copy is far back; Rust decides this from the delivery record |
+
+### D3 · Build, install and wiring are three layers
+
+Chosen by the user: everything mAId builds is cargo and Rust; nix is how
+this environment is managed, not how mAId is built.
+
+| Layer | Owner | What it does |
+|---|---|---|
+| **build** | `cargo build` (with a Rust step for the non-binary artefacts) | processes `resources/content` and the crates into one staged tree under `target/`: `bin/maid-core`, the plugin (skills, agent, hooks and MCP config with the core's path filled in, manifests, content-hash version), server declarations, overlays |
+| **install** | a Rust install step, `PREFIX`-style | copies the staged tree into a top-level directory with the same layout; `@maid-core@` resolves to `<prefix>/bin/maid-core` |
+| **wire** | build-tool | points each agent at the installed directory through its own commands (plugin marketplace, MCP registration, settings) and records the part list |
+| nix, one way to run the layers | the flake | its derivation runs build and install with `PREFIX=$out`, so the directory is a store path with generations and rollback; then wiring names the profile link |
+
+A non-nix installer runs the same build and install with its own prefix,
+then the same wiring. This is the usual shape of robust projects: the
+build system knows nothing of packaging, install is a `PREFIX`/`DESTDIR`
+copy into a standard layout, and packagers (nix, distro packages,
+Homebrew) wrap those two steps. In Rust, non-binary artefacts are
+staged by a Rust step in the workspace (the "xtask" pattern) rather than
+by the packager. Third-party runtimes (pensieve, the browser MCP's node
+package) stay pinned dependencies the installer resolves; nix pins them
+today.
 
 ## What to judge in review
 
