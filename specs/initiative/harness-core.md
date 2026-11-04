@@ -387,6 +387,193 @@ session id with no delivery record yet, or the first after a compaction or
 resume. MCP server instructions are not a reliable carrier outside the
 coding CLIs, so the genome never depends on them.
 
+## Implementation design: the ghost on Claude Code
+
+How the conceptual design is built on Claude Code, the one shell built in
+this initiative. Three views: what happens in a session, how the package
+for the agents is built, and how it is installed and wired. Each decision
+sits where it applies, as *Decision:* with the options weighed. Where the
+code does not do it yet, the stream that will is named.
+
+### The parts
+
+| Program | Where | Role |
+|---|---|---|
+| `maid-core` | `resources/core` | the ghost: the five entry points and the readers they need; called by every carrier |
+| `build-tool` | `resources/build-tool` | builds and installs the package, wires each agent, reports status |
+| `pensieve` | its own repo, pinned | the memory server (MCP), called by the model |
+
+`maid-core`'s modules are the concepts above, one each:
+- *read what is installed:* `config`, `parts`, `contract`, `map`, `environment`;
+- *what a session gets:* `entry` (the five entry points and each carrier's
+  output), `delivery`, `here`, `fit`, `select`, `record`, `mcp`;
+- *learning:* `sleep`, `source`, `claude` (the transcript packer),
+  `experience`, `adapt` and `adapt/moves` (guards, batch, decisions),
+  `memory`, `ledger`;
+- `main` is the CLI every carrier calls.
+
+*Decision:* Rust does what must be deterministic (reading, fusing,
+checking readiness, guards, writes, timing); a model does what needs
+judgement (the agent in the session, the reflector). The guards are code
+so they hold whatever a model does.
+
+### In a session
+
+```
+ you                 Claude Code                 maid-core                                on disk
+ launch claude ───►  SessionStart ────────────►  genome: read part lists and each   ◄──── parts dir, the package
+                                                 bring-in's declaration, fuse the
+                                                 map, check readiness
+                     ◄── startup picture: personas, acting persona, memory and
+                         store, bring-ins and their bound files, ready, pending
+ a prompt ───────►   UserPromptSubmit ────────►  expression: the prefix (below)   ◄──── delivery record, memory index
+                     ◄── prefix, in front of the prompt
+ the model works; it calls pensieve itself, and may save a correction or a
+ "new rule:" to the persona's store during the session ─────────────────────────────► memory store
+ sub-agent ──────►   SubagentStart ───────────►  genome, the sub-session slice
+ /clear, compact ►   SessionStart (reset) ────►  genome placed again
+ "close this session" or "reflect"  ──►  the reflect skill (below)
+ /exit ──────────►   SessionEnd ──────────────►  sleep: mark the session done
+```
+
+**Start (genome).** Deterministic: the picture is the map as resolved
+here. *Decision:* derived on every call, never stored, so a part that
+installs or leaves changes the next session and nothing else. *Decision:*
+no always-loaded rules file on Claude Code; SessionStart covers start,
+resume, clear and compact.
+
+**Each prompt (expression), the prefix.** The prefix is a prompt context
+put in front of the prompt. It reinforces the essentials, whatever the
+agent loaded earlier: the acting persona and its memory, the work's own
+record (goal, next step), the first rules of the turn bring-ins that fit,
+and the memories that bear on the work.
+
+*Decision, who judges (D1):*
+- **B, chosen:** Rust gathers, the agent judges. Rust keeps what is
+  deterministic (location and file signals, caps, timing). Where meaning
+  matters it widens the net and offers short candidates in the prefix
+  ("may bear on this: no-awk-in-scripts, shell habit"), and the model
+  already in the session decides what to open.
+- Weighed and not taken:
+  - A: Rust alone, as first built. Blind to meaning: Macro run 5 missed a
+    habit on a turn whose words did not match it.
+  - C: a local model in the hook. Real judgement, but latency on every
+    prompt and a model to install. The `Selector` interface keeps it open.
+  - D: a hosted model from the hook. Money and latency on every prompt.
+- What to repeat of a bring-in stays its author's `rules` section, at most
+  30 lines.
+- *Built today:* A. Stream 11 builds B.
+
+*Decision, how often (D2):*
+- **c, chosen:** on change, and again once it has drifted. A short form
+  goes again when the fit changes, after a number of turns, or when the
+  last copy is far back. Rust decides this from the delivery record.
+- Weighed and not taken:
+  - a: once, then on change, as first built. Rules from early turns drift
+    out of reach in a long session.
+  - b: every prompt. The history fills with copies.
+- *Built today:* a. Stream 11 builds c.
+
+Limits:
+- at most 3 turn bring-ins and 3 memories per turn;
+- the genome is tested under 8,000 bytes;
+- a hook always exits 0, so it never blocks a prompt.
+
+**Close (sleep, experience, adaptation).**
+
+```
+ reflect skill ─ sleep ──────────────► mark done
+               ─ adaptation ─────────► pack the transcript (said, told, did, touched,
+                                       friction); keep the briefed copy; print the brief
+               ─ maid:reflector ─────► read-only agent (Read, Grep, Glob): findings as JSON
+               ─ adaptation findings ► guards; "saved in memory" lines; move item; one batch
+ you answer ───► adaptation decide ──► habit: the memory server's own write
+                                       skill or harness: a proposal file
+                                       borrowed: a note for its lender; the ledger counts it
+```
+
+- **Deterministic (Rust):**
+  - packing the session;
+  - every guard: quotes in your own words, evidence in the briefed copy,
+    borrowed never written;
+  - finding what the session saved;
+  - the batch;
+  - every write.
+- **Judgement (models):**
+  - the reflector proposes;
+  - the skill carries the conversation;
+  - you decide.
+- *Decision:* nothing depends on an end event; SessionEnd only marks.
+- *Decision:* a memory the session saved counts and is reported as saved
+  in memory. Ringmaster's ruling, to ratify: it relaxes "habits wait for
+  your yes".
+- *Decision:* writing-style's taught rules live in persona memory and move
+  into the skill by proposal (user's ruling).
+
+### Building the package for the agents
+
+*Decision (D3, user's):* everything mAId builds is cargo and Rust. Build,
+install and wiring are three layers, and nix is one way to run the first
+two. This is the usual shape of a robust project:
+- the build knows nothing of packaging;
+- install copies into a standard layout under a prefix;
+- a packager wraps those two.
+
+In Rust, non-binary artefacts are staged by a Rust step in the workspace
+(the "xtask" pattern), not by the packager.
+
+```
+ cargo build (workspace)               a Rust staging step                      target/maid/ (staged tree)
+ ───────────────────────               ──────────────────                       ──────────────────────────
+ resources/core      ─► maid-core  ──┐                                          bin/maid-core
+ resources/build-tool ─► build-tool  ├─► validate every declaration and rules ─► share/maid/marketplace/plugins/maid/
+ resources/content ──────────────────┘   pointer; copy skills, agent, server      skills/, agents/, hooks/claude.json,
+                                          declarations, overlays; write the        claude-mcp.json, manifests
+                                          claude and codex manifests; fill        share/maid/servers/, overlays/
+                                          @maid-core@ with <prefix>/bin/maid-core;
+                                          version = hash of the plugin's content
+```
+
+- **The plugin's version** is the hash of its content. Agents cache a
+  plugin by version, so the version changes exactly when the content does.
+  A docs-only commit gives the same package.
+- **Third-party runtimes** are pinned dependencies, not built by mAId:
+  pensieve, and the browser server's node package.
+- *Built today:* the flake assembles the plugin in a shell step. Stream 12
+  moves it into the Rust staging step.
+
+### Installing and wiring (the nix way)
+
+```
+ install (PREFIX)                         wire (build-tool, per agent)                  record
+ ────────────────                         ───────────────────────────                   ──────
+ nix: the flake runs the cargo build      claude plugin marketplace add <dir>            part list:
+ and the staging step with PREFIX=$out ─► claude plugin install maid@maid                persona, bring-ins
+ → a store path; the profile link         vendor document skills (borrowed)              (unit, source + rev,
+   gives generations and rollback         claude mcp add personal-memory pensieve        own or borrowed,
+                                            --store <your store>                         route, bound values),
+ another installer: the same build and    Claude's own memory off                        what was placed
+ staging with its own PREFIX ──────────►  read grant on the plugin dir                   on each agent
+```
+
+- **Wiring is placement, not wrapping.** It goes through Claude Code's own
+  plugin, MCP and settings commands, and every `claude` it starts gets
+  `CLAUDE_CONFIG_DIR` exactly as resolved.
+- *Decision:* Claude Code's marketplace is the installed directory itself:
+  the profile's `share/maid/marketplace`. Current Claude Code refuses
+  plugin files that resolve outside it (Macro run 1). Claude Code keeps the
+  path as typed, so a rollback, which moves the profile link, needs no
+  re-registration. Codex keeps the links dir, since it records resolved
+  paths.
+- *Decision:* install records exactly what it placed in the part list, so
+  uninstall removes exactly that and other parts can tell what is mAId's.
+- **Another part** writes its own part list beside mAId's. The next
+  session includes it with nothing re-installed. A bring-in with no
+  declaration shows as undeclared and keeps working as a plain unit.
+- **After any Claude Code upgrade,** run the two live tests (project.md
+  Testing). The hook and plugin surface moved twice during this
+  initiative.
+
 ## Streams
 
 | # | Feature | Ships | Needs | Status |
@@ -401,6 +588,8 @@ coding CLIs, so the genome never depends on them.
 | 8 | claude-config-dir | from Macro test run 3: install, uninstall and status read and write Claude's user config at `$HOME/.claude` even when `CLAUDE_CONFIG_DIR` is set; the paid tests isolate through `CLAUDE_CONFIG_DIR`, not a scratch HOME | 7 | merged |
 | 9 | writing-style-memory | from Macro test run 3: writing-style's taught rules live in persona memory, not a file tier; the close batch says what was saved and offers to move them into the skill on its source; the reflector quotes only the person's words for a habit; the guard's label says what it checks | 8 | merged |
 | 10 | saved-in-session | from Macro test run 4: the genome names where a bring-in's bound files are, so a skill never falls back to a default path (R4-1); a persona memory saved during the session is shown in the close batch as saved in memory (R4-2) | 9 | merged |
+| 11 | prompt-prefix | Implementation design D1 and D2: Rust gathers and the agent judges (candidates in the prefix); the essentials go again on change and once drifted | 10 | planned |
+| 12 | build-install-layers | Implementation design D3: a Rust staging step builds the package; install is a PREFIX copy; the flake only runs build and install; wiring unchanged | 10 | planned |
 
 The work part's own bring-ins take the contract in their own repo, outside
 this initiative.
@@ -687,3 +876,8 @@ this initiative.
 - Manual run (user, 2026-11-03, the kit at /tmp/ghost-manual/, real model
   calls through the user's own `claude`): steps 1, 2, 3 and 5 PASS; step 4
   skipped, covered by runs 5 and 7; the kit's cleanup ran
+- Ruling (user, 2026-11-04): the implementation design lives in this spec,
+  after the System design, with each decision beside what it decides;
+  D1 B and D2 c are chosen for the prompt prefix; D3: build, install and
+  wiring are three layers, everything mAId builds is cargo and Rust, and
+  nix is one way to run build and install · streams 11 and 12 build them
