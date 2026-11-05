@@ -1,12 +1,10 @@
 # Initiative: harness-core
 
 - Branch: `initiative/harness-core` (cut from `main` at 0881e13)
-- Status: closed. Every stream merged; every Macro step passes on the real
-  model (run 7); steps 1, 2, 3 and 5 also in the user's manual run. PR #60 is open; waiting
-  on the user: ratify the briefing's calls, then squash.
-- Builds on initiative `my-harness` (parts, part lists, whole-status, the
-  memory server as a bring-in), which is not on `main` yet. See
-  Constraints > Build base.
+- Status: streams 1-10 merged; every Macro step passes on the real model
+  (run 7), and steps 1, 2, 3 and 5 in the user's manual run. Streams 11
+  and 12 are planned. PR #60 waits on the user to ratify the briefing's
+  calls, then lands as a squash.
 
 ## Goal
 
@@ -17,236 +15,231 @@ the next, on any base harness, without wrapping it.
 
 ## Framing
 
-### The core harness: a ghost in the shell
+### A ghost in the shell
 
-- **Every base harness is a shell**: Claude Code, kiro-cli, codex, a
-  LangGraph app, any agent loop. It can do the work, but it knows nothing
-  about the person using it.
-- **A ghost in the shell makes it act like that person**: their way of
-  working, what they know, what they have learned, carried into whichever
-  shell they use.
-- **Without that infusion, the base harness is a zombie in the shell**: it
-  acts, often well, on instinct alone, with no self, no memory of who it
-  serves, and nothing learned from last time.
-- **One ghost, several personas, fused.** The person is one ghost with
-  several personas (work, personal, ...), each delivered by its own part.
-  Infusion fuses them: every session carries the whole ghost, acts through
-  the persona the work belongs to, and keeps what each persona learns in
-  that persona's own memory, so the fusion never mixes their stores.
-- **Bring-ins come and go.** A bring-in is part of the ghost for as long as
-  it is brought in: some are the person's own, some are borrowed (a server
-  or a skill someone lent them), used for a while, and given back. The
-  ghost is always the bring-ins present now; adding or removing one changes
-  the next session's genome and nothing else.
+- **Shell:** any base harness (Claude Code, kiro-cli, codex, a LangGraph
+  app, any agent loop). It can do the work and knows nothing about the
+  person using it.
+- **Ghost:** what makes the shell act like that person: their way of
+  working, what they know and have learned, carried into any shell.
+  Without it the shell is a **zombie**: it acts, often well, on instinct
+  alone, with no self and nothing learned from last time.
+- **One ghost, several personas, fused.** Each persona (work, personal,
+  ...) comes from its own part. Every session carries the whole ghost,
+  acts through the persona the work belongs to, and keeps each persona's
+  learnings in its own memory.
+- **Bring-ins come and go.** Some are the person's own; some are
+  borrowed, used for a while and given back. Adding or removing one
+  changes the next session's genome and nothing else.
 
 ### The ghost works like an organism
 
 | Function | What it does, and why |
 |---|---|
-| **genome** (plus habits) | Carries who the person is, all personas fused: the nature their parts ship (the bring-ins present now, rules) and the habits learned since (memories, what bring-ins have learned), so every session starts as them and not as a blank shell. |
-| **expression** | Switches on, at each turn, only the part of the genome the work at hand needs, so the shell acts on what matters now without carrying everything at once. |
-| **experience** | Records everything done toward the outcome as it happened (what was said, what the agent was told, what it did, what it touched, where it struggled), so there is something true to learn from. |
-| **sleep** | Is the moment, once the outcome is done, when experience is gathered and adaptation runs, so learning never interrupts the work itself. |
-| **adaptation** | Turns experience into a changed genome and new habits, with the person deciding, so the next session is better and the ghost stays theirs. |
+| **genome** (plus habits) | Who the person is, every persona fused: the nature their parts ship (the bring-ins present now, their rules) and the habits learned since (memories). Every session starts as them. |
+| **expression** | At each turn, switches on only the part of the genome the work needs, so the shell acts on what matters now without carrying everything. |
+| **experience** | The session as it happened: what was said, what the agent was told, what it did, what it touched, where it struggled. Something true to learn from. |
+| **sleep** | Once the outcome is done, the session rests, marked, until it is reflected on. Learning never interrupts the work. |
+| **adaptation** | Turns experience into a changed genome and new habits, with the person deciding. The next session is better and the ghost stays theirs. |
 
-## Experience architecture
+## Experience
 
-What the ghost guarantees, implicitly, whatever the shell. None of it is
-something the person sees or has to ask for.
+What the ghost guarantees on any shell. It is implicit: the person never
+has to see it or ask for it.
+
+```
+ launch  ──► the session starts as the ghost ............ genome
+ prompt  ──► each turn takes on what the work needs ..... expression
+             everything is captured as it happens ....... experience
+ done    ──► the session sleeps until reflected on ...... sleep
+ reflect ──► the ghost updates, the person deciding ..... adaptation ──► next session
+```
 
 A **session** is what the person says it is: by default from a launch
 until they consider the outcome done. Resumes and compactions belong to
 it; branches (sub-agents, parallel work) are its sub-sessions; a feature
 file or another persisted record can carry it across launches.
 
-### 1. When the harness starts: the genome is present
+### Start: the genome is present
 
 | The shell already knows | Detail | Size |
 |---|---|---|
 | **the personas, fused** | all of them, what each is for, and which one this session most likely acts through (a guess the person can correct); a session may move between them | a few lines |
-| **the session bring-ins** | each one's job, where its state lives (memory is one, one per part), and whether it is the person's own or borrowed | one line each |
-| **the turn bring-ins** | a catalog only: what each is for, whether it keeps its own memory and where; none loaded | one line each |
-| **the environment** | the parts, their bring-ins, and the stores and tools they point at, as resolved here: bound, reachable, ready, or not | a few lines |
-| **what is pending** | decisions waiting for the person | a count and a pointer |
+| **the session bring-ins** | each one's job, where its state and bound files live (memory is one, one per part), own or borrowed | one line each |
+| **the turn bring-ins** | a catalog only: what each is for, where it keeps what it learns; none loaded | one line each |
+| **the environment** | the parts, their bring-ins, and the stores and tools they point at, as resolved here: ready, or not and why | a few lines |
+| **what is pending** | decisions waiting for the person, and sessions waiting to be reflected on | a count and a pointer |
 
-It holds after a resume or a compaction, and each sub-session starts with
-the slice its job needs. Anything larger stays behind a pointer.
+It holds after a resume or a compaction. Each sub-session starts with the
+slice its job needs. Anything larger stays behind a pointer.
 
-### 2. When the harness takes a turn: expression
+### Each turn: expression
 
-- **Reinforced only when it changed:** the active persona and its memory,
-  the goal and next step taken from the work's own record, and the few
-  rules that must never drift. About a paragraph.
-- **The turn bring-ins that fit attach:** which ones is worked out, never
-  declared, from the outcome being pursued, the job being done, the state
-  the work has reached, and the location or project context. Their key
-  rules come first, with the entries of their own memory and of the
-  persona's memory that bear on the work. When nothing fits, the shell's
-  native way of doing the job stands.
-- **Recall at the point of need:** a few memories reach the turn without
-  the agent having to think to search, under a small cap; selection starts
-  as a cheap lookup and is built to move to a local model.
-- **Never:** the same text from two parts, the catalog again, or an edit to
-  the start of the context mid-session.
+- **The essentials, kept in reach:** the acting persona and its memory,
+  the goal and next step from the work's own record, and the first rules
+  of the turn bring-ins that fit. About a paragraph, sent again when it
+  changes and once it has drifted far back.
+- **The turn bring-ins that fit attach.** Which ones is worked out, never
+  declared, from the outcome being pursued, the job, the state the work
+  has reached, and the location or project. Their key rules come first.
+  When nothing fits, the shell's native way of doing the job stands.
+- **Recall at the point of need.** A few memories that may bear on the
+  work are offered, under a small cap, so the agent does not have to
+  think to search. The agent opens what bears on it.
+- **Never:** the same text from two parts, the catalog again, or an edit
+  to the start of the context mid-session.
 
-### 3. When the outcome is done: sleep and experience
+### Done: captured, then sleep
 
 - The outcome is done **implicitly** (the session ends, the work's record
-  says done) or **explicitly** (the person says "close", "reflect", or
-  asks for a sweep of past sessions). Either way the session is marked for
-  sleep; nothing depends on an end event firing.
-- At sleep, the session and its sub-sessions become one experience: what
-  was said, what the agent was told (skills, prompts, standing text), what
-  it did, what it touched, and where it struggled (corrections, refusals,
-  interruptions, prompts, retries).
+  says done) or **explicitly** (the person says "close" or "reflect", or
+  asks for a sweep of past sessions). Either way the session is marked
+  and sleeps until it is reflected on; nothing depends on an end event.
+- At reflection, the session and its sub-sessions, captured as they
+  happened, are read back as one experience: what was said, what the agent
+  was told (skills, prompts, standing text), what it did, what it touched,
+  and where it struggled (corrections, refusals, interruptions, retries).
 
-### 4. How the ghost updates: adaptation, with the person's guards
+### Update: adaptation, with the person's guards
 
 - A separate reflector, which knows how this harness is put together,
-  reads the experience and finds what should change in persona memories, a
-  bring-in's own memory, stores, session and turn bring-ins, and the
-  harness loop itself, the reflector included. Removing something is a
-  change like any other.
+  reads the experience and finds what should change: persona memories, a
+  bring-in's own memory, stores, bring-ins, and the harness loop itself,
+  the reflector included. Removing something is a change like any other.
 - **Guards, set by the person whose ghost it is:**
-  - every finding names what it changes and quotes its evidence;
-  - **habits** (persona memory, a bring-in's local tier) are written;
+  - every finding names what it changes and quotes its evidence; a
+    habit's evidence is the person's own words;
+  - **habits** (a persona's or a bring-in's memory) are written on the
+    person's yes, each one line they read whole;
+  - what the session already saved in memory (a correction, a taught
+    rule) is shown as saved and not proposed again *(to ratify)*;
   - **nature** (a bring-in, a skill, the harness) is only proposed, as a
-    backlog item or a worktree to turn into a PR on its source;
-  - each learning goes to the persona it belongs to; contradictions and
-    guesses about which persona that is go to the person;
-  - a borrowed bring-in is never changed: what is learned about it is a
-    note for its lender or a proposal to stop borrowing it;
-  - nothing from tool or web content alone becomes a habit without the
-    person's yes, and nothing the reflector cannot place goes to a public
-    store;
+    backlog item or a worktree to a PR on its source; a taught rule moves
+    into its bring-in's text this way;
+  - each learning goes to its own persona; contradictions and persona
+    guesses go to the person;
+  - a borrowed bring-in is never changed: what is learned is a note for
+    its lender or a proposal to stop borrowing it;
+  - nothing from tool or web content alone becomes a habit without a yes,
+    and nothing the reflector cannot place goes to a public store;
   - everything waits in one short batch for the person's decisions.
-- The ghost tracks whether it is getting better: fewer bring-in updates
-  needed, the same corrections no longer repeated, more work right first
-  time.
+- The ghost tracks whether it gets better: fewer bring-in updates, the
+  same corrections no longer repeated, more work right first time.
 
 Later, not in this initiative: adaptation as a scheduled sweep, and other
 scheduled work that starts the same shell with the same ghost.
 
-## Macro test
+## Concept: how the ghost hooks into an agent
 
-In a scratch HOME with the personal part installed and a fixture second
-part beside it, on Claude Code (since the user's 2026-11-01 ruling, a
-scratch `CLAUDE_CONFIG_DIR` and scratch ghost locations stand in for the
-scratch HOME wherever the real model is used):
+The ghost is parts installed through the shell's own extension points,
+plus a core that answers five entry points. Each part brings a persona and
+bring-ins; the core fuses them, places what each moment needs, and learns
+from what happened.
 
-1. **Start:** a fresh session's startup report shows the genome
-   (personas, session and turn bring-ins with where their state lives,
-   environment bound and ready, pending count); the on-demand resource
-   returns the same.
-2. **Turn:** in a location where a turn bring-in fits, a prompt gets its
-   first rules and a few memory pointers; a second prompt with nothing
-   changed gets nothing new.
-3. **Done and adaptation:** a session where the person corrects the agent
-   once and teaches a bring-in a rule, then says close: the experience holds
-   both; one decision batch proposes a persona-memory habit, a bring-in
-   local-tier entry and one skill edit as a backlog item; after "ok" the
-   habit and the entry are written where their config points and nothing
-   else changes.
-4. **On demand:** the same adaptation started by hand mid-session routes the
-   same way.
-5. **Travel:** a second scratch HOME pulls the stores and its genome shows
-   the new habit; the first HOME's environment is not there.
+### What forms the ghost
 
-## Constraints
-
-- **Embedded, not wrapped.** The ghost attaches only through each shell's
-  own extension points; a small adapter per shell is fine, a launcher in
-  front of it is not.
-- **Hooked and on demand.** Every function is one entry point that a hook,
-  a framework adapter or an on-demand call (MCP tool, resource or prompt,
-  a skill, a CLI) reaches the same way.
-- **Independent of any environment.** No host, path layout, OS or
-  organisation in the design; every location is a config value bound per
-  environment.
-- **Public repo:** no employer, internal tool or store names.
-- **The core ships with the personal part (this repo).** Any other part
-  carries only bring-ins, which work as plain standard units where the core
-  is absent; no part depends on another.
-- **Small and stable context.** The genome is loaded once per session (and
-  again only when the shell drops it); expression sends only what changed
-  on carriers that keep history; each item has exactly one carrier.
-  Whether a shell needs a repeated preamble or keeps a context for every
-  call is settled per shell by a test.
-- **One record of the work.** Goal, next step and session continuity come
-  from the work's own records.
-- **Paid tests:** up to 30 model runs for the initiative.
-- **Claude Code first;** the other shells in the System design are mapped,
-  not built, in this initiative.
-- **Build base.** The build needs initiative `my-harness`. It brings it in
-  by merging the local `initiative/my-harness` into this branch (a merge,
-  not a rebase, so nothing already pushed is rewritten).
-- **Nothing reaches main until the end.** Every stream works on its own
-  branch cut from this initiative branch and is squash-merged into it
-  locally, one commit per stream; stream branches are never pushed, and no
-  review happens on any branch but this one. The only push is this
-  initiative branch, once, when every stream has merged and the memory
-  server is pinned to its published commit (no local path). The PR from
-  this branch then carries everything, `my-harness` included, and goes to
-  `main` with a merge commit so each stream stays its own commit; the
-  stream history also stays on the forge after branches are deleted.
-  (Superseded by the user's 2026-11-01 ruling: it lands as a squash.)
-- **Finish:** one review brief for the whole initiative, by design area,
-  not stream by stream, with where to focus first.
-
-## Conceptual design
-
-### Technical concepts
-
-The framing names what the ghost is; these are what make it work. Each is
-stated with what it is, why it exists, and the framing concept it serves.
+```
+ GHOST (my harness)
+ |
+ +-- part (one per repo: personal, work, ...)
+ |    +-- persona .............. a name                              (who the genome is for)
+ |    +-- session bring-ins .... memory -> store, the core's adapter (genome, always present)
+ |    +-- turn bring-ins ....... coding, writing, notes, triage, ... (genome, expressed when they fit)
+ |
+ |    each bring-in declares the contract; state lives only behind config   (habits)
+ |
+ +-- fusion .................... every part's persona present, kept distinct  (one ghost)
+ +-- harness map ............... union of the parts' declarations, derived on every call
+ +-- environment ............... the map resolved where it runs      (what this shell can do)
+ +-- core (with the personal part): entry points genome, expression, experience, sleep, adaptation
+```
 
 | Concept | What it is, and why | Serves |
 |---|---|---|
-| **base harness** | a vendor's agent loop, reached only through its extension points, because wrapping it would tie the ghost to one shell | the shell |
-| **extension point / carrier** | one extension point used to place one item (always-loaded context, a start, per-prompt or end hook, MCP tools and resources, a skill, a sub-agent definition), so each item has exactly one way in | infusion |
-| **carrier kind** | append (kept in history), transient (sent with one call only) or on demand (called when wanted), because each needs a different rule for what to send again | infusion |
-| **part** | what one repo delivers: a persona name and its bring-ins, so personal and work can be installed apart and add up | the ghost |
-| **persona** | a name for who the work is for; it owns nothing, so a store or a bring-in can change without renaming anyone | genome |
-| **fusion** | the genome built from every part present, each persona kept distinct: one active persona per turn, each learning routed back to its own persona, so the ghost is whole without mixing its stores | the ghost |
-| **bring-in** | a standard unit (a skill, an MCP server, a plugin, a sub-agent, a hook) that a part installs and that declares what the ghost needs to know about it, so it can be vended to anyone and still serve this harness | genome (nature) |
-| **session bring-in** | a bring-in that acts for the whole session (memory, status, the core's adapters), because some of the genome must be present from the start | genome |
-| **turn bring-in** | a bring-in that attaches when it fits the work (coding, writing, notes, triage, documents, web, brought-in tools), because the rest of the genome should be expressed only when needed | expression |
-| **tenure** | whether a bring-in is the person's own or borrowed (from whom, since when), recorded by the part, so a borrowed bring-in can be used, left untouched by adaptation, and given back cleanly | genome, adaptation |
-| **package** | the implementation a bring-in uses (for example the memory server), named by the bring-in and configured by the part, so two parts can share one without depending on each other | genome |
-| **store** | a git checkout the person owns, pointed at by a bring-in's config, so habits travel between environments | habits |
-| **state tiers** | a bring-in's local (pending) and permanent memory, each a config key, with a promotion rule, so a learning is tried before it is trusted | habits, adaptation |
-| **harness map** | the union of every part's declarations, generated at install, so the ghost has a model of itself to reason over | genome, adaptation |
-| **environment** | the harness map as resolved where the session runs (bound, reachable, ready), derived and never authored, so the ghost knows what this shell can actually do | genome |
-| **entry points** | `genome`, `expression`, `experience`, `sleep`, `adaptation`: carrier-neutral functions every carrier calls, so hooked and on-demand use never drift apart | all five functions |
-| **delivery record** | what was sent per session id, so a hook and an on-demand call do not send the same thing twice | expression |
-| **turn fit** | which turn bring-ins apply now, worked out from outcome, job, state and location, never declared, so nobody has to name modes | expression |
-| **selector** | the few memories that bear on this turn, under a cap, behind one interface, so recall can move from a lookup to a local model | expression |
-| **session source** | where a session can be read from: a shell's transcript, a framework's own session store, or traces, so experience works across shells | experience |
-| **bundle** | one session and its sub-sessions as said, told, did, touched and friction, with large outputs as pointers, so the reflector reads what happened and not a raw log | experience |
-| **reflector** | a separate agent that reads a bundle with the harness map and proposes findings, so the session never judges itself | adaptation |
-| **finding** | one proposed change: the thing in the map, its kind, its evidence, the change | adaptation |
-| **guards** | the evidence check, the tool-content and public-store checks, and the person's decision batch, so the ghost stays the person's | adaptation |
-| **route** | how a finding is applied: write, local tier, backlog, worktree to PR, report only, taken from the map | adaptation |
-| **ledger** | counts kept across sessions (corrections, refusals, findings by thing, accepted or not), so improvement is measured | adaptation |
+| **carrier** | one extension point of the shell (a start, per-prompt or end hook, MCP tools and resources, a skill, a sub-agent), used for one item, so each item has one way in | infusion |
+| **persona** | a name for who the work is for; it owns nothing, so a store or bring-in can change without renaming anyone | genome |
+| **part, fusion** | one repo's persona and bring-ins; every part present is fused, one acting persona per turn and each learning routed to its own, so parts install apart, add up, and never mix stores | the ghost |
+| **bring-in** | a plain standard unit (skill, MCP server, plugin, sub-agent, hook) that a part installs and that declares what the ghost needs to know, so anyone can use it and it still serves this harness | genome (nature) |
+| **session / turn bring-in** | acts for the whole session (memory, the core's adapter), or attaches when it fits the work (coding, writing, notes, documents, web, ...) | genome / expression |
+| **tenure** | own, or borrowed (from whom, since when), so a borrowed bring-in is used, never changed, and given back cleanly | genome, adaptation |
+| **package** | the implementation a bring-in runs (the memory server), named by the bring-in and configured by the part, so two parts share one without depending on each other | genome |
+| **store** | a git checkout the person owns, pointed at by a memory bring-in's config, so habits travel when the person syncs it | habits |
+| **state tiers** | a bring-in's local and permanent memory, each a config key, with a promotion rule (auto, propose, off); a bring-in may instead keep what it learns in the persona's memory | habits |
+| **harness map** | the union of every part's declarations, derived on every call and never stored, so the ghost has a model of itself and a part that installs later needs no regeneration | genome, adaptation |
+| **environment** | the map as resolved where the session runs (bound, reachable, ready), derived and never authored | genome |
+| **delivery record** | what was sent per session id, so a hook and an on-demand call never send the same thing twice, and so the core knows when to send again | expression |
+| **turn fit** | which turn bring-ins apply now, from outcome, job, state and location, never declared, so nobody names modes | expression |
+| **selector** | the few memories that may bear on this turn, under a cap, behind one interface; it reads a memory's index from what the bring-in states, never a fixed path | expression |
+| **session source** | where a session is read from: a shell's transcript, a framework's store, or traces | experience |
+| **reflector** | a separate agent that reads the experience with the harness map and proposes findings, so the session never judges itself | adaptation |
+| **finding** | one proposed change: the thing in the map, its kind, its evidence, the change; the guards check it | adaptation |
+| **route** | how a finding is applied, from the map: write, local tier, backlog, worktree to PR, report only | adaptation |
+| **ledger** | counts across sessions (corrections, refusals, findings by thing, accepted or not), so improvement is measured | adaptation |
+
+### The five entry points
+
+Each is carrier-neutral: a hook, a framework adapter and an on-demand call
+reach the same function, so the two never drift apart.
+
+```
+ START    genome       map (every part fused) + environment + pending --> the session picture
+ TURN     expression   work's record + acting persona --> the essentials
+                       outcome, job, state, location x bring-ins' signals --> turn fit --> first rules
+                       memories behind config --> selector (capped) --> candidates
+                       delivery record --> send on change, and again once drifted
+ DONE     sleep        the session is marked, and waits
+ REFLECT  experience   session + sub-sessions from a session source --> one experience
+          adaptation   experience + map --> reflector --> findings --> guards --> one batch
+                       --> the person decides --> route from the map --> ledger
+                           habits: written   nature: backlog or PR   borrowed: a note for its lender
+```
+
+### Who does what
+
+| Who | Does | Why there |
+|---|---|---|
+| **Our code** (the core, deterministic) | reads part lists and declarations, fuses the map, checks readiness, works out turn fit from location and file signals, caps and times what is sent, marks sleep, packs the experience, runs every guard, builds the batch, makes every write, keeps the ledger | it must give the same answer every time; the guards hold whatever a model does |
+| **Our injection and bring-ins** (text the model reads) | the genome; the per-turn prefix; each bring-in's declared `rules` and `signals`; the reflect skill and the reflector's prompt; the memory server's own instructions, built from the store's `about.md` | this is how the ghost speaks to a model; each text has an owner and changes by proposal |
+| **The agent's judgement** (the models) | the session's model chooses what to use: which candidates to open, what bears on the work, when to save a memory; the reflector proposes findings | meaning needs judgement, and code is blind to it |
+| **The person** | decides every batch; teaches and corrects; says when the outcome is done; syncs the stores; takes proposals to their source | it is their ghost |
+
+Two choices follow from this split (user's ruling, 2026-11-04):
+
+- **D1. Our code gathers, the agent judges.** Code keeps location and file
+  signals, caps and timing. Where meaning matters it widens the net and
+  offers short candidates in the prefix ("may bear on this:
+  no-awk-in-scripts, shell habit"); the model already in the session
+  decides what to open. What to repeat of a bring-in stays its author's
+  `rules`, at most 30 lines. Not taken: code alone (blind to meaning;
+  Macro run 5 missed a habit whose words the turn did not use); a local
+  model in the hook (latency on every prompt and a model to install; the
+  selector's interface keeps it open); a hosted model from the hook (money
+  and latency on every prompt).
+- **D2. Reinforce on change, and again once drifted.** A short form goes
+  again when the fit changes, after a number of turns, or when the last
+  copy is far back; code decides from the delivery record. Not taken: once,
+  then on change (early rules drift out of reach in a long session); every
+  prompt (the history fills with copies).
 
 ### The bring-in contract
 
-A bring-in stays a plain unit of its standard, so anyone can use it without
-this harness. The contract adds only what this design needs, carried in the
-standard's own extension slot under one namespace; a shell that does not
-know it ignores it.
+A bring-in stays a plain unit of its standard, so anyone can use it
+without this harness. The contract adds only what this design needs, in
+the standard's own extension slot under the namespace `my-harness`; a
+shell that does not know it ignores it.
 
 **Declared by the bring-in** (travels with it):
 
 | Field | What it says | Used by |
 |---|---|---|
-| `scope` | session or turn | genome |
-| `job` | one line: what it is for | genome, turn fit |
-| `signals` | optional hints that it fits: outcomes, jobs, states, locations or file patterns; without them, `job` and the standard's own description | turn fit |
-| `rules` | a pointer to the few lines that come first while it applies | expression |
+| `scope` | `session` or `turn` (required) | genome |
+| `job` | one line: what it is for (required) | genome, turn fit |
+| `signals` | optional hints that it fits: outcomes, jobs, states, locations, file patterns; without them, `job` | turn fit |
+| `rules` | `<file>#<heading slug>`: the few lines, at most 30, that come first while it applies | expression |
+| `record` | optional, on a turn bring-in: where the work keeps its own record (`<file glob>#<heading slug>`; kdevkit points at a feature spec's Handoff) | expression |
 | `package` | the implementation it runs, if any | install, environment |
 | `config` | every key it needs per environment or part, secrets marked, every state location included | the part binds values |
-| `state` | none, or which config keys hold its local and permanent tiers, and the promotion rule (auto, propose, off) | genome, selector, adaptation |
+| `state` | none, or which config keys hold its local and permanent tiers and the promotion rule; a bring-in that keeps what it learns in persona memory declares none and says so in its `job` | genome, selector, adaptation |
 | `requires` | what must be present for it to be ready | environment |
 
 **Recorded by the part at install** (in its part list):
@@ -255,115 +248,160 @@ know it ignores it.
 |---|---|---|
 | `part`, `persona` | who installed it, for whom | genome, route |
 | `source` | a git project repo, a git store, a machine directory, or a vendor; pinned revision | route |
-| `tenure` | own, or borrowed (from whom, since when) | genome, adaptation (borrowed: report only) |
-| `route` | write, backlog, worktree to PR, report only (defaults from the source; report only when borrowed) | adaptation |
-| `values` | the config values bound here, every state location included | everything that reads state |
+| `tenure` | own, or borrowed (from whom, since when) | genome, adaptation |
+| `route` | write, backlog, worktree to PR, report only (default from the source; always report when borrowed) | adaptation |
+| `values` | the config values bound here, every state location included; a secret only as `env:<NAME>` | everything that reads state |
 
-**Slots:** an Agent Skill's `metadata` (flat keys); a plugin manifest's
-`extensions` entry; an MCP server's `_meta`; a sub-agent or hook through the
-plugin that ships it. Name, version, licence, permissions and the shell's
-own activation stay with the standards.
-
-### What forms a harness
-
-```
- GHOST (my harness)
- |
- +-- part (one per repo: personal, work, ...)
- |    +-- persona .............. a name                              (who the genome is for)
- |    +-- session bring-ins .... memory -> store, status, adapters   (genome, always present)
- |    +-- turn bring-ins ....... coding, writing, notes, triage, ... (genome, expressed when they fit)
- |
- |    each bring-in declares: scope | job | signals | rules | package | config | state | requires
- |    each part records:      part | persona | source | tenure | route | values
- |    state lives only behind config: store, local tier -> permanent tier   (habits)
- |
- +-- fusion .................... every part's persona present, kept distinct  (one ghost)
- +-- harness map ............... union of the parts' declarations    (the ghost's model of itself)
- +-- environment ............... the map resolved where it runs      (what this shell can do)
- +-- core (with the personal part): entry points genome, expression, experience, sleep, adaptation
-```
-
-### How a session is assembled
-
-```
- 1. START  ->  genome
-    harness map (fused from every part present) + environment + pending decisions
-      --> session picture: personas, session bring-ins and their state,
-          turn bring-in catalog, environment, pending count
-
- 2. TURN  ->  expression
-    the work's record (goal, next step, state) + active persona --> reinforcement, on change
-    outcome + job + state + location + turn bring-ins' job and signals
-      --> turn fit --> rules of the bring-ins that fit
-    memories behind config --> selector (capped) --> recall for this turn
-
- 3. OUTCOME DONE (implicit or explicit)  ->  sleep, then experience
-    session + sub-sessions, from a session source --> bundle
-      (said | told | did | touched | friction)
-
- 4. UPDATE  ->  adaptation, with guards
-    bundle + harness map --> reflector --> findings (thing, kind, evidence)
-      --> checks --> the person decides (one batch)
-      --> route from the map:
-            habits:  the owning persona's memory written; bring-in local tier written
-            nature:  bring-in / skill / harness -> backlog or worktree to PR
-            borrowed: a note for its lender, or a proposal to give it back
-      --> ledger
-```
+**Slots:** an Agent Skill's frontmatter `metadata` (flat `my-harness.*`
+keys); a plugin manifest's `extensions["my-harness"]`; an MCP server's
+`server.json` `_meta["my-harness"]`; a sub-agent or hook through the plugin
+that ships it. A borrowed unit is never read for its declaration: the part
+ships an **overlay**, a manifest in the unit's own standard holding only
+`name`, `description` and the slot. Name, version, licence, permissions and
+the shell's own activation stay with the standards.
 
 ### For any persona part
 
-What a repo that delivers a persona does to join the ghost. It needs
-nothing from the core's repo but this list, and it still works without the
-core, as plain standard units.
+What a persona repo does to join the ghost; its units still work as plain
+standard units without the core. The operative checklist, every shape
+spelled out, is project.md's "For any persona part"; it needs nothing else.
 
-1. **Name its persona** in its part list.
-2. **Declare the contract on every bring-in** it ships, in that standard's
-   slot: `scope`, `job`, `signals` (optional), `rules`, `package` (if
-   any), `config` (secrets marked, every state location included), `state`,
-   `requires`.
-3. **Give its persona a memory:** a session bring-in that names the memory
-   package and points at the persona's own store through config (a private
-   store for anything that names work).
-4. **Record at install** in its part list: `part`, `persona`, `source`
-   with the pinned revision, `tenure` (own, or borrowed from whom),
-   `route`, and the bound config `values`.
-5. **Mark what it borrows** (servers, skills or packages someone else
-   provides) as borrowed, and never change them; what it learns about them
-   goes to their lender.
-6. **Leave the core's carriers alone:** the core owns the start, turn and
-   end hooks (and, on shells that have one, the always-loaded context
-   file); a part adds bring-ins, never a second copy of those.
+1. **Write a part list and name its persona;** place every unit on each
+   shell itself, and follow the five part rules.
+2. **Declare the contract** on every bring-in it ships, in its slot.
+3. **Give its persona exactly one memory,** on the persona's own store
+   (a private one for anything that names work).
+4. **Record each bring-in at install:** pinned `source`, `tenure`,
+   `route`, bound `values`.
+5. **Mark what it borrows,** declare it by overlay, never change it.
+6. **Leave the core's carriers alone:** the start, sub-agent, turn and end
+   hooks and the on-demand server; a part adds bring-ins only.
+7. **Keep its own copy** of the checklist, contract and reader rules, and
+   name no other part.
+8. **Install from one canonical clone;** a second checkout replaces it.
+9. **Report ready, not just registered.**
 
-7. **Keep its own copy** of the contract and the reader rules in its own
-   docs, kept in step by the person, and name no other part.
-8. **Install from one canonical clone**; a second checkout installing
-   replaces the first.
-9. **Report ready, not just registered:** status checks each bring-in's
-   `requires`.
+## How we know it works
 
-The operative copy of this checklist is project.md's "For any persona
-part", which later rulings and the macro test refined.
+### Macro test
 
-## System design: mapping per base harness
+On Claude Code, with the personal part installed and a fixture second part
+beside it. Isolation is a scratch `CLAUDE_CONFIG_DIR` and scratch ghost
+locations (state, parts, cache); the shell keeps its own HOME and model
+access, and no credential is handed to a test (user's ruling, 2026-11-01).
+The session runs where one persona is acting, so no persona guess is
+expected.
 
-Each entry point reaches each shell through the carrier named; *(test)*
-marks behaviour settled by a probe before it is built. All five entry
-points are also on demand everywhere: MCP tools for `expression` and
-`adaptation`, MCP resources and prompts for `genome`, a skill and a CLI
-for all.
+1. **Start:** a fresh session's startup report shows the genome
+   (personas, session and turn bring-ins with where their state lives,
+   environment bound and ready, pending count); the on-demand resource
+   returns the same.
+2. **Turn:** in a location where a turn bring-in fits, a prompt gets its
+   first rules and a few memory pointers; a second prompt with nothing
+   changed gets nothing new.
+3. **Done and adaptation:** the person corrects the agent once and
+   teaches writing-style a rule, then says close. The experience holds
+   both. The batch shows the rule saved in memory, the correction as a
+   persona-memory habit (an item, or a saved-in-memory line when the agent
+   saved it), and one item moving the rule into the skill as a backlog
+   item on its source. After "ok", only the habit (when an item) and the
+   move proposal are written, where their config points. *(Ringmaster's
+   readings, to ratify: the rule in memory is the "bring-in local-tier
+   entry"; the move proposal is the "skill edit"; a habit saved in session
+   counts.)*
+4. **On demand:** the same adaptation started by hand mid-session routes
+   the same way.
+5. **Travel:** a second scratch environment pulls the store and its genome
+   shows the new habit; the first environment's bindings are not there.
+
+### The layers behind it
+
+| Layer | What it runs | What it proves |
+|---|---|---|
+| **Unit** (`just test`) | every reader, guard, route and entry point against temp dirs; the shipped hooks through `sh -c`; the MCP server over stdio; close, reflect and decide through the binary with a stub reflector and the real memory server (Macro step 3 as ruled) | our code is right, fast, with no real HOME and no model |
+| **Free integration** (`claude_live`, `claude_installed`) | real Claude Code in a temp HOME against a loopback stub of the model API that records every request; the plugin from source and as install places it, a new generation and a rollback | the shell places what the core sends: the genome once at start, a fitting prompt's rules and pointers, nothing new on a second prompt, a sub-agent's slice, the genome again after compaction, the MCP tool, the sleep mark |
+| **Paid** (`claude_paid`, the Macro runs) | real Claude Code and the real model, through the shell's own access, isolated as above; it refuses to start if anything would land under HOME | the model acts on it: names the persona and store from the genome, follows a fitted rule, and the real reflector proposes what the guards accept |
+| **The person's manual kit** | the steps run by the user with their own `claude`, in a kit that cleans up after itself | it works as the person lives it |
+
+Run both free integration tests after any Claude Code upgrade: the hook
+and plugin surface moved twice during this initiative.
+
+## Constraints
+
+- **Embedded, not wrapped.** Only each shell's own extension points; a
+  small adapter per shell is fine, a launcher in front of it is not.
+- **Hooked and on demand.** Every function is one entry point that a hook,
+  a framework adapter or an on-demand call (MCP, a skill, a CLI) reaches
+  the same way.
+- **Independent of any environment.** No host, path layout, OS or
+  organisation in the design; every location is a config value.
+- **Public repo:** no employer, internal tool or store names.
+- **The core ships with the personal part (this repo).** Other parts carry
+  only bring-ins, plain standard units where the core is absent; no part
+  depends on another.
+- **Small and stable context.** The genome once per session, and again
+  only when the shell drops it; expression on change and once drifted
+  (D2); one carrier per item. Whether a shell needs a repeated preamble is
+  settled per shell by a test.
+- **One record of the work.** Goal, next step and continuity come from the
+  work's own records.
+- **Paid tests:** up to 30 model runs for the initiative.
+- **Claude Code first.** The other shells are mapped, not built.
+- **Build base.** `my-harness` (parts, part lists, whole-status, the
+  memory server) is not on `main` yet. It comes in by merging the local
+  `initiative/my-harness` into this branch: a merge, not a rebase, so
+  nothing already pushed is rewritten.
+- **Nothing reaches main until the end.** Each stream branches from this
+  one and is squash-merged back locally, one commit per stream; stream
+  branches are never pushed or reviewed. The only push is this branch,
+  once, after every stream has merged and the memory server is pinned to
+  its published commit (no local path). Its PR carries everything,
+  `my-harness` included, and lands on `main` as a squash (user,
+  2026-11-01; it replaced a merge commit).
+- **Finish:** one review brief for the whole initiative, by design area,
+  with where to focus first.
+
+## System design: what other agentic systems teach
+
+The mapping covers four coding CLIs, ten agent frameworks, and traces.
+Five things hold across them, and the design follows from them:
+
+1. **Carriers are of three kinds:** *append* (coding CLIs keep it in
+   history), *transient* (frameworks send it with one call only) and *on
+   demand* (MCP, a skill or a CLI, called when wanted). Each needs its own
+   rule for what to send again, so the core takes the kind and keeps a
+   delivery record.
+2. **The entry points are carrier-neutral.** Every shell has some way in
+   and none has all, so one core serves every carrier; a shell's adapter
+   is a bring-in.
+3. **Start is the first turn with no record.** Where a shell has no start
+   event, `genome` runs on the first turn of a session id with no delivery
+   record, or the first after a compaction or resume.
+4. **Close never depends on an end event.** Many are missing or unproven
+   (the *(test)* cells), so an end event only marks, as the person's
+   close or a sweep does.
+5. **Sessions come from a session source:** a transcript, a framework's
+   session store, or traces with an explicit session id.
+
+MCP server instructions are not a reliable carrier outside the coding
+CLIs, so the genome never depends on them. Every entry point is also on
+demand: MCP resources and prompts for `genome`, MCP tools for `expression`
+and `adaptation`, a skill and a CLI for all. *(test)* marks behaviour to
+settle by a probe before it is built.
 
 **Coding CLIs** (append carriers):
 
 | Entry point | Claude Code (built here) | codex | kiro-cli | Antigravity / Gemini CLI |
 |---|---|---|---|---|
-| `genome`, static | none: SessionStart covers it (superseded, see the stream 2 ruling) | user AGENTS.md block | `always` steering | always-on rule |
+| `genome`, static | none; SessionStart covers it (superseded the install-rendered rules file, stream 2 ruling) | user AGENTS.md block | `always` steering | always-on rule |
 | `genome`, dynamic | SessionStart (startup, resume, clear, compact) | SessionStart (hooks need trust) | agentSpawn *(test)* | SessionStart |
 | sub-sessions | SubagentStart | SubagentStart | agent resources *(test)* | *(test)* |
 | `expression` | UserPromptSubmit | UserPromptSubmit | userPromptSubmit | PreInvocation (truly per call) |
 | `sleep` mark | SessionEnd | session end *(test)* | stop *(test)* | *(test)* |
 | session source | transcript JSONL with sub-agent files | rollouts and thread edges | session files *(test)* | *(test)* |
+
+kiro's loading of the `my-harness.*` skill frontmatter is unverified: the
+only check would repoint the real HOME's skill links.
 
 **Agent frameworks** (transient carriers; one registration line by the
 app's owner, otherwise on demand only):
@@ -382,40 +420,32 @@ app's owner, otherwise on demand only):
 | Letta (server) | a memory block | on demand only | sweep | message API |
 | traces (OpenTelemetry, observability tools) | - | - | - | traces with an explicit session id |
 
-Where a shell has no start event, `genome` runs on the first turn of a
-session id with no delivery record yet, or the first after a compaction or
-resume. MCP server instructions are not a reliable carrier outside the
-coding CLIs, so the genome never depends on them.
-
 ## Implementation design: the ghost on Claude Code
 
-How the conceptual design is built on Claude Code, the one shell built in
-this initiative. Three views: what happens in a session, how the package
-for the agents is built, and how it is installed and wired. Each decision
-sits where it applies, as *Decision:* with the options weighed. Where the
-code does not do it yet, the stream that will is named.
+The concept on Claude Code, in three views. Each decision sits beside what
+it decides; where the code does not do it yet, the stream that will is
+named.
 
 ### The parts
 
 | Program | Where | Role |
 |---|---|---|
-| `maid-core` | `resources/core` | the ghost: the five entry points and the readers they need; called by every carrier |
+| `maid-core` | `resources/core` | the core: the five entry points and the readers they need; every carrier calls its CLI |
 | `build-tool` | `resources/build-tool` | builds and installs the package, wires each agent, reports status |
 | `pensieve` | its own repo, pinned | the memory server (MCP), called by the model |
 
-`maid-core`'s modules are the concepts above, one each:
-- *read what is installed:* `config`, `parts`, `contract`, `map`, `environment`;
-- *what a session gets:* `entry` (the five entry points and each carrier's
-  output), `delivery`, `here`, `fit`, `select`, `record`, `mcp`;
-- *learning:* `sleep`, `source`, `claude` (the transcript packer),
-  `experience`, `adapt` and `adapt/moves` (guards, batch, decisions),
-  `memory`, `ledger`;
-- `main` is the CLI every carrier calls.
+`maid-core`'s modules are the concepts, one each: installed state
+(`config`, `parts`, `contract`, `map`, `environment`), what a session gets
+(`entry`, `delivery`, `here`, `fit`, `select`, `record`, `mcp`), learning
+(`sleep`, `source`, `claude` the transcript packer, `experience`, `adapt`
+with `adapt/moves`, `memory`, `ledger`), and `main`, the CLI.
 
-*Decision:* Rust does what must be deterministic (reading, fusing,
-checking readiness, guards, writes, timing); a model does what needs
-judgement (the agent in the session, the reflector). The guards are code
-so they hold whatever a model does.
+mAId's part is `maid-harness`, persona `personal`. Its session bring-ins
+are `personal-memory` (package `pensieve`, own, sourced at pensieve's repo
+and the `flake.lock` pin) and `claude-adapter`, declared in the plugin's
+Claude manifest. MCP server declarations live at
+`resources/content/servers/<name>/server.json`, overlays under
+`resources/content/overlays/`.
 
 ### In a session
 
@@ -436,48 +466,24 @@ so they hold whatever a model does.
  /exit ──────────►   SessionEnd ──────────────►  sleep: mark the session done
 ```
 
-**Start (genome).** Deterministic: the picture is the map as resolved
-here. *Decision:* derived on every call, never stored, so a part that
-installs or leaves changes the next session and nothing else. *Decision:*
-no always-loaded rules file on Claude Code; SessionStart covers start,
-resume, clear and compact.
+On demand, `maid-core mcp` serves resource `my-harness://genome`, prompt
+`genome` and tool `expression`; the reflect skill and the CLI reach sleep,
+experience and adaptation.
 
-**Each prompt (expression), the prefix.** The prefix is a prompt context
-put in front of the prompt. It reinforces the essentials, whatever the
-agent loaded earlier: the acting persona and its memory, the work's own
-record (goal, next step), the first rules of the turn bring-ins that fit,
-and the memories that bear on the work.
+**Start (genome).** *Decision:* no always-loaded rules file; SessionStart
+covers start, resume, clear and compact, and the picture is derived each
+time.
 
-*Decision, who judges (D1):*
-- **B, chosen:** Rust gathers, the agent judges. Rust keeps what is
-  deterministic (location and file signals, caps, timing). Where meaning
-  matters it widens the net and offers short candidates in the prefix
-  ("may bear on this: no-awk-in-scripts, shell habit"), and the model
-  already in the session decides what to open.
-- Weighed and not taken:
-  - A: Rust alone, as first built. Blind to meaning: Macro run 5 missed a
-    habit on a turn whose words did not match it.
-  - C: a local model in the hook. Real judgement, but latency on every
-    prompt and a model to install. The `Selector` interface keeps it open.
-  - D: a hosted model from the hook. Money and latency on every prompt.
-- What to repeat of a bring-in stays its author's `rules` section, at most
-  30 lines.
-- *Built today:* A. Stream 11 builds B.
-
-*Decision, how often (D2):*
-- **c, chosen:** on change, and again once it has drifted. A short form
-  goes again when the fit changes, after a number of turns, or when the
-  last copy is far back. Rust decides this from the delivery record.
-- Weighed and not taken:
-  - a: once, then on change, as first built. Rules from early turns drift
-    out of reach in a long session.
-  - b: every prompt. The history fills with copies.
-- *Built today:* a. Stream 11 builds c.
-
-Limits:
-- at most 3 turn bring-ins and 3 memories per turn;
-- the genome is tested under 8,000 bytes;
-- a hook always exits 0, so it never blocks a prompt.
+**Each prompt (expression): the prefix,** a prompt context in front of the
+prompt carrying the essentials, the fitting rules and the memories that
+may bear on the work, whatever the agent loaded earlier.
+- *D1 and D2 (Concept, "Who does what").* *Built today:* code alone (the
+  v1 selector looks the prompt's words up in each memory index line), and
+  sent once, then on change. Stream 11 builds the candidates in the prefix
+  and the resend once drifted.
+- *Limits:* at most 3 turn bring-ins and 3 memories per turn; the genome
+  tested under 8,000 bytes and expression under 9,000; a hook always exits
+  0, so it never blocks a prompt.
 
 **Close (sleep, experience, adaptation).**
 
@@ -492,35 +498,30 @@ Limits:
                                        borrowed: a note for its lender; the ledger counts it
 ```
 
-- **Deterministic (Rust):**
-  - packing the session;
-  - every guard: quotes in your own words, evidence in the briefed copy,
-    borrowed never written;
-  - finding what the session saved;
-  - the batch;
-  - every write.
-- **Judgement (models):**
-  - the reflector proposes;
-  - the skill carries the conversation;
-  - you decide.
-- *Decision:* nothing depends on an end event; SessionEnd only marks.
-- *Decision:* a memory the session saved counts and is reported as saved
-  in memory. Ringmaster's ruling, to ratify: it relaxes "habits wait for
-  your yes".
-- *Decision:* writing-style's taught rules live in persona memory and move
-  into the skill by proposal (user's ruling).
+*Decisions:*
+- nothing depends on an end event; SessionEnd only marks;
+- the guards are code: every quote found word for word in the briefed
+  copy, a habit's in the person's own words, at most 10 findings, borrowed
+  never written;
+- a habit is written through the memory server's own MCP write, started
+  from the part list's `serve` value (part lists are trusted as the
+  person's own install), so it reaches the store's history and travels;
+- an accepted habit is one line of at most 200 characters, shown
+  verbatim; waiting sessions can be dismissed; a briefed copy is deleted
+  once decided;
+- a memory the session saved counts and is reported as saved in memory
+  *(ringmaster's ruling, to ratify)*;
+- writing-style's taught rules live in persona memory and move into the
+  skill by proposal *(user's ruling)*.
 
-### Building the package for the agents
+### Building the package (D3)
 
 *Decision (D3, user's):* everything mAId builds is cargo and Rust. Build,
 install and wiring are three layers, and nix is one way to run the first
-two. This is the usual shape of a robust project:
-- the build knows nothing of packaging;
-- install copies into a standard layout under a prefix;
-- a packager wraps those two.
-
-In Rust, non-binary artefacts are staged by a Rust step in the workspace
-(the "xtask" pattern), not by the packager.
+two: the build knows nothing of packaging, install copies into a standard
+layout under a prefix, and a packager wraps those two. Non-binary
+artefacts are staged by a Rust step in the workspace (the "xtask"
+pattern), not by the packager.
 
 ```
  cargo build (workspace)               a Rust staging step                      target/maid/ (staged tree)
@@ -535,8 +536,8 @@ In Rust, non-binary artefacts are staged by a Rust step in the workspace
 ```
 
 - **The plugin's version** is the hash of its content. Agents cache a
-  plugin by version, so the version changes exactly when the content does.
-  A docs-only commit gives the same package.
+  plugin by version, so the version changes exactly when the content does;
+  a docs-only commit gives the same package.
 - **Third-party runtimes** are pinned dependencies, not built by mAId:
   pensieve, and the browser server's node package.
 - *Built today:* the flake assembles the plugin in a shell step. Stream 12
@@ -557,22 +558,19 @@ In Rust, non-binary artefacts are staged by a Rust step in the workspace
 ```
 
 - **Wiring is placement, not wrapping.** It goes through Claude Code's own
-  plugin, MCP and settings commands, and every `claude` it starts gets
-  `CLAUDE_CONFIG_DIR` exactly as resolved.
-- *Decision:* Claude Code's marketplace is the installed directory itself:
+  plugin, MCP and settings commands. Install, uninstall and status read and
+  write Claude's config where `CLAUDE_CONFIG_DIR` points, and every
+  `claude` they start gets it exactly as resolved.
+- *Decision:* Claude Code's marketplace is the installed directory itself,
   the profile's `share/maid/marketplace`. Current Claude Code refuses
-  plugin files that resolve outside it (Macro run 1). Claude Code keeps the
-  path as typed, so a rollback, which moves the profile link, needs no
+  plugin files that resolve outside it (Macro run 1). It keeps the path as
+  typed, so a rollback, which moves the profile link, needs no
   re-registration. Codex keeps the links dir, since it records resolved
   paths.
 - *Decision:* install records exactly what it placed in the part list, so
   uninstall removes exactly that and other parts can tell what is mAId's.
-- **Another part** writes its own part list beside mAId's. The next
-  session includes it with nothing re-installed. A bring-in with no
-  declaration shows as undeclared and keeps working as a plain unit.
-- **After any Claude Code upgrade,** run the two live tests (project.md
-  Testing). The hook and plugin surface moved twice during this
-  initiative.
+- **Another part** writes its own part list beside mAId's; the next
+  session includes it. An undeclared bring-in keeps working as a plain unit.
 
 ## Streams
 
