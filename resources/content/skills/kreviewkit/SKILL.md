@@ -3,6 +3,12 @@ name: kreviewkit
 description: 'Brief a human before they review a change — "review what was done", "prep this for review", "brief the review", "summarise this change for a reviewer". Independent review-briefing tool: read-only reviewer turns a spec + diff into the briefing a reviewer reads first. Becomes the PR/CR body; not a scoring gate. Opens with `[kreviewkit] applies`.'
 version: 1.3.0
 tags: [review, pr, cr, briefing, reviewer, spec, diff, independent]
+metadata:
+  my-harness.scope: turn
+  my-harness.job: brief a human reviewer on a change from its spec and diff
+  my-harness.signals.jobs: brief a review, write a PR body
+  my-harness.signals.states: review
+  my-harness.rules: SKILL.md#non-negotiables--check-every-one-before-you-return
 ---
 
 # kreviewkit — brief a human before they review

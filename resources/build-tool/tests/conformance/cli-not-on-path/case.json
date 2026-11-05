@@ -1,0 +1,51 @@
+{
+  "about": "with no CLI on PATH its listings are not checkable, and its files are still read",
+  "expect": {
+    "exit": 0,
+    "entries": [
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "plugin",
+        "name": "p",
+        "state": "not checkable"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "marketplace",
+        "name": "m",
+        "state": "not checkable"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "skill",
+        "name": "s",
+        "state": "present"
+      },
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "plugin",
+        "name": "p",
+        "state": "not checkable"
+      },
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "marketplace",
+        "name": "m",
+        "state": "not checkable"
+      },
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "mcp",
+        "name": "x",
+        "state": "not checkable"
+      }
+    ],
+    "refused": []
+  }
+}

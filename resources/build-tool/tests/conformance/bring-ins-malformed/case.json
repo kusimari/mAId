@@ -1,0 +1,13 @@
+{
+  "about": "malformed bring-ins are unreadable, one at a time or all of a list's, and the list is not refused",
+  "expect": {
+    "exit": 0,
+    "entries": [],
+    "refused": [],
+    "bring_ins": [
+      { "part": "b", "name": "*", "state": "unreadable" },
+      { "part": "c", "name": "odd", "state": "unreadable" },
+      { "part": "c", "name": "fine", "state": "undeclared" }
+    ]
+  }
+}

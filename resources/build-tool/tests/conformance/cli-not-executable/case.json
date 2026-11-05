@@ -1,0 +1,28 @@
+{
+  "about": "a file on PATH without execute bits is not the CLI: not on PATH",
+  "clis": {
+    "claude": {
+      "plugin list --json": {
+        "stdout": "[{\"id\":\"p\",\"scope\":\"user\"}]",
+        "stderr": "",
+        "exit": 0
+      }
+    }
+  },
+  "modes": {
+    "bin/claude": "644"
+  },
+  "expect": {
+    "exit": 0,
+    "entries": [
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "plugin",
+        "name": "p",
+        "state": "not checkable"
+      }
+    ],
+    "refused": []
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "about": "a parts path that is not a dir aborts the report",
+  "expect": {
+    "exit": 1,
+    "aborted": true,
+    "refused": [],
+    "entries": []
+  }
+}

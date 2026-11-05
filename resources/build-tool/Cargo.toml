@@ -17,4 +17,6 @@ gray_matter = "0.3"
 serde = { version = "1", features = ["derive"] }
 
 # The plugin CLIs list their state as JSON.
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
+# The contract and part-list reader, shared with the installed core.
+maid-core = { path = "../core" }

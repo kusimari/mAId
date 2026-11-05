@@ -1,0 +1,10 @@
+{
+  "format": 1,
+  "part": "c",
+  "persona": "work",
+  "harnesses": {},
+  "bring_ins": [
+    { "name": "odd", "tenure": { "kind": "rented" } },
+    { "name": "fine" }
+  ]
+}

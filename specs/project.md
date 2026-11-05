@@ -5,19 +5,22 @@
 <!-- What this project exists to do, and who it serves. One
      paragraph. Change only when the goal itself changes. -->
 
-Tool-agnostic source of truth for my agentic resources — mostly
-skills — compiled into whatever AI tool I'm using (Claude Code,
-Kiro, Codex, future tools). The repo is the checked-in source;
-`just install` builds it into a nix profile in user space and links
-each tool at that profile, so what is installed never depends on the
-checkout. claude and codex install the skills as a plugin through
-their own plugin commands; kiro (and agy) discover them natively at
-their own skills path, by symlink. Either way there is no global
-instruction preamble; the one non-skill resource
-(browser-control MCP) registers as a runnable server via Just verbs
-(see Architecture). One canonical set of resources, many consumer
-surfaces. Apps that ship binaries (today: future `kaimux/`, the
-agent-orch successor) live as
+Tool-agnostic source of truth for my agentic resources — mostly skills
+— compiled into whatever AI tool I'm using (Claude Code, Kiro, Codex,
+future tools). The repo is the checked-in source; `just install`
+builds it into a nix profile in user space and links each tool at that
+profile, so what is installed never depends on the checkout. claude
+and codex install the skills as a plugin through their own plugin
+commands; kiro (and agy) discover them natively at their own skills
+path, by symlink. Either way there is no global instruction file; the
+runnable resources (the browser-control and memory MCP servers, the
+core) are closures in the profile, the servers registered via Just
+verbs (see Architecture). One canonical set of resources, many
+consumer surfaces. mAId also ships the core that makes those resources
+a ghost in each shell, built so any base harness launched plain acts
+like me and gets better from use, through its own extension points,
+never a wrapper; today only Claude Code carries it. Apps that ship
+binaries (today: future `kaimux/`, the agent-orch successor) live as
 sibling workspace members with their own native cargo verbs.
 
 ## Architecture
@@ -28,11 +31,11 @@ sibling workspace members with their own native cargo verbs.
 
 Two halves at the top level:
 
-- **`resources/`** — three layers, working together:
+- **`resources/`** — four layers, working together:
   1. **Content** (`resources/content/skills/<name>/SKILL.md`) —
-     the skill definitions the AI tools load. Skills are the only
-     deployed artefact; each tool auto-discovers them at its own
-     skills path.
+     the skill definitions the AI tools load, beside the declarations,
+     adapter and agent the core uses (see Layout). Each tool
+     auto-discovers the skills at its own skills path.
 
      A skill may ship **deferred modules** beside its `SKILL.md` —
      sibling files, or files under subdirectories — that the
@@ -75,11 +78,13 @@ Two halves at the top level:
      **`deploy.rs` hands over to the agent where it can.** The pipeline
      declares *what* it wants deployed; `deploy.rs` alone knows *how*,
      behind a `Deploy` trait (`install` / `uninstall` / `status` /
-     `is_deployed`, each returning a `Report`, never a path). `Plugins`
+     `is_deployed`, each returning a `Report`, never a path, and
+     `placed`, what the part list records). `Plugins`
      drives claude's and codex's own plugin CLIs; `Symlinks` (the
      $HOME-layout knowledge, `Link`/`FanOut` registry expansion,
      `--force` semantics) covers the agents with no such command (kiro,
-     agy). `Deployment` routes each agent to one of them, so nothing in
+     agy). `Deployment` routes each agent to one of them, then runs
+     `BringIns` (the vendor marketplaces, below), so nothing in
      `stages.rs` knows which. `check` needs no deployment at all — it receives a
      `NoDeploy` target and runs with no `$HOME`, which is what makes
      "check needs no install" a structural fact rather than a
@@ -96,6 +101,9 @@ Two halves at the top level:
      omit for all three). These are how a human or another tool
      consumes the
      tooling.
+  4. **Core** (`resources/core/`) — `maid-core`, installed in the
+     profile: the ghost's five entry points, which every shell's carriers
+     call (see "My harness").
 - **`kaimux/`** — tmux-pane orchestrator for coding-agent
   sessions. Single-binary Rust crate (workspace member).
   Wraps `claude` / `kiro-cli` calls so each running agent
@@ -114,7 +122,8 @@ root, so `cargo build --workspace` covers everything.
 `resources/build-tool/src/shared.rs`: `REGISTRY`, a slice of
 `(home_subpath, source_subpath, kind, agent)` tuples for the linked
 agents, and `PLUGIN_AGENTS` for the plugin ones (with where each
-one's pre-plugin links lived, which install reaps). The
+one's pre-plugin links lived, which install reaps), and `BRING_INS` for
+the vendor marketplaces mAId registers with the plugin ones. The
 authoritative manifest for what gets installed where. The
 `agent` tag is what lets install/uninstall/status be scoped
 to one coding agent (`--agent`, surfaced as the Just verbs'
@@ -134,12 +143,20 @@ under `bin/`, and the plugin marketplace under `share/maid/marketplace`
 link and MCP registration names the *profile* path, never a store path
 or a checkout, so the checkout can be deleted, and an install from any
 other checkout or worktree takes over by adding a generation without
-touching agent config.
+touching agent config. The profile is addressed by its content: nothing
+in it may change with a commit alone (no revision, no build date), so a
+commit that changes no installed file makes no new generation and the
+rollback window holds only real changes.
 
-**Plugins (claude, codex).** Both agents are pointed at
-`<profile's dir>/marketplace`, a real directory of links into the
-profile path: codex records a marketplace by its resolved path, so
-registering the profile itself would pin one generation's store path.
+**Plugins (claude, codex).** codex is pointed at `<profile's
+dir>/marketplace`, a real directory of links into the profile path: it
+records a marketplace by its resolved path, so registering the profile
+itself would pin one generation's store path. claude is pointed at the
+profile's own `share/maid/marketplace`: it refuses a file the plugin
+manifest names (the manifest, `hooks`, `mcpServers`) that resolves outside
+the marketplace dir as resolved, so a dir of links loses the hooks; it
+records the path as given, so the profile link still moves it to each
+generation, a rollback included.
 The plugin's version is a hash of its content, computed in the flake
 build; both CLIs cache by version and only compare for change, so an
 install updates exactly when content changed (claude reads the
@@ -159,13 +176,108 @@ than 30 days, and nix keeps the newest one older than that, so the
 install before the live one survives (an unchanged install adds none and
 skips the wipe, which would otherwise keep only the live one). **Rollback** is `nix profile rollback` plus the plugin install
 (codex serves its cached copy until `codex plugin add` runs). It refuses
-a generation without the skills, the plugin manifest or the browser
-launcher, before switching; it does not switch back on an install
+a generation without the skills, the plugin manifest, the browser
+launcher or the core the plugin's hooks call, before switching; it does not switch back on an install
 failure, since install also exits non-zero for a link it left alone.
 nix rolls back to the next lower generation number, so install drops
 the generations above the live one (the ones a rollback returned from),
 after its build succeeds; otherwise a rollback after rollback-then-install would land on
 them rather than on the install before.
+
+**Claude's config dir.** Every `~/.claude/…` and `~/.claude.json` path in
+this file is Claude Code's default. With `CLAUDE_CONFIG_DIR` set, Claude
+Code (checked on 2.1.314) keeps all of it in that dir, `.claude.json`
+included, and reads nothing from `~/.claude`; empty is unset. One resolver,
+`maid_core::config::ClaudeConfig`, places those paths for the core and
+build-tool alike. build-tool resolves it once, in `main`, and passes it as a
+value: nothing deeper reads the variable, so a test with a temp HOME can
+never reach a config dir the shell sets. Every `claude` build-tool starts
+gets the variable exactly as the value has it, removed when unset
+(`shared::claude_env`). Claude Code writes its MCP logs under
+`$XDG_CACHE_HOME`, not its config dir. The one path left at HOME is the
+reap of an old `~/.claude/skills` link, where older mAId made it.
+
+**Skill reads (claude).** Claude loads a plugin of a `directory`
+marketplace live from the marketplace path, so it reports each mAId skill's
+base dir as `<marketplace>/plugins/maid/skills/<skill>`, and a Read of a
+module there asks for permission in manual mode. A plugin cannot grant
+itself reads (a plugin's settings take no permissions; a skill's
+`allowed-tools` lasts one turn), and a `Read` allow rule on that path does
+not match, since Claude also checks the file it resolves to, in the store.
+So install adds `<marketplace>/plugins/maid` (the profile-side path, never a
+store path) to `permissions.additionalDirectories` in
+`~/.claude/settings.json`: Claude then reads anything under it without
+asking. This widens Claude's working directories only to a read-only tree,
+so the edit half of a working directory grants nothing there. It is one
+element of a list the user and other parts also write: mAId owns the element
+its part list records, and adopts an identical one it finds (rule 2),
+removing either on uninstall; any other element is left alone, and a recorded value not of
+that shape is not mAId's. claude not on PATH, or no plugin in the profile,
+writes nothing; a value that is not a list is left and recorded skipped.
+
+**Skill state (claude).** writing-style keeps the style rules a person
+teaches in the persona's memory: on "new rule: …" it saves one memory
+through that memory server's own tools during the session, tagged
+`metadata.bring-in: writing-style` (Memory, below), and at session start
+it finds them with `memory_search` and applies them on top of its shipped
+body. That memory is its temporary tier; its permanent home is its own
+checked-in text, reached by the move a reflection offers (Adaptation).
+Its older files in its dir under mAId's config dir,
+`${XDG_CONFIG_HOME:-~/.config}/maid/writing-style/` (`MAID_CONFIG` in
+`resources/Justfile`), `learned.md` (`## Learned rules`) and `promoted.md`
+(`## Promoted rules`), are the user's data: still read and applied, never
+written or deleted, and their rules go with that move. They are its
+optional config keys `learned` and `promoted`, which install binds to those
+files (a skill's config key `<k>` binds to `<config dir>/<skill>/<k>.md`).
+The skill reads them only at the paths the genome names for those keys,
+and no skill text carries a default location (a content test holds it). No
+skill tells the runtime to find, read or edit a checkout; content
+validation fails a skill file that says `resources/content/`, "mAId
+checkout", `just install` or `just resources::`. Changing a shipped body is
+a maintainer action, an edit under `resources/content/` and `just install`,
+never a runtime one. So install adds `Edit(/<config dir>/<skill>/**)` to
+`permissions.allow` in `~/.claude/settings.json` for each skill in
+`reads::STATEFUL_SKILLS` (today writing-style), and the same rule on the
+path it resolves to when that differs: Claude checks a path as written and
+as resolved, so behind a symlinked HOME a rule on one form is denied. With
+both, Read and Write there pass with no prompt in the default mode (checked
+on Claude Code 2.1.296); an `additionalDirectories` element would grant
+reads only. Only skill dirs are granted, never the config dir itself: it
+also holds the browser allowlist, which no agent may write, and the memory
+store's file. The rules follow the same element rules as the plugin dir
+(owned, adopted, another part's left alone, a stale one replaced, removed
+on uninstall), one part-list entry each; a recorded value not of the shape
+`Edit(/<absolute path>/<stateful skill>/**)` (no `..`, no glob or rule
+characters) is not mAId's, and a config path whose rule would not be of it
+is granted nothing and recorded skipped, and mAId's earlier rules are
+removed. Install does not create the dirs. The rules are user settings, so
+they hold in every session in every repo: content a session reads there can
+write rules a later session loads, so at session start writing-style says
+how many saved rules apply and quotes the newest three.
+
+**Bring-ins (claude, codex).** A vendor's plugin marketplace mAId
+brings in is a `BRING_INS` row in the registry: the name both CLIs list
+it under, its public git source, a commit, the plugins to install from
+it, and the commands its skills run. Install registers it and installs
+the plugins through each CLI, after mAId's own plugin, so a failure there
+(no network) leaves mAId's skills in and exits non-zero. Nothing of the
+vendor's is copied into the profile. Neither CLI records who added a
+marketplace, so an item is mAId's only when mAId's part list names it
+as placed or the run added it; a marketplace or plugin the user had
+already is kept, recorded skipped "not mAId's", and never removed. A run
+that cannot list them (no CLI, or a listing that cannot be read) keeps
+what the part list names as mAId's placed.
+Uninstall removes mAId's plugins, then mAId's marketplace unless a plugin
+not mAId's is installed from it (removing a marketplace uninstalls every
+plugin from it). codex is pinned to the commit (`--ref`); claude's CLI
+takes only a branch or tag, so claude holds the commit current when it
+first registered it, and third-party marketplaces do not auto-update.
+The row's commit applies to fresh installs only: a marketplace already
+registered is not re-pinned when it changes. A part list that cannot be
+read stops install and uninstall (ownership is unknown); `status` reports
+it and carries on. kiro and agy have no plugin marketplace, so the part list
+records them skipped. The first row is the vendor's document skills
+(`xlsx`, `pptx`, `docx`, `pdf`).
 
 Skills reach kiro (and agy) through the registry as symlinks at their
 own skills path, verified to load with no extra preamble. kiro reads
@@ -181,9 +293,10 @@ like a mAId one wins in kiro. mAId installs no global instruction file:
 `AGENTS.md` is a repo-root convention (per-project, alongside
 README.md), not a global per-tool preamble, and "load the project's
 AGENTS.md / project.md" is kdevkit's work-time instruction rather
-than something deployed here.
+than something deployed here. The ghost's context reaches a session
+through hooks, not a file (see "The Claude Code adapter").
 
-**Browser-control MCP** is the one resource that isn't a skill — the
+**Browser-control MCP** was the first resource that isn't a skill, and the
 first *runnable* one (skills are markdown symlinks; this is a live
 server). It lets the agent drive the user's already-running Chrome
 over the DevTools Protocol, so existing logins are reused with no
@@ -192,14 +305,29 @@ re-auth. Its shape differs from skills in two ways:
 - **Registration vs. runtime split.** A skill lives entirely
   in the harness config as a symlink. An MCP server is an
   out-of-process service the harness *calls*, so only its
-  *registration* goes in each harness config (`claude mcp
-  add` / `kiro-cli mcp add`); its *runtime* (the pinned
+  *registration* goes in each harness's global config (`claude mcp
+  add` / `codex mcp add`, and for kiro an edit of
+  `~/.kiro/settings/mcp.json`); its *runtime* (the pinned
   chrome-devtools-mcp and its Node) is a closure in the mAId
   profile. This is why the registry
   above can't express it — registration is a runnable command,
   not a symlink — so it lives in `resources::browser-mcp-*`
   Just verbs (shell over each harness's MCP CLI), keeping the
   Rust build-tool pure-symlink.
+- **Kiro's registration is a direct edit.** `kiro-cli mcp add`
+  needs a login and writes every other server back through its own
+  struct, dropping keys it does not know, so `manage` sets mAId's
+  entry in kiro's global config with `jq` and leaves every other key
+  as it is. The entry is mAId's only while its `command` is the
+  profile's `bin/maid-browser-mcp`: install and uninstall leave any
+  other `chrome-devtools` alone (install records it as skipped, "not
+  mAId's"). The write is atomic (a temp file beside the resolved
+  target, with its mode, renamed over it), and uninstall needs no
+  `kiro-cli`. Kiro agents get it by pulling the global config in; mAId
+  writes into no kiro agent file.
+- **Its declaration** is `resources/content/servers/browser/server.json`
+  (see "My harness"): a turn bring-in, with no rules of its own, since
+  the browser skill carries them.
 - **Browser-enforced allowlist.** The agent may act only on
   sites in a user-owned allowlist file
   (`${XDG_CONFIG_HOME:-$HOME/.config}/maid/browser-allowlist`).
@@ -211,22 +339,693 @@ re-auth. Its shape differs from skills in two ways:
   (re)connect, so edits apply next session without restarting
   Chrome.
 
+### My harness
+
+My harness is a ghost in the shell. The terms:
+
+- **Shell** (base harness): a model plus a vendor coding agent
+  (`claude`, `codex`, `kiro-cli`, `agy`), run as the vendor ships it. It
+  can do the work and knows nothing about me.
+- **Ghost** (my harness): what every part adds on top of the shells
+  (skills, MCP servers, plugins, sub-agents), through each shell's own
+  extension points, so the shell acts like me. It has no driver loop of
+  its own.
+- **Part**: what one repo installs into the shells: one persona and its
+  bring-ins. mAId's part is `maid-harness`, persona `personal`, and it
+  also ships the core. Other parts sit beside it; the ghost is the union.
+- **Persona**: a name for who the work is for. It owns nothing; each
+  persona's learnings go to its own memory, so fusing parts never mixes
+  their stores.
+- **Bring-in**: a plain standard unit a part installs (a skill, an MCP
+  server, a plugin) that declares what the ghost needs to know about it.
+  A **session** bring-in acts for the whole session (memory, the core's
+  adapter); a **turn** bring-in attaches when it fits the work. Each is
+  the part's own or borrowed.
+
+The core gives the ghost five functions, each an entry point every
+carrier calls the same way:
+
+| Function | What it does | Paragraph |
+|---|---|---|
+| `genome` | who I am at session start, every persona fused | "Genome" |
+| `expression` | only what this turn needs, sent when it changed | "Expression" |
+| `experience` | the session as it happened, packed to learn from | "Experience" |
+| `sleep` | marks the session done, so learning never interrupts work | "Sleep" |
+| `adaptation` | turns experience into habits and proposals, the person deciding | "Adaptation" |
+
+On Claude Code the carriers are the plugin's hooks and MCP server ("The
+Claude Code adapter"). The other shells get the skills only, for now.
+
+The rules every part follows, so that parts add up and never fight:
+
+1. No wrapper. The base harness binaries run as the vendor ships them:
+   no wrapper scripts, aliases or `PATH` shims.
+2. A part owns only what it wrote in each extension point, and
+   removes only that. A setting's value (for a list, one element) that is
+   exactly what the part would write is adopted: the part records it with
+   `adopted`, reports it `already present, adopted`, and owns and removes
+   it as if it had written it. Before adopting or writing a value it does
+   not already hold, it reads the other part lists: when any of format 1
+   records that setting with that value and no `skipped`, the value is that
+   part's, so the part neither adopts nor writes it and records `skipped:
+   "another part's"`. Two lists never both claim one value. Any other value
+   it did not write is another's.
+3. A setting that holds one value is set only when it is empty or
+   already this part's.
+4. Each part writes a part list (below) on install and removes it on
+   uninstall.
+5. Setup is idempotent and assumes nothing about other parts.
+
+**The part list.** Each part keeps one file,
+`${XDG_STATE_HOME:-$HOME/.local/state}/my-harness/parts/<part>.json`,
+that says what it placed on each base harness. A part writes only its
+own file, and may keep a temporary dotfile beside it while it writes. A
+whole-status reads every `*.json` file in the dir that is not a dotfile.
+
+```json
+{
+  "format": 1,
+  "part": "maid-harness",
+  "harnesses": {
+    "claude": [
+      { "kind": "marketplace", "name": "maid" },
+      { "kind": "plugin", "name": "maid@maid" },
+      { "kind": "mcp", "name": "chrome-devtools", "skipped": "no graphical Chrome" }
+    ],
+    "kiro-cli": [
+      { "kind": "skill", "name": "notes" },
+      { "kind": "mcp", "name": "chrome-devtools" }
+    ]
+  }
+}
+```
+
+- `format`: 1. A reader refuses a format it does not know, and ignores
+  keys it does not know.
+- `part`: the part's name, the same as the file name.
+- `harnesses`: keyed by the base harness's command (`claude`, `codex`,
+  `kiro-cli`, `agy`), one list of entries each.
+- `kind`: `skill`, `mcp`, `agent`, `plugin`, `marketplace` or
+  `setting`. `name`: what the harness's own listing calls it; for a
+  `setting`, its key, or a dotted path to a nested one
+  (`permissions.additionalDirectories`); a top-level key that holds the
+  dots itself wins (rule 14).
+- `scope`, optional: where inside the harness, for a part that places
+  something in one of several places. mAId places everything in one
+  place per harness and writes none.
+- `skipped`, optional: install meant to place this and did not, and
+  why. A reader reports such an entry and does not check it for
+  presence.
+- `value`, optional: for a `setting`, the value the part set, so a later
+  install can tell its own value from another part's. For a setting that
+  holds a list, the entry is one element of it and `value` is that element.
+  Writers write a string; a reader checks no other type (rule 14).
+- `adopted`, optional: `true` when the part found this exact value already
+  there and took it over; it owns it as if it had written it.
+- An entry without `skipped` is placed: the harness lists it, in
+  whatever state (a plugin the user disabled is still placed).
+
+The list says what is there after install, read back from each step,
+plus what install skipped. Uninstall leaves only what it could not
+remove, and deletes the file when nothing is left. In mAId, `part.rs`
+is the one writer: install and uninstall record what `Deploy::placed`
+reads back, and the browser-MCP script records its server through
+`build-tool record`.
+
+**Persona and bring-ins.** Beside `harnesses`, a list may say what the part
+brings into the ghost; readers that do not know these keys ignore them, so
+the format stays 1:
+
+```json
+{
+  "persona": "personal",
+  "bring_ins": [
+    {
+      "name": "notes",
+      "unit": { "standard": "skill", "path": "/abs/path/notes/SKILL.md" },
+      "source": { "kind": "project", "at": "https://example.org/me/repo.git", "rev": "<commit>" },
+      "tenure": { "kind": "own" },
+      "route": "worktree",
+      "values": { "store": "/abs/path/store", "token": "env:TOKEN" }
+    }
+  ]
+}
+```
+
+- `persona`: who the part's work is for. A name only; it owns nothing.
+- `unit`, optional: the bring-in's manifest, whose slot holds its
+  declaration: `standard` `skill`, `plugin` or `mcp`, and an absolute `path`.
+- `source`, optional: `kind` `project` (a git project repo), `store` (a git
+  store), `dir` (a directory here) or `vendor`; `at` (never a path on this
+  machine, never with a user or token) and the pinned `rev`. mAId records
+  its checkout's `HEAD` at install, `-dirty` when the tree has changes;
+  nothing in the profile names a revision, so a commit that changes no
+  installed file makes no new generation. After `just rollback` the
+  list names the checkout's revision, not the generation's.
+- `tenure`: `{"kind": "own"}` (the default) or `{"kind": "borrowed",
+  "from": "<whom>", "since": "<date>"}`.
+- `route`, optional: `write`, `backlog`, `worktree` (to a PR on the source)
+  or `report`. Default from the source: project → worktree, store and dir
+  → write, vendor or none → report. Borrowed is always report.
+- `values`: the config values bound here, every state location included.
+  A secret's value is never written: it is `env:<NAME>`.
+
+**The bring-in contract.** A bring-in stays a plain unit of its standard
+and declares what the ghost needs in that standard's own extension slot,
+under the namespace `my-harness`; a shell that does not know the slot
+ignores it:
+
+- an Agent Skill: frontmatter `metadata`, flat string keys:
+  `my-harness.scope` (`session` or `turn`), `my-harness.job`,
+  `my-harness.signals.<outcomes|jobs|states|locations|files>` (comma
+  lists), `my-harness.rules`, `my-harness.package`,
+  `my-harness.config.<key>` (its description, after optional `[secret]`
+  and `[optional]` markers), `my-harness.state.local`,
+  `my-harness.state.permanent` (each a config key),
+  `my-harness.state.promote` (`auto`, `propose` or `off`),
+  `my-harness.requires` (commands, a comma list) and `my-harness.record`
+  (pointers, a comma list);
+- a plugin manifest: `extensions["my-harness"]`, and an MCP server's
+  `server.json`: `_meta["my-harness"]`, each the same fields as one JSON
+  object (lists as arrays; `config` as `{ "<key>": { "about", "secret",
+  "optional" } }`; `state` as `{ "local", "permanent", "promote" }`).
+
+`scope` and `job` are required. A unit with no declaration is undeclared:
+its standard's own description stands in for `job`.
+
+`rules` is `<file>#<anchor>`: `file` relative to the unit's manifest dir
+(never absolute, never through `..`), `anchor` a heading's slug as GitHub
+makes it. The rules are that heading's section, up to the next heading of
+the same or a higher level, fenced code skipped; `maid_core::contract::rules`
+reads it, and content validation fails a skill whose declaration does not
+read or whose pointer names no heading. mAId keeps each to at most 30
+lines.
+
+`record`, optional, on a turn bring-in that knows where the work keeps its
+own record: one or more `<file glob>#<anchor>`, each glob relative to the
+session's location (the repo root above the folder, else the folder; never
+absolute, never through `..`). The first glob that matches names the
+record: its one file, or among several the one whose stem is a whole
+`/`-separated part of the branch name (`hooks` for `feat/hooks/work`, read
+from `.git/HEAD`), else none. A glob walk follows no link, its starting
+folders included. The record is that
+heading's section, read as `rules` is, at most 30 lines: its `Stage` (or
+`State`) line is the work's state, its `Ready for` (or `Next`) line the
+next step, and the file's `# ` title the goal. The core reads it to
+restate the goal and next step and to match `signals.states`; it never
+writes it.
+
+**Session bring-ins.** mAId's part records two: its memory (Memory,
+below) and the core's adapter on each shell it is built for. On Claude Code
+that is `claude-adapter`, declared in the Claude manifest of mAId's plugin
+(`extensions["my-harness"]`, which the flake fills from
+`resources/content/adapters/claude/my-harness.json`), whose hooks are the
+core's carriers; it is recorded while `maid@maid` is placed on claude,
+source this repo, own. `claude plugin validate` warns on `extensions`, and
+`--strict` refuses it; that is known and accepted, since Claude Code ignores
+the field at load time. Status needs no bring-in of its own: it is the
+genome's environment section.
+
+**Borrowed units: an overlay.** A part never changes a unit it borrows,
+so it ships an *overlay*, a manifest in the unit's own standard holding
+only `name`, `description` and the `my-harness` slot, and records that
+as the bring-in's `unit`. The lender's files are never read for the
+declaration. mAId's are `resources/content/overlays/<plugin>/plugin.json`
+(today `document-skills`, whose `requires` is the vendor row's `needs`),
+in the profile under `share/maid/overlays/`. Each MCP server mAId ships
+declares itself in `resources/content/servers/<name>/server.json`, in the
+profile under `share/maid/servers/`; content validation reads both kinds.
+
+**mAId's bring-ins.** Every skill is `turn`, as are the browser server
+(`chrome-devtools`, own, recorded while some harness has it placed: the
+browser step's `build-tool record` keeps it in step) and the document
+skills. None declares a file tier: writing-style keeps its rules in the
+persona's memory and says so in its `job` (see "Skill state").
+
+**The core.** `maid-core` (`resources/core`, in the profile as
+`bin/maid-core`) reads every part list, fuses the personas and bring-ins
+into the harness map on every call (never stored), derives the
+environment (each bring-in ready, or not and why), and answers the entry
+points `genome`, `expression`, `experience`, `sleep` and `adaptation` for
+any carrier: `--session <id>`, `--carrier append|transient|on-demand`,
+`--reset`, `--input <json>`, `--json`. An append carrier is sent only what
+its session's delivery record does not hold; on demand always answers and
+records; transient always sends. An item counts as sent when it is handed
+to the carrier, so a carrier that fails to place it calls again with
+`--reset`, which forgets what the session was sent; a sub-session is its
+own id. The core takes the same part lists
+whole-status takes (rule 3), and never keeps or prints a secret a list
+holds as a value. It reads `MY_HARNESS_PARTS` and
+`MY_HARNESS_STATE` (default `${XDG_STATE_HOME:-$HOME/.local/state}/my-harness`,
+parts under it), so it runs from a hook with no checkout. With no
+`--session`, the session is the input's `session_id` (with an `agent_id`,
+the sub-session `<session_id>.<agent_id>`); `--claude-event <Event>`
+answers as a Claude Code hook and exits 0 on any error, a bad flag or a
+panic included.
+
+**Genome** is the session's picture, a few lines per section: the
+personas (each with its part) and the one this session acts through, or
+"not known; ask"; each session bring-in with its job, own or borrowed, and
+where its state lives; the turn bring-ins as a catalog, none loaded; on
+every bring-in's line, session or turn, its other bound file and dir
+locations by key (`locations: learned
+<path>, ...`: a config value, not a state tier or a secret, that is an
+absolute path), so a skill reads a location only where the session names
+it and never through a default path; the
+environment, how many bring-ins are ready and why each other one is not;
+and the pending count, with how many sessions wait to be reflected on. It
+adds a line for part lists it refused and for bring-in names two parts
+both record, when there are any. It is one item, so any change re-sends
+all of it. `--slice sub-session` gives a sub-agent the same without the
+environment's detail and pending, which are the person's.
+
+**Expression** answers a turn from its input's `prompt` and `cwd`, each part
+its own item so an append carrier is sent only what changed, under 9,000
+bytes in all once what the session already holds is left out (a rules
+section is cut to 30 lines and 2,000 bytes, a record line or a memory's
+title and hook to 300, control characters dropped):
+
+- the reinforcement: the acting persona and its session bring-ins with
+  state, when there are several personas, and the work's record (goal, state, next) when a turn bring-in's
+  `record` names one here, whether or not it fits, since `signals.states`
+  match against it. The persona and the record are two items, each
+  tracked on its own: a session told one that moves to where none is
+  known is told so once (`persona: none known here`, `record: none
+  here`), and a session never told one is told nothing about it.
+  With the fitting bring-ins' first rules below, and the genome placed
+  again at clear and compact, these are the few rules that must never
+  drift; there is no other carrier for them;
+- per turn bring-in that fits (at most 3, counted after the same rules
+  text from two parts is sent once), its job and its first rules. Turn fit is derived, never
+  declared: `signals.locations` globs against the folder's path, its name
+  or its repo root's name, `signals.files`
+  globs against the files under the repo root (a bounded walk) or paths
+  named in the prompt, `jobs` and `outcomes` phrases whose words are all in
+  the prompt, `states` against the record's state; with no signals, two
+  words of its `job`. Location and file matches count 2, words 1. When
+  nothing fits, nothing is sent and the shell's own way stands;
+- per recalled memory (at most 3), a pointer: title, hook, file. A
+  `Selector` picks them; v1 is a lookup of the prompt's words against each
+  index line's title and hook, from the acting persona's memories (every
+  persona's, labelled, when none is known).
+
+The acting persona is the only one when there is one; otherwise the one
+whose turn bring-ins' location or file signals match here, or whose bound
+state location holds the folder; otherwise not known. The genome makes
+the same guess from its input's `cwd`.
+
+**The Claude Code adapter** is data in mAId's plugin: `hooks/claude.json`
+and `claude-mcp.json` (from `resources/content/adapters/claude/`), named by
+the Claude manifest's `hooks` and `mcpServers`, not codex's default
+`hooks/hooks.json` and `.mcp.json`, since codex reads the same plugin dir.
+Each command starts `@maid-core@`, which the flake replaces with this
+build's core, so the plugin and its core are one build. SessionStart
+`startup`, `resume` and `fork` call `genome` on the append carrier (a resume
+keeps its history and its id; Claude Code does not place a SessionStart
+context identical to one already there); `clear` and `compact` call it with
+`--reset`; SubagentStart calls it with `--slice sub-session`;
+UserPromptSubmit calls `expression`; SessionEnd calls `sleep`, which marks
+the session and prints nothing (its input's own `reason` is recorded as
+`end`). `maid-core mcp --session-env
+CLAUDE_CODE_SESSION_ID` serves the on-demand carrier: resource
+`my-harness://genome`, prompt `genome`, tool `expression` (a folder under
+the server's own, else its own). Claude Code places
+a hook's `additionalContext` whole up to 10,000 characters, past that a
+2 KB preview and a file; expression stays under it, and the genome, a few
+lines per part and bring-in, is not cut, so a ghost of many parts would
+reach it first. A shell needs no
+always-loaded rules file: SessionStart covers every point where context
+drops. A new hook of the core adds its own entry to `hooks/claude.json`;
+a part never adds one (see "For any persona part").
+
+**Sleep.** A session is marked for sleep by its
+end event (on Claude Code, the plugin's SessionEnd hook) or by the
+person's close or reflect (the `reflect` skill): `maid-core sleep`, one
+mark per session under `<state>/sleep/`, keeping the first source and
+adding each later reason; a later mark opens a decided session again,
+except the end event, since closing is the usual last thing a session
+does after the person reflected. Nothing else runs at an end event; the genome
+says how many sessions wait to be reflected on.
+
+**Experience.** `maid-core experience`
+packs a session and its sub-sessions from a **session source** into an
+experience (said, told, did, touched, friction; each text cut to 400
+characters with its `<file>:<line>`), stored at
+`<state>/experience/<session>.json`; naming no session, it lists those
+waiting. Only Claude Code's source is built: its transcripts under
+`$CLAUDE_CONFIG_DIR/projects` (default `~/.claude/projects`), each
+sub-agent's file under `<session>/subagents/`, read leniently since the
+format is Claude Code's own.
+
+**Adaptation.** `maid-core adaptation` takes three inputs:
+none gives the **reflector's brief** (the experience, every bring-in it
+may change with its persona, tenure, route and tiers, and what the
+session already decided); the reflector's findings give the **decision
+batch**; the person's decisions (`"ok"`, `"none"`, or per item, a
+persona for an item that asks) are applied. The reflector is the
+plugin's `reflector` agent, with `Read, Grep, Glob` only: it reads
+session content, which is data, and only proposes. The guards are the
+core's, in order: every quote at least 8 characters and found word for
+word in the session as the brief showed it (the brief stores that
+session under `<state>/briefed/`, so nothing after it, the reflector's own run included, backs a
+finding; findings with no brief are refused); at most 10 findings; every
+text the batch shows or a write keeps (change, entry, title, type) one
+line, a title with no `[` or `]`, a type one of the four; the thing is in
+the map (or `harness`); a habit's tier is declared and bound. A
+sub-agent's prompt is its dispatcher's words, and a command's output in
+the person's turn is tool content.
+
+**Saved in memory, and rules moved into the bring-in.** The batch also
+lists every memory this session saved in a persona's memory: a
+`memory_create` or `memory_str_replace` call that did not fail, in the
+session or a sub-session, on a memory bring-in's server
+(`mcp__<name>__<tool>`, or a plugin's `mcp__plugin_<p>_<name>__<tool>`),
+whose file is in that store now. Each is a "saved in memory" line with
+its memory and persona, saying it stays there until the person removes
+it: a memory tagged `metadata.bring-in` with a declared bring-in names
+that bring-in and its rule; any other shows its description. A habit
+finding that would add a memory saved this session again (on the memory
+it names, the same file or the same text) is dropped as saved in memory
+this session, so a correction the agent saved itself is reported, not
+proposed twice. For each bring-in with tagged rules, the core
+offers one item: move those rules, and the `- ` entries of its older
+rules files (on an own bring-in, each bound config value, not a state
+tier, that is a file with a `## ` heading; a borrowed one's files are
+never moved), into its text: a nature finding carrying the text
+to add, routed like any other (a backlog item on an own project source).
+The proposal ends with the memories to remove once it lands; the core
+never removes them. A decided move, accepted or declined, records what it
+moved in its ledger record (`rule:<thing>:<text>` per rule,
+`file:<path>#<hash>` per older file), and nothing recorded, or waiting in
+another session's batch, is offered again: a new rule saved, or an older
+file changed, brings the move back with only what is new.
+
+Then the route, from the map: a **habit** (a persona memory, or a bring-in's tier) is
+written (a persona memory through its own server, see "Memory"); **nature** (a bring-in, a skill, the harness) becomes a
+proposal under `<state>/proposals/<thing>/`, backlog-item shaped, naming
+the source repo and revision, and a worktree-to-PR one only when it
+carries an edit and the route is `worktree`; anything about a
+**borrowed** bring-in is a note for its lender under `<state>/notes/`;
+an own bring-in with route `report` gets a note too. A habit not placed
+on a persona is asked, never written, and a persona with no memory, or
+more than one, takes none. A habit with a quote not in the
+person's own words, a contradiction, or a persona guess leaves the item
+out of "ok", for its own answer; the first says "learned only from tool
+or web content" when such a quote is also in tool or told text, else "a
+quote is not your own words". Every answer is checked before any is
+applied, and each accepted item is placed again on the map as it is
+then. A habit's entry is at most 200 characters, read whole in the
+batch. "skip" leaves the session out with nothing applied, and
+`{"dismiss": "all" | [<session>, ...]}` does the same for sessions
+waiting to be reflected on: their marks stop waiting and the ledger
+records them as dismissed. Once a batch is decided or dismissed, its
+`briefed/` copy is deleted; the capped experience stays. An entry
+already in either tier is listed `already in <tier>`, with no action. Each undecided item is one file
+under `<state>/pending/`, which is the genome's pending count; an item
+that fails to apply stays, with why. A new file the core writes is
+`0600`.
+
+A tier file is markdown: an entry
+is `- <date> · <entry>` and a `source:` line under its first `## `
+heading, newest first; a new file gets `## <Key> rules`. The **ledger**
+(`<state>/ledger.jsonl`) keeps what each reflection saw (friction by
+tool, corrections by thing; a session's last reflection counts) and each
+decision and each dismissal; `maid-core ledger` counts them by thing
+(findings decided and accepted) and the sessions dismissed.
+
+**Whole-status.** `just status --whole [agent]` reads every part's list
+(`whole.rs`) and reports each entry, per harness and part, in one of six
+states: present, present (disabled) (the listing says the user turned it
+off), missing, skipped (with the part's reason), not checkable, or
+unreadable. Then each part's bring-ins, ready or not (rule 15), read
+through the core, which status shares with every session. Presence is read
+from the harness's own listing or config:
+
+| Harness | skill | agent | mcp | plugin | marketplace | setting |
+|---|---|---|---|---|---|---|
+| `claude` | `~/.claude/skills/<n>/SKILL.md` | `~/.claude/agents/*.md` frontmatter `name` | `~/.claude.json` `mcpServers` (scope `user`) | `claude plugin list --json`, `user` scope only | `claude plugin marketplace list --json` | `~/.claude/settings.json` key (rule 14) |
+| `codex` | `~/.codex/skills/<n>/SKILL.md` | - | `codex mcp list --json` | `codex plugin list --json` | `codex plugin marketplace list --json` | - |
+| `kiro-cli` | `~/.kiro/skills/<n>/SKILL.md` | `~/.kiro/agents/*.json` `name` (or file name) | the agent named by `scope`, its `mcpServers`; no scope: `~/.kiro/settings/mcp.json` | - | - | `~/.kiro/settings/cli.json` key (rule 14) |
+| `agy` | `~/.gemini/config/skills/<n>/SKILL.md` | - | - | - | - | - |
+
+claude's MCP is read from its config because `claude mcp list` and `get`
+start each server. agy is checked by path only. A kiro MCP's sub-agent
+comes from each entry's `scope`, so `--whole` takes no sub-agent argument.
+
+**Reader rules.** Any whole-status reader, in any repo or language, follows
+these, and the conformance set below checks them. A rule is what changes a
+state or the exit code. The report's wording, layout, order and reasons
+are free.
+
+1. **Text.** Every file and every CLI's stdout is UTF-8, strictly. A
+   byte-order mark is not stripped, so a JSON file that starts with one is
+   not JSON. stderr is decoded leniently and only ever feeds a reason. In a
+   JSON object with a repeated key, the last one counts.
+2. **Which lists.** Every entry in the parts dir named `<stem>.json`, with
+   a stem that is not empty and does not start with `.`. No parts dir: no
+   lists, which passes. A parts dir that exists but cannot be listed
+   (permissions, not a dir) aborts: no report, exit 1. That is the only
+   abort. Every other failure stays with its list or its entry.
+3. **Refused lists.** A list is refused, reported by file name, and fails
+   the run when: it cannot be read (permissions, a dir), is not UTF-8,
+   JSON or an object; `format` is not a JSON number whose value, read as a
+   double, is 1 (`1.0` passes, `true` and `"1"` do not); `part` is not a string equal to the
+   stem, exactly; `harnesses` is not an object of arrays; an entry is not
+   an object; `kind` or `name` is not a string; or `scope` or `skipped` is
+   neither a string nor null. Other keys are not read, and `value` and
+   `adopted` are taken whatever their type (rule 14 reads a setting's
+   `value`; one that is not a string makes that entry not checkable). No entry of a refused list is checked; the other
+   lists still are.
+4. **Absent and present.** A field that is null is absent. A field that is
+   a string is present, whatever it holds: `"skipped": ""` is skipped, and
+   `"scope": ""` is a scope.
+5. **Each entry**, in this order: with `skipped`, skipped, and nothing is
+   read. A harness key or kind not exactly one in the table: not
+   checkable. A `-` in the table: not checkable. Then its scope (rule 6),
+   then its source.
+6. **Scope.** Absent: the harness's one place. A claude plugin or MCP:
+   `"user"` is that place too, and any other scope is not checkable. A
+   kiro MCP: the scope names the kiro agent (`""` included) whose
+   `mcpServers` should hold it (no such agent: missing); with no scope,
+   `~/.kiro/settings/mcp.json`.
+   Any other kind with a scope: not checkable.
+7. **Names** compare exactly, case included, with the names a source
+   holds, and are never joined into a path: a skill `a/b` or `.` is
+   missing.
+8. **CLIs.** A CLI is on PATH when an absolute PATH dir, in order, holds
+   a regular file of that name with any execute bit. Empty and relative
+   entries are skipped, never read as the current dir: status runs what
+   it finds, and a `claude` planted in a checked-out repo must not run. Not on PATH: not checkable. It
+   runs with the reader's HOME. If it fails to start, exits non-zero, or
+   its stdout is not one JSON value (whitespace around it is fine, empty
+   is not) or not the listing's shape, every entry it would answer is
+   unreadable. With exit 0, stderr is ignored: stderr never decides a
+   state. Shapes: claude's `plugin list` is an array, items named by `id`,
+   counting only `"scope": "user"`; claude's marketplaces an array by
+   `name`; codex's `plugin list` an object whose `installed` array names by
+   `pluginId`; codex's marketplaces an object whose `marketplaces` array
+   names by `name`; codex's `mcp list` an array by `name`. An item that is
+   not an object or has no string name is ignored. An item with
+   `"enabled": false` (the JSON value; not `0`, not `"false"`) is present
+   (disabled).
+9. **Config files** (`~/.claude.json`, `~/.claude/settings.json`,
+   `~/.kiro/settings/*.json`). Absent: nothing listed. Only "does not
+   exist" is absent, here and for a dir in rule 10; any other failure, a
+   parent that is not a dir included, is unreadable. Cannot be read, not
+   UTF-8, not JSON, or not an object: unreadable. A key counts whatever its
+   value, null included (a setting's key is found as in rule 14). A member read for names (`mcpServers`) that is
+   absent or null lists nothing; of any other non-object type, unreadable.
+10. **Dirs.** An absent skills or agents dir lists nothing. One that
+    exists but cannot be listed (permissions, not a dir): every entry read
+    from it is unreadable. A skill is present when `<dir>/<name>/SKILL.md`
+    is a regular file after links; when that cannot be confirmed (absent,
+    not a file, its own dir without permission), missing.
+11. **Agent files** are every regular file, after links, named `<stem>.md`
+    (claude) or `<stem>.json` (kiro): stem not empty, dotfiles included,
+    extension exact. One that cannot be read or is not UTF-8 is unreadable
+    under its stem, which is the name an entry matches it by.
+    - kiro: a JSON object, named by its `name` when that is a string, else
+      by its stem. Not JSON or not an object: unreadable under its stem.
+      Its `mcpServers` reads as in rule 9.
+    - claude: lines split on LF, a trailing CR dropped. A first line that
+      starts with a byte-order mark: unreadable under its stem.
+      Frontmatter is the lines between a first line exactly `---` and the
+      next line exactly `---`. The name is on the first of those lines
+      that starts `name:` at column 0: the rest of that line, cut at its
+      first ` #`, trimmed of spaces and tabs, then one pair of matching surrounding quotes
+      (`"` or `'`) removed. No frontmatter, or no `name:` line: the file
+      names nothing.
+12. **One name, several sources** (listing items, agent files): the best
+    state wins, so order never matters: present, then present (disabled),
+    then unreadable, then missing. A kiro MCP whose agent name is in two
+    files is present if either lists it, else unreadable if one could not
+    be read or its `mcpServers` is not an object.
+13. **Exit.** 0, unless an entry is missing or unreadable or a list was
+    refused: then 1. An abort exits 1; a bad invocation 2. With one
+    harness selected, only its entries are checked and reported, and
+    refused lists still are reported and fail the run.
+14. **Settings.** A setting's `name` is first a key of the config file's
+    top-level object equal to the whole name, dots included; only when
+    there is no such key, a dotted path split at every `.`, each part a key
+    of the object one level down (`permissions.additionalDirectories`). A
+    key with dots below the top level is never found as one key. Neither
+    found: missing, as is a path through a value that is not an object. A `value` compares only
+    as a string: one that is neither null nor a string makes the entry not
+    checkable, decided before the file is read. With a string `value`, the
+    entry is present only when the setting, or when the setting is an
+    array one element of it, is a JSON string equal to `value` code point
+    for code point (escapes decoded, no normalisation), else missing; a
+    setting or element that is not a string never matches. With no `value`
+    or a null one, a found key is present. `adopted` changes no state.
+15. **Bring-ins.** Every bring-in of every list not refused is reported,
+    whatever harness is selected, as **ready**, **not ready** (a non-optional
+    config key without a value, an `env:` value whose variable is unset or
+    empty, an absolute state location of a non-optional key that does
+    not exist (an optional key's is a tier not written yet), a memory
+    index that leaves its store (see Memory), a `requires`
+    command not on PATH by rule 8, where a command with a `/` is never
+    found), **undeclared** (no `unit`, or a unit whose slot holds no
+    declaration) or **unreadable** (the entry is not of the shape above, the
+    unit is not a regular file of at most 1 MiB or its declaration is
+    malformed, or a secret's value is not `env:<NAME>`). A null field is
+    absent (rule 4). A list whose `persona` is not a string or whose
+    `bring_ins` is not an array is not refused; its bring-ins are one
+    unreadable line named `*`. None of these changes the exit code.
+
+**Conformance set.** `resources/build-tool/tests/conformance/<case>/`, plain
+data any reader's tests can copy (`tests/conformance.rs` runs `whole.rs`
+against it):
+
+- `parts/`: the parts dir (no `parts/`: no parts dir; a file: not a dir).
+- `home/`: HOME. Placeholder files keep dirs git would drop; a
+  `.gitattributes` of `* -text` keeps every byte as written.
+- `units/`, optional: bring-in manifests; a parts file writes `@RUN@` for
+  the run dir, filled in before the run.
+- `case.json`: `about`; optional `harness`, the one selected; optional
+  `env`, the names of the variables set (none when absent); optional
+  `clis`, per CLI, per exact argument string, `stdout` or `stdout_file`,
+  `stderr` or `stderr_file` (paths under the case), and `exit`. A CLI not
+  named is not on PATH; the PATH holds only the stubs' dir, which is also
+  the run's working dir, and arguments not listed exit 3. Optional `path`:
+  the PATH entries to use instead, as written. Optional `modes`, paths under the run dir (`parts/…`,
+  `home/…`, `bin/<cli>`) to octal modes, set before the run. Where they
+  do not bite (as root) the case cannot run; mAId's test then fails
+  unless `CONFORMANCE_ALLOW_SKIPS=1` is set. `expect`:
+  `exit`, `aborted` (when the report aborts), `entries` (`harness`,
+  `part`, `kind`, `name`, `scope` when the entry has one, and `state`, as
+  above) `refused` (file names) and optional `bring_ins` (`part`, `name`, `state`
+  as in rule 15; none when absent), compared in any order.
+
+A reader of part lists keeps its own lenient structs beside the writer's
+strict ones (`whole.rs` beside `part.rs`), so a kind or harness it does not
+know is one entry it cannot check, not a refused file.
+
+**Memory.** Memory is served by MCP servers, one per persona, each bound
+to one store: a git checkout the user owns. Each part registers its own
+server on its own store; parts share no store config. The server is
+`pensieve` (its own public repo, pinned as a flake input, in the profile
+as `bin/pensieve`): it owns the store format (Claude Code's auto-memory
+format under `<store>/memory/`), its tools, and its instructions, which it
+builds from the store's `about.md` (what belongs here and what does not,
+then a short profile). That file is the user's; no part writes it or
+anything else in a store. Syncing a store (pull, commit, push) is the
+user's.
+
+mAId's server is `personal-memory` on the personal store, whose path is in
+`${XDG_CONFIG_HOME:-$HOME/.config}/maid/memory-store` (`just memory-store
+<path>` sets it). With none set, install reports "no personal store set"
+and registers nothing. Install
+registers it on claude with `claude mcp add -s user personal-memory --
+<profile>/bin/pensieve --store <path>` and records it as `mcp`. The entry
+is mAId's while its command is the profile's `bin/pensieve`; install
+re-registers it when the store path changes and leaves any other
+same-named entry, or one another part's list records as placed, alone. A
+store that is not there is reported and skipped, never created, and mAId's
+earlier entry is removed. An unreadable `~/.claude.json` fails install.
+
+It is also a session bring-in. Its declaration is mAId's own
+`resources/content/servers/personal-memory/server.json` (every MCP
+server's declaration in this repo lives at
+`resources/content/servers/<name>/server.json`), in the profile under
+`share/maid/servers/`: scope `session`, package `pensieve`, config `store`
+(the store), `index` (the memory index, relative to `store`) and `serve`
+(the command that serves the store over MCP stdio, a JSON array), and
+`store` as its permanent tier with promote `off`, since persona memories
+are habits, written directly. Install records it while the server is
+registered: unit that manifest, values `store` (the store path),
+`index` (`memory/MEMORY.md`, pensieve's layout) and `serve` (the profile's
+`bin/pensieve --store <store>`, as registered on claude), tenure own, and source
+the package's own repo at the revision `flake.lock` pins
+(`https://github.com/<owner>/<repo>` for a GitHub pin, the node the root's
+`inputs` name; any other pin records no source, so no local path is
+written). The lock is read with or without git. Its route is then the
+project default: a finding about the server is a PR on pensieve, while a
+habit goes to the store. The core writes an accepted habit through the
+server itself: it runs `serve`, calls the memory tool one request at a
+time, stopping at the first that fails (`memory_create`, then the index
+line by `memory_insert`, or `memory_create` for a new index; a remove by
+`memory_str_replace` and `memory_delete`), and stops it. `index` is then
+`<dir>/<file>`, the dir the server serves as `/memories`; so the store is left as any other memory write leaves it. pensieve
+does no git, so a habit reaches another environment when the person syncs
+the store.
+
+**The memory index, as a reader such as the selector takes it.** A
+bring-in whose declaration has a `state.permanent` key and a config key
+`index` has a memory index at that tier's bound location joined with the
+bound `index`, which is relative and never leaves the location. A reader
+takes the path from those values, never a literal. The index is markdown,
+one memory per line, `- [Title](file.md) - hook`, each file relative to
+the index's dir; each memory file has frontmatter `name`, `description`
+and `metadata.type` (`user`, `feedback`, `project` or `reference`), then
+its body (Claude Code's auto-memory format). A memory a bring-in saved
+for itself also carries `metadata.bring-in: <its name>`, and its body is
+the rule (Adaptation, "Saved in memory"). The memory's persona is the
+one of the part that records the bring-in. A bring-in with no `index` key
+has no index in this shape.
+
+**Claude's own automatic memory is turned off** by a part whose server is
+registered, so saves go to a server and not to Claude's memory dir: user
+settings `env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = "1"` (Claude applies
+user-settings `env` at startup). A part sets it only while its own server is
+registered after install. Under rules 2 and 3 it is set when empty, adopted
+when identical and no other part's list records it, otherwise left and
+recorded skipped. A part removes its own value when it uninstalls, or when
+it installs with claude on PATH and no server of its own; another part's
+value it leaves alone. A part with a server that follows these rules then
+takes the value on at its next install; until then Claude's own memory is
+on. The `autoMemoryDirectory` value an
+older mAId set is removed when it is still the recorded value.
+
+`just memory-harvest --to <dir> [--project <path-prefix>]` copies Claude's
+per-project memories (and, with no `--project`, codex's `memories/`
+registry) into `<dir>/memory/`, never changing the originals. `<dir>` must
+exist. A prefix matches the way Claude names project dirs (every character
+that is not a letter or digit as `-`), so it may take a sibling; each
+project taken is printed. A rerun changes nothing, and a same-name
+different memory lands as `<stem>-N.md`, reported.
+
+codex, kiro-cli and agy reach the same servers by registration, later.
+
 ## Tech Stack
 
 <!-- Languages, runtimes, frameworks, key libraries. Versions
      only where version matters. -->
 
 - **Runtime:** Rust (cargo workspace) + Just for the verb
-  surface. `resources/build-tool` is today's only
-  workspace member; future Rust crates (e.g. `kaimux/`)
-  join as additional members.
+  surface. The workspace members are `resources/core` (`maid-core`,
+  the installed core; it matches turn-fit globs with `globset`, the
+  matcher ripgrep uses), `resources/build-tool` and `kaimux/`.
 - **Isolation:** one flake, two outputs. `devShells.default`
   (loaded by `.envrc` via direnv) is the dev closure: the rust
   toolchain (rust-overlay), `just`, and `jq` (the install tests read
-  the agents' JSON). `packages.default` is
+  the agents' JSON, and the browser MCP install edits kiro's global
+  config with it), plus `MAID_TEST_PENSIEVE`, the pinned pensieve the
+  core's adaptation test writes through. `packages.default` is
   the installable: the skills plus `chrome-devtools-mcp`
   (packaged from its npm tarball, which has no dependencies)
-  wrapped with `nodejs_22`.
+  wrapped with `nodejs_22`, `pensieve`, the memory server, from its
+  own flake (a pinned input), and `maid-core`, built from the
+  workspace's `Cargo.lock`.
 - **Dependencies.** mAId does not care how a prerequisite got
   onto PATH (host package, home-manager, nix profile), and does
   not check for it; a missing one fails in the step that needs it.
@@ -234,7 +1033,8 @@ re-auth. Its shape differs from skills in two ways:
   | Kind | What | Provided by |
   |---|---|---|
   | Runtime prerequisites | coding-agent CLIs, `git`, a graphical Chrome (browser only) | the environment |
-  | Runtime-provided | skills, node, chrome-devtools-mcp | the mAId profile |
+  | Runtime-provided | skills, node, chrome-devtools-mcp, pensieve, maid-core | the mAId profile |
+  | What the vendor document skills run | `python` with openpyxl, pandas, pypdf, pdfplumber, reportlab, pypdfium2, pdf2image, Pillow, lxml, defusedxml, python-pptx, markitdown; `node` with the `docx` and `pptxgenjs` packages; LibreOffice (`soffice`), `pandoc`, `markitdown`, `qpdf`, poppler (`pdftotext`, `pdftoppm`, `pdfimages`), ImageMagick (`magick`) | the environment; `just status` names each missing command |
   | Install and dev prerequisites | `nix` with flakes; `direnv` optional | the developer |
 - **Entrypoints:** Justfile organised as a root file with
   `mod` declarations per area, so verbs are namespaced by
@@ -258,7 +1058,7 @@ re-auth. Its shape differs from skills in two ways:
     [name]` (construct and structurally check every prompt
     without calling an agent; free).
     Browser-control MCP adds
-    `install-browser-mcp [agent] [kiro-sub]` /
+    `install-browser-mcp [agent]` /
     `uninstall-browser-mcp` / `status-browser-mcp` /
     `browser-mcp-allow <pattern>` (register/report the server
     + append allowlist patterns), plus `verify-browser-mcp`
@@ -266,9 +1066,15 @@ re-auth. Its shape differs from skills in two ways:
   - **`kaimux::*`** (operate on the kaimux crate):
     `just kaimux::build` (release + copy to `dist/`),
     `just kaimux::test`, `just kaimux::integration`.
-  - **Install** at the root: `just install [agent] [kiro-sub]`
+  - **Memory** at the root: `just memory-store <path>`, `just
+    memory-harvest --to <dir> [--project <path-prefix>]`; `just status`
+    reports the store, its server and Claude's own memory. Each wraps a
+    `resources::*-memory*` verb over `build-tool memory`.
+  - **Install** at the root: `just install [agent]`
     (profile, then skills and browser MCP), `just uninstall`,
-    `just status`, `just rollback`, and the Macro test `just
+    `just status` (`--whole`: every part's list against each
+    harness), `just
+    rollback`, and the Macro test `just
     verify-install` / `just verify-install-paid` (both `[confirm]`-gated).
     Later installables (kaimux) join here. `./install [agent]` at the
     repo root is the same install for callers that only know a repo's
@@ -293,7 +1099,7 @@ re-auth. Its shape differs from skills in two ways:
 
 ```
 mAId/
-├── Cargo.toml              workspace root: members = ["resources/build-tool"]
+├── Cargo.toml              workspace root: members = ["resources/core", "resources/build-tool", "kaimux"]
 ├── Cargo.lock              committed (binary-workspace policy)
 ├── Justfile                root verb surface (workspace hygiene + `mod resources` / `mod kaimux`)
 ├── install                 entry-point for setup walks: `just install`, via the dev shell if needed
@@ -301,26 +1107,77 @@ mAId/
 ├── flake.nix / .envrc      dev shell (rust toolchain, just, jq) and the installable package
 ├── resources/
 │   ├── Justfile            `resources::*` verb surface (install/uninstall/status/verify)
+│   ├── core/               Rust crate maid-core, installed: entry points, map, environment
+│   │   ├── src/config.rs   where things are (parts dir, state dir)
+│   │   ├── src/contract.rs the bring-in contract, read from each standard's slot
+│   │   ├── src/parts.rs    each part's persona and bring-ins, as its list records them
+│   │   ├── src/map.rs      fusion: the harness map
+│   │   ├── src/environment.rs  each bring-in ready or not here; the PATH rule
+│   │   ├── src/delivery.rs the delivery record per session
+│   │   ├── src/here.rs     where a session is: folder, repo root, branch, globs
+│   │   ├── src/record.rs   the work's own record a turn bring-in points at
+│   │   ├── src/fit.rs      turn fit and the persona guess
+│   │   ├── src/select.rs   recall: the memory indexes and the Selector
+│   │   ├── src/source.rs   session sources: where a session is read from
+│   │   ├── src/claude.rs   Claude Code's transcripts, located and packed
+│   │   ├── src/experience.rs  a session as said, told, did, touched, friction
+│   │   ├── src/sleep.rs    sleep marks: sessions waiting to be reflected on
+│   │   ├── src/adapt.rs    findings, the guards, the decision batch, the routes (tests in adapt/)
+│   │   ├── src/adapt/moves.rs  what a session saved in memory, and a bring-in's rules moved into its text
+│   │   ├── src/memory.rs   a persona memory written through its server, MCP over stdio
+│   │   ├── src/ledger.rs   what reflections saw and the person decided
+│   │   ├── src/files.rs, src/time.rs  whole-file writes; UTC stamps
+│   │   ├── src/entry.rs    genome, expression, experience, sleep, adaptation
+│   │   ├── src/mcp.rs      the on-demand carrier as an MCP server on stdio
+│   │   ├── src/main.rs     the CLI
+│   │   ├── tests/cli.rs    the binary under a bare environment
+│   │   ├── tests/claude_hooks.rs  the shipped Claude hooks and MCP config, run as Claude Code runs them
+│   │   ├── tests/mcp.rs    the MCP server over stdio
+│   │   ├── tests/shipped_fit.rs  turn fit against this repo's own declarations
+│   │   ├── tests/claude_live.rs  ignored: Claude Code against a stub model API on loopback
+│   │   ├── tests/claude_paid.rs  ignored, paid: Claude Code with a real model, on the shell's HOME and model access
+│   │   ├── tests/adaptation.rs  close, reflect and decide through the binary, the real memory server, a store's travel
+│   │   └── tests/fixtures/claude/  a real-shaped Claude Code session and sub-agent
 │   ├── build-tool/         Rust crate — the pipeline (check/install/uninstall/status/smoke)
-│   │   ├── Cargo.toml      deps: clap, anyhow, gray_matter, serde, serde_json, tempfile
+│   │   ├── Cargo.toml      deps: clap, anyhow, gray_matter, serde, serde_json, tempfile, maid-core
 │   │   ├── src/main.rs     the shim: clap surface + dispatch, in pipeline order
 │   │   ├── src/lib.rs      module wiring + the pipeline doc comment
 │   │   ├── src/shared.rs   Agent, REGISTRY, roots — what every stage speaks
 │   │   ├── src/harness.rs  fixtures, the five kinds, prompts, invocation, verdicts
-│   │   ├── src/deploy.rs   the Deploy trait: Plugins (claude, codex) and Symlinks (kiro, agy)
+│   │   ├── src/deploy.rs   the Deploy trait: Plugins (claude, codex), Symlinks (kiro, agy), BringIns
+│   │   ├── src/part.rs     mAId's part list: the format and its one writer
+│   │   ├── src/whole.rs    whole-status: every part's list, checked against each harness
+│   │   ├── src/memory.rs   the personal store, personal-memory on claude, Claude's memory off
+│   │   ├── src/harvest.rs  copying each harness's own memory into a store dir
+│   │   ├── src/settings.rs Claude's user settings file, kept key for key
+│   │   ├── src/reads.rs    Claude's grants: mAId's skill files (additionalDirectories), skill state (allow)
 │   │   ├── src/stages.rs   content → check → install → smoke
 │   │   ├── tests/integration.rs  cross-stage tests against the real repo
-│   │   ├── tests/plugins.rs  ignored: Plugins against the real claude/codex CLIs in a temp HOME
-│   │   └── tests/no_cli.rs   install with no agent CLI on PATH keeps the old links
+│   │   ├── tests/plugins.rs  ignored: Plugins and BringIns against the real claude/codex CLIs in a temp HOME
+│   │   ├── tests/claude_installed.rs  ignored: Claude Code on the plugin as install places it, against a stub model API
+│   │   ├── tests/claude_config_dir.rs  install, status and uninstall with CLAUDE_CONFIG_DIR set, a stub claude, nothing under HOME
+│   │   ├── tests/no_cli.rs   install with no agent CLI on PATH keeps the old links
+│   │   ├── tests/stops_on_list.rs  an unreadable part list stops install and uninstall, through the binary
+│   │   ├── tests/memory.rs   the memory verbs through the binary, temp HOME
+│   │   ├── tests/memory_install.rs  install's claude memory step, a stub claude, its part list, the memory bring-in's readiness
+│   │   ├── tests/conformance.rs  whole.rs against the conformance set
+│   │   ├── tests/conformance/  the whole-status conformance set, one dir per case
+│   │   └── tests/reads_install.rs   install's claude skill-reads step beside memory's
 │   ├── content/            the deployable skills (copied into the profile)
+│   │   ├── overlays/<plugin>/plugin.json  the declaration of a borrowed plugin
 │   │   ├── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
 │   │   ├── skills/kdevkit/  SKILL.md core + phases/, tiers/, setup.md, interviews.md
-│   │   └── skills/kyodakit/ SKILL.md: developer judgement, any language
+│   │   ├── skills/kyodakit/ SKILL.md: developer judgement, any language
+│   │   ├── servers/<name>/server.json  each MCP server's declaration (copied to share/maid/servers/)
+│   │   ├── skills/reflect/  SKILL.md: close or reflect, the batch, the person's answer (names `@maid-core@`)
+│   │   ├── agents/reflector.md  the reflector, a read-only Claude Code sub-agent (into the plugin)
+│   │   └── adapters/claude/ the Claude Code adapter: my-harness.json (its declaration), hooks.json, mcp.json
 │   ├── browser/            browser-control MCP (not symlinked — runnable)
 │   │   ├── launch          allowlist-enforcing launcher; the flake wraps it as maid-browser-mcp
-│   │   └── manage          data-driven MCP registrar (MCP_AGENTS table: claude/codex global, kiro per-sub-agent)
+│   │   └── manage          data-driven MCP registrar (MCP_AGENTS table; every agent global, kiro by editing its config)
 │   └── tests/              fixtures + the attended browser test (the runner itself is in build-tool)
 │       ├── browser-functional   ATTENDED test: drives real Chrome, asserts off-list blocked
+│       ├── browser-mcp          free: kiro's browser MCP registration, temp HOME, stub CLIs
 │       ├── rollback             free: `just rollback` and install's generation cleanup, temp HOME
 │       ├── verify-install       the installable Macro test, on the real install (`just verify-install`)
 │       ├── conversational-stream.txt  the --stressed prefix
@@ -350,7 +1207,18 @@ Two test layers, each scoped to what they verify.
 **`just test` — workspace unit tests.** Rust unit tests
 covering the content validator and the symlink state
 machine against a `tempfile`-fake `$HOME`, plus the kaimux
-crate's 53 unit tests against a tempdir `Store`. Fast
+crate's 53 unit tests against a tempdir `Store`, and the core's
+(`maid-core`: the contract readers, fusion, readiness, the delivery
+record, the entry points, turn fit, the work record, recall, the
+transcript packer on a real-shaped fixture, each guard and route against
+a stub memory server, the ledger, and its binary under a bare
+environment: the shipped Claude hooks run through `sh -c` with a
+payload, the MCP server over stdio, turn fit against this repo's own
+declarations, and `tests/adaptation.rs`, which closes, reflects and
+decides through the binary with a stub reflector and the real memory
+server (Macro step 3 as ruled: the habit, the rule writing-style saved in
+memory, and its move into the skill; a declined move not offered again), `MAID_TEST_PENSIEVE`, which the dev shell sets to the profile's
+pinned pensieve, then syncs the store to a second clone). Fast
 (sub-second). No real `$HOME` side effects, no API credits.
 Load-bearing — this is the kdevkit Test Gate default. `deploy.rs` carries
 the structural coverage: a full install→status→uninstall round-trip in
@@ -358,12 +1226,68 @@ a fake `$HOME`, `--force` semantics per state, and deployment
 detection — the tests most sensitive to a symlink-layout regression —
 and, for `Plugins`, reading each CLI's listing, the commands each
 plugin state leads to, and reaping the links an older install left.
+`whole.rs` checks each (harness, kind) against a temp HOME and stub CLIs
+on a PATH it is handed, never the real ones, and `tests/conformance.rs`
+runs it, and the binary for the exit code, against every case of the
+conformance set (see "My harness").
+
+`cargo test -p maid-core --test claude_live -- --ignored` drives the real
+Claude Code (`CLAUDE_BIN`, else `claude` on PATH) in a temp HOME with
+`--plugin-dir` on a plugin built from the adapter files and the cargo-built
+core, against a stub of the model API on `127.0.0.1` at a port the OS
+picks, which records every request: the genome placed once at start, a
+fitting prompt's rules and memory pointer, nothing new on a second prompt,
+a sub-agent's slice, the genome again once after `/compact`, the MCP tool
+answering, the plugin loading with `extensions` in its manifest, and a
+session that ends marked for sleep. Free
+(no model, no network). Run it after any change to the adapter or the
+plugin manifest, and after a Claude Code update.
+
+`cargo test -p build-tool --test claude_installed -- --ignored` starts the
+real Claude Code (`CLAUDE_BIN`, else `claude` on PATH) on the plugin as
+install places it, with no `--plugin-dir`: profile generations outside the
+state dir as nix keeps them, `Plugins::install` with the real claude CLI,
+moving an older install off the links dir, then a session against the same
+kind of stub (the MCP server connects, the genome placed once), a new
+generation and a rollback, each followed with nothing registered again. It
+builds `maid-core` (dev profile) and is free.
+
+`cargo test -p maid-core --test claude_paid -- --ignored --test-threads 1`
+with `MAID_PAID=1` (and `CLAUDE_BIN`) runs Claude Code with a real model:
+four model calls, only as granted. It keeps the shell's HOME and
+environment, so the model access is the shell's own and no credential is
+handed to it; Claude's config dir, the ghost's state and parts, and
+`XDG_CACHE_HOME` go to a temp world, and it refuses to start if any of them
+would land under HOME. Its free guard test runs in `just test`.
+
+**After any Claude Code upgrade**, run both before trusting the ghost on
+the new version, since where Claude takes its marketplace from (the path as
+given, its files checked against the dir as resolved) is undocumented:
+
+```
+cargo test -p build-tool --test claude_installed -- --ignored
+cargo test -p maid-core --test claude_live -- --ignored
+```
 
 `cargo test -p build-tool --test plugins -- --ignored` drives the real
 claude and codex CLIs in a temp HOME (install, update, a disabled
-plugin, a codex marketplace whose dir is gone, uninstall). Free (no
-model calls) but needs both CLIs, so it is out of `just test`; run it
-after any change to `Plugins`.
+plugin, a codex marketplace whose dir is gone, uninstall), and the
+bring-ins: install and a no-op reinstall, uninstall keeping a marketplace
+another plugin uses, the user's own marketplace kept and not claimed, and
+an unreachable source failing the run. Free (no model calls) but needs
+both CLIs and network (it clones the vendor repo), so it is out of `just
+test`; run it after any change to `Plugins` or `BringIns`.
+
+`nix develop -c resources/tests/browser-mcp` drives
+`resources/browser/manage` for kiro in a temp HOME with stub `kiro-cli`
+and Chrome (free, seconds): other servers and keys in kiro's global
+config kept, reruns byte-identical, a same-named entry that is not
+mAId's left alone, a config that is not JSON left alone, a linked
+config kept a link with its mode through an atomic rename, a link
+cycle refused, uninstall with no `kiro-cli`, the part list's entries
+and whole-status reading them, the server's bring-in recorded and
+dropped with its entry, and kiro-cli never run. Run it after
+any change to `manage`.
 
 `nix develop -c resources/tests/rollback` drives `just rollback` and
 install's generation cleanup against the real claude and codex CLIs in a
@@ -371,9 +1295,26 @@ temp HOME and a temp profile (free, under a minute): rollback, an
 install whose build fails keeping the generations it would drop,
 rollback after rollback-then-install, an earlier generation the agents
 cannot take, no earlier generation, the 30-day cleanup keeping the
-previous install (also after an unchanged install), and rollback past a
-link mAId did not write.
-Run it after any change to the profile recipes.
+previous install (also after an unchanged install), rollback past a
+link mAId did not write, the part list install leaves (placed,
+skipped, the vendor marketplace, gone after uninstall), install and
+uninstall with no claude or codex on PATH keeping the bring-ins mAId's
+(a later uninstall still removes them), Claude's
+plugin-dir and config-dir grants (there after install, gone after uninstall), and `just
+status --whole` finding what mAId placed, then a second part's list beside
+it; the profile's `maid-core genome` under `env -i HOME=…` showing mAId's
+persona and bring-ins, with the memory (its store as its state) and the
+core's adapter under session bring-ins, the Claude plugin's hooks and MCP
+server naming the profile's own core and a start hook answering, every mAId bring-in declared and
+writing-style ready with no older rules file, the bring-ins recorded with
+tenure and this checkout's revision (dirty or not), the memory's source
+as pensieve at the flake's pin and its `serve` the profile's pensieve on
+the store, the reflector agent in the plugin, the reflect skill naming a
+core of this build that runs bare, `claude plugin validate` passing the
+built plugin, and a spec-only commit building the same profile. It sets a temp personal store, so the memory server is
+registered on the temp HOME's claude.
+It needs network for the vendor marketplace.
+Run it after any change to the profile recipes or the part list.
 
 **`just verify-install` is the installable Macro test**
 (`resources/tests/verify-install`), run on the real install: install
@@ -391,8 +1332,16 @@ One test deliberately breaks the fake-`$HOME` pattern:
 `resources/content/`. Everything else here builds a synthetic tree, so
 without it the suite can be green while the content on disk is
 uninstallable — which is exactly what happened when two descriptions
-carried an unquoted `: ` (see "Writing a skill"). It reads only, so it
-keeps the no-side-effects property.
+carried an unquoted `: ` (see "Writing a skill"). It also fails a skill
+that points the runtime at the repo ("Skill state"), or whose bring-in
+declaration does not read or names a rules heading that is not there.
+Beside it, `shipped_skills_declare_the_contract` and
+`shipped_servers_and_overlays_declare_the_contract` hold every shipped
+unit to the contract (turn, a job, rules of at most 30 lines, no file
+tier, writing-style's two optional older-file keys, no default location
+such as `~/.config` in any file a skill ships, the overlay's `requires`
+equal to the vendor's `needs`). They read only, so they keep the no-side-effects
+property.
 
 **`just resources::check-skills` / `…::smoke-skills` — AI-tool
 functional tests, on opposite sides of install.** Drives
@@ -746,10 +1695,15 @@ slice.
 
 Not a service — consumed locally.
 `just install` validates content, builds the mAId profile, installs
-the claude/codex plugin and links kiro and agy at it (see
-Architecture); `just uninstall` reverses it and removes the profile;
+the claude/codex plugin and links kiro and agy at it, registers the
+vendor marketplaces it brings in (Architecture, "Bring-ins"), points
+`personal-memory` on the personal store and turns Claude's own automatic
+memory off (Architecture, "Memory"), lets Claude read mAId's skill files and read and write each skill's state
+dir (Architecture, "Skill reads", "Skill state"), and writes mAId's part list with its persona and bring-ins (see Architecture, "My harness");
+`just uninstall` reverses it, removing the list, and removes the profile;
 `just status` reports the generation, each plugin and
-each link; `just rollback` returns every agent to the previous install
+each link, and `just status --whole` checks every part's list against
+each harness; `just rollback` returns every agent to the previous install
 (no selector: the profile is shared). `just resources::verify-skills` drives the
 real AI tools against the installed content. Each takes an
 optional coding-agent selector (`claude|kiro|codex`; omit for all
@@ -758,9 +1712,9 @@ three). App workspace members (`kaimux/`) build via
 --release` + copy into `dist/`).
 
 The browser-control MCP is registered by `just install` too
-(env-gated): `just resources::install-browser-mcp [agent]
-[kiro-sub]`, which it calls, registers the server with each harness
-(claude/codex global; kiro per named sub-agent) and prints the
+(env-gated): `just resources::install-browser-mcp [agent]`, which
+it calls, registers the server globally with each harness (kiro in
+its global MCP config) and prints the
 one-time manual step (enable Chrome remote debugging via
 `chrome://inspect`). It graceful-skips where a prereq is missing
 (no GUI Chrome, no harness CLI) — never a
@@ -786,9 +1740,12 @@ the experience is symmetric across resource kinds.
   ad-hoc edit.
 - **No global state mutation** on install beyond what mAId
   owns: the mAId profile, its marketplace dir, the registry's links,
-  the `maid@maid` plugin and `maid` marketplace registrations, and
-  the MCP registrations. Never the user's default nix profile (a
-  home-manager may own it). The rust toolchain and `just` come
+  the `maid@maid` plugin and `maid` marketplace registrations, the
+  bring-in marketplaces and plugins it added, the MCP registrations, its
+  elements of Claude's settings (`env.CLAUDE_CODE_DISABLE_AUTO_MEMORY`, its
+  `additionalDirectories` element, its `Edit` rules on skill state dirs in
+  `permissions.allow`), and its own part list. Never the user's default
+  nix profile (a home-manager may own it). The rust toolchain and `just` come
   from the dev shell; `build-tool` is invoked through `cargo run
   -p build-tool` (wrapped by Just) from the checkout — no shim
   under `~/.local/bin`, no `cargo install` anywhere in the
@@ -809,6 +1766,98 @@ the experience is symmetric across resource kinds.
   rather than letting names land here. The `kdevkit`
   skill encodes this rule for every project; this bullet
   declares mAId as a public repo so the rule fires.
+
+## For any persona part
+
+What a repo that delivers a persona does to join the ghost. It needs
+nothing from the repo that ships the core but this list, and its units
+still work as plain standard units where the core is absent. Each shape
+named here is defined under Architecture, "My harness".
+
+1. **Write a part list, and name its persona.** On install, write
+   `<part>.json` in the parts dir (`$MY_HARNESS_PARTS`, default
+   `${XDG_STATE_HOME:-$HOME/.local/state}/my-harness/parts`; readers skip
+   a dotfile, so a temporary one beside it while writing is safe), and
+   on uninstall delete it once nothing it placed is left. It holds `format` `1`, `part` (the file's
+   stem), `harnesses` (what it placed on each shell, read back from the
+   shell: entries of `kind` and `name`, Architecture, "The part list"),
+   and `persona`, a name only. Place every unit on each shell yourself,
+   in that shell's own way, and list it under `harnesses`; the core loads
+   no unit. Follow
+   the five part rules: no wrapper, own and remove only what it wrote,
+   adopt only an identical value no other list records, set a one-value
+   setting only when empty or its own, assume nothing about other parts.
+2. **Declare the contract on every bring-in it ships,** in that
+   standard's slot under the namespace `my-harness`: a skill's
+   frontmatter `metadata` (flat keys, `my-harness.scope`, ...), a plugin
+   manifest's `extensions["my-harness"]`, an MCP server's `server.json`
+   `_meta["my-harness"]`, with the standard's own fields too (a
+   `server.json` has `name`, `description` and `version`). Key and value
+   shapes per slot: Architecture, "The bring-in contract" (a skill's
+   signals are flat comma lists, `my-harness.signals.locations: garden-*`).
+   `scope` (`session` or `turn`) and `job` are
+   required. Add what applies: `signals` (what each matches, and how the
+   acting persona follows from them: Architecture, "Expression"), `rules` (`<file>#<heading
+   slug>`, the file relative to the manifest's dir, at most 30 lines),
+   `package`, `config` (every key it needs, secrets marked, every state
+   location included), `state` (`local`, `permanent`, `promote`), `requires`, and on a turn bring-in that knows
+   where the work keeps its record, `record`. A bring-in may instead keep
+   what it learns in the persona's memory: it declares no `state`, says so
+   in its `job`, and saves each memory through the memory's own tools
+   with `metadata.bring-in: <its name>`, so a reflection can offer to move
+   them into its source (Architecture, "Adaptation").
+3. **Give its persona exactly one memory.** A session bring-in that names
+   its memory package in `package`, with config `store` (the persona's own
+   store, a git checkout the person owns; a private one for anything that
+   names work; pensieve builds its instructions from the store's
+   `about.md`, Architecture, "Memory"), `index` (`<dir>/<file>` relative
+   to `store`, lines and files as in Architecture, "The memory index, as a
+   reader such as the selector takes it") and `serve` (the command that serves the store over
+   MCP stdio: a string holding a JSON array of strings whose first is
+   absolute, `"[\"/abs/bin/server\",\"--store\",\"/abs/store\"]"`),
+   and `state` `{"permanent": "store", "promote": "off"}`. The core takes a bring-in with a `permanent` tier
+   and an `index` key as a memory, and writes an accepted habit by running
+   `serve` and calling the server's own memory tools. A persona with two
+   memories, or none, gets no habit written: the core cannot tell where it
+   goes. Register that server with each shell yourself (on Claude Code,
+   `claude mcp add -s user <name> -- <serve's command>`), and record it
+   under `harnesses`. On Claude Code, turn Claude's own automatic memory
+   off while the server is registered: the setting, and the `skipped`
+   record when another part holds it, are in Architecture, "Claude's own
+   automatic memory is turned off".
+4. **Record each bring-in at install** in the list's `bring_ins`: `name`;
+   `unit` (`standard` `skill`, `plugin` or `mcp`, and the absolute `path`
+   of the manifest whose slot holds the declaration); `source` (`kind`
+   `project`, `store`, `dir` or `vendor`, `at`, never a local path or a
+   credential, and the pinned `rev`; with no public remote, omit `at`);
+   `tenure`; `route` (`write`,
+   `backlog`, `worktree` or `report`; omit it for the default from the
+   source); and `values`, every config key bound here as a string, every
+   state location included, a secret only as `env:<NAME>`; omit `values`
+   when nothing is bound.
+5. **Mark what it borrows,** a unit someone else provides, as `tenure`
+   `{"kind": "borrowed", "from": "<whom>", "since": "<date>"}`, and never
+   change it. Its declaration is an overlay: a manifest in the unit's own
+   standard holding only `name`, `description` and the `my-harness` slot,
+   shipped by the part and recorded as the bring-in's `unit`. The lender's
+   files are never read for it. Its route is always `report`: what is
+   learned about it becomes a note for its lender.
+6. **Leave the core's carriers alone.** The core owns the shell's start,
+   sub-agent start, turn and end hooks and the on-demand server that
+   serves the genome and expression; on Claude Code there is no
+   always-loaded rules file. A part adds bring-ins, never a second copy of
+   those.
+7. **Keep its own copy** of this list, the bring-in contract and the
+   reader rules in its own docs, kept in step by the person, and name no
+   other part.
+8. **Install from one canonical clone.** The list is keyed by the part's
+   name, so a second checkout installing replaces the first.
+9. **Report ready, not just registered.** Status checks each bring-in by
+   reader rule 15: ready, or not ready and why (a config key with no
+   value, an unset `env:` secret, a missing state location, a memory
+   index that leaves its store, a `requires` command not on PATH),
+   undeclared or unreadable. The genome's
+   environment line says the same in every session.
 
 ## Agent Development
 

@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# Free test of the browser MCP's kiro registration: resources/browser/manage
+# against kiro's global MCP config in a temp HOME, with stub kiro-cli and
+# Chrome. No model calls, no login, no nix build. From the checkout:
+#
+#   nix develop -c resources/tests/browser-mcp
+set -uo pipefail
+
+here=$(git rev-parse --show-toplevel)
+cd "$here" || exit 1
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+th=$work/home
+mkdir -p "$th/.kiro/settings" "$work/bin" "$work/profile/bin"
+export CARGO_HOME=${CARGO_HOME:-$HOME/.cargo} CARGO_TARGET_DIR=$here/target
+unset XDG_STATE_HOME XDG_CONFIG_HOME MAID_BROWSER_ALLOWLIST
+export MY_HARNESS_PARTS=$th/.local/state/my-harness/parts
+# The profile the server's bring-in names its manifest in.
+export MAID_PROFILE=$work/profile
+mkdir -p "$MAID_PROFILE/share/maid/servers/browser"
+cp resources/content/servers/browser/server.json "$MAID_PROFILE/share/maid/servers/browser/"
+
+# kiro-cli is a stub that leaves a mark if anything runs it.
+printf '#!/bin/sh\ntouch %q\nexit 1\n' "$work/kiro-cli-ran" >"$work/bin/kiro-cli"
+printf '#!/bin/sh\n' >"$work/bin/google-chrome"
+launcher=$work/profile/bin/maid-browser-mcp
+printf '#!/bin/sh\n' >"$launcher"
+chmod +x "$work/bin/"* "$launcher"
+export PATH=$work/bin:$PATH
+
+cfg=$th/.kiro/settings/mcp.json
+partlist=$MY_HARNESS_PARTS/maid-harness.json
+fails=0
+check() {
+  local what=$1
+  shift
+  if "$@" >/dev/null; then echo "PASS  $what"; else echo "FAIL  $what"; fails=$((fails + 1)); fi
+}
+manage() { HOME=$th resources/browser/manage "$1" "$launcher" kiro >"$work/out" 2>&1; }
+# kiro's mcp entries in mAId's part list, one `name scope skipped` per line.
+kiro_mcp() {
+  jq -r '.harnesses["kiro-cli"][]? | select(.kind == "mcp") | "\(.name) \(.scope // "-") \(.skipped // "-")"' \
+    "$partlist" 2>/dev/null
+}
+# mAId's bring-ins as `name unit`, one per line.
+bring_ins() { jq -r '.bring_ins[]? | "\(.name) \(.unit.path // "-")"' "$partlist" 2>/dev/null; }
+same_json() { [ "$(jq -S . "$1")" = "$(jq -S . "$2")" ]; }
+without_ours() { jq -S 'del(.mcpServers["chrome-devtools"])' "$cfg"; }
+
+# Another tool's server, with a field kiro does not define, and a top-level key.
+printf '%s' '{"mcpServers":{"other-cred":{"command":"/opt/other/cred-mcp","args":["--x"],"env":{"A":"1"},"autoApprove":["read"]}},"someTopKey":42}' >"$work/seed"
+cp "$work/seed" "$cfg"
+
+manage install
+check "install points chrome-devtools at the launcher" \
+  jq -e --arg c "$launcher" '.mcpServers["chrome-devtools"] == {command: $c, args: []}' "$cfg"
+check "install keeps every other server and key" eval '[ "$(without_ours)" = "$(jq -S . "$work/seed")" ]'
+check "the part list names kiro's server with no scope" eval '[ "$(kiro_mcp)" = "chrome-devtools - -" ]'
+check "the server is a bring-in, declared in the profile's server.json" \
+  eval '[ "$(bring_ins)" = "chrome-devtools $MAID_PROFILE/share/maid/servers/browser/server.json" ]'
+HOME=$th just status --whole kiro >"$work/whole" 2>&1
+check "whole-status finds kiro's server present" grep -qE '^ +present +mcp chrome-devtools$' "$work/whole"
+
+# Compact, as a hand-written file would be: any rewrite changes its bytes.
+# The user disabled mAId's entry; install must keep that.
+jq -c '.mcpServers["chrome-devtools"].disabled = true' "$cfg" >"$work/compact" && cp "$work/compact" "$cfg"
+manage install
+check "an install over mAId's own entry leaves the config byte-identical" cmp -s "$cfg" "$work/compact"
+jq '.mcpServers["chrome-devtools"] |= del(.disabled)' "$work/compact" >"$cfg"
+
+manage status
+check "status reports kiro's server as registered" grep -qE 'kiro +\(chrome-devtools registered\)' "$work/out"
+
+manage uninstall
+check "uninstall removes only chrome-devtools" same_json "$cfg" "$work/seed"
+check "uninstall clears kiro's server from the part list" eval '[ -z "$(kiro_mcp)" ]'
+check "uninstall drops the server's bring-in" eval '[ -z "$(bring_ins)" ]'
+
+rm -f "$cfg"
+(umask 022 && manage install)
+check "install with no config creates one holding only chrome-devtools" \
+  jq -e --arg c "$launcher" '. == {mcpServers: {"chrome-devtools": {command: $c, args: []}}}' "$cfg"
+check "a new config gets the umask's mode" eval '[ -n "$(find "$cfg" -perm 644)" ]'
+rm -f "$cfg"
+manage uninstall
+check "uninstall with no config creates none" eval '[ ! -e "$cfg" ]'
+
+printf 'not json {' >"$cfg"
+cp "$cfg" "$work/bad"
+manage install
+check "a config that is not JSON is left as it is" cmp -s "$cfg" "$work/bad"
+check "the part list says why kiro's server was skipped" eval '[ "$(kiro_mcp)" = "chrome-devtools - mcp add failed" ]'
+manage status
+check "status says the config is not JSON" grep -qF "not one JSON object" "$work/out"
+manage uninstall
+check "uninstall over a config that is not JSON leaves it and the part list" \
+  eval 'cmp -s "$cfg" "$work/bad" && [ "$(kiro_mcp)" = "chrome-devtools - mcp add failed" ]'
+
+# A config kept elsewhere, linked in by a relative link, with its own mode.
+mkdir -p "$th/dotfiles"
+cp "$work/seed" "$th/dotfiles/mcp.json"
+chmod 640 "$th/dotfiles/mcp.json"
+ln -sfn ../../dotfiles/mcp.json "$cfg"
+inode() { ls -i "$1" | awk '{print $1}'; }
+before=$(inode "$th/dotfiles/mcp.json")
+manage install
+check "install through a linked config keeps the link and edits its target" \
+  eval '[ -L "$cfg" ] && jq -e ".mcpServers[\"chrome-devtools\"]" "$th/dotfiles/mcp.json"'
+renamed_with_mode() {
+  [ -n "$(find "$th/dotfiles/mcp.json" -perm 640)" ] && [ "$(inode "$th/dotfiles/mcp.json")" != "$before" ]
+}
+check "install keeps the target's mode and replaces it whole (a rename)" renamed_with_mode
+check "install leaves no temp file beside the config" \
+  eval '[ -z "$(find "$th/dotfiles" "$th/.kiro/settings" -name ".mcp.json.*")" ]'
+rm -f "$cfg"
+
+printf '%s' '{"mcpServers":{"chrome-devtools":{"command":"/elsewhere/chrome-devtools-mcp"}}}' >"$cfg"
+cp "$cfg" "$work/theirs"
+manage install
+check "install leaves a chrome-devtools that is not mAId's" cmp -s "$cfg" "$work/theirs"
+check "the part list says that chrome-devtools is not mAId's" eval '[ "$(kiro_mcp)" = "chrome-devtools - not mAId'"'"'s" ]'
+manage status
+check "status says that chrome-devtools is not mAId's" grep -qF "registered, not mAId's" "$work/out"
+manage uninstall
+check "uninstall leaves a chrome-devtools that is not mAId's" cmp -s "$cfg" "$work/theirs"
+
+# Uninstall needs no kiro: with no kiro-cli on PATH it still removes mAId's entry.
+cp "$work/seed" "$cfg"
+manage install
+check "install put mAId's entry in before the kiro-less uninstall" jq -e '.mcpServers["chrome-devtools"]' "$cfg"
+nokiro=$(IFS=:; for d in $PATH; do [ -x "$d/kiro-cli" ] || printf '%s:' "$d"; done)
+HOME=$th PATH=${nokiro%:} resources/browser/manage uninstall "$launcher" kiro >"$work/out" 2>&1
+check "uninstall without kiro-cli removes mAId's entry and only that" \
+  eval 'same_json "$cfg" "$work/seed" && [ -z "$(kiro_mcp)" ]'
+
+# A link cycle fails the install instead of hanging it.
+ln -sfn mcp.json.loop "$cfg" && ln -sfn mcp.json "$th/.kiro/settings/mcp.json.loop"
+timeout 20 env HOME="$th" resources/browser/manage install "$launcher" kiro >"$work/out" 2>&1
+cycle_rc=$?
+stopped_on_cycle() { [ "$cycle_rc" != 124 ] && [ "$(kiro_mcp)" = "chrome-devtools - mcp add failed" ]; }
+check "install over a link cycle stops and records it as skipped" stopped_on_cycle
+rm -f "$cfg" "$th/.kiro/settings/mcp.json.loop"
+
+check "kiro-cli was never run" eval '[ ! -e "$work/kiro-cli-ran" ]'
+
+[ "$fails" = 0 ] && echo "all browser-mcp checks passed" || echo "$fails browser-mcp check(s) failed"
+exit $((fails > 0))
