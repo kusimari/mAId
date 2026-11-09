@@ -1008,3 +1008,11 @@ this initiative.
   own, with the genome and `ghost rollback` naming a revision mismatch;
   the reflector needs a home in each shell; stream 11's paid runs compare
   with and without candidates · stream 14 before 12
+- Ruling (user, 2026-11-11, stream 14 planning): one install manifest per
+  package, no pointer to a second file: maid's, the work package's and the
+  ghost's own, in one folder and one format. Own or borrowed is worked out
+  from plain facts (an entry from another repo is borrowed, since the
+  install date); the ghost's meaning (contract, persona, overlays, route)
+  is an opaque `extensions.my-harness` block, copied verbatim by the plain
+  installer from the package's resources, as a skill carries `metadata`.
+  Each shell's adapter interprets the manifests for its environment
