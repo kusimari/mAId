@@ -958,3 +958,11 @@ this initiative.
   `infusion`, what the ghost knows of memory stays in `ghost`; `infusion`
   reads no shell's field names: `shell/claude` turns Claude's hook input
   into the neutral call
+- Ruling (user, 2026-11-09): the repo splits as `resources/` (all the
+  resources), `plain/` (the plain installer: builds, stages and installs
+  them, wires each agent), `ghost-in-shell/` (the mechanism), and
+  `ghost-in-shell/shell/<agent>/` (installs the ghost and wires to what
+  plain installed, or installs the resources itself when that cannot be
+  reused). The Justfile is shortcuts only. Nix provides the environment
+  and wires into it, with no build logic: without nix everything still
+  works, only the store and its generations are lost
