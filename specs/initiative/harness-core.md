@@ -1010,3 +1010,8 @@ this initiative.
   shell. Installers' own records are theirs, not the ghost's input.
   Supersedes the install-manifest rulings of the same day · stream 14
   rescoped as `live-shell`
+- Ruling (user, 2026-11-11): ghost-in-shell and plain are easy-to-read
+  Rust that maps to the spec's concepts: types and modules carry the
+  concept's name (`Ghost`, `Persona`, `BringIn`, `Declaration`,
+  `Installed`, `Tenure`, the five entry points), one concept per file,
+  each module's doc naming its concept and spec section
