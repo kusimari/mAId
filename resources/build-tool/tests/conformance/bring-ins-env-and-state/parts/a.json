@@ -1,0 +1,16 @@
+{
+  "format": 1,
+  "part": "a",
+  "persona": "personal",
+  "harnesses": {},
+  "bring_ins": [
+    { "name": "set", "unit": { "standard": "skill", "path": "@RUN@/units/s/SKILL.md" },
+      "values": { "store": "@RUN@/units", "token": "env:SET_TOKEN" } },
+    { "name": "unset", "unit": { "standard": "skill", "path": "@RUN@/units/s/SKILL.md" },
+      "values": { "store": "@RUN@/units", "token": "env:UNSET_TOKEN" } },
+    { "name": "no-store", "unit": { "standard": "skill", "path": "@RUN@/units/s/SKILL.md" },
+      "values": { "store": "@RUN@/units/gone", "token": "env:SET_TOKEN" } },
+    { "name": "literal", "unit": { "standard": "skill", "path": "@RUN@/units/s/SKILL.md" },
+      "values": { "store": "@RUN@/units", "token": "a literal secret" } }
+  ]
+}

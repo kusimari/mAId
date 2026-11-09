@@ -17,8 +17,17 @@ use crate::harness::{
     Assertion, Authority, Fixture, Kind as TestKind, Outcome, Plan, Reach, Selection, Skipped,
     Stage, Stress, Verdict, KIRO_READONLY_AGENT, KIRO_READONLY_NAME,
 };
-use crate::shared::{checkout_skill, usage, Agent};
+use crate::harvest;
+use crate::memory;
+use crate::part::{self, Item, What};
+use crate::reads;
+use crate::shared::{
+    checkout_skill, on_path, usage, Agent, BringIn as Marketplace, BROWSER_SERVER,
+};
 use anyhow::{anyhow, Context, Result};
+use ghost::contract::{Slot, Standard};
+use ghost::parts::{BringIn, Source, SourceKind, Tenure, Unit};
+use shell_claude::config_dir::ConfigDir;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -29,25 +38,142 @@ use std::path::{Path, PathBuf};
 // SKILL.md needs YAML frontmatter with a non-empty name + description.
 // ─────────────────────────────────────────────────────────────────
 
-/// Validate `resources/content/`, returning the count of validated
-/// files or the joined error list. Caller decides whether to print or
-/// abort.
-pub fn check_content(content_dir: &Path) -> Result<usize, Vec<String>> {
-    // Walk every skill, partition into (oks, errs), and report the Ok
-    // count or the FULL error list — matching on the partitioned tuple
-    // so there's no intermediate binding but all errors are still kept.
-    match fs::read_dir(content_dir.join("skills"))
+/// Validate every root skills are authored under (in the checkout,
+/// `shared::skill_roots`; after the build, the one profile dir),
+/// returning the count of validated files or the joined error list.
+/// Caller decides whether to print or abort.
+pub fn check_content(roots: &[PathBuf]) -> Result<usize, Vec<String>> {
+    let skills: Vec<PathBuf> = roots
+        .iter()
+        .flat_map(|root| fs::read_dir(root.join("skills")).into_iter().flatten())
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|dir| dir.join("SKILL.md").exists())
+        .collect();
+    let errs: Vec<String> = twice(&skills)
+        .into_iter()
+        .chain(skills.iter().flat_map(|dir| {
+            check_one_skill(&dir.join("SKILL.md"))
+                .err()
+                .into_iter()
+                .chain(repo_pointers(dir))
+        }))
+        .chain(
+            roots
+                .iter()
+                .flat_map(|root| manifests(root))
+                .filter_map(|(standard, p)| {
+                    declaration(standard, &p)
+                        .err()
+                        .map(|e| format!("{}: {e}", p.display()))
+                }),
+        )
+        .collect();
+    match errs.is_empty() {
+        true => Ok(skills.len()),
+        false => Err(errs),
+    }
+}
+
+/// A name two roots both have a skill under: the build copies both to one
+/// place, so one would end up inside the other.
+fn twice(skills: &[PathBuf]) -> Vec<String> {
+    let mut by_name: std::collections::BTreeMap<String, Vec<&PathBuf>> = Default::default();
+    for dir in skills {
+        let name = dir.file_name().unwrap_or_default().to_string_lossy();
+        by_name.entry(name.into_owned()).or_default().push(dir);
+    }
+    by_name
+        .into_iter()
+        .filter(|(_, dirs)| dirs.len() > 1)
+        .map(|(name, dirs)| {
+            let at: Vec<String> = dirs.iter().map(|d| d.display().to_string()).collect();
+            format!("skill {name} is in more than one root: {}", at.join(", "))
+        })
+        .collect()
+}
+
+/// The bring-in manifests shipped beside the skills: each MCP server's
+/// `servers/<name>/server.json`, and each overlay's
+/// `overlays/<name>/plugin.json` (a borrowed plugin's declaration).
+fn manifests(content_dir: &Path) -> Vec<(Standard, PathBuf)> {
+    [
+        ("servers", "server.json", Standard::Mcp),
+        ("overlays", "plugin.json", Standard::Plugin),
+    ]
+    .into_iter()
+    .flat_map(|(dir, file, standard)| {
+        let mut found: Vec<_> = fs::read_dir(content_dir.join(dir))
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .map(|e| e.path().join(file))
+            .filter(|p| p.exists())
+            .collect();
+        found.sort();
+        found.into_iter().map(move |p| (standard, p))
+    })
+    .collect()
+}
+
+/// Text that sends an installed session to the mAId repo, which it never
+/// has (see project.md "Skill state"). Matched lowercased.
+const REPO_POINTERS: [&str; 5] = [
+    "resources/content/",
+    "ghost-in-shell/",
+    "maid checkout",
+    "just install",
+    "just resources::",
+];
+
+/// Every line of every `.md` file in a skill dir, modules included, that
+/// names one of `REPO_POINTERS`.
+fn repo_pointers(skill_dir: &Path) -> Vec<String> {
+    md_files(skill_dir)
+        .into_iter()
+        .flat_map(|p| match fs::read_to_string(&p) {
+            Err(e) => vec![format!("{}: cannot read: {e}", p.display())],
+            Ok(text) => text
+                .lines()
+                .enumerate()
+                .filter_map(|(n, line)| {
+                    let line = line.to_lowercase();
+                    REPO_POINTERS
+                        .iter()
+                        .find(|pat| line.contains(*pat))
+                        .map(|pat| {
+                            format!(
+                                "{}:{}: points the installed skill at the repo ({pat})",
+                                p.display(),
+                                n + 1
+                            )
+                        })
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+fn md_files(dir: &Path) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = fs::read_dir(dir)
         .into_iter()
         .flatten()
         .filter_map(Result::ok)
-        .map(|entry| entry.path().join("SKILL.md"))
-        .filter(|p| p.exists())
-        .map(|p| check_one_skill(&p))
-        .partition::<Vec<_>, _>(Result::is_ok)
-    {
-        (oks, errs) if errs.is_empty() => Ok(oks.len()),
-        (_, errs) => Err(errs.into_iter().map(Result::unwrap_err).collect()),
-    }
+        // The entry's own type, so a linked dir is not followed into a cycle.
+        .flat_map(|e| match e.file_type().is_ok_and(|t| t.is_dir()) {
+            true => md_files(&e.path()),
+            false => {
+                let p = e.path();
+                p.extension()
+                    .is_some_and(|x| x == "md")
+                    .then_some(p)
+                    .into_iter()
+                    .collect()
+            }
+        })
+        .collect();
+    found.sort();
+    found
 }
 
 /// Validate one SKILL.md: readable, `---`-fenced YAML frontmatter, and
@@ -70,9 +196,23 @@ fn check_one_skill(path: &Path) -> Result<(), String> {
         .map_err(|e| at(e.to_string()))?
         .data
         .ok_or_else(|| at("missing or unterminated YAML frontmatter".into()))?;
-    (!fm.name.trim().is_empty() && !fm.description.trim().is_empty())
-        .then_some(())
-        .ok_or_else(|| at("name and description must be non-empty".into()))
+    if fm.name.trim().is_empty() || fm.description.trim().is_empty() {
+        return Err(at("name and description must be non-empty".into()));
+    }
+    declaration(Standard::Skill, path).map_err(at)
+}
+
+/// A unit's bring-in declaration, if it has one, reads, and its rules
+/// pointer names a section that is there, so a renamed heading never ships.
+fn declaration(standard: Standard, path: &Path) -> Result<(), String> {
+    let path = std::path::absolute(path).map_err(|e| e.to_string())?;
+    match ghost::contract::read(standard, &path)? {
+        Slot::Declared(d) => match &d.rules {
+            Some(pointer) => ghost::contract::rules(&path, pointer).map(drop),
+            None => Ok(()),
+        },
+        Slot::Undeclared { .. } => Ok(()),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -85,8 +225,8 @@ fn check_one_skill(path: &Path) -> Result<(), String> {
 // ─────────────────────────────────────────────────────────────────
 
 /// Validate content, failing with every error found.
-pub fn cmd_validate(content_dir: &Path) -> Result<u8> {
-    let count = check_content(content_dir)
+pub fn cmd_validate(roots: &[PathBuf]) -> Result<u8> {
+    let count = check_content(roots)
         .map_err(|errs| anyhow!("Content validation failed:\n{}", errs.join("\n")))?;
     eprintln!("validated {count} content file(s)");
     Ok(0)
@@ -96,6 +236,7 @@ pub fn cmd_validate(content_dir: &Path) -> Result<u8> {
 pub fn cmd_install(
     target: &impl Deploy,
     content_dir: &Path,
+    parts: &Path,
     dry_run: bool,
     force: bool,
     agent: Option<Agent>,
@@ -106,17 +247,759 @@ pub fn cmd_install(
             content_dir.display()
         ));
     }
-    cmd_validate(content_dir)?;
-    outcome(target.install(agent, dry_run, force)?, dry_run, false)
+    cmd_validate(std::slice::from_ref(&content_dir.to_path_buf()))?;
+    // Recorded even when install stops partway: the list says what is there.
+    let done = target.install(agent, dry_run, force);
+    let recorded = match dry_run {
+        true => Ok(()),
+        false => record_placed(target, parts, agent, |_| true),
+    };
+    let rc = outcome(
+        done.inspect_err(|_| warn_unrecorded(&recorded))?,
+        dry_run,
+        false,
+    )?;
+    recorded.map(|()| rc)
 }
 
 pub fn cmd_uninstall(
     target: &impl Deploy,
+    parts: &Path,
     dry_run: bool,
     force: bool,
     agent: Option<Agent>,
 ) -> Result<u8> {
-    outcome(target.uninstall(agent, dry_run, force)?, dry_run, true)
+    let done = target.uninstall(agent, dry_run, force);
+    // What uninstall did not reach is still there; a skip is not.
+    let recorded = match dry_run {
+        true => Ok(()),
+        false => record_placed(target, parts, agent, |i| i.skipped.is_none()),
+    };
+    let rc = outcome(
+        done.inspect_err(|_| warn_unrecorded(&recorded))?,
+        dry_run,
+        true,
+    )?;
+    recorded.map(|()| rc)
+}
+
+/// The step's own error is returned; a part-list failure beside it is
+/// still said.
+fn warn_unrecorded(recorded: &Result<()>) {
+    if let Err(e) = recorded {
+        eprintln!("build-tool: part list not updated: {e:#}");
+    }
+}
+
+/// What `Deploy` places; the browser MCP is recorded by its own script.
+const DEPLOYED_KINDS: &[What] = &[What::Skill, What::Plugin, What::Marketplace];
+
+/// Write what the target reports placed into the part list, for each
+/// selected agent.
+fn record_placed(
+    target: &impl Deploy,
+    parts: &Path,
+    agent: Option<Agent>,
+    keep: impl Fn(&Item) -> bool,
+) -> Result<()> {
+    let placed = target.placed(agent)?;
+    for &a in Agent::ALL
+        .iter()
+        .filter(|a| agent.is_none_or(|sel| sel == **a))
+    {
+        let items = placed
+            .iter()
+            .filter(|(g, i)| *g == a && keep(i))
+            .map(|(_, i)| i.clone())
+            .collect();
+        part::record(parts, a, DEPLOYED_KINDS, None, items)?;
+    }
+    Ok(())
+}
+
+/// Record one kind of entry on one agent in the part list, for a step
+/// outside `Deploy` (the browser MCP). No names clears that kind.
+pub fn cmd_record(
+    parts: &Path,
+    agent: Agent,
+    kind: What,
+    scope: Option<&str>,
+    skipped: Option<&str>,
+    only: Option<&str>,
+    names: &[String],
+) -> Result<u8> {
+    // Each setting is owned by the step that writes it, with its value.
+    if kind == What::Setting {
+        return Err(usage("a setting is recorded by the step that sets it"));
+    }
+    let items = names
+        .iter()
+        .map(|n| Item {
+            scope: scope.map(str::to_string),
+            skipped: skipped.map(str::to_string),
+            ..Item::placed(kind, n)
+        })
+        .collect();
+    match only {
+        Some(name) if names.iter().any(|n| n != name) => {
+            return Err(usage(format!("--only {name} records that name only")))
+        }
+        Some(name) => part::record_named(parts, agent, kind, scope, name, items)?,
+        None => part::record(parts, agent, &[kind], scope, items)?,
+    }
+    Ok(0)
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Bring-ins — what mAId's part brings into the ghost, for the core.
+// ─────────────────────────────────────────────────────────────────
+
+/// Record mAId's persona and its bring-ins in its part list: each shipped
+/// skill with its state bound under `config`, the core's adapter on Claude
+/// Code, the personal memory server when a store is set (its source the
+/// memory package), the browser server, and each vendor plugin, borrowed. See project.md "My harness".
+pub fn cmd_install_bring_ins(
+    parts: &Path,
+    profile: &Path,
+    config: &Path,
+    checkout: Checkout,
+    store_file: &Path,
+    vendors: &[Marketplace],
+    dry_run: bool,
+) -> Result<u8> {
+    // A bring-in is recorded only while install has it placed somewhere.
+    let mut items = bring_ins(
+        profile,
+        &Sources {
+            pensieve: checkout.pensieve.clone(),
+            project: project_source(checkout),
+        },
+        memory::store(store_file)?.as_deref(),
+        vendors,
+        &Placed::read(parts)?,
+        &part::bring_ins(parts)?,
+        &today(),
+    )?;
+    bind_state(&mut items, config);
+    println!(
+        "bring-ins: {} recorded for persona {}",
+        items.len(),
+        part::PERSONA
+    );
+    if !dry_run {
+        part::record_bring_ins(parts, items)?;
+    }
+    Ok(0)
+}
+
+/// Uninstall keeps only the bring-ins some harness still has placed, so a
+/// whole uninstall clears them with the persona.
+pub fn cmd_uninstall_bring_ins(parts: &Path, vendors: &[Marketplace], dry_run: bool) -> Result<u8> {
+    let placed = Placed::read(parts)?;
+    let mut kept = part::bring_ins(parts)?;
+    kept.retain(|b| still_placed(b, &placed, vendors));
+    if !dry_run {
+        part::record_bring_ins(parts, kept)?;
+    }
+    Ok(0)
+}
+
+/// Where mAId's bring-ins come from: this repo, and the memory package as
+/// `flake.lock` pins it.
+struct Sources {
+    project: Source,
+    pensieve: Option<Source>,
+}
+
+/// What mAId's list records placed: on any harness, and on claude alone,
+/// where the core's adapter is.
+#[derive(Default)]
+struct Placed {
+    anywhere: Vec<Item>,
+    claude: Vec<Item>,
+}
+
+impl Placed {
+    fn read(parts: &Path) -> Result<Placed> {
+        let mut anywhere = vec![];
+        for agent in Agent::ALL {
+            anywhere.extend(part::placed(parts, *agent)?);
+        }
+        Ok(Placed {
+            anywhere,
+            claude: part::placed(parts, Agent::Claude)?,
+        })
+    }
+}
+
+/// The core's adapter on Claude Code, declared in mAId's plugin manifest.
+const ADAPTER: &str = "claude-adapter";
+const ADAPTER_MANIFEST: &str = "share/maid/marketplace/plugins/maid/.claude-plugin/plugin.json";
+/// The browser step records its server after install's own step, so
+/// every record of an MCP entry keeps the browser server's bring-in in
+/// step with what is placed now, and leaves the other bring-ins alone. A
+/// bring-in already recorded is kept as install recorded it.
+pub fn sync_browser_bring_in(parts: &Path, profile: &Path, checkout: Checkout) -> Result<()> {
+    let recorded = part::bring_ins(parts)?;
+    let (mut ours, mut items): (Vec<BringIn>, Vec<BringIn>) = recorded
+        .iter()
+        .cloned()
+        .partition(|b| b.name == BROWSER_SERVER);
+    let server = ours
+        .pop()
+        .unwrap_or_else(|| browser_bring_in(profile, &project_source(checkout)));
+    if still_placed(&server, &Placed::read(parts)?, &[]) {
+        items.push(server);
+    }
+    items.sort_by(|a, b| a.name.cmp(&b.name));
+    if items != recorded {
+        part::record_bring_ins(parts, items)?;
+    }
+    Ok(())
+}
+
+fn browser_bring_in(profile: &Path, project: &Source) -> BringIn {
+    let manifest = profile
+        .join(crate::shared::PROFILE_CONTENT_DIR)
+        .join("servers/browser/server.json");
+    BringIn {
+        name: BROWSER_SERVER.into(),
+        unit: manifest.is_file().then_some(Unit {
+            standard: Standard::Mcp,
+            path: manifest,
+        }),
+        source: Some(project.clone()),
+        tenure: Tenure::Own,
+        route: None,
+        values: Default::default(),
+    }
+}
+
+/// Bind each skill's config keys, each to `<config>/<skill>/<key>.md`: a
+/// skill's config key is a file in its own dir under the config dir (today
+/// only writing-style's older rules files), never a secret or a value.
+fn bind_state(items: &mut [BringIn], config: &Path) {
+    for b in items {
+        let Some(Unit {
+            standard: Standard::Skill,
+            path,
+        }) = &b.unit
+        else {
+            continue;
+        };
+        let Ok(Slot::Declared(d)) = ghost::contract::read(Standard::Skill, path) else {
+            continue;
+        };
+        for k in d.config.keys() {
+            let at = config.join(&b.name).join(format!("{k}.md"));
+            b.values.insert(k.to_string(), at.display().to_string());
+        }
+    }
+}
+
+fn bring_ins(
+    profile: &Path,
+    sources: &Sources,
+    store: Option<&Path>,
+    vendors: &[Marketplace],
+    placed: &Placed,
+    recorded: &[BringIn],
+    today: &str,
+) -> Result<Vec<BringIn>> {
+    let project = &sources.project;
+    let own = |name: &str| BringIn {
+        name: name.into(),
+        unit: None,
+        source: Some(project.clone()),
+        tenure: Tenure::Own,
+        route: None,
+        values: Default::default(),
+    };
+    let skills = profile
+        .join(crate::shared::PROFILE_CONTENT_DIR)
+        .join("skills");
+    let mut names: Vec<String> = fs::read_dir(&skills)
+        .with_context(|| format!("cannot list {}", skills.display()))?
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| skills.join(n).join("SKILL.md").is_file())
+        .collect();
+    names.sort();
+    let mut items: Vec<BringIn> = names
+        .iter()
+        .map(|n| BringIn {
+            unit: Some(Unit {
+                standard: Standard::Skill,
+                path: skills.join(n).join("SKILL.md"),
+            }),
+            ..own(n)
+        })
+        .collect();
+    items.push(BringIn {
+        unit: Some(Unit {
+            standard: Standard::Plugin,
+            path: profile.join(ADAPTER_MANIFEST),
+        }),
+        ..own(ADAPTER)
+    });
+    items.push(browser_bring_in(profile, project));
+    if let Some(store) = store {
+        items.push(BringIn {
+            unit: Some(Unit {
+                standard: Standard::Mcp,
+                path: profile.join(memory::MANIFEST),
+            }),
+            source: sources.pensieve.clone(),
+            values: [
+                ("store".to_string(), store.display().to_string()),
+                ("index".to_string(), memory::INDEX.to_string()),
+                ("serve".to_string(), serve(profile, store)),
+            ]
+            .into(),
+            ..own(memory::SERVER)
+        });
+    }
+    for v in vendors {
+        for plugin in v.plugins {
+            // When it was first brought in, which a rerun keeps.
+            let since = recorded
+                .iter()
+                .find(|b| b.name == *plugin)
+                .and_then(|b| match &b.tenure {
+                    Tenure::Borrowed { since, .. } => since.clone(),
+                    Tenure::Own => None,
+                })
+                .unwrap_or_else(|| today.into());
+            // The vendor's files are never read for the declaration: mAId
+            // ships an overlay in the plugin's own standard that holds it.
+            let overlay = profile
+                .join(crate::shared::PROFILE_CONTENT_DIR)
+                .join("overlays")
+                .join(plugin)
+                .join("plugin.json");
+            items.push(BringIn {
+                name: plugin.to_string(),
+                unit: overlay.is_file().then_some(Unit {
+                    standard: Standard::Plugin,
+                    path: overlay,
+                }),
+                source: Some(Source {
+                    kind: SourceKind::Vendor,
+                    at: Some(v.source.into()),
+                    rev: Some(v.rev.into()),
+                }),
+                tenure: Tenure::Borrowed {
+                    from: v.marketplace.into(),
+                    since: Some(since),
+                },
+                route: None,
+                values: Default::default(),
+            });
+        }
+    }
+    items.retain(|b| still_placed(b, placed, vendors));
+    Ok(items)
+}
+
+/// Whether some harness still has what this bring-in needs placed: the
+/// memory server or the browser server, the vendor's plugin, mAId's plugin
+/// on claude for the adapter, or mAId's skills (through the plugin or as
+/// links).
+fn still_placed(b: &BringIn, placed: &Placed, vendors: &[Marketplace]) -> bool {
+    let on = |items: &[Item], kind: What, name: &str| {
+        items.iter().any(|i| i.kind == kind && i.name == name)
+    };
+    let has = |kind: What, name: &str| on(&placed.anywhere, kind, name);
+    if b.name == memory::SERVER || b.name == BROWSER_SERVER {
+        return has(What::Mcp, &b.name);
+    }
+    if b.name == ADAPTER {
+        return on(&placed.claude, What::Plugin, crate::shared::PLUGIN_ID);
+    }
+    if let Tenure::Borrowed { from, .. } = &b.tenure {
+        return vendors
+            .iter()
+            .filter(|v| v.marketplace == from)
+            .any(|v| has(What::Plugin, &v.plugin_id(&b.name)));
+    }
+    has(What::Plugin, crate::shared::PLUGIN_ID)
+        || placed.anywhere.iter().any(|i| i.kind == What::Skill)
+}
+
+/// What install reads from the checkout it runs from: its `origin` URL, its
+/// revision with `-dirty` when the tree has changes, and the memory
+/// package's pin in `flake.lock`. Read there, not from the profile, so the
+/// profile stays addressed by its content.
+#[derive(Debug, Default)]
+pub struct Checkout {
+    pub origin: Option<String>,
+    pub head: Option<String>,
+    pub dirty: bool,
+    /// The memory package as the checkout's `flake.lock` pins it.
+    pub pensieve: Option<Source>,
+}
+
+impl Checkout {
+    /// Read through the `git` that PATH finds by rule 8. With no git, or
+    /// outside a repo, the git fields are empty; the lock needs no git.
+    pub fn read(dir: &Path) -> Checkout {
+        let pensieve = locked_pensieve(dir);
+        let Some(git) = crate::shared::find_on(std::env::var_os("PATH").as_deref(), "git") else {
+            return Checkout {
+                pensieve,
+                ..Checkout::default()
+            };
+        };
+        let run = |args: &[&str]| {
+            std::process::Command::new(&git)
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|s| s.trim().to_string())
+        };
+        Checkout {
+            origin: run(&["remote", "get-url", "origin"]).filter(|s| !s.is_empty()),
+            head: run(&["rev-parse", "HEAD"]).filter(|s| !s.is_empty()),
+            // Untracked files are not built, so they do not make it dirty;
+            // and status must not take the index lock, even on a dry run.
+            dirty: run(&[
+                "--no-optional-locks",
+                "status",
+                "--porcelain",
+                "--untracked-files=no",
+            ])
+            .is_some_and(|s| !s.is_empty()),
+            pensieve,
+        }
+    }
+}
+
+/// The memory package as the `flake.lock` in `dir` pins it.
+fn locked_pensieve(dir: &Path) -> Option<Source> {
+    pinned(
+        &fs::read_to_string(dir.join("flake.lock")).ok()?,
+        "pensieve",
+    )
+}
+
+/// An input `flake.lock` pins on GitHub, as a project source. Any other pin
+/// (a path on this machine, say) gives none, so no local path is recorded.
+fn pinned(lock: &str, input: &str) -> Option<Source> {
+    let lock: serde_json::Value = serde_json::from_str(lock).ok()?;
+    // The root's inputs name each input's node, which may differ from it.
+    let root = lock["root"].as_str().unwrap_or("root");
+    let node = lock["nodes"][root]["inputs"][input]
+        .as_str()
+        .unwrap_or(input);
+    let locked = &lock["nodes"][node]["locked"];
+    let field = |k: &str| locked[k].as_str().filter(|v| !v.is_empty());
+    if field("type")? != "github" {
+        return None;
+    }
+    Some(Source {
+        kind: SourceKind::Project,
+        at: Some(format!(
+            "https://github.com/{}/{}",
+            field("owner")?,
+            field("repo")?
+        )),
+        rev: Some(field("rev")?.to_string()),
+    })
+}
+
+/// This repo as a source.
+fn project_source(c: Checkout) -> Source {
+    Source {
+        kind: SourceKind::Project,
+        at: c.origin.and_then(|u| remote(&u)),
+        rev: c.head.map(|h| match c.dirty {
+            true => format!("{h}-dirty"),
+            false => h,
+        }),
+    }
+}
+
+/// A remote as the part list may hold it: a URL or `host:path`, with any
+/// user or token taken out. A path on this machine is left out, since
+/// nothing installed names a checkout.
+fn remote(url: &str) -> Option<String> {
+    if let Some((scheme, rest)) = url.split_once("://") {
+        if scheme == "file" {
+            return None;
+        }
+        // A host holds no `@`, so everything up to the last one is user
+        // or token, even one with a `/` in it.
+        let rest = rest.rsplit_once('@').map_or(rest, |(_, r)| r);
+        return Some(format!("{scheme}://{rest}"));
+    }
+    // scp-like `[user@]host:path`: a host before the first ':' with no '/'.
+    let (host, path) = url.split_once(':')?;
+    let host = host.rsplit_once('@').map_or(host, |(_, h)| h);
+    (!host.is_empty() && !host.contains('/') && !host.starts_with('~') && !host.starts_with('.'))
+        .then(|| format!("{host}:{path}"))
+}
+
+use ghost::time::today;
+
+// ─────────────────────────────────────────────────────────────────
+// Memory — the personal store's server, Claude's own memory, harvest.
+// ─────────────────────────────────────────────────────────────────
+
+/// The command that serves the store over MCP stdio, as the memory's
+/// `serve` value: the same command install registers on claude.
+fn serve(profile: &Path, store: &Path) -> String {
+    serde_json::json!([
+        launcher(profile).display().to_string(),
+        "--store",
+        store.display().to_string()
+    ])
+    .to_string()
+}
+
+/// The profile's memory server.
+fn launcher(profile: &Path) -> PathBuf {
+    profile.join("bin/pensieve")
+}
+
+/// Install's claude memory step: register `personal-memory` on the
+/// personal store, turn Claude's own automatic memory off, and take away
+/// the memory dir an older mAId set. Each is recorded in the part list.
+pub fn cmd_install_memory(
+    claude: &ConfigDir,
+    store_file: &Path,
+    profile: &Path,
+    parts: &Path,
+    dry_run: bool,
+    agent: Option<Agent>,
+) -> Result<u8> {
+    if agent.is_some_and(|a| a != Agent::Claude) {
+        return Ok(0);
+    }
+    let cli_present = on_path(Agent::Claude.cli());
+    let store = memory::store(store_file)?;
+    let launcher = launcher(profile);
+    let plan = memory::ServerPlan {
+        launcher: &launcher,
+        store: store.as_deref(),
+        claimed: part::placed_by_others(parts, Agent::Claude, What::Mcp, memory::SERVER),
+        cli_present,
+    };
+    let memory::ServerOutcome {
+        out: server,
+        failed,
+    } = memory::install_server(claude, &plan, dry_run)?;
+    println!("{}", server.line);
+    let registered = server.item.as_ref().is_some_and(|i| i.skipped.is_none());
+    let off = memory::install_off(claude, &ownership(parts)?, registered, cli_present, dry_run)?;
+    println!("{}", off.line);
+    let legacy = legacy_setting(claude, parts, dry_run)?;
+    if !dry_run {
+        // mAId owns only what it recorded, so an unrecorded change is the user's to undo.
+        let unrecorded =
+            |what: &str| format!("claude {what} may be set but is not recorded; check it by hand");
+        part::record_named(
+            parts,
+            Agent::Claude,
+            What::Mcp,
+            None,
+            memory::SERVER,
+            server.item.into_iter().collect(),
+        )
+        .with_context(|| unrecorded(memory::SERVER))?;
+        part::record_setting(parts, Agent::Claude, memory::SETTING, off.item)
+            .with_context(|| unrecorded(memory::SETTING))?;
+        if legacy {
+            part::record_setting(parts, Agent::Claude, memory::LEGACY_SETTING, None)?;
+        }
+    }
+    Ok(u8::from(failed))
+}
+
+pub fn cmd_uninstall_memory(
+    claude: &ConfigDir,
+    profile: &Path,
+    parts: &Path,
+    dry_run: bool,
+    agent: Option<Agent>,
+) -> Result<u8> {
+    if agent.is_some_and(|a| a != Agent::Claude) {
+        return Ok(0);
+    }
+    let memory::ServerOutcome {
+        out: server,
+        failed,
+    } = memory::uninstall_server(
+        claude,
+        &launcher(profile),
+        part::placed_by_others(parts, Agent::Claude, What::Mcp, memory::SERVER),
+        on_path(Agent::Claude.cli()),
+        dry_run,
+    )?;
+    println!("{}", server.line);
+    let off = memory::uninstall_off(claude, &ownership(parts)?, dry_run)?;
+    println!("{}", off.line);
+    let legacy = legacy_setting(claude, parts, dry_run)?;
+    if !dry_run {
+        part::record_named(
+            parts,
+            Agent::Claude,
+            What::Mcp,
+            None,
+            memory::SERVER,
+            server.item.into_iter().collect(),
+        )?;
+        part::record_setting(parts, Agent::Claude, memory::SETTING, None)?;
+        if legacy {
+            part::record_setting(parts, Agent::Claude, memory::LEGACY_SETTING, None)?;
+        }
+    }
+    Ok(u8::from(failed))
+}
+
+/// Remove the memory dir an older mAId set, while it is the value mAId
+/// recorded. Whether the part list holds an entry for it to clear: one
+/// recorded as skipped has no value and nothing to remove, but still goes.
+fn legacy_setting(claude: &ConfigDir, parts: &Path, dry_run: bool) -> Result<bool> {
+    let Some(item) = part::recorded(parts, Agent::Claude, What::Setting, memory::LEGACY_SETTING)?
+    else {
+        return Ok(false);
+    };
+    if let Some(line) = memory::remove_legacy(claude, item.value.as_deref(), dry_run)? {
+        println!("{line}");
+    }
+    Ok(true)
+}
+
+/// Install's claude step for reading mAId's skill files and the user's
+/// skill state: grant mAId's plugin dir and config dir, and record each
+/// element.
+pub fn cmd_install_reads(
+    claude: &ConfigDir,
+    profile: &Path,
+    config: &Path,
+    parts: &Path,
+    dry_run: bool,
+    agent: Option<Agent>,
+) -> Result<u8> {
+    if agent.is_some_and(|a| a != Agent::Claude) {
+        return Ok(0);
+    }
+    for grant in [reads::plugin_grant(profile), reads::config_grant(config)] {
+        let setting = grant.list.setting();
+        let out = reads::install_claude(
+            claude,
+            &grant,
+            &recorded_settings(parts, setting)?,
+            &part::claimed_by_others(parts, Agent::Claude, setting),
+            on_path(Agent::Claude.cli()),
+            dry_run,
+        )?;
+        out.lines.iter().for_each(|l| println!("{l}"));
+        if !dry_run {
+            part::record_named(parts, Agent::Claude, What::Setting, None, setting, out.items)
+                .with_context(|| {
+                    format!(
+                        "claude {setting} may hold mAId's elements but they are not recorded; check it by hand"
+                    )
+                })?;
+        }
+    }
+    Ok(0)
+}
+
+/// Uninstall's claude step for skill reads and skill state: remove mAId's
+/// recorded elements only.
+pub fn cmd_uninstall_reads(
+    claude: &ConfigDir,
+    parts: &Path,
+    dry_run: bool,
+    agent: Option<Agent>,
+) -> Result<u8> {
+    if agent.is_some_and(|a| a != Agent::Claude) {
+        return Ok(0);
+    }
+    for list in reads::List::ALL {
+        let setting = list.setting();
+        let own = recorded_settings(parts, setting)?;
+        reads::uninstall_claude(claude, list, &own, dry_run)?
+            .iter()
+            .for_each(|l| println!("{l}"));
+        if !dry_run {
+            part::record_setting(parts, Agent::Claude, setting, None)?;
+        }
+    }
+    Ok(0)
+}
+
+/// Every element of the list setting `name` mAId's part list records
+/// placed on claude.
+fn recorded_settings(parts: &Path, name: &str) -> Result<Vec<Item>> {
+    Ok(part::placed(parts, Agent::Claude)?
+        .into_iter()
+        .filter(|i| i.kind == What::Setting && i.name == name)
+        .collect())
+}
+
+/// The setting `name` as mAId's part list records it placed on claude.
+fn recorded_setting(parts: &Path, name: &str) -> Result<Option<Item>> {
+    Ok(part::placed(parts, Agent::Claude)?
+        .into_iter()
+        .find(|i| i.kind == What::Setting && i.name == name))
+}
+
+/// What mAId owns of Claude's automatic-memory setting: what its part list
+/// says it set or adopted.
+fn ownership(parts: &Path) -> Result<memory::Ownership> {
+    let item = recorded_setting(parts, memory::SETTING)?;
+    Ok(memory::Ownership {
+        adopted: item.as_ref().is_some_and(|i| i.adopted),
+        recorded: item.and_then(|i| i.value),
+        claimed: part::claimed_by_others(parts, Agent::Claude, memory::SETTING),
+    })
+}
+
+pub fn cmd_memory_status(
+    claude: &ConfigDir,
+    store_file: &Path,
+    profile: &Path,
+    parts: &Path,
+) -> Result<u8> {
+    let store = memory::store(store_file)?;
+    memory::status(
+        claude,
+        store.as_deref(),
+        &launcher(profile),
+        &ownership(parts)?,
+    )?
+    .iter()
+    .for_each(|l| println!("{l}"));
+    Ok(0)
+}
+
+/// Copy each harness's native memory into `<to>/memory/`. Refuses, before
+/// writing anything, a `to` that is not a directory.
+pub fn cmd_harvest(
+    claude: &ConfigDir,
+    codex_home: &Path,
+    to: &Path,
+    project: Option<&str>,
+) -> Result<u8> {
+    if !to.is_dir() {
+        return Err(usage(format!(
+            "{} is not a directory; clone the store first",
+            to.display()
+        )));
+    }
+    println!("harvest  into {}", to.join("memory").display());
+    harvest::harvest(claude, codex_home, to, project)?
+        .lines()
+        .iter()
+        .for_each(|l| println!("{l}"));
+    Ok(0)
 }
 
 pub fn cmd_status(target: &impl Deploy, agent: Option<Agent>) -> Result<u8> {
@@ -181,6 +1064,13 @@ fn outcome_line(report: &crate::deploy::Report, dry_run: bool, removing: bool) -
         (State::Unreadable(why), _) => {
             skipped += 1;
             format!("{tag}skip          {at} (unreadable: {why})")
+        }
+        (State::Failed(why), _) => {
+            skipped += 1;
+            format!("{tag}FAILED        {at} ({why})")
+        }
+        (State::InUse, _) => {
+            format!("{tag}skip          {at} (in use by a plugin not mAId's; kept)")
         }
         (State::Current(_) | State::Stale { .. } | State::Disabled { .. }, true) if removing => {
             format!("{tag}removed       {at}")
@@ -481,35 +1371,30 @@ fn execute(plan: &Plan, judge: Option<Agent>) -> Outcome {
         return Outcome::Fail(format!("{} required but not on PATH", plan.agent.name()));
     }
     match &plan.assertion {
-        Assertion::Behavioral { setup, assert } => {
-            run_behavioral(plan.agent, &plan.prompt, setup, assert, &plan.name)
-        }
+        Assertion::Behavioral { setup, assert } => run_behavioral(plan, setup, assert),
         Assertion::Reply {
             substr,
             narrative,
             seed,
         } => run_reply(
-            plan.agent,
-            &plan.prompt,
+            plan,
             substr.as_deref(),
             narrative.as_deref(),
             seed.as_deref(),
             judge,
-            &plan.name,
         ),
     }
 }
 
 /// Drive an agent read-only and score its reply.
 fn run_reply(
-    agent: Agent,
-    prompt: &str,
+    plan: &Plan,
     substr: Option<&str>,
     narrative: Option<&str>,
     seed: Option<&str>,
     judge: Option<Agent>,
-    label: &str,
 ) -> Outcome {
+    let (agent, prompt, label) = (plan.agent, plan.prompt.as_str(), plan.name.as_str());
     // A scratch cwd, so a relative path in the prompt cannot reach the
     // checkout the runner was started from.
     let Ok(scratch) = tempfile::TempDir::new() else {
@@ -562,12 +1447,12 @@ fn run_reply(
 /// broke: asserts are silent `test`/`grep -q` under `set -e`, so without
 /// the trace every behavioral failure read "assert failed" with nothing
 /// after it — undiagnosable without hand-reproducing the fixture.
-fn run_behavioral(agent: Agent, prompt: &str, setup: &str, assert: &str, label: &str) -> Outcome {
+fn run_behavioral(plan: &Plan, setup: &str, assert: &str) -> Outcome {
+    let (agent, prompt, label) = (plan.agent, plan.prompt.as_str(), plan.name.as_str());
     let Ok(work) = tempfile::TempDir::new() else {
         return Outcome::Fail("could not create scratch workdir".into());
     };
     let dir = work.path();
-
     if let Err(e) = shell(setup, dir) {
         return Outcome::Fail(format!("setup failed: {e}"));
     }
@@ -743,7 +1628,7 @@ mod tests {
     #[test]
     fn check_content_empty_root_ok() {
         let dir = TempDir::new().unwrap();
-        assert_eq!(check_content(dir.path()).unwrap(), 0);
+        assert_eq!(check_content(&[dir.path().to_path_buf()]).unwrap(), 0);
     }
 
     #[test]
@@ -753,7 +1638,175 @@ mod tests {
             &dir.path().join("skills/foo/SKILL.md"),
             "---\nname: foo\ndescription: bar\n---\nbody.\n",
         );
-        assert_eq!(check_content(dir.path()).unwrap(), 1);
+        assert_eq!(check_content(&[dir.path().to_path_buf()]).unwrap(), 1);
+    }
+
+    #[test]
+    fn one_skill_name_under_two_roots_is_refused() {
+        let (a, b) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+        for dir in [&a, &b] {
+            write(
+                &dir.path().join("skills/notes/SKILL.md"),
+                "---\nname: notes\ndescription: capture notes\n---\nbody.\n",
+            );
+        }
+        let roots = [a.path().to_path_buf(), b.path().to_path_buf()];
+        let errs = check_content(&roots).unwrap_err();
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(
+            errs[0].starts_with("skill notes is in more than one root: "),
+            "{}",
+            errs[0]
+        );
+        assert_eq!(check_content(&roots[..1]).unwrap(), 1);
+    }
+
+    /// A profile with one valid skill, its home, and a parts dir.
+    fn installable() -> (TempDir, crate::deploy::Symlinks, PathBuf) {
+        let dir = TempDir::new().unwrap();
+        write(
+            &dir.path().join("profile/share/maid/skills/notes/SKILL.md"),
+            "---\nname: notes\ndescription: d\n---\nbody.\n",
+        );
+        let target = crate::deploy::Symlinks {
+            home: dir.path().join("home"),
+            source: dir.path().join("profile"),
+        };
+        let parts = dir.path().join("parts");
+        (dir, target, parts)
+    }
+
+    fn content(dir: &TempDir) -> PathBuf {
+        dir.path().join("profile/share/maid")
+    }
+
+    #[test]
+    fn install_writes_the_part_list_and_uninstall_removes_it() {
+        let (dir, target, parts) = installable();
+        cmd_install(&target, &content(&dir), &parts, false, false, None).unwrap();
+        let text = fs::read_to_string(part::path(&parts)).unwrap();
+        for harness in ["kiro-cli", "agy"] {
+            assert!(text.contains(&format!("\"{harness}\"")), "{text}");
+        }
+        assert!(text.contains(r#""name": "notes""#), "{text}");
+        cmd_uninstall(&target, &parts, false, false, None).unwrap();
+        assert!(!part::path(&parts).exists());
+    }
+
+    /// Installs into kiro, then fails before the rest.
+    struct Partway;
+
+    impl Deploy for Partway {
+        fn install(
+            &self,
+            _: Option<Agent>,
+            _: bool,
+            _: bool,
+        ) -> Result<Vec<crate::deploy::Report>> {
+            Err(anyhow!("codex plugin install failed"))
+        }
+        fn uninstall(
+            &self,
+            _: Option<Agent>,
+            _: bool,
+            _: bool,
+        ) -> Result<Vec<crate::deploy::Report>> {
+            unreachable!()
+        }
+        fn status(&self, _: Option<Agent>) -> Result<Vec<crate::deploy::Report>> {
+            unreachable!()
+        }
+        fn is_deployed(&self, _: Agent) -> bool {
+            unreachable!()
+        }
+        fn placed(&self, _: Option<Agent>) -> Result<Vec<(Agent, Item)>> {
+            Ok(vec![(Agent::Kiro, Item::placed(What::Skill, "notes"))])
+        }
+    }
+
+    #[test]
+    fn an_install_that_stops_partway_records_what_it_placed() {
+        let (dir, _, parts) = installable();
+        let err = cmd_install(&Partway, &content(&dir), &parts, false, false, None).unwrap_err();
+        assert!(err.to_string().contains("codex"), "{err}");
+        let text = fs::read_to_string(part::path(&parts)).unwrap();
+        assert!(text.contains(r#""name": "notes""#), "{text}");
+    }
+
+    #[test]
+    fn a_dry_run_writes_no_part_list() {
+        let (dir, target, parts) = installable();
+        cmd_install(&target, &content(&dir), &parts, true, false, None).unwrap();
+        assert!(!parts.exists());
+    }
+
+    #[test]
+    fn record_refuses_a_setting_and_writes_nothing() {
+        let dir = TempDir::new().unwrap();
+        let parts = dir.path().join("parts");
+        let err = cmd_record(
+            &parts,
+            Agent::Claude,
+            What::Setting,
+            None,
+            None,
+            None,
+            &["k".into()],
+        )
+        .unwrap_err();
+        assert!(
+            err.downcast_ref::<crate::shared::UsageError>().is_some(),
+            "{err}"
+        );
+        assert!(!parts.exists());
+    }
+
+    #[test]
+    fn record_only_replaces_that_name_and_keeps_the_kinds_others() {
+        let dir = TempDir::new().unwrap();
+        let parts = dir.path().join("parts");
+        let rec = |only, names: &[&str]| {
+            let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+            cmd_record(&parts, Agent::Claude, What::Mcp, None, None, only, &names)
+        };
+        rec(Some("personal-memory"), &["personal-memory"]).unwrap();
+        rec(Some("chrome-devtools"), &["chrome-devtools"]).unwrap();
+        rec(Some("chrome-devtools"), &[]).unwrap();
+        let names: Vec<_> = part::placed(&parts, Agent::Claude)
+            .unwrap()
+            .into_iter()
+            .map(|i| i.name)
+            .collect();
+        assert_eq!(names, ["personal-memory"]);
+        assert!(rec(Some("a"), &["b"]).is_err());
+    }
+
+    #[test]
+    fn uninstall_drops_a_skip_but_keeps_what_is_still_there() {
+        let (dir, target, parts) = installable();
+        cmd_record(
+            &parts,
+            Agent::Kiro,
+            What::Mcp,
+            Some("s"),
+            None,
+            None,
+            &["m".into()],
+        )
+        .unwrap();
+        // agy's skills dir is the user's, so install skips it.
+        write(&dir.path().join("home/.gemini/config/skills/x"), "mine");
+        cmd_install(&target, &content(&dir), &parts, false, false, None).unwrap();
+        assert!(fs::read_to_string(part::path(&parts))
+            .unwrap()
+            .contains("skipped"));
+        cmd_uninstall(&target, &parts, false, false, None).unwrap();
+        let text = fs::read_to_string(part::path(&parts)).unwrap();
+        assert!(
+            !text.contains("skipped") && !text.contains("notes"),
+            "{text}"
+        );
+        assert!(text.contains(r#""name": "m""#), "{text}");
     }
 
     /// A missing tree validates as zero files, so without the guard an
@@ -761,9 +1814,16 @@ mod tests {
     #[test]
     fn install_without_a_profile_names_the_fix() {
         let dir = TempDir::new().unwrap();
-        let err = cmd_install(&crate::deploy::NoDeploy, dir.path(), false, false, None)
-            .unwrap_err()
-            .to_string();
+        let err = cmd_install(
+            &crate::deploy::NoDeploy,
+            dir.path(),
+            dir.path(),
+            false,
+            false,
+            None,
+        )
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("just install"), "{err}");
     }
 
@@ -774,7 +1834,7 @@ mod tests {
             &dir.path().join("skills/foo/SKILL.md"),
             "---\nname: foo\n---\n",
         );
-        let errs = check_content(dir.path()).unwrap_err();
+        let errs = check_content(&[dir.path().to_path_buf()]).unwrap_err();
         assert!(errs.iter().any(|e| e.contains("description")));
     }
 
@@ -790,7 +1850,7 @@ mod tests {
             &dir.path().join("skills/bar/SKILL.md"),
             "---\nname: bar\n---\n",
         );
-        let errs = check_content(dir.path()).unwrap_err();
+        let errs = check_content(&[dir.path().to_path_buf()]).unwrap_err();
         assert_eq!(errs.len(), 2);
     }
 
@@ -804,7 +1864,52 @@ mod tests {
             "---\nname: multi\ndescription: a multi-file skill\n---\nbody.\n",
         );
         write(&skill_dir.join("setup.md"), "# Plain markdown.\n");
-        assert_eq!(check_content(dir.path()).unwrap(), 1);
+        assert_eq!(check_content(&[dir.path().to_path_buf()]).unwrap(), 1);
+    }
+
+    #[test]
+    fn check_content_flags_repo_pointers_in_skill_md_and_modules() {
+        let dir = TempDir::new().unwrap();
+        let skill = dir.path().join("skills/foo");
+        write(
+            &skill.join("SKILL.md"),
+            "---\nname: foo\ndescription: bar\n---\nok\nIn a mAId Checkout, edit it.\n",
+        );
+        write(
+            &skill.join("phases/a.md"),
+            "x\nsee resources/content/skills/foo\n",
+        );
+        write(&skill.join("b.md"), "then run `just install`\n");
+        write(
+            &skill.join("c.md"),
+            "or `just resources::browser-mcp-allow`\n",
+        );
+        write(&skill.join("notes.txt"), "just install\n");
+        let errs = check_content(&[dir.path().to_path_buf()]).unwrap_err();
+        let at = |f: &str, n: usize| format!("{}:{n}:", skill.join(f).display());
+        assert_eq!(errs.len(), 4, "{errs:?}");
+        for (e, (f, n, pat)) in errs.iter().zip([
+            ("SKILL.md", 6, "maid checkout"),
+            ("b.md", 1, "just install"),
+            ("c.md", 1, "just resources::"),
+            ("phases/a.md", 2, "resources/content/"),
+        ]) {
+            assert!(e.starts_with(&at(f, n)) && e.contains(pat), "{e}");
+        }
+    }
+
+    #[test]
+    fn check_content_passes_a_skill_naming_no_repo_path() {
+        let dir = TempDir::new().unwrap();
+        let skill = dir.path().join("skills/foo");
+        write(
+            &skill.join("SKILL.md"),
+            "---\nname: foo\ndescription: bar\n---\nInstall the content, then check out a branch.\n",
+        );
+        write(&skill.join("phases/a.md"), "the user's own config\n");
+        // A linked dir is not walked, so a cycle ends.
+        std::os::unix::fs::symlink(&skill, skill.join("phases/loop")).unwrap();
+        assert_eq!(check_content(&[dir.path().to_path_buf()]).unwrap(), 1);
     }
 
     // ── frontmatter (gray_matter + serde) ───────────────────────
@@ -851,6 +1956,46 @@ mod tests {
     fn frontmatter_missing_description_rejected() {
         let e = frontmatter_of("---\nname: foo\n---\n").unwrap_err();
         assert!(e.contains("description"));
+    }
+
+    #[test]
+    fn a_shipped_server_or_overlay_must_declare_readably() {
+        let dir = TempDir::new().unwrap();
+        write(
+            &dir.path().join("servers/s/server.json"),
+            r#"{"name":"s","_meta":{"my-harness":{"scope":"turn","job":"j"}}}"#,
+        );
+        write(
+            &dir.path().join("overlays/o/plugin.json"),
+            r#"{"name":"o"}"#,
+        );
+        assert_eq!(check_content(&[dir.path().to_path_buf()]).unwrap(), 0);
+        write(
+            &dir.path().join("servers/s/server.json"),
+            r#"{"name":"s","_meta":{"my-harness":{"scope":"turn","job":"j","rules":"README.md#x"}}}"#,
+        );
+        let errs = check_content(&[dir.path().to_path_buf()]).unwrap_err();
+        assert!(errs[0].contains("cannot read"), "{errs:?}");
+        write(&dir.path().join("servers/s/README.md"), "## X\n\nfirst\n");
+        assert_eq!(check_content(&[dir.path().to_path_buf()]).unwrap(), 0);
+        write(&dir.path().join("overlays/o/plugin.json"), "not json");
+        let errs = check_content(&[dir.path().to_path_buf()]).unwrap_err();
+        assert!(
+            errs[0].contains("overlays/o/plugin.json") && errs[0].contains("not JSON"),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn a_declaration_must_read_and_its_rules_resolve() {
+        let decl = |rules: &str| {
+            format!("---\nname: foo\ndescription: bar\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: j\n  my-harness.rules: {rules}\n---\n## Rules\n\nfirst\n")
+        };
+        assert!(frontmatter_of(&decl("SKILL.md#rules")).is_ok());
+        let e = frontmatter_of(&decl("SKILL.md#renamed")).unwrap_err();
+        assert!(e.contains("no heading"), "{e}");
+        let e = frontmatter_of("---\nname: foo\ndescription: bar\nmetadata:\n  my-harness.scope: always\n  my-harness.job: j\n---\n").unwrap_err();
+        assert!(e.contains("declaration"), "{e}");
     }
 
     /// A malformed fixture fails itself; the sweep continues. Bash did
@@ -930,5 +2075,685 @@ mod tests {
             "{err}"
         );
         assert!(err.to_string().contains("typo-of-real"));
+    }
+
+    // ── bring-ins ────────────────────────────────────────────────
+
+    const VENDOR: Marketplace = Marketplace {
+        marketplace: "a-vendor",
+        source: "https://example.org/skills.git",
+        rev: "abc",
+        plugins: &["docs"],
+        needs: &[],
+    };
+
+    fn profile_with(skills: &[&str]) -> TempDir {
+        let p = TempDir::new().unwrap();
+        for s in skills {
+            let d = p.path().join("share/maid/skills").join(s);
+            fs::create_dir_all(&d).unwrap();
+            fs::write(d.join("SKILL.md"), "---\nname: x\ndescription: y\n---\n").unwrap();
+        }
+        fs::create_dir_all(p.path().join("share/maid/skills/not-a-skill")).unwrap();
+        p
+    }
+
+    /// mAId's plugin, the vendor's and the memory server, placed somewhere.
+    fn all_placed() -> Vec<Item> {
+        vec![
+            Item::placed(What::Plugin, crate::shared::PLUGIN_ID),
+            Item::placed(What::Plugin, VENDOR.plugin_id("docs")),
+            Item::placed(What::Mcp, memory::SERVER),
+        ]
+    }
+
+    #[test]
+    fn uninstall_drops_a_borrowed_plugin_no_harness_still_has() {
+        let p = profile_with(&["notes"]);
+        let parts = TempDir::new().unwrap();
+        let plugins = vec![
+            Item::placed(What::Plugin, crate::shared::PLUGIN_ID),
+            Item::placed(What::Plugin, VENDOR.plugin_id("docs")),
+        ];
+        part::record(parts.path(), Agent::Codex, &[What::Plugin], None, plugins).unwrap();
+        let none = Path::new("/nowhere/memory-store");
+        cmd_install_bring_ins(
+            parts.path(),
+            p.path(),
+            Path::new("/c"),
+            Checkout::default(),
+            none,
+            &[VENDOR],
+            false,
+        )
+        .unwrap();
+        let names = || -> Vec<String> {
+            part::bring_ins(parts.path())
+                .unwrap()
+                .into_iter()
+                .map(|b| b.name)
+                .collect()
+        };
+        assert_eq!(names(), ["docs", "notes"]);
+        let mine = vec![Item::placed(What::Plugin, crate::shared::PLUGIN_ID)];
+        part::record(parts.path(), Agent::Codex, &[What::Plugin], None, mine).unwrap();
+        cmd_uninstall_bring_ins(parts.path(), &[VENDOR], false).unwrap();
+        assert_eq!(names(), ["notes"]);
+    }
+
+    #[test]
+    fn what_install_did_not_place_is_not_a_bring_in() {
+        let p = profile_with(&["notes"]);
+        let none = bring_ins(
+            p.path(),
+            &sources(),
+            None,
+            &[VENDOR],
+            &Placed::default(),
+            &[],
+            "2026-10-31",
+        )
+        .unwrap();
+        assert!(none.is_empty(), "{none:?}");
+        let links = [Item::placed(What::Skill, "notes")];
+        let skills = bring_ins(
+            p.path(),
+            &sources(),
+            None,
+            &[VENDOR],
+            &anywhere(links.to_vec()),
+            &[],
+            "2026-10-31",
+        )
+        .unwrap();
+        let names: Vec<_> = skills.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(names, ["notes"]);
+    }
+
+    fn project() -> Source {
+        Source {
+            kind: SourceKind::Project,
+            at: None,
+            rev: Some("r1".into()),
+        }
+    }
+
+    fn pensieve() -> Source {
+        Source {
+            kind: SourceKind::Project,
+            at: Some("https://github.com/me/pensieve".into()),
+            rev: Some("p1".into()),
+        }
+    }
+
+    fn sources() -> Sources {
+        Sources {
+            project: project(),
+            pensieve: Some(pensieve()),
+        }
+    }
+
+    /// Placed on some harness, not on claude.
+    fn anywhere(items: Vec<Item>) -> Placed {
+        Placed {
+            anywhere: items,
+            claude: vec![],
+        }
+    }
+
+    /// Placed on claude, so on some harness too.
+    fn on_claude(items: Vec<Item>) -> Placed {
+        Placed {
+            anywhere: items.clone(),
+            claude: items,
+        }
+    }
+
+    #[test]
+    fn install_records_each_skill_the_memory_server_and_the_vendor_borrowed() {
+        let p = profile_with(&["notes", "kdevkit"]);
+        let items = bring_ins(
+            p.path(),
+            &sources(),
+            Some(Path::new("/s")),
+            &[VENDOR],
+            &on_claude(all_placed()),
+            &[],
+            "2026-10-31",
+        )
+        .unwrap();
+        let names: Vec<_> = items.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "kdevkit",
+                "notes",
+                "claude-adapter",
+                "personal-memory",
+                "docs"
+            ]
+        );
+        let notes = &items[1];
+        assert_eq!(
+            notes.unit.as_ref().unwrap().path,
+            p.path().join("share/maid/skills/notes/SKILL.md")
+        );
+        assert_eq!(
+            (&notes.tenure, notes.source.as_ref()),
+            (&Tenure::Own, Some(&project()))
+        );
+        let adapter = &items[2];
+        assert_eq!(
+            adapter.unit,
+            Some(Unit {
+                standard: Standard::Plugin,
+                path: p.path().join(ADAPTER_MANIFEST)
+            })
+        );
+        assert_eq!(adapter.source.as_ref(), Some(&project()));
+        let memory = &items[3];
+        assert_eq!(
+            memory.unit,
+            Some(Unit {
+                standard: Standard::Mcp,
+                path: p.path().join(memory::MANIFEST)
+            })
+        );
+        assert_eq!(
+            (&memory.tenure, memory.source.as_ref()),
+            (&Tenure::Own, Some(&pensieve())),
+            "the memory's source is its package, not mAId"
+        );
+        assert_eq!(memory.values["store"], "/s");
+        assert_eq!(memory.values["index"], "memory/MEMORY.md");
+        let serve: Vec<String> = serde_json::from_str(&memory.values["serve"]).unwrap();
+        assert_eq!(serve[1..], ["--store", "/s"]);
+        assert!(serve[0].ends_with("/bin/pensieve"), "{serve:?}");
+        assert_eq!(
+            items[4].tenure,
+            Tenure::Borrowed {
+                from: "a-vendor".into(),
+                since: Some("2026-10-31".into())
+            }
+        );
+        assert_eq!(items[4].route(), ghost::parts::Route::Report);
+    }
+
+    /// A profile with a stateful skill, the browser server's manifest and
+    /// the vendor plugin's overlay, as the flake lays them out.
+    fn declared_profile() -> TempDir {
+        let p = profile_with(&["notes"]);
+        let at = |rel: &str, text: &str| {
+            let f = p.path().join("share/maid").join(rel);
+            fs::create_dir_all(f.parent().unwrap()).unwrap();
+            fs::write(f, text).unwrap();
+        };
+        at(
+            "skills/style/SKILL.md",
+            "---\nname: style\ndescription: d\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: j\n  my-harness.config.learned: \"[optional] p\"\n  my-harness.config.promoted: \"[optional] k\"\n---\n",
+        );
+        at("servers/browser/server.json", "{}");
+        at("overlays/docs/plugin.json", "{}");
+        p
+    }
+
+    #[test]
+    fn install_binds_skill_config_and_records_the_overlay_and_the_browser_server() {
+        let p = declared_profile();
+        let mut placed = all_placed();
+        placed.push(Item::placed(What::Mcp, BROWSER_SERVER));
+        let mut items = bring_ins(
+            p.path(),
+            &sources(),
+            None,
+            &[VENDOR],
+            &anywhere(placed),
+            &[],
+            "2026-10-31",
+        )
+        .unwrap();
+        bind_state(&mut items, Path::new("/c"));
+        let by = |n: &str| items.iter().find(|b| b.name == n).expect(n);
+        let style = by("style");
+        assert_eq!(style.values["learned"], "/c/style/learned.md");
+        assert_eq!(style.values["promoted"], "/c/style/promoted.md");
+        assert!(by("notes").values.is_empty());
+        let docs = by("docs").unit.as_ref().unwrap();
+        assert_eq!(
+            (docs.standard, &docs.path),
+            (
+                Standard::Plugin,
+                &p.path().join("share/maid/overlays/docs/plugin.json")
+            )
+        );
+        assert!(matches!(by("docs").tenure, Tenure::Borrowed { .. }));
+        let server = by(BROWSER_SERVER);
+        assert_eq!(
+            server.unit.as_ref().unwrap().path,
+            p.path().join("share/maid/servers/browser/server.json")
+        );
+        assert_eq!(server.tenure, Tenure::Own);
+        let unplaced = bring_ins(
+            p.path(),
+            &sources(),
+            None,
+            &[VENDOR],
+            &anywhere(all_placed()),
+            &[],
+            "2026-10-31",
+        )
+        .unwrap();
+        assert!(unplaced.iter().all(|b| b.name != BROWSER_SERVER));
+    }
+
+    #[test]
+    fn recording_the_browser_server_keeps_its_bring_in_in_step() {
+        let p = declared_profile();
+        let parts = TempDir::new().unwrap();
+        let plugin = vec![Item::placed(What::Plugin, crate::shared::PLUGIN_ID)];
+        part::record(parts.path(), Agent::Claude, &[What::Plugin], None, plugin).unwrap();
+        let none = Path::new("/nowhere/memory-store");
+        let install = || {
+            cmd_install_bring_ins(
+                parts.path(),
+                p.path(),
+                Path::new("/c"),
+                Checkout::default(),
+                none,
+                &[],
+                false,
+            )
+            .unwrap()
+        };
+        install();
+        let names = || -> Vec<String> {
+            part::bring_ins(parts.path())
+                .unwrap()
+                .into_iter()
+                .map(|b| b.name)
+                .collect()
+        };
+        assert_eq!(names(), [ADAPTER, "notes", "style"]);
+        let server = |names: &[&str]| {
+            let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+            cmd_record(
+                parts.path(),
+                Agent::Kiro,
+                What::Mcp,
+                None,
+                None,
+                Some(BROWSER_SERVER),
+                &names,
+            )
+            .unwrap();
+            sync_browser_bring_in(parts.path(), p.path(), Checkout::default()).unwrap();
+        };
+        server(&[BROWSER_SERVER]);
+        assert_eq!(names(), [BROWSER_SERVER, ADAPTER, "notes", "style"]);
+        // A later record from another checkout keeps install's record.
+        let elsewhere = Checkout {
+            head: Some("other".into()),
+            ..Checkout::default()
+        };
+        let kept = part::bring_ins(parts.path()).unwrap();
+        cmd_record(
+            parts.path(),
+            Agent::Codex,
+            What::Mcp,
+            None,
+            None,
+            Some(BROWSER_SERVER),
+            &[BROWSER_SERVER.to_string()],
+        )
+        .unwrap();
+        sync_browser_bring_in(parts.path(), p.path(), elsewhere).unwrap();
+        assert_eq!(part::bring_ins(parts.path()).unwrap(), kept);
+        cmd_record(
+            parts.path(),
+            Agent::Codex,
+            What::Mcp,
+            None,
+            None,
+            Some(BROWSER_SERVER),
+            &[],
+        )
+        .unwrap();
+        let before = fs::read(part::path(parts.path())).unwrap();
+        install();
+        assert_eq!(
+            fs::read(part::path(parts.path())).unwrap(),
+            before,
+            "a rerun keeps it"
+        );
+        server(&[]);
+        assert_eq!(names(), [ADAPTER, "notes", "style"]);
+        let skipped = Item::skipped(What::Mcp, BROWSER_SERVER, "no graphical Chrome");
+        part::record_named(
+            parts.path(),
+            Agent::Claude,
+            What::Mcp,
+            None,
+            BROWSER_SERVER,
+            vec![skipped],
+        )
+        .unwrap();
+        sync_browser_bring_in(parts.path(), p.path(), Checkout::default()).unwrap();
+        assert_eq!(
+            names(),
+            [ADAPTER, "notes", "style"],
+            "a skipped server is no bring-in"
+        );
+    }
+
+    #[test]
+    fn no_store_records_no_memory_server_and_a_rerun_keeps_since() {
+        let p = profile_with(&["notes"]);
+        let first = bring_ins(
+            p.path(),
+            &sources(),
+            None,
+            &[VENDOR],
+            &anywhere(all_placed()),
+            &[],
+            "2026-01-01",
+        )
+        .unwrap();
+        assert!(first.iter().all(|b| b.name != "personal-memory"));
+        let again = bring_ins(
+            p.path(),
+            &sources(),
+            None,
+            &[VENDOR],
+            &anywhere(all_placed()),
+            &first,
+            "2026-10-31",
+        )
+        .unwrap();
+        assert_eq!(again, first);
+    }
+
+    #[test]
+    fn the_memory_server_is_a_bring_in_only_while_install_has_it_placed() {
+        let p = profile_with(&["notes"]);
+        let (parts, conf) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+        let store_file = conf.path().join("memory-store");
+        fs::write(&store_file, "/s/personal\n").unwrap();
+        let names = || -> Vec<String> {
+            part::bring_ins(parts.path())
+                .unwrap()
+                .into_iter()
+                .map(|b| b.name)
+                .collect()
+        };
+        let plugin = vec![Item::placed(What::Plugin, crate::shared::PLUGIN_ID)];
+        part::record(parts.path(), Agent::Claude, &[What::Plugin], None, plugin).unwrap();
+        let skipped = Item::skipped(What::Mcp, memory::SERVER, memory::STORE_MISSING);
+        part::record_named(
+            parts.path(),
+            Agent::Claude,
+            What::Mcp,
+            None,
+            memory::SERVER,
+            vec![skipped],
+        )
+        .unwrap();
+        cmd_install_bring_ins(
+            parts.path(),
+            p.path(),
+            Path::new("/c"),
+            Checkout::default(),
+            &store_file,
+            &[],
+            false,
+        )
+        .unwrap();
+        assert_eq!(names(), ["claude-adapter", "notes"]);
+        let placed = Item::placed(What::Mcp, memory::SERVER);
+        part::record_named(
+            parts.path(),
+            Agent::Claude,
+            What::Mcp,
+            None,
+            memory::SERVER,
+            vec![placed],
+        )
+        .unwrap();
+        cmd_install_bring_ins(
+            parts.path(),
+            p.path(),
+            Path::new("/c"),
+            Checkout::default(),
+            &store_file,
+            &[],
+            false,
+        )
+        .unwrap();
+        assert_eq!(names(), ["claude-adapter", "notes", "personal-memory"]);
+        part::record_named(
+            parts.path(),
+            Agent::Claude,
+            What::Mcp,
+            None,
+            memory::SERVER,
+            vec![],
+        )
+        .unwrap();
+        cmd_uninstall_bring_ins(parts.path(), &[], false).unwrap();
+        assert_eq!(
+            names(),
+            ["claude-adapter", "notes"],
+            "removing the memory server keeps the skills the plugin still places"
+        );
+        part::record(parts.path(), Agent::Claude, &[What::Plugin], None, vec![]).unwrap();
+        cmd_uninstall_bring_ins(parts.path(), &[], false).unwrap();
+        assert!(names().is_empty());
+        assert!(
+            !part::path(parts.path()).exists(),
+            "the list goes with its last bring-in"
+        );
+    }
+
+    #[test]
+    fn the_adapter_is_a_bring_in_only_while_maids_plugin_is_on_claude() {
+        let p = profile_with(&["notes"]);
+        let plugin = vec![Item::placed(What::Plugin, crate::shared::PLUGIN_ID)];
+        let names = |placed: &Placed| -> Vec<String> {
+            bring_ins(p.path(), &sources(), None, &[], placed, &[], "2026-10-31")
+                .unwrap()
+                .into_iter()
+                .map(|b| b.name)
+                .collect()
+        };
+        assert_eq!(names(&anywhere(plugin.clone())), ["notes"], "codex only");
+        assert_eq!(names(&on_claude(plugin)), ["notes", "claude-adapter"]);
+        let adapter = bring_ins(
+            p.path(),
+            &sources(),
+            None,
+            &[],
+            &on_claude(vec![Item::placed(What::Plugin, crate::shared::PLUGIN_ID)]),
+            &[],
+            "2026-10-31",
+        )
+        .unwrap()
+        .pop()
+        .unwrap();
+        let left = anywhere(vec![Item::placed(What::Plugin, crate::shared::PLUGIN_ID)]);
+        assert!(!still_placed(&adapter, &left, &[]), "uninstall drops it");
+    }
+
+    #[test]
+    fn the_lock_gives_a_github_pin_as_its_source_and_nothing_else() {
+        let lock = |locked: serde_json::Value| {
+            serde_json::json!({"nodes": {"pensieve": {"locked": locked}}}).to_string()
+        };
+        let github = lock(serde_json::json!(
+            {"type": "github", "owner": "me", "repo": "pensieve", "rev": "p1"}
+        ));
+        assert_eq!(pinned(&github, "pensieve"), Some(pensieve()));
+        let path = lock(serde_json::json!({"type": "path", "path": "/home/me/pensieve"}));
+        assert_eq!(
+            pinned(&path, "pensieve"),
+            None,
+            "a local path is never recorded"
+        );
+        assert_eq!(pinned(&github, "other"), None);
+        assert_eq!(pinned("not json", "pensieve"), None);
+        let renamed = serde_json::json!({"root": "root", "nodes": {
+            "root": {"inputs": {"pensieve": "pensieve_2"}},
+            "pensieve": {"locked": {"type": "path", "path": "/elsewhere"}},
+            "pensieve_2": {"locked":
+                {"type": "github", "owner": "me", "repo": "pensieve", "rev": "p1"}}}});
+        assert_eq!(
+            pinned(&renamed.to_string(), "pensieve"),
+            Some(pensieve()),
+            "the root's inputs name the node"
+        );
+    }
+
+    #[test]
+    fn with_no_github_pin_the_memory_has_no_source_and_only_reports() {
+        let p = profile_with(&[]);
+        let unpinned = Sources {
+            project: project(),
+            pensieve: None,
+        };
+        let items = bring_ins(
+            p.path(),
+            &unpinned,
+            Some(Path::new("/s")),
+            &[],
+            &anywhere(all_placed()),
+            &[],
+            "2026-10-31",
+        )
+        .unwrap();
+        let memory = items.iter().find(|b| b.name == memory::SERVER).unwrap();
+        assert_eq!(memory.source, None, "never mAId's project source");
+        assert_eq!(memory.route(), ghost::parts::Route::Report);
+    }
+
+    #[test]
+    fn the_checkouts_lock_is_read_from_its_dir() {
+        let dir = TempDir::new().unwrap();
+        assert_eq!(locked_pensieve(dir.path()), None);
+        let lock = serde_json::json!({"nodes": {"pensieve": {"locked":
+            {"type": "github", "owner": "me", "repo": "pensieve", "rev": "p1"}}}});
+        fs::write(dir.path().join("flake.lock"), lock.to_string()).unwrap();
+        assert_eq!(locked_pensieve(dir.path()), Some(pensieve()));
+    }
+
+    #[test]
+    fn this_repo_pins_the_memory_package_at_its_published_commit() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let lock = fs::read_to_string(root.join("flake.lock")).unwrap();
+        let got = pinned(&lock, "pensieve").expect("pensieve pinned on GitHub");
+        assert_eq!(
+            got.at.as_deref(),
+            Some("https://github.com/kusimari/pensieve")
+        );
+        let rev = got.rev.unwrap();
+        assert!(
+            rev.len() == 40 && rev.chars().all(|c| c.is_ascii_hexdigit()),
+            "{rev}"
+        );
+    }
+
+    #[test]
+    fn the_shipped_memory_declaration_names_its_package_store_and_index() {
+        use ghost::contract::{read, Scope, Slot};
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../content");
+        let path = root
+            .join(memory::MANIFEST.trim_start_matches("share/maid/"))
+            .canonicalize()
+            .unwrap();
+        let Ok(Slot::Declared(d)) = read(Standard::Mcp, &path) else {
+            panic!("{path:?} holds no declaration");
+        };
+        assert_eq!(d.scope, Scope::Session);
+        assert_eq!(d.package.as_deref(), Some("pensieve"));
+        let keys: Vec<_> = d.config.keys().map(String::as_str).collect();
+        assert_eq!(keys, ["index", "serve", "store"]);
+        assert!(d.config.values().all(|k| !k.optional && !k.secret));
+        let state = d.state.unwrap();
+        assert_eq!(
+            (state.local, state.permanent.as_deref()),
+            (None, Some("store"))
+        );
+    }
+
+    #[test]
+    fn the_shipped_adapter_declaration_reads_from_a_plugin_manifest() {
+        use ghost::contract::{read, Scope, Slot};
+        let shipped = crate::shared::repo_root()
+            .unwrap()
+            .join(crate::shared::GHOST_PLUGIN_DIR)
+            .join("my-harness.json");
+        let decl: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(shipped).unwrap()).unwrap();
+        // As the flake writes it into the Claude plugin manifest.
+        let dir = TempDir::new().unwrap();
+        let manifest = dir.path().join("plugin.json");
+        let plugin = serde_json::json!({"name": "maid", "extensions": {"my-harness": decl}});
+        fs::write(&manifest, plugin.to_string()).unwrap();
+        let Ok(Slot::Declared(d)) = read(Standard::Plugin, &manifest) else {
+            panic!("no declaration");
+        };
+        assert_eq!(d.scope, Scope::Session);
+        assert!(d.job.contains("Claude Code"), "{}", d.job);
+    }
+
+    #[test]
+    fn a_remote_on_this_machine_is_not_recorded() {
+        for local in [
+            "/home/me/mAId",
+            "./x",
+            "../x",
+            "~/repo",
+            "repo",
+            "file:///x",
+        ] {
+            assert_eq!(remote(local), None, "{local}");
+        }
+        assert_eq!(
+            remote("https://github.com/someone/mAId.git").as_deref(),
+            Some("https://github.com/someone/mAId.git")
+        );
+        assert_eq!(
+            remote("git@github.com:someone/mAId.git").as_deref(),
+            Some("github.com:someone/mAId.git")
+        );
+    }
+
+    #[test]
+    fn a_user_or_token_in_a_remote_is_never_recorded() {
+        let got = remote("https://me:tok3n@example.org/me/mAId.git").unwrap();
+        assert_eq!(got, "https://example.org/me/mAId.git");
+        let slashed = remote("https://me:ab/cd@example.org/x").unwrap();
+        assert_eq!(slashed, "https://example.org/x");
+    }
+
+    #[test]
+    fn the_revision_says_when_the_tree_has_changes() {
+        let at = |head: Option<&str>, dirty| {
+            project_source(Checkout {
+                origin: None,
+                head: head.map(str::to_string),
+                dirty,
+                pensieve: None,
+            })
+            .rev
+        };
+        assert_eq!(at(Some("abc"), false).as_deref(), Some("abc"));
+        assert_eq!(at(Some("abc"), true).as_deref(), Some("abc-dirty"));
+        assert_eq!(at(None, true), None);
+    }
+
+    #[test]
+    fn civil_dates_are_right_across_leap_days() {
+        use ghost::time::civil;
+        assert_eq!(civil(0), "1970-01-01");
+        assert_eq!(civil(11_016), "2000-02-29");
+        assert_eq!(civil(20_757), "2026-10-31");
     }
 }

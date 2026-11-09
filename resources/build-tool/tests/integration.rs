@@ -2,7 +2,7 @@
 //! unit suite because they exercise the crate from outside, against the
 //! real repository rather than a synthetic tree.
 
-use build_tool::shared::repo_root;
+use build_tool::shared::{repo_root, skill_roots, GHOST_PLUGIN_DIR};
 use build_tool::stages::check_content;
 
 /// Every unit test builds a synthetic tree in a `TempDir`, so none of
@@ -13,14 +13,12 @@ use build_tool::stages::check_content;
 /// the repo can't be installed, `just test` says so.
 #[test]
 fn shipped_content_validates() {
-    let content = repo_root()
-        .expect("repo root resolves under cargo test")
-        .join("resources/content");
-    match check_content(&content) {
+    let roots = skill_roots(&repo_root().expect("repo root resolves under cargo test"));
+    match check_content(&roots) {
         Ok(n) => assert!(
-            n > 0,
-            "no skills found under {} — the walk is broken",
-            content.display()
+            n > 1,
+            "only {n} skills found under {} — the walk is broken",
+            roots[0].display()
         ),
         Err(errs) => panic!(
             "shipped content is not installable:\n  {}",
@@ -89,4 +87,146 @@ fn shipped_judgement_role_contract() {
         read(&skills.join("kdevkit/setup.md")).contains("judgement:"),
         "the judgement: setting is not documented in kdevkit setup.md"
     );
+}
+
+fn files_under(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = vec![];
+    for e in std::fs::read_dir(dir).unwrap().flatten() {
+        let p = e.path();
+        match p.is_dir() {
+            true => out.extend(files_under(&p)),
+            false => out.push(p),
+        }
+    }
+    out
+}
+
+/// Every shipped skill is a turn bring-in with a job and a rules pointer
+/// that names a few lines, not a whole skill (see project.md "My harness").
+#[test]
+fn shipped_skills_declare_the_contract() {
+    use ghost::contract::{read, rules, Scope, Slot, Standard};
+    let repo = repo_root().unwrap();
+    // The person's skills, and the ghost's own beside the ghost.
+    let dirs: Vec<std::path::PathBuf> = skill_roots(&repo)
+        .iter()
+        .flat_map(|root| std::fs::read_dir(root.join("skills")).unwrap())
+        .map(|e| e.unwrap().path())
+        .collect();
+    let mut names: Vec<_> = dirs
+        .iter()
+        .map(|d| d.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "browser",
+            "kdevkit",
+            "kreviewkit",
+            "kyodakit",
+            "notes",
+            "reflect",
+            "writing-style"
+        ]
+    );
+    for name in &names {
+        let dir = dirs.iter().find(|d| d.ends_with(name)).unwrap();
+        let unit = dir.join("SKILL.md");
+        let Ok(Slot::Declared(d)) = read(Standard::Skill, &unit) else {
+            panic!("{name} is not declared");
+        };
+        assert_eq!(d.scope, Scope::Turn, "{name}");
+        assert!(!d.job.is_empty(), "{name}");
+        // A skill reads a location only where the session names it, so no
+        // run reaches the person's real config through a default.
+        for file in files_under(dir) {
+            let text = std::fs::read_to_string(&file).unwrap_or_default();
+            for default in [
+                "XDG_CONFIG_HOME",
+                "~/.config",
+                "$HOME/.config",
+                "${HOME}/.config",
+            ] {
+                assert!(
+                    !text.contains(default),
+                    "{} names {default}",
+                    file.display()
+                );
+            }
+        }
+        let lines = rules(&unit, d.rules.as_deref().expect(name)).unwrap();
+        let n = lines.lines().count();
+        assert!((2..=30).contains(&n), "{name}: rules are {n} lines");
+        // No skill keeps a file tier: writing-style keeps its rules in the
+        // persona's memory, and reads its older rules files until moved.
+        assert!(d.state.is_none(), "{name} keeps no file tier");
+        let keys: Vec<&str> = d.config.keys().map(String::as_str).collect();
+        match name.as_str() {
+            "writing-style" => {
+                assert_eq!(keys, ["learned", "promoted"]);
+                assert!(d.config.values().all(|k| k.optional));
+                assert!(d.job.contains("persona's memory"), "{}", d.job);
+            }
+            _ => assert!(keys.is_empty(), "{name} binds no config"),
+        }
+        // Claude's grants on state dirs go to exactly the skills with
+        // files to read there.
+        let granted = build_tool::reads::STATEFUL_SKILLS.contains(&name.as_str());
+        assert_eq!(granted, !keys.is_empty(), "{name}: STATEFUL_SKILLS");
+    }
+}
+
+/// The browser server's manifest and the vendor plugin's overlay declare
+/// the contract, and the overlay needs what plain status checks for.
+#[test]
+fn shipped_servers_and_overlays_declare_the_contract() {
+    use build_tool::shared::BRING_INS;
+    use ghost::contract::{read, Scope, Slot, Standard};
+    let content = repo_root().unwrap().join("resources/content");
+    let declared = |standard, rel: &str| match read(standard, &content.join(rel)) {
+        Ok(Slot::Declared(d)) => d,
+        other => panic!("{rel}: {other:?}"),
+    };
+    let server = declared(Standard::Mcp, "servers/browser/server.json");
+    assert_eq!(server.scope, Scope::Turn);
+    for vendor in BRING_INS {
+        for plugin in vendor.plugins {
+            let d = declared(Standard::Plugin, &format!("overlays/{plugin}/plugin.json"));
+            assert_eq!(d.scope, Scope::Turn);
+            assert_eq!(
+                d.requires, vendor.needs,
+                "{plugin}: requires drifted from needs"
+            );
+        }
+    }
+}
+
+/// The reflector reads and never writes: it reads untrusted session
+/// content, so it holds no write authority (see project.md "My harness",
+/// Adaptation). The reflect skill names the core the flake fills in, and
+/// the reflector it dispatches.
+#[test]
+fn the_reflector_reads_only_and_the_reflect_skill_names_it_and_the_core() {
+    #[derive(serde::Deserialize)]
+    struct Agent {
+        name: String,
+        description: String,
+        tools: String,
+    }
+    let plugin = repo_root().unwrap().join(GHOST_PLUGIN_DIR);
+    let text = std::fs::read_to_string(plugin.join("agents/reflector.md")).unwrap();
+    let agent = gray_matter::Matter::<gray_matter::engine::YAML>::new()
+        .parse::<Agent>(&text)
+        .unwrap()
+        .data
+        .unwrap();
+    assert_eq!(agent.name, "reflector");
+    assert!(!agent.description.is_empty());
+    let tools: Vec<&str> = agent.tools.split(',').map(str::trim).collect();
+    assert_eq!(tools, ["Read", "Grep", "Glob"]);
+    let skill = std::fs::read_to_string(plugin.join("skills/reflect/SKILL.md")).unwrap();
+    assert!(skill.contains("`maid:reflector`"));
+    assert!(skill.contains("@maid-core@ adaptation --session"));
+    assert!(skill.contains("${CLAUDE_SESSION_ID}"));
 }

@@ -1,0 +1,1 @@
+{"format": 1, "part": "v17", "harnesses": {"claude": [{"kind": "setting", "name": "x.y", "value": "nested"}]}}

@@ -5,8 +5,13 @@
 //! order (`stages` → `harness` → `shared`).
 
 use anyhow::{anyhow, Context, Result};
+use shell_claude::config_dir::ConfigDir;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+
+/// The PATH rule every reader shares; see `ghost::environment`.
+pub use ghost::environment::find_on;
 
 /// A bad invocation — an unknown agent or kind, a kind belonging to the
 /// other stage. Distinct from a test failure so a wrapper can tell "your
@@ -67,7 +72,7 @@ pub enum Kind {
 /// One coding agent mAId deploys to. Rows below are keyed by this, so
 /// the variant — not a string — is what identifies an agent; the only
 /// place a name is spelled is `Agent::name`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Agent {
     Claude,
     Kiro,
@@ -105,20 +110,80 @@ pub const PLUGIN_AGENTS: &[(Agent, &str, Kind)] = &[
 
 /// The plugin and the marketplace it comes from, as both CLIs name them.
 pub const PLUGIN_ID: &str = "maid@maid";
+
+/// The browser-control server, as every harness lists it.
+pub const BROWSER_SERVER: &str = "chrome-devtools";
 pub const MARKETPLACE: &str = "maid";
+
+/// A vendor's plugin marketplace mAId registers with each plugin agent
+/// through its own CLI, and the plugins it installs from it. The content
+/// stays the vendor's: nothing of it is copied into the profile. (A ghost
+/// bring-in, what a part brings in, is `ghost::parts::BringIn`.)
+#[derive(Debug, PartialEq, Eq)]
+pub struct BringIn {
+    /// The name both CLIs list the marketplace under.
+    pub marketplace: &'static str,
+    /// A public git URL.
+    pub source: &'static str,
+    /// The commit codex is pinned to. claude's CLI takes only a branch or
+    /// tag, so it holds the commit current when it was first registered.
+    pub rev: &'static str,
+    pub plugins: &'static [&'static str],
+    /// Commands the plugins' skills run, which the environment provides;
+    /// status names any not on PATH.
+    pub needs: &'static [&'static str],
+}
+
+impl BringIn {
+    /// A plugin's id as both CLIs list it.
+    pub fn plugin_id(&self, plugin: &str) -> String {
+        format!("{plugin}@{}", self.marketplace)
+    }
+}
+
+/// The vendor marketplaces `just install` brings in.
+pub const BRING_INS: &[BringIn] = &[BringIn {
+    marketplace: "anthropic-agent-skills",
+    source: "https://github.com/anthropics/skills.git",
+    rev: "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+    plugins: &["document-skills"],
+    needs: &[
+        "python",
+        "node",
+        "soffice",
+        "pandoc",
+        "markitdown",
+        "qpdf",
+        "pdftotext",
+        "pdftoppm",
+        "pdfimages",
+        "magick",
+    ],
+}];
 
 /// Where flake.nix puts the marketplace in the profile.
 pub const PROFILE_MARKETPLACE_DIR: &str = "share/maid/marketplace";
 
-/// The marketplace dir the agents are pointed at: a real dir beside the
-/// profile whose entries link into it. Codex records a marketplace by its
-/// resolved path, so registering the profile itself would pin one
-/// generation's store path.
+/// The marketplace dir codex is pointed at: a real dir beside the profile
+/// whose entries link into it. Codex records a marketplace by its resolved
+/// path, so registering the profile itself would pin one generation's
+/// store path.
 pub fn marketplace_root(profile: &Path) -> PathBuf {
     profile
         .parent()
         .unwrap_or(Path::new("/"))
         .join("marketplace")
+}
+
+/// The marketplace dir `agent` is pointed at. Claude Code refuses a plugin
+/// file that resolves outside its marketplace dir, the dir taken as
+/// resolved, so it takes the profile's own; it records the path as given,
+/// so the profile link still moves it to each generation.
+pub fn agent_marketplace(agent: Agent, profile: &Path) -> PathBuf {
+    match agent {
+        Agent::Claude => profile.join(PROFILE_MARKETPLACE_DIR),
+        _ => marketplace_root(profile),
+    }
 }
 
 impl Agent {
@@ -185,6 +250,21 @@ impl Agent {
         self.entry().map(|(home_sub, ..)| home.join(home_sub))
     }
 
+    /// The dir under `$HOME` this agent reads standalone skills from: its
+    /// REGISTRY row, or for a plugin agent where mAId linked skills before
+    /// it shipped a plugin.
+    pub fn user_skills_dir(self) -> &'static str {
+        self.entry()
+            .map(|(home_sub, ..)| *home_sub)
+            .or_else(|| {
+                PLUGIN_AGENTS
+                    .iter()
+                    .find(|(a, ..)| *a == self)
+                    .map(|(_, sub, _)| *sub)
+            })
+            .expect("every agent has a skills dir")
+    }
+
     /// Where this agent reads `<skill>`'s SKILL.md once installed — the
     /// post-install source, i.e. what the deployment exposes.
     pub fn installed_skill(self, home: &Path, skill: &str) -> Option<PathBuf> {
@@ -229,22 +309,38 @@ pub fn validate_agents(agents: Option<&str>) -> Result<Option<Vec<Agent>>> {
     }
 }
 
-/// Where skills are authored in the checkout.
+/// Where the person's resources are authored in the checkout.
 pub const CONTENT_DIR: &str = "resources/content";
+
+/// The ghost's own Claude plugin in the checkout: the skill and the agent
+/// that belong to the ghost are authored under it, and the build copies
+/// them into the plugin beside the rest.
+pub const GHOST_PLUGIN_DIR: &str = "ghost-in-shell/shell/claude/plugin";
+
+/// Every root a skill may be authored under, in the order they are read.
+pub fn skill_roots(checkout: &Path) -> Vec<PathBuf> {
+    [CONTENT_DIR, GHOST_PLUGIN_DIR]
+        .iter()
+        .map(|d| checkout.join(d))
+        .collect()
+}
 
 /// Where flake.nix puts that tree in the profile. Every REGISTRY row
 /// names its `skills/` child.
 pub const PROFILE_CONTENT_DIR: &str = "share/maid";
 
 /// Where `<skill>`'s SKILL.md lives in the checkout — the pre-install
-/// source. Agent-independent by design: before install there is only
-/// one copy, which is why the explicit test kinds need no deploy.
+/// source, from the first root that has it. Agent-independent by design:
+/// before install there is only one copy, which is why the explicit test
+/// kinds need no deploy.
 pub fn checkout_skill(checkout: &Path, skill: &str) -> PathBuf {
-    checkout
-        .join(CONTENT_DIR)
-        .join("skills")
-        .join(skill)
-        .join("SKILL.md")
+    let at = |root: &Path| root.join("skills").join(skill).join("SKILL.md");
+    let roots = skill_roots(checkout);
+    roots
+        .iter()
+        .map(|r| at(r))
+        .find(|p| p.is_file())
+        .unwrap_or_else(|| at(&roots[0]))
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -284,11 +380,69 @@ pub fn profile_dir() -> Result<PathBuf> {
         .ok_or_else(|| anyhow!("MAID_PROFILE must be an absolute path (got {raw:?})"))
 }
 
+/// Where every part of my harness keeps its part list. The Justfile owns
+/// where it is and passes it in, as for the profile.
+pub fn parts_dir() -> Result<PathBuf> {
+    let raw = std::env::var("MY_HARNESS_PARTS")
+        .context("MY_HARNESS_PARTS not set — invoke via `just` (resources/Justfile sets it)")?;
+    let dir = PathBuf::from(&raw);
+    dir.is_absolute()
+        .then_some(dir)
+        .ok_or_else(|| anyhow!("MY_HARNESS_PARTS must be an absolute path (got {raw:?})"))
+}
+
+/// The file naming mAId's personal memory store. The Justfile owns where
+/// it is and passes it in, as for the parts dir.
+pub fn memory_store_file() -> Result<PathBuf> {
+    let raw = std::env::var("MAID_MEMORY_STORE")
+        .context("MAID_MEMORY_STORE not set — invoke via `just` (resources/Justfile sets it)")?;
+    let file = PathBuf::from(&raw);
+    file.is_absolute()
+        .then_some(file)
+        .ok_or_else(|| anyhow!("MAID_MEMORY_STORE must be an absolute path (got {raw:?})"))
+}
+
+/// mAId's user-owned config dir, `${XDG_CONFIG_HOME:-~/.config}/maid`: skill
+/// state dirs, the browser allowlist, the memory store's file.
+/// The Justfile owns where it is and passes it in, as for the parts dir.
+pub fn config_dir() -> Result<PathBuf> {
+    let raw = std::env::var("MAID_CONFIG")
+        .context("MAID_CONFIG not set — invoke via `just` (resources/Justfile sets it)")?;
+    let dir = PathBuf::from(&raw);
+    dir.is_absolute()
+        .then_some(dir)
+        .ok_or_else(|| anyhow!("MAID_CONFIG must be an absolute path (got {raw:?})"))
+}
+
+/// codex's own home, where it keeps its memories when they are on.
+pub fn codex_home() -> Result<PathBuf> {
+    match std::env::var("CODEX_HOME") {
+        Ok(raw) if !raw.is_empty() => Ok(PathBuf::from(raw)),
+        _ => Ok(home_dir()?.join(".codex")),
+    }
+}
+
+/// Claude Code's user config, as the environment places it.
+pub fn claude_config() -> Result<ConfigDir> {
+    ConfigDir::from_env()?.ok_or_else(|| anyhow!("HOME is not set"))
+}
+
+/// Start `claude` for `config`: its HOME, and `CLAUDE_CONFIG_DIR` exactly
+/// as `config` has it, so the CLI and the files mAId reads agree.
+pub fn claude_env<'a>(cmd: &'a mut Command, config: &ConfigDir) -> &'a mut Command {
+    if let Some(h) = config.home() {
+        cmd.env("HOME", h);
+    }
+    match config.var() {
+        Some(v) => cmd.env("CLAUDE_CONFIG_DIR", v),
+        None => cmd.env_remove("CLAUDE_CONFIG_DIR"),
+    }
+}
+
 /// Whether a program is on PATH. Scans PATH directly: `command -v` is a
 /// shell builtin, so spawning it always fails.
 pub fn on_path(program: &str) -> bool {
-    std::env::var_os("PATH")
-        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
+    find_on(std::env::var_os("PATH").as_deref(), program).is_some()
 }
 
 pub fn home_dir() -> Result<PathBuf> {
@@ -306,6 +460,24 @@ pub fn home_dir() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_started_claude_gets_the_config_dir_exactly_as_resolved() {
+        let var = |cmd: &Command| {
+            cmd.get_envs()
+                .find(|(k, _)| *k == "CLAUDE_CONFIG_DIR")
+                .map(|(_, v)| v.map(PathBuf::from))
+        };
+        let mut cmd = Command::new("claude");
+        cmd.env("CLAUDE_CONFIG_DIR", "/elsewhere");
+        claude_env(&mut cmd, &ConfigDir::new(Path::new("/h"), None));
+        assert_eq!(var(&cmd), Some(None), "removed, not inherited");
+        claude_env(
+            &mut cmd,
+            &ConfigDir::new(Path::new("/h"), Some(Path::new("/c"))),
+        );
+        assert_eq!(var(&cmd), Some(Some(PathBuf::from("/c"))));
+    }
 
     // ── agent selector (--agent) ─────────────────────────────────
 
@@ -397,6 +569,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn claude_takes_the_profiles_marketplace_and_codex_the_links_beside_it() {
+        let profile = Path::new("/s/maid/profile");
+        assert_eq!(
+            agent_marketplace(Agent::Claude, profile),
+            Path::new("/s/maid/profile/share/maid/marketplace")
+        );
+        assert_eq!(
+            agent_marketplace(Agent::Codex, profile),
+            Path::new("/s/maid/marketplace")
+        );
+    }
+
     /// The linked roots and the old plugin-agent link paths, spelled out
     /// literally: a row edited to the wrong home path is otherwise
     /// invisible here, since every other assertion derives from the rows.
@@ -426,11 +611,44 @@ mod tests {
         );
     }
 
+    /// Spelled out: a row edited to the wrong URL or a short commit would
+    /// otherwise register something else, or fail only at install.
     #[test]
-    fn checkout_skill_is_agent_independent() {
+    fn the_bring_ins_are_the_vendors_document_skills_pinned_to_a_commit() {
+        let [b] = BRING_INS else {
+            panic!("one bring-in expected")
+        };
+        assert_eq!(b.marketplace, "anthropic-agent-skills");
+        assert_eq!(b.source, "https://github.com/anthropics/skills.git");
+        assert_eq!(b.plugins, ["document-skills"]);
+        assert_eq!(
+            b.plugin_id("document-skills"),
+            "document-skills@anthropic-agent-skills"
+        );
+        assert!(
+            b.rev.len() == 40 && b.rev.bytes().all(|c| c.is_ascii_hexdigit()),
+            "{}",
+            b.rev
+        );
+        assert!(b.needs.contains(&"soffice") && b.needs.contains(&"python"));
+    }
+
+    #[test]
+    fn checkout_skill_is_agent_independent_and_reads_either_root() {
         assert_eq!(
             checkout_skill(Path::new("/repo"), "notes"),
-            Path::new("/repo/resources/content/skills/notes/SKILL.md")
+            Path::new("/repo/resources/content/skills/notes/SKILL.md"),
+            "a skill neither root has is named in the first"
+        );
+        let repo = repo_root().expect("repo root resolves under cargo test");
+        assert_eq!(
+            checkout_skill(&repo, "notes"),
+            repo.join("resources/content/skills/notes/SKILL.md")
+        );
+        assert_eq!(
+            checkout_skill(&repo, "reflect"),
+            repo.join("ghost-in-shell/shell/claude/plugin/skills/reflect/SKILL.md"),
+            "the ghost's own skill is authored with the ghost"
         );
     }
 

@@ -13,7 +13,7 @@
 #
 # Tests the committed HEAD (the clones see nothing uncommitted). Touches
 # only what mAId owns. However it exits, it ends with mAId installed from
-# this checkout and the user's allowlist and learned-rules files as they
+# this checkout and the user's allowlist and style-rules files as they
 # were. Step 6 uninstalls, which removes the profile and its history, so
 # afterwards there is no earlier install to roll back to.
 set -uo pipefail
@@ -32,6 +32,7 @@ marketplace=$(dirname "$profile")/marketplace
 config=${XDG_CONFIG_HOME:-$HOME/.config}/maid
 allowlist=$config/browser-allowlist
 learned=$config/writing-style/learned.md
+promoted=$config/writing-style/promoted.md
 kiro_dir=$HOME/.kiro/skills
 work=$(mktemp -d)
 # Share the build cache, so each clone's install rebuilds rather than
@@ -159,7 +160,7 @@ else
 fi
 
 # ── 3 ────────────────────────────────────────────────────────────
-step "3. the browser server answers MCP initialize with only HOME set"
+step "3. the browser and memory servers answer MCP initialize with only HOME set"
 browser_home=$HOME
 if ! grep -qsv '^[[:space:]]*\(#\|$\)' "$HOME/.config/maid/browser-allowlist"; then
   # No site on the user's list, so the launcher would refuse to start.
@@ -174,6 +175,13 @@ server=$(jq -r 'select(.id == 1) | .result.serverInfo.name // empty' <<<"$reply"
 check "$profile/bin/maid-browser-mcp answers initialize${server:+ (server: $server)}" test -n "$server"
 [ -n "$server" ] || sed 's/^/  /' "$work/mcp.err"
 
+# The memory server, on a temp store: its instructions carry the store's about.md.
+mkdir -p "$work/store/memory"
+echo "Belongs here: verify-install's test memories." >"$work/store/about.md"
+reply=$({ echo "$init"; sleep 2; } | timeout 10 env -i HOME="$work" "$profile/bin/pensieve" --store "$work/store" 2>"$work/pensieve.err" | head -n 1)
+check "$profile/bin/pensieve answers initialize with the store's about.md" \
+  grep -q "verify-install's test memories" <<<"$(jq -r '.result.instructions // empty' <<<"$reply" 2>/dev/null)"
+
 # ── 4 ────────────────────────────────────────────────────────────
 step "4. nothing mAId installed names a checkout"
 {
@@ -182,6 +190,7 @@ step "4. nothing mAId installed names a checkout"
   codex plugin marketplace list --json 2>/dev/null | jq -c '.marketplaces[]? | select(.name == "maid")'
   codex_plugin
   claude mcp get chrome-devtools 2>/dev/null
+  claude mcp get personal-memory 2>/dev/null
   codex mcp get chrome-devtools 2>/dev/null
   # Only mAId's names: the rest of kiro's dir is the user's.
   for link in $(printf "$kiro_dir/%s " $shipped) "$HOME/.gemini/config/skills" "$marketplace"/* "$marketplace"/.[!.]*; do
@@ -235,7 +244,7 @@ asked lacks
 
 # ── 6 ────────────────────────────────────────────────────────────
 step "6. just uninstall keeps user data; then reinstall from this checkout"
-for f in "$allowlist" "$learned"; do
+for f in "$allowlist" "$learned" "$promoted"; do
   if [ ! -e "$f" ]; then
     # Comment-only, so it enables nothing; removed at the end, with any
     # directory made for it.
@@ -248,11 +257,11 @@ for f in "$allowlist" "$learned"; do
     created+=("$f")
   fi
 done
-before=$(sha256sum "$allowlist" "$learned")
+before=$(sha256sum "$allowlist" "$learned" "$promoted")
 just uninstall >"$work/uninstall.log" 2>&1 || { tail -n 20 "$work/uninstall.log"; fail "just uninstall"; }
 check "neither claude nor codex lists maid@maid" none_listed
 check "kiro's mAId skill links are gone" kiro_none
-check "the allowlist and learned-rules files are untouched" eval '[ "$(sha256sum "$allowlist" "$learned" 2>/dev/null)" = "$before" ]'
+check "the allowlist and style-rules files are untouched" eval '[ "$(sha256sum "$allowlist" "$learned" "$promoted" 2>/dev/null)" = "$before" ]'
 install_from "$here" "$work/install-here.log" && reinstall=0
 check "just install from this checkout" test "$reinstall" = 0
 check "claude and codex list this checkout's $(built_version)" listed_at "$(built_version)"

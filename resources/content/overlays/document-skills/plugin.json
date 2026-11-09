@@ -1,0 +1,14 @@
+{
+  "name": "document-skills",
+  "description": "The vendor's document skills (docx, xlsx, pptx, pdf), borrowed. This overlay carries only their declaration; the vendor's own files are never changed.",
+  "extensions": {
+    "my-harness": {
+      "scope": "turn",
+      "job": "read, create or edit Word, Excel, PowerPoint and PDF files",
+      "signals": {
+        "files": ["*.docx", "*.xlsx", "*.xlsm", "*.csv", "*.tsv", "*.pptx", "*.pdf"]
+      },
+      "requires": ["python", "node", "soffice", "pandoc", "markitdown", "qpdf", "pdftotext", "pdftoppm", "pdfimages", "magick"]
+    }
+  }
+}

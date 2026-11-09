@@ -1,0 +1,29 @@
+{
+  "about": "an empty or relative PATH entry is skipped, even with the CLI in the working dir: not on PATH",
+  "path": [
+    "",
+    "."
+  ],
+  "clis": {
+    "claude": {
+      "plugin list --json": {
+        "stdout": "[{\"id\":\"p\",\"scope\":\"user\"}]",
+        "stderr": "",
+        "exit": 0
+      }
+    }
+  },
+  "expect": {
+    "exit": 0,
+    "entries": [
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "plugin",
+        "name": "p",
+        "state": "not checkable"
+      }
+    ],
+    "refused": []
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "about": "rule 14: a value that is not a string is not checkable before the settings file is read, so an unreadable file does not change it; a string value reads the file",
+  "expect": {
+    "exit": 1,
+    "entries": [
+      {"harness": "claude", "part": "p", "kind": "setting", "name": "s", "state": "not checkable"},
+      {"harness": "claude", "part": "p", "kind": "setting", "name": "s", "state": "unreadable"}
+    ],
+    "refused": []
+  }
+}

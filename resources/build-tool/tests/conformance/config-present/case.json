@@ -1,0 +1,51 @@
+{
+  "about": "an absent config lists nothing; a key counts whatever its value, null included; keys match exactly",
+  "expect": {
+    "exit": 1,
+    "entries": [
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "mcp",
+        "name": "m",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "setting",
+        "name": "k",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "setting",
+        "name": "K",
+        "state": "missing"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "mcp",
+        "name": "m",
+        "state": "missing"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "mcp",
+        "name": "n",
+        "state": "present"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "setting",
+        "name": "k",
+        "state": "missing"
+      }
+    ],
+    "refused": []
+  }
+}

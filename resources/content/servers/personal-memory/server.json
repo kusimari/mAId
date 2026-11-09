@@ -1,0 +1,22 @@
+{
+  "name": "io.github.kusimari/personal-memory",
+  "description": "The personal persona's memory: pensieve on the personal store.",
+  "version": "0.1.0",
+  "repository": {
+    "url": "https://github.com/kusimari/pensieve",
+    "source": "github"
+  },
+  "_meta": {
+    "my-harness": {
+      "scope": "session",
+      "job": "the personal persona's memory: what agents keep across sessions",
+      "package": "pensieve",
+      "config": {
+        "store": { "about": "the persona's store, a git checkout the person owns" },
+        "index": { "about": "the memory index, a path relative to store" },
+        "serve": { "about": "the command that serves store over MCP stdio, a JSON array of strings" }
+      },
+      "state": { "permanent": "store", "promote": "off" }
+    }
+  }
+}

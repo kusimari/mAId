@@ -1,0 +1,40 @@
+{
+  "description": "The core's carriers on Claude Code: each command calls one of its entry points.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|fork",
+        "hooks": [
+          { "type": "command", "command": "@maid-core@ genome --carrier append --input - --claude-event SessionStart", "timeout": 10 }
+        ]
+      },
+      {
+        "matcher": "clear|compact",
+        "hooks": [
+          { "type": "command", "command": "@maid-core@ genome --carrier append --reset --input - --claude-event SessionStart", "timeout": 10 }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "@maid-core@ genome --carrier append --slice sub-session --input - --claude-event SubagentStart", "timeout": 10 }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "@maid-core@ expression --carrier append --input - --claude-event UserPromptSubmit", "timeout": 10 }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          { "type": "command", "command": "@maid-core@ sleep --carrier append --input - --claude-event SessionEnd", "timeout": 10 }
+        ]
+      }
+    ]
+  }
+}

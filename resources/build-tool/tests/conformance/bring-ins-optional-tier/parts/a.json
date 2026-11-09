@@ -1,0 +1,12 @@
+{
+  "format": 1,
+  "part": "a",
+  "persona": "personal",
+  "harnesses": {},
+  "bring_ins": [
+    { "name": "fresh", "unit": { "standard": "skill", "path": "@RUN@/units/w/SKILL.md" },
+      "values": { "learned": "@RUN@/units/w/learned.md", "kept": "@RUN@/units/w" } },
+    { "name": "kept-gone", "unit": { "standard": "skill", "path": "@RUN@/units/w/SKILL.md" },
+      "values": { "learned": "@RUN@/units/w/learned.md", "kept": "@RUN@/units/gone" } }
+  ]
+}

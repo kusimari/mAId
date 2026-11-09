@@ -8,9 +8,14 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # The memory MCP server, pinned to its published commit.
+    pensieve = {
+      url = "github:kusimari/pensieve/4ff98e71e442a8c5cccdb34bbab45a2c89786a04";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, rust-overlay }:
+  outputs = { self, nixpkgs, flake-utils, rust-overlay, pensieve }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -40,6 +45,36 @@
           '';
         };
 
+        pensieveServer = pensieve.packages.${system}.default;
+
+        # The ghost's own plugin assets, which the build copies in: they
+        # are no input to the binary, so editing one does not rebuild it.
+        ghostPlugin = ./ghost-in-shell/shell/claude/plugin;
+
+        # The core every carrier calls, from the workspace's own lock. Only
+        # the workspace's crates go in, so a content edit does not rebuild it.
+        maid-core = (pkgs.makeRustPlatform { cargo = rustToolchain; rustc = rustToolchain; }).buildRustPackage {
+          pname = "maid-core";
+          version = "0.1.0";
+          src = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = pkgs.lib.fileset.unions [
+              ./Cargo.toml
+              ./Cargo.lock
+              # Not the plugin assets or the README: the binary is no
+              # input to them, so editing one must not rebuild it.
+              (pkgs.lib.fileset.difference ./ghost-in-shell
+                (pkgs.lib.fileset.unions [ ghostPlugin ./ghost-in-shell/README.md ]))
+              ./resources/build-tool
+              ./kaimux
+            ];
+          };
+          cargoLock.lockFile = ./Cargo.lock;
+          cargoBuildFlags = [ "-p" "shell-claude" "--bin" "maid-core" ];
+          # `just test` runs the tests; this builds the binary.
+          doCheck = false;
+        };
+
         maid-browser-mcp = pkgs.writeShellApplication {
           name = "maid-browser-mcp";
           runtimeInputs = [ chrome-devtools-mcp ];
@@ -63,12 +98,27 @@
             policy.installation = "AVAILABLE";
           } ];
         };
+        # `extensions` declares the core's adapter on Claude Code (project.md
+        # "My harness"). Claude Code ignores the field at load time; only
+        # `claude plugin validate --strict` refuses it.
         claudePlugin = manifest "claude-plugin.json" {
           name = "maid";
           version = "@version@";
           inherit description;
           author.name = "mAId";
+          extensions."my-harness" = builtins.fromJSON (builtins.readFile "${ghostPlugin}/my-harness.json");
+          # Not the default `hooks/hooks.json` and `.mcp.json`: codex reads
+          # those from the same plugin dir.
+          hooks = "./hooks/claude.json";
+          mcpServers = "./claude-mcp.json";
         };
+        # Every hook and server command names the core as `@maid-core@`:
+        # this build's, so the plugin and its core are one build and the
+        # plugin's version hash moves with the core.
+        withCore = name: file: pkgs.writeText name (builtins.replaceStrings
+          [ "@maid-core@" ] [ "${maid-core}/bin/maid-core" ] (builtins.readFile file));
+        claudeHooks = withCore "claude-hooks.json" "${ghostPlugin}/hooks.json";
+        claudeMcp = withCore "claude-mcp.json" "${ghostPlugin}/mcp.json";
         codexPlugin = manifest "codex-plugin.json" {
           name = "maid";
           version = "@version@";
@@ -78,7 +128,7 @@
       in
       {
         packages = {
-          inherit chrome-devtools-mcp maid-browser-mcp;
+          inherit chrome-devtools-mcp maid-browser-mcp maid-core;
 
           # What `just install` puts in the mAId profile: the plugin
           # marketplace claude and codex install from, and the skills
@@ -87,11 +137,24 @@
           default = pkgs.runCommand "maid" { } ''
             m=$out/share/maid/marketplace
             p=$m/plugins/maid
-            mkdir -p $m/.claude-plugin $m/.agents/plugins $p/.claude-plugin $p/.codex-plugin $out/bin
+            mkdir -p $m/.claude-plugin $m/.agents/plugins $p/.claude-plugin $p/.codex-plugin $p/hooks $out/bin
             cp -r ${./resources/content/skills} $p/skills
+            # The ghost's own skill and agent are authored with the ghost.
+            chmod u+w $p/skills
+            cp -r ${ghostPlugin}/skills/reflect $p/skills/reflect
+            cp -r ${ghostPlugin}/agents $p/agents
+            # The reflect skill names the core as `@maid-core@`: this build's.
+            chmod u+w $p/skills/reflect $p/skills/reflect/SKILL.md
+            sed -i "s|@maid-core@|${maid-core}/bin/maid-core|g" $p/skills/reflect/SKILL.md
+            # Bring-in declarations outside the plugin: MCP servers', and
+            # overlays for borrowed units mAId does not own.
+            cp -r ${./resources/content/servers} $out/share/maid/servers
+            cp -r ${./resources/content/overlays} $out/share/maid/overlays
             cp ${claudeMarketplace} $m/.claude-plugin/marketplace.json
             cp ${codexMarketplace} $m/.agents/plugins/marketplace.json
             cp ${claudePlugin} $p/.claude-plugin/plugin.json
+            cp ${claudeHooks} $p/hooks/claude.json
+            cp ${claudeMcp} $p/claude-mcp.json
             cp ${codexPlugin} $p/.codex-plugin/plugin.json
             # Both agents cache a plugin by version, so it must change
             # exactly when the plugin's content does.
@@ -100,6 +163,8 @@
             sed -i "s/@version@/1.0.0-$hash/" $p/.claude-plugin/plugin.json $p/.codex-plugin/plugin.json
             ln -s marketplace/plugins/maid/skills $out/share/maid/skills
             ln -s ${maid-browser-mcp}/bin/maid-browser-mcp $out/bin/maid-browser-mcp
+            ln -s ${pensieveServer}/bin/pensieve $out/bin/pensieve
+            ln -s ${maid-core}/bin/maid-core $out/bin/maid-core
           '';
         };
 
@@ -107,8 +172,11 @@
           buildInputs = [
             rustToolchain
             pkgs.just
-            pkgs.jq # the install tests read the agents' JSON
+            pkgs.jq # the install tests read the agents' JSON; install edits kiro's MCP config
           ];
+          # The core's adaptation test writes a habit through the real
+          # memory server, the one the profile ships.
+          MAID_TEST_PENSIEVE = "${pensieveServer}/bin/pensieve";
         };
       }
     );

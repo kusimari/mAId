@@ -8,18 +8,22 @@
 //!   just resources::install-skills [agent]    install the claude/codex plugin, link the rest at the profile
 //!   just resources::uninstall-skills [agent]  remove the plugin and the managed symlinks
 //!   just resources::status-skills [agent]     report each plugin's version and each managed symlink
+//!   just resources::status-whole [agent]      check every part's list against each harness
 //!   just resources::smoke-skills [agent]      verify against the deployed tree
 //!   just resources::verify-skills [agent]     both verification stages
 //! An optional `--agent <claude|kiro|codex|agy>` scopes any of them to one
 //! coding agent (the verification verbs take a comma list); the default
 //! is all of them.
 
-use anyhow::Result;
-use build_tool::deploy::{Deployment, NoDeploy, Plugins, Symlinks};
+use anyhow::{Context, Result};
+use build_tool::deploy::{BringIns, Deployment, NoDeploy, Plugins, Symlinks};
 use build_tool::harness::{Selection, Stage};
+use build_tool::memory;
+use build_tool::part::What;
 use build_tool::shared::{
-    home_dir, profile_dir, repo_root, usage, validate_agent, validate_agents, UsageError,
-    CONTENT_DIR, PROFILE_CONTENT_DIR,
+    claude_config, codex_home, config_dir, home_dir, memory_store_file, parts_dir, profile_dir,
+    repo_root, skill_roots, usage, validate_agent, validate_agents, Agent, UsageError, BRING_INS,
+    PROFILE_CONTENT_DIR,
 };
 use build_tool::stages;
 use clap::{Parser, Subcommand};
@@ -99,12 +103,60 @@ enum Cmd {
     Uninstall(DeployArgs),
     /// Report what is deployed and whether it points where it should.
     Status(DeployArgs),
+    /// Check every part list in the parts dir against each harness's own
+    /// listing or config. Exits 1 when anything placed is missing or
+    /// unreadable, or a list was refused.
+    Whole {
+        /// Scope to one coding agent (claude|kiro|codex|agy); default all.
+        #[arg(long)]
+        agent: Option<String>,
+    },
     /// Verify skills AFTER install, from the deployed tree: the kinds
     /// where the agent must find the skill among everything installed.
     Smoke(VerifyArgs),
     /// Both verification stages. Runs the second even when the first
     /// reports failures, so one sweep is one report.
     Verify(VerifyArgs),
+    /// Record, in mAId's part list, what a step outside install placed on
+    /// one agent: replaces that agent's entries of this kind and scope.
+    Record {
+        #[arg(long)]
+        agent: String,
+        /// skill|mcp|agent|plugin|marketplace|setting
+        #[arg(long)]
+        kind: String,
+        /// Where in the agent, when it has more than one place.
+        #[arg(long)]
+        scope: Option<String>,
+        /// The step meant to place these and did not, and why.
+        #[arg(long)]
+        skipped: Option<String>,
+        /// Replace only the entries with this name, keeping the kind's others.
+        #[arg(long)]
+        only: Option<String>,
+        /// What was placed; none clears this kind and scope.
+        names: Vec<String>,
+    },
+    /// The personal memory store: set it, report it, harvest into a store.
+    #[command(subcommand)]
+    Memory(MemoryCmd),
+}
+
+#[derive(Subcommand)]
+enum MemoryCmd {
+    /// Set the personal store (an existing checkout).
+    SetStore { path: std::path::PathBuf },
+    /// Report the store, its server on claude, and Claude's own memory.
+    Status,
+    /// Copy each harness's own memory into a store dir, leaving the originals.
+    Harvest {
+        /// The store dir; memories land in its `memory/`.
+        #[arg(long)]
+        to: std::path::PathBuf,
+        /// Only Claude's projects whose working directory starts with this.
+        #[arg(long)]
+        project: Option<String>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -133,7 +185,10 @@ fn run(cli: Cli) -> Result<u8> {
     // Lazy, because `check` must work with no $HOME at all — it carries
     // each skill inline, so resolving a home would reintroduce the
     // coupling that stage exists to avoid.
-    let deployment = || -> Result<Deployment> {
+    //
+    // Only install and uninstall act on what mAId owns, so only they stop
+    // on a part list that cannot be read; the rest report it.
+    let deployment_for = |acting: bool| -> Result<Deployment> {
         Ok(Deployment {
             links: Symlinks {
                 home: home_dir()?,
@@ -141,34 +196,139 @@ fn run(cli: Cli) -> Result<u8> {
             },
             plugins: Plugins {
                 home: home_dir()?,
+                claude: claude_config()?,
                 profile: profile_dir()?,
+            },
+            bring_ins: match acting {
+                true => BringIns::new(home_dir()?, claude_config()?, BRING_INS, &parts_dir()?)?,
+                false => {
+                    BringIns::reporting(home_dir()?, claude_config()?, BRING_INS, &parts_dir()?)
+                }
             },
         })
     };
+    let deployment = || deployment_for(false);
     match cli.cmd {
         // No deployment target at all: the guarantee is structural.
         Cmd::Check(args) => verify(Stage::Check, args, &NoDeploy, &root, false),
-        Cmd::Validate => stages::cmd_validate(&root.join(CONTENT_DIR)),
-        Cmd::Install(a) => stages::cmd_install(
-            &deployment()?,
-            &profile_dir()?.join(PROFILE_CONTENT_DIR),
-            a.dry_run,
-            a.force,
-            validate_agent(a.agent.as_deref())?,
-        ),
-        Cmd::Uninstall(a) => stages::cmd_uninstall(
-            &deployment()?,
-            a.dry_run,
-            a.force,
-            validate_agent(a.agent.as_deref())?,
-        ),
+        // In the checkout a skill is authored under the person's
+        // resources or with the ghost; the build puts them in one place.
+        Cmd::Validate => stages::cmd_validate(&skill_roots(&root)),
+        Cmd::Install(a) => {
+            let agent = validate_agent(a.agent.as_deref())?;
+            let rc = stages::cmd_install(
+                &deployment_for(true)?,
+                &profile_dir()?.join(PROFILE_CONTENT_DIR),
+                &parts_dir()?,
+                a.dry_run,
+                a.force,
+                agent,
+            )?;
+            let memory = stages::cmd_install_memory(
+                &claude_config()?,
+                &memory_store_file()?,
+                &profile_dir()?,
+                &parts_dir()?,
+                a.dry_run,
+                agent,
+            )?;
+            let reads = stages::cmd_install_reads(
+                &claude_config()?,
+                &profile_dir()?,
+                &config_dir()?,
+                &parts_dir()?,
+                a.dry_run,
+                agent,
+            )?;
+            // What the ghost is made of, whichever harness was selected.
+            let bring_ins = stages::cmd_install_bring_ins(
+                &parts_dir()?,
+                &profile_dir()?,
+                &config_dir()?,
+                stages::Checkout::read(&root),
+                &memory_store_file()?,
+                BRING_INS,
+                a.dry_run,
+            )?;
+            Ok(rc.max(memory).max(reads).max(bring_ins))
+        }
+        Cmd::Uninstall(a) => {
+            let agent = validate_agent(a.agent.as_deref())?;
+            let rc = stages::cmd_uninstall(
+                &deployment_for(true)?,
+                &parts_dir()?,
+                a.dry_run,
+                a.force,
+                agent,
+            )?;
+            let memory = stages::cmd_uninstall_memory(
+                &claude_config()?,
+                &profile_dir()?,
+                &parts_dir()?,
+                a.dry_run,
+                agent,
+            )?;
+            let reads =
+                stages::cmd_uninstall_reads(&claude_config()?, &parts_dir()?, a.dry_run, agent)?;
+            let bring_ins = stages::cmd_uninstall_bring_ins(&parts_dir()?, BRING_INS, a.dry_run)?;
+            Ok(rc.max(memory).max(reads).max(bring_ins))
+        }
         Cmd::Status(a) => stages::cmd_status(&deployment()?, validate_agent(a.agent.as_deref())?),
+        Cmd::Whole { agent } => build_tool::whole::cmd_whole(
+            &parts_dir()?,
+            &home_dir()?,
+            &claude_config()?,
+            validate_agent(agent.as_deref())?,
+        ),
         Cmd::Smoke(args) => verify(Stage::Smoke, args, &deployment()?, &root, false),
         Cmd::Verify(args) => {
             let check = verify(Stage::Check, clone_args(&args), &NoDeploy, &root, true)?;
             let smoke = verify(Stage::Smoke, args, &deployment()?, &root, true)?;
             Ok(check.max(smoke))
         }
+        Cmd::Record {
+            agent,
+            kind,
+            scope,
+            skipped,
+            only,
+            names,
+        } => {
+            let kind = What::parse(&kind).map_err(|e| usage(e.to_string()))?;
+            // Resolved before anything is written, so a missing one fails
+            // the call with the list untouched.
+            let (parts, profile) = (parts_dir()?, profile_dir()?);
+            let rc = stages::cmd_record(
+                &parts,
+                Agent::parse(&agent)?,
+                kind,
+                scope.as_deref(),
+                skipped.as_deref(),
+                only.as_deref(),
+                &names,
+            )?;
+            if kind == What::Mcp {
+                let checkout = stages::Checkout::read(&root);
+                stages::sync_browser_bring_in(&parts, &profile, checkout)
+                    .context("the entry is recorded; the browser server's bring-in is not")?;
+            }
+            Ok(rc)
+        }
+        Cmd::Memory(m) => match m {
+            MemoryCmd::SetStore { path } => {
+                println!("{}", memory::set_store(&memory_store_file()?, &path)?);
+                Ok(0)
+            }
+            MemoryCmd::Status => stages::cmd_memory_status(
+                &claude_config()?,
+                &memory_store_file()?,
+                &profile_dir()?,
+                &parts_dir()?,
+            ),
+            MemoryCmd::Harvest { to, project } => {
+                stages::cmd_harvest(&claude_config()?, &codex_home()?, &to, project.as_deref())
+            }
+        },
     }
 }
 

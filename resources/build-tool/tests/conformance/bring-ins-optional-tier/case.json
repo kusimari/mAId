@@ -1,0 +1,12 @@
+{
+  "about": "a state location of an optional key that is not there yet is an empty tier and leaves the bring-in ready; a non-optional one is still not ready",
+  "expect": {
+    "exit": 0,
+    "entries": [],
+    "refused": [],
+    "bring_ins": [
+      { "part": "a", "name": "fresh", "state": "ready" },
+      { "part": "a", "name": "kept-gone", "state": "not ready" }
+    ]
+  }
+}
