@@ -999,7 +999,7 @@ this initiative.
   works, only the store and its generations are lost
 - Ruling (user, 2026-11-11): what a plain installer writes is an install
   manifest, not a harness: plain facts only, one per package, named after
-  the package (`maid`, `gorantls-agents`), in a shared folder any
+  the package (`maid`, and a work package by its own name), in a shared folder any
   installer can write to. What the ghost needs (persona, tenure, route)
   is content: a part manifest in the package's resources, with a contract
   version. Both repos' plain installs work the same with or without the
