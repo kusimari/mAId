@@ -936,3 +936,9 @@ this initiative.
   works, Constraints, the investigation across agentic systems, the system
   design (the concept laid out as code, building and installing), and on
   Claude Code. No separate design README under ghost-in-shell/
+- Ruling (user, 2026-11-09, stream 13 planning): `ghost` gets a `Ghost`
+  type built by `Ghost::from_roots` (today one root, the parts dir), in
+  place of `map::fuse`; the memory-server client goes with adaptation in
+  `infusion`, what the ghost knows of memory stays in `ghost`; `infusion`
+  reads no shell's field names: `shell/claude` turns Claude's hook input
+  into the neutral call
