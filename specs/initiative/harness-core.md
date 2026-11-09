@@ -621,7 +621,7 @@ pattern), not by the packager.
 | 10 | saved-in-session | from Macro test run 4: the genome names where a bring-in's bound files are, so a skill never falls back to a default path (R4-1); a persona memory saved during the session is shown in the close batch as saved in memory (R4-2) | 9 | merged |
 | 11 | prompt-prefix | Implementation design D1 and D2: Rust gathers and the agent judges (candidates in the prefix); the essentials go again on change and once drifted | 13 | planned |
 | 12 | ghost-package | the plain install and the ghost install split: the ghost as its own Claude plugin and install, on/off, `ghost status`; with D3: a Rust staging step builds each package, install is a PREFIX copy, the flake only runs build and install | 13 | planned |
-| 13 | ghost-in-shell-layout | the crates `ghost`, `infusion`, `shell/claude` and `tests` under `ghost-in-shell/`, laid out as the concept; no behaviour change | 10 | planned |
+| 13 | ghost-in-shell-layout | the crates `ghost`, `infusion`, `shell/claude` and `tests` under `ghost-in-shell/`, laid out as the concept; no behaviour change | 10 | running |
 
 The work part's own bring-ins take the contract in their own repo, outside
 this initiative.
