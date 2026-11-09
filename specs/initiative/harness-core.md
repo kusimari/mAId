@@ -205,7 +205,7 @@ reach the same function, so the two never drift apart.
 
 | Who | Does | Why there |
 |---|---|---|
-| **Our code** (the core, deterministic) | reads install manifests, part manifests and declarations, fuses the map, checks readiness, works out turn fit from location and file signals, caps and times what is sent, marks sleep, packs the experience, runs every guard, builds the batch, makes every write, keeps the ledger | it must give the same answer every time; the guards hold whatever a model does |
+| **Our code** (the core, deterministic) | reads install manifests and declarations, fuses the map, checks readiness, works out turn fit from location and file signals, caps and times what is sent, marks sleep, packs the experience, runs every guard, builds the batch, makes every write, keeps the ledger | it must give the same answer every time; the guards hold whatever a model does |
 | **Our injection and bring-ins** (text the model reads) | the genome; the per-turn prefix; each bring-in's declared `rules` and `signals`; the reflect skill and the reflector's prompt; the memory server's own instructions, built from the store's `about.md` | this is how the ghost speaks to a model; each text has an owner and changes by proposal |
 | **The agent's judgement** (the models) | the session's model chooses what to use: which candidates to open, what bears on the work, when to save a memory; the reflector proposes findings | meaning needs judgement, and code is blind to it |
 | **The person** | decides every batch; teaches and corrects; says when the outcome is done; syncs the stores; takes proposals to their source | it is their ghost |
@@ -254,29 +254,22 @@ shell that does not know it ignores it.
 | `state` | none, or which config keys hold its local and permanent tiers and the promotion rule; a bring-in that keeps what it learns in persona memory declares none and says so in its `job` | genome, selector, adaptation |
 | `requires` | what must be present for it to be ready | environment |
 
-**The part manifest** (one file in the package's resources, copied as
-content by its plain installer, never read by it):
-
-| Field | What it says | Used by |
-|---|---|---|
-| `contract` | the contract version these declarations follow; the ghost refuses one it does not know and says so | everything |
-| `part`, `persona` | the package, and who the work is for | genome, route |
-| `tenure` | per borrowed unit: borrowed, from whom, since when; everything else is own | genome, adaptation |
-| `route` | per unit where it differs from the default (write, backlog, worktree to PR, report; always report when borrowed) | adaptation |
-
-**The install manifest** (written by each package's plain installer:
-plain facts only, useful with or without the ghost):
+**The install manifest** (one per package, in one folder,
+`$XDG_STATE_HOME/install-manifests/<package>.json`, one format for every
+package, the ghost's own included). Its installer writes plain facts, useful
+with or without the ghost:
 
 | Field | What it says |
 |---|---|
-| `package`, `source` | the package, its repo and the revision installed |
-| per agent, what was placed | kind, name, where, and the settings it was bound with (`values`, e.g. a memory server's store; a secret only as `env:<NAME>`) |
-| `part manifest` | where the part manifest was copied |
+| `package`, `source`, `installed` | the package, its repo and the revision installed, and when |
+| `agents` | per agent, what was placed: kind, name, where (`at`), its own `source` if not the package's, and the settings it was bound with (`values`; a secret only as `env:<NAME>`) |
+| `extensions.my-harness` | the ghost's meaning, copied verbatim from the package's resources and never read by its installer: `contract` (a version; an unknown one is refused), `persona`, `overlays` (declarations for borrowed units), `route` where it differs from the default |
 
-One file per package in a shared folder any installer can write to
-(`$XDG_STATE_HOME/install-manifests/<package>.json`). The ghost joins the
-three: what was placed (the install manifest), what it means (the part
-manifest and each unit's declaration), into the view it fuses.
+Own or borrowed comes from plain facts: an entry whose source is another
+repo is borrowed from it, since the install date; a route or tenure in the
+extension overrides that in the rare case. The ghost joins what was placed
+(the manifest) with what it means (the extension and each unit's
+declaration) into the view it fuses.
 
 **Slots:** an Agent Skill's frontmatter `metadata` (flat `my-harness.*`
 keys); a plugin manifest's `extensions["my-harness"]`; an MCP server's
@@ -292,15 +285,14 @@ What a persona repo does to join the ghost; its units still work as plain
 standard units without the core. The operative checklist, every shape
 spelled out, is project.md's "For any persona part"; it needs nothing else.
 
-1. **Ship a part manifest** in its resources: contract version, part,
-   persona, what it borrows and from whom.
+1. **Ship its `my-harness` extension** in its resources: contract version,
+   persona, overlays for what it borrows.
 2. **Declare the contract** on every bring-in it ships, in its slot.
 3. **Give its persona exactly one memory,** on the persona's own store
    (a private one for anything that names work).
 4. **Write an install manifest** when it installs: what it placed on each
-   agent, where, with which settings, from which revision, and where the
-   part manifest went. Plain facts only; its installer needs nothing of
-   the ghost.
+   agent, where, with which settings, from which revision, when; and copy
+   the extension in verbatim. Its installer needs nothing of the ghost.
 5. **Mark what it borrows,** declare it by overlay, never change it.
 6. **Leave the ghost's carriers alone:** the start, sub-agent, turn and
    end hooks and the on-demand server; a part adds bring-ins only.
@@ -470,7 +462,7 @@ resources/                 the person's resources (skills, servers, plugins) and
 ghost-in-shell/
   ghost/                   what forms the ghost; no shell knowledge
     ghost.rs               Ghost::from_roots(manifest dirs): every part fused
-    parts.rs               install manifests + part manifests: what is placed, what it means
+    manifests.rs           install manifests: what is placed, and what it means
     contract.rs            a bring-in's declaration, from its standard's slot
     environment.rs         ready, not ready (why), undeclared; memory's store and index
     config.rs              where the ghost's own state lives
@@ -498,15 +490,15 @@ ghost-in-shell/
 
 - **Plain and ghost on Claude Code.** The plain install places the `maid`
   plugin (skills), the MCP servers and the settings. The ghost install
-  places the `ghost` plugin. The ghost reads the install manifests, the
-  part manifests and the declarations inside the installed resources; nothing of the plain
+  places the `ghost` plugin. The ghost reads the install manifests and
+  the declarations inside the installed resources; nothing of the plain
   install is placed twice. On and off is Claude Code's own
   `claude plugin enable|disable`, a project's settings, or `--settings`
   for one launch. `just status` reports the plain install; `ghost status`
   reports readiness and pending decisions.
 - *Decision:* plain knows nothing of the ghost. Its install manifest holds
   only plain facts; what the ghost needs is content in the resources (the
-  part manifest, the declarations), which plain copies without reading.
+  extension block, the declarations), which plain copies without reading.
   The ghost joins them. The ghost can run maid's plain install through it
   as a library when it is missing or from another revision; another
   package's plain install (another repo, another installer) it can only
@@ -567,7 +559,7 @@ extension points calls which entry point, and how the ghost is wired in.
 
 ```
  you                 Claude Code                 maid-core                                on disk
- launch claude ───►  SessionStart ────────────►  genome: read install and part     ◄──── manifests, the package
+ launch claude ───►  SessionStart ────────────►  genome: read install manifests   ◄──── manifests, the package
                                                  bring-in's declaration, fuse the
                                                  map, check readiness
                      ◄── startup picture: personas, acting persona, memory and
@@ -639,8 +631,8 @@ may bear on the work, whatever the agent loaded earlier.
  PREFIX=$out ────────────────────────────► claude plugin install maid@maid                package, source + rev,
  → a store path; the profile link         vendor document skills (borrowed)              per agent what was
    gives generations and rollback         claude mcp add personal-memory pensieve        placed, where, with
-                                            --store <your store>                         which settings; where
- no nix: the same Rust install with       Claude's own memory off                        the part manifest went
+                                            --store <your store>                         which settings; the
+ no nix: the same Rust install with       Claude's own memory off                        extension, verbatim
  its own PREFIX ─────────────────────────► read grant on the plugin dir
 ```
 
@@ -658,7 +650,7 @@ may bear on the work, whatever the agent loaded earlier.
   manifest, so uninstall removes exactly that and others can tell what is
   whose.
 - **Another package** writes its own install manifest beside maid's and
-  ships its own part manifest; the next ghost session includes it. An undeclared bring-in keeps working as a plain unit.
+  carries its own extension; the next ghost session includes it. An undeclared bring-in keeps working as a plain unit.
 
 ## Streams
 
