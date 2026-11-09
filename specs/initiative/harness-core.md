@@ -677,7 +677,7 @@ may bear on the work, whatever the agent loaded earlier.
 | 11 | prompt-prefix | Concept D1 and D2: Rust gathers and the agent judges (candidates in the prefix); the essentials go again on change and once drifted; paid runs compare with and without candidates | 12 | planned |
 | 12 | ghost-package | the plain install and the ghost install split: the ghost as its own Claude plugin and install, on/off, `ghost status`; with D3: a Rust staging step builds each package, install is a PREFIX copy, the flake only runs build and install | 14 | blocked: planning done, waits for 14 |
 | 13 | ghost-in-shell-layout | the crates `ghost`, `infusion`, `shell/claude` and `tests` under `ghost-in-shell/`, laid out as the concept; no behaviour change | 10 | merged |
-| 14 | install-manifest | plain knows nothing of the ghost: each package's plain installer writes an install manifest (plain facts: what was placed, where, with which settings, from which revision, where the part manifest went) in a shared folder; persona, tenure and route move to a part manifest in the resources with a contract version; the ghost joins the three; the part names lose "harness" | 13 | planned |
+| 14 | install-manifest | plain knows nothing of the ghost: each package's plain installer writes an install manifest (plain facts: what was placed, where, with which settings, from which revision, where the part manifest went) in a shared folder; persona, tenure and route move to a part manifest in the resources with a contract version; the ghost joins the three; the part names lose "harness" | 13 | running |
 
 The work part's own bring-ins take the contract in their own repo, outside
 this initiative.
