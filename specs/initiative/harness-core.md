@@ -443,20 +443,36 @@ The code is laid out as the concept: one crate per idea, under
 concept's parts by name.
 
 ```
-resources/              the person's resources (skills, servers, plugins) and
-  build-tool/           the plain installer: puts them into claude, codex, kiro;
-                        writes the part list; `just install`, `just status`
+resources/                 the person's resources (skills, servers, plugins) and
+  build-tool/              the plain installer: puts them into claude, codex, kiro;
+                           writes the part list; `just install`, `just status`
 ghost-in-shell/
-  ghost/                what forms the ghost: Ghost::from_roots (the parts dirs)
-                        → parts, personas, bring-ins, fused; readiness; memory
-  infusion/             the five entry points: genome, expression, experience,
-                        sleep, adaptation; depends on ghost, knows no shell
-  shell/claude/         wires ghost and infusion into Claude Code: the binary,
-                        hook I/O, the transcript as an experience source, the
-                        config dir, the MCP server, and the `ghost` plugin
-                        (hooks, MCP config, the reflect skill, the reflector)
-  tests/                every test that spans files or runs Claude Code;
-                        unit tests stay inside each file
+  ghost/                   what forms the ghost; no shell knowledge
+    ghost.rs               Ghost::from_roots(parts dirs): every part fused
+    parts.rs               a part list: persona, bring-ins, what was placed
+    contract.rs            a bring-in's declaration, from its standard's slot
+    environment.rs         ready, not ready (why), undeclared; memory's store and index
+    config.rs              where the ghost's own state lives
+  infusion/                the five entry points; depends on ghost; knows no shell
+    call.rs                the one call every carrier makes (where, prompt, close)
+    genome.rs              the startup picture
+    expression.rs          the prefix, with expression/: fit, select (recall),
+                           record (the work's own), here (location), delivery
+    experience.rs          the packed session, with experience/source.rs: the
+                           session-source trait a shell implements
+    sleep.rs               marks
+    adaptation.rs          guards, batch, decide, with adaptation/: moves,
+                           ledger, memory (writes a habit through the server)
+  shell/claude/            Claude Code's adapter: builds the `maid-core` binary
+    main.rs                the CLI every carrier calls; Claude's hook output
+    hook.rs                Claude's hook input → the neutral call
+    transcript.rs          Claude's transcript as a session source
+    config_dir.rs          CLAUDE_CONFIG_DIR
+    mcp.rs                 the on-demand carrier
+    plugin/                hooks, MCP config, the adapter's declaration,
+                           skills/reflect, agents/reflector
+  tests/                   every test that spans crates or runs Claude Code;
+                           unit tests stay inside each file
 ```
 
 - **Plain and ghost on Claude Code.** The plain install places the `maid`
@@ -473,9 +489,9 @@ ghost-in-shell/
 - *Decision:* one binary per shell (`shell/claude` builds Claude's) until
   one binary is shown to serve every shell; `infusion` stays shell-free so
   that is a move, not a rewrite.
-- *Built today:* one crate, `resources/core` (`maid-core`), and the ghost's
-  carriers ship inside the `maid` plugin. Stream 13 lays out the crates;
-  stream 12 splits the ghost into its own plugin and install.
+- *Built today:* the crates as above (stream 13); the binary is still
+  named `maid-core`, and the ghost's carriers still ship inside the `maid`
+  plugin. Stream 12 splits the ghost into its own plugin and install.
 
 mAId's part is `maid-harness`, persona `personal`. Its session bring-ins
 are `personal-memory` (package `pensieve`, own, sourced at pensieve's repo
@@ -496,7 +512,7 @@ pattern), not by the packager.
 ```
  cargo build (workspace)               a Rust staging step                      target/maid/ (staged tree)
  ───────────────────────               ──────────────────                       ──────────────────────────
- resources/core      ─► maid-core  ──┐                                          bin/maid-core
+ shell/claude        ─► maid-core  ──┐                                          bin/maid-core
  resources/build-tool ─► build-tool  ├─► validate every declaration and rules ─► share/maid/marketplace/plugins/maid/
  resources/content ──────────────────┘   pointer; copy skills, agent, server      skills/, agents/, hooks/claude.json,
                                           declarations, overlays; write the        claude-mcp.json, manifests
