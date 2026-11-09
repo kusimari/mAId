@@ -368,7 +368,7 @@ and plugin surface moved twice during this initiative.
 - **Finish:** one review brief for the whole initiative, by design area,
   with where to focus first.
 
-## System design: what other agentic systems teach
+## Investigation across agentic systems
 
 The mapping covers four coding CLIs, ten agent frameworks, and traces.
 Five things hold across them, and the design follows from them:
@@ -427,16 +427,20 @@ app's owner, otherwise on demand only):
 | Letta (server) | a memory block | on demand only | sweep | message API |
 | traces (OpenTelemetry, observability tools) | - | - | - | traces with an explicit session id |
 
-## Implementation design: the ghost on Claude Code
+## System design: the concept as code
 
-The concept on Claude Code, in three views. Each decision sits beside what
-it decides; where the code does not do it yet, the stream that will is
-named.
+The investigation leads to a small system: the ghost and its five entry
+points are shell-free code, and each shell gets a thin adapter that maps
+its own carriers onto them. So the system design is the concept, laid out
+as code, plus how it is built and installed. Each decision sits beside
+what it decides; where the code does not do it yet, the stream that will
+is named.
 
-### The parts
+### The layout
 
 The code is laid out as the concept: one crate per idea, under
-`ghost-in-shell/`, beside the plain installer.
+`ghost-in-shell/`, beside the plain installer. Each crate's files are the
+concept's parts by name.
 
 ```
 resources/              the person's resources (skills, servers, plugins) and
@@ -479,6 +483,40 @@ and the `flake.lock` pin) and the Claude adapter, declared in the ghost
 plugin's manifest. MCP server declarations live at
 `resources/content/servers/<name>/server.json`, overlays under
 `resources/content/overlays/`.
+
+### Building the packages (D3)
+
+*Decision (D3, user's):* everything mAId builds is cargo and Rust. Build,
+install and wiring are three layers, and nix is one way to run the first
+two: the build knows nothing of packaging, install copies into a standard
+layout under a prefix, and a packager wraps those two. Non-binary
+artefacts are staged by a Rust step in the workspace (the "xtask"
+pattern), not by the packager.
+
+```
+ cargo build (workspace)               a Rust staging step                      target/maid/ (staged tree)
+ ───────────────────────               ──────────────────                       ──────────────────────────
+ resources/core      ─► maid-core  ──┐                                          bin/maid-core
+ resources/build-tool ─► build-tool  ├─► validate every declaration and rules ─► share/maid/marketplace/plugins/maid/
+ resources/content ──────────────────┘   pointer; copy skills, agent, server      skills/, agents/, hooks/claude.json,
+                                          declarations, overlays; write the        claude-mcp.json, manifests
+                                          claude and codex manifests; fill        share/maid/servers/, overlays/
+                                          @maid-core@ with <prefix>/bin/maid-core;
+                                          version = hash of the plugin's content
+```
+
+- **The plugin's version** is the hash of its content. Agents cache a
+  plugin by version, so the version changes exactly when the content does;
+  a docs-only commit gives the same package.
+- **Third-party runtimes** are pinned dependencies, not built by mAId:
+  pensieve, and the browser server's node package.
+- *Built today:* the flake assembles the plugin in a shell step. Stream 12
+  moves it into the Rust staging step.
+
+## On Claude Code
+
+How `shell/claude` makes Claude Code carry the ghost: which of its
+extension points calls which entry point, and how the ghost is wired in.
 
 ### In a session
 
@@ -547,35 +585,6 @@ may bear on the work, whatever the agent loaded earlier.
 - writing-style's taught rules live in persona memory and move into the
   skill by proposal *(user's ruling)*.
 
-### Building the package (D3)
-
-*Decision (D3, user's):* everything mAId builds is cargo and Rust. Build,
-install and wiring are three layers, and nix is one way to run the first
-two: the build knows nothing of packaging, install copies into a standard
-layout under a prefix, and a packager wraps those two. Non-binary
-artefacts are staged by a Rust step in the workspace (the "xtask"
-pattern), not by the packager.
-
-```
- cargo build (workspace)               a Rust staging step                      target/maid/ (staged tree)
- ───────────────────────               ──────────────────                       ──────────────────────────
- resources/core      ─► maid-core  ──┐                                          bin/maid-core
- resources/build-tool ─► build-tool  ├─► validate every declaration and rules ─► share/maid/marketplace/plugins/maid/
- resources/content ──────────────────┘   pointer; copy skills, agent, server      skills/, agents/, hooks/claude.json,
-                                          declarations, overlays; write the        claude-mcp.json, manifests
-                                          claude and codex manifests; fill        share/maid/servers/, overlays/
-                                          @maid-core@ with <prefix>/bin/maid-core;
-                                          version = hash of the plugin's content
-```
-
-- **The plugin's version** is the hash of its content. Agents cache a
-  plugin by version, so the version changes exactly when the content does;
-  a docs-only commit gives the same package.
-- **Third-party runtimes** are pinned dependencies, not built by mAId:
-  pensieve, and the browser server's node package.
-- *Built today:* the flake assembles the plugin in a shell step. Stream 12
-  moves it into the Rust staging step.
-
 ### Installing and wiring (the nix way)
 
 ```
@@ -619,7 +628,7 @@ pattern), not by the packager.
 | 8 | claude-config-dir | from Macro test run 3: install, uninstall and status read and write Claude's user config at `$HOME/.claude` even when `CLAUDE_CONFIG_DIR` is set; the paid tests isolate through `CLAUDE_CONFIG_DIR`, not a scratch HOME | 7 | merged |
 | 9 | writing-style-memory | from Macro test run 3: writing-style's taught rules live in persona memory, not a file tier; the close batch says what was saved and offers to move them into the skill on its source; the reflector quotes only the person's words for a habit; the guard's label says what it checks | 8 | merged |
 | 10 | saved-in-session | from Macro test run 4: the genome names where a bring-in's bound files are, so a skill never falls back to a default path (R4-1); a persona memory saved during the session is shown in the close batch as saved in memory (R4-2) | 9 | merged |
-| 11 | prompt-prefix | Implementation design D1 and D2: Rust gathers and the agent judges (candidates in the prefix); the essentials go again on change and once drifted | 13 | planned |
+| 11 | prompt-prefix | Concept D1 and D2: Rust gathers and the agent judges (candidates in the prefix); the essentials go again on change and once drifted | 13 | planned |
 | 12 | ghost-package | the plain install and the ghost install split: the ghost as its own Claude plugin and install, on/off, `ghost status`; with D3: a Rust staging step builds each package, install is a PREFIX copy, the flake only runs build and install | 13 | planned |
 | 13 | ghost-in-shell-layout | the crates `ghost`, `infusion`, `shell/claude` and `tests` under `ghost-in-shell/`, laid out as the concept; no behaviour change | 10 | running |
 
@@ -922,3 +931,8 @@ this initiative.
   own plugin and install on top of plain, switched on and off with no
   reinstall; plain status and ghost status are separate; one binary per
   shell for now · streams 13, then 12, then 11
+- Ruling (user, 2026-11-09): this spec is the one design document, read in
+  order: the idea (Goal, Framing), Experience, Concept, how we know it
+  works, Constraints, the investigation across agentic systems, the system
+  design (the concept laid out as code, building and installing), and on
+  Claude Code. No separate design README under ghost-in-shell/
