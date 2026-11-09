@@ -12,8 +12,8 @@ use crate::part::{Item, What, ANOTHER_PART};
 use crate::settings::{read_settings, write_settings, NO_CLI};
 use crate::shared::{agent_marketplace, Agent, PLUGIN_ID};
 use anyhow::Result;
-use maid_core::config::ClaudeConfig;
 use serde_json::{Map, Value};
+use shell_claude::config_dir::ConfigDir;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -200,7 +200,7 @@ fn recorded(list: List, own: &[Item]) -> Vec<&str> {
 /// there unless another part's list records it (`claimed`). `own` is what
 /// mAId's part list recorded for this setting.
 pub fn install_claude(
-    claude: &ClaudeConfig,
+    claude: &ConfigDir,
     grant: &Grant,
     own: &[Item],
     claimed: &BTreeSet<String>,
@@ -304,7 +304,7 @@ pub fn install_claude(
 
 /// Uninstall: remove the elements mAId recorded (placed or adopted), only.
 pub fn uninstall_claude(
-    claude: &ClaudeConfig,
+    claude: &ConfigDir,
     list: List,
     own: &[Item],
     dry_run: bool,
@@ -352,8 +352,8 @@ mod tests {
     }
 
     /// Claude's config under `home`, the variable unset.
-    fn cc(home: &Path) -> ClaudeConfig {
-        ClaudeConfig::new(home, None)
+    fn cc(home: &Path) -> ConfigDir {
+        ConfigDir::new(home, None)
     }
 
     fn env() -> Env {

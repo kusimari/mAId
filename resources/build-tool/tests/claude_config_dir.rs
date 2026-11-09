@@ -4,7 +4,7 @@
 
 use build_tool::shared::Agent;
 use build_tool::stages::{cmd_install_memory, cmd_install_reads};
-use maid_core::config::ClaudeConfig;
+use shell_claude::config_dir::ConfigDir;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -89,8 +89,8 @@ impl Env {
         self.root.join(p)
     }
 
-    fn claude(&self) -> ClaudeConfig {
-        ClaudeConfig::new(&self.at("home"), Some(&self.at("claude-config")))
+    fn claude(&self) -> ConfigDir {
+        ConfigDir::new(&self.at("home"), Some(&self.at("claude-config")))
     }
 
     fn json(&self, p: &str) -> serde_json::Value {

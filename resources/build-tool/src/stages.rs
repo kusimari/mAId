@@ -25,9 +25,9 @@ use crate::shared::{
     checkout_skill, on_path, usage, Agent, BringIn as Marketplace, BROWSER_SERVER,
 };
 use anyhow::{anyhow, Context, Result};
-use maid_core::config::ClaudeConfig;
-use maid_core::contract::{Slot, Standard};
-use maid_core::parts::{BringIn, Source, SourceKind, Tenure, Unit};
+use ghost::contract::{Slot, Standard};
+use ghost::parts::{BringIn, Source, SourceKind, Tenure, Unit};
+use shell_claude::config_dir::ConfigDir;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -38,28 +38,30 @@ use std::path::{Path, PathBuf};
 // SKILL.md needs YAML frontmatter with a non-empty name + description.
 // ─────────────────────────────────────────────────────────────────
 
-/// Validate `resources/content/`, returning the count of validated
-/// files or the joined error list. Caller decides whether to print or
-/// abort.
-pub fn check_content(content_dir: &Path) -> Result<usize, Vec<String>> {
-    let skills: Vec<PathBuf> = fs::read_dir(content_dir.join("skills"))
-        .into_iter()
-        .flatten()
+/// Validate every root skills are authored under (in the checkout,
+/// `shared::skill_roots`; after the build, the one profile dir),
+/// returning the count of validated files or the joined error list.
+/// Caller decides whether to print or abort.
+pub fn check_content(roots: &[PathBuf]) -> Result<usize, Vec<String>> {
+    let skills: Vec<PathBuf> = roots
+        .iter()
+        .flat_map(|root| fs::read_dir(root.join("skills")).into_iter().flatten())
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .filter(|dir| dir.join("SKILL.md").exists())
         .collect();
-    let errs: Vec<String> = skills
-        .iter()
-        .flat_map(|dir| {
+    let errs: Vec<String> = twice(&skills)
+        .into_iter()
+        .chain(skills.iter().flat_map(|dir| {
             check_one_skill(&dir.join("SKILL.md"))
                 .err()
                 .into_iter()
                 .chain(repo_pointers(dir))
-        })
+        }))
         .chain(
-            manifests(content_dir)
-                .into_iter()
+            roots
+                .iter()
+                .flat_map(|root| manifests(root))
                 .filter_map(|(standard, p)| {
                     declaration(standard, &p)
                         .err()
@@ -71,6 +73,24 @@ pub fn check_content(content_dir: &Path) -> Result<usize, Vec<String>> {
         true => Ok(skills.len()),
         false => Err(errs),
     }
+}
+
+/// A name two roots both have a skill under: the build copies both to one
+/// place, so one would end up inside the other.
+fn twice(skills: &[PathBuf]) -> Vec<String> {
+    let mut by_name: std::collections::BTreeMap<String, Vec<&PathBuf>> = Default::default();
+    for dir in skills {
+        let name = dir.file_name().unwrap_or_default().to_string_lossy();
+        by_name.entry(name.into_owned()).or_default().push(dir);
+    }
+    by_name
+        .into_iter()
+        .filter(|(_, dirs)| dirs.len() > 1)
+        .map(|(name, dirs)| {
+            let at: Vec<String> = dirs.iter().map(|d| d.display().to_string()).collect();
+            format!("skill {name} is in more than one root: {}", at.join(", "))
+        })
+        .collect()
 }
 
 /// The bring-in manifests shipped beside the skills: each MCP server's
@@ -98,8 +118,9 @@ fn manifests(content_dir: &Path) -> Vec<(Standard, PathBuf)> {
 
 /// Text that sends an installed session to the mAId repo, which it never
 /// has (see project.md "Skill state"). Matched lowercased.
-const REPO_POINTERS: [&str; 4] = [
+const REPO_POINTERS: [&str; 5] = [
     "resources/content/",
+    "ghost-in-shell/",
     "maid checkout",
     "just install",
     "just resources::",
@@ -185,9 +206,9 @@ fn check_one_skill(path: &Path) -> Result<(), String> {
 /// pointer names a section that is there, so a renamed heading never ships.
 fn declaration(standard: Standard, path: &Path) -> Result<(), String> {
     let path = std::path::absolute(path).map_err(|e| e.to_string())?;
-    match maid_core::contract::read(standard, &path)? {
+    match ghost::contract::read(standard, &path)? {
         Slot::Declared(d) => match &d.rules {
-            Some(pointer) => maid_core::contract::rules(&path, pointer).map(drop),
+            Some(pointer) => ghost::contract::rules(&path, pointer).map(drop),
             None => Ok(()),
         },
         Slot::Undeclared { .. } => Ok(()),
@@ -204,8 +225,8 @@ fn declaration(standard: Standard, path: &Path) -> Result<(), String> {
 // ─────────────────────────────────────────────────────────────────
 
 /// Validate content, failing with every error found.
-pub fn cmd_validate(content_dir: &Path) -> Result<u8> {
-    let count = check_content(content_dir)
+pub fn cmd_validate(roots: &[PathBuf]) -> Result<u8> {
+    let count = check_content(roots)
         .map_err(|errs| anyhow!("Content validation failed:\n{}", errs.join("\n")))?;
     eprintln!("validated {count} content file(s)");
     Ok(0)
@@ -226,7 +247,7 @@ pub fn cmd_install(
             content_dir.display()
         ));
     }
-    cmd_validate(content_dir)?;
+    cmd_validate(std::slice::from_ref(&content_dir.to_path_buf()))?;
     // Recorded even when install stops partway: the list says what is there.
     let done = target.install(agent, dry_run, force);
     let recorded = match dry_run {
@@ -466,7 +487,7 @@ fn bind_state(items: &mut [BringIn], config: &Path) {
         else {
             continue;
         };
-        let Ok(Slot::Declared(d)) = maid_core::contract::read(Standard::Skill, path) else {
+        let Ok(Slot::Declared(d)) = ghost::contract::read(Standard::Skill, path) else {
             continue;
         };
         for k in d.config.keys() {
@@ -722,7 +743,7 @@ fn remote(url: &str) -> Option<String> {
         .then(|| format!("{host}:{path}"))
 }
 
-use maid_core::time::today;
+use ghost::time::today;
 
 // ─────────────────────────────────────────────────────────────────
 // Memory — the personal store's server, Claude's own memory, harvest.
@@ -748,7 +769,7 @@ fn launcher(profile: &Path) -> PathBuf {
 /// personal store, turn Claude's own automatic memory off, and take away
 /// the memory dir an older mAId set. Each is recorded in the part list.
 pub fn cmd_install_memory(
-    claude: &ClaudeConfig,
+    claude: &ConfigDir,
     store_file: &Path,
     profile: &Path,
     parts: &Path,
@@ -799,7 +820,7 @@ pub fn cmd_install_memory(
 }
 
 pub fn cmd_uninstall_memory(
-    claude: &ClaudeConfig,
+    claude: &ConfigDir,
     profile: &Path,
     parts: &Path,
     dry_run: bool,
@@ -842,7 +863,7 @@ pub fn cmd_uninstall_memory(
 /// Remove the memory dir an older mAId set, while it is the value mAId
 /// recorded. Whether the part list holds an entry for it to clear: one
 /// recorded as skipped has no value and nothing to remove, but still goes.
-fn legacy_setting(claude: &ClaudeConfig, parts: &Path, dry_run: bool) -> Result<bool> {
+fn legacy_setting(claude: &ConfigDir, parts: &Path, dry_run: bool) -> Result<bool> {
     let Some(item) = part::recorded(parts, Agent::Claude, What::Setting, memory::LEGACY_SETTING)?
     else {
         return Ok(false);
@@ -857,7 +878,7 @@ fn legacy_setting(claude: &ClaudeConfig, parts: &Path, dry_run: bool) -> Result<
 /// skill state: grant mAId's plugin dir and config dir, and record each
 /// element.
 pub fn cmd_install_reads(
-    claude: &ClaudeConfig,
+    claude: &ConfigDir,
     profile: &Path,
     config: &Path,
     parts: &Path,
@@ -893,7 +914,7 @@ pub fn cmd_install_reads(
 /// Uninstall's claude step for skill reads and skill state: remove mAId's
 /// recorded elements only.
 pub fn cmd_uninstall_reads(
-    claude: &ClaudeConfig,
+    claude: &ConfigDir,
     parts: &Path,
     dry_run: bool,
     agent: Option<Agent>,
@@ -942,7 +963,7 @@ fn ownership(parts: &Path) -> Result<memory::Ownership> {
 }
 
 pub fn cmd_memory_status(
-    claude: &ClaudeConfig,
+    claude: &ConfigDir,
     store_file: &Path,
     profile: &Path,
     parts: &Path,
@@ -962,7 +983,7 @@ pub fn cmd_memory_status(
 /// Copy each harness's native memory into `<to>/memory/`. Refuses, before
 /// writing anything, a `to` that is not a directory.
 pub fn cmd_harvest(
-    claude: &ClaudeConfig,
+    claude: &ConfigDir,
     codex_home: &Path,
     to: &Path,
     project: Option<&str>,
@@ -1607,7 +1628,7 @@ mod tests {
     #[test]
     fn check_content_empty_root_ok() {
         let dir = TempDir::new().unwrap();
-        assert_eq!(check_content(dir.path()).unwrap(), 0);
+        assert_eq!(check_content(&[dir.path().to_path_buf()]).unwrap(), 0);
     }
 
     #[test]
@@ -1617,7 +1638,27 @@ mod tests {
             &dir.path().join("skills/foo/SKILL.md"),
             "---\nname: foo\ndescription: bar\n---\nbody.\n",
         );
-        assert_eq!(check_content(dir.path()).unwrap(), 1);
+        assert_eq!(check_content(&[dir.path().to_path_buf()]).unwrap(), 1);
+    }
+
+    #[test]
+    fn one_skill_name_under_two_roots_is_refused() {
+        let (a, b) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+        for dir in [&a, &b] {
+            write(
+                &dir.path().join("skills/notes/SKILL.md"),
+                "---\nname: notes\ndescription: capture notes\n---\nbody.\n",
+            );
+        }
+        let roots = [a.path().to_path_buf(), b.path().to_path_buf()];
+        let errs = check_content(&roots).unwrap_err();
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(
+            errs[0].starts_with("skill notes is in more than one root: "),
+            "{}",
+            errs[0]
+        );
+        assert_eq!(check_content(&roots[..1]).unwrap(), 1);
     }
 
     /// A profile with one valid skill, its home, and a parts dir.
@@ -1793,7 +1834,7 @@ mod tests {
             &dir.path().join("skills/foo/SKILL.md"),
             "---\nname: foo\n---\n",
         );
-        let errs = check_content(dir.path()).unwrap_err();
+        let errs = check_content(&[dir.path().to_path_buf()]).unwrap_err();
         assert!(errs.iter().any(|e| e.contains("description")));
     }
 
@@ -1809,7 +1850,7 @@ mod tests {
             &dir.path().join("skills/bar/SKILL.md"),
             "---\nname: bar\n---\n",
         );
-        let errs = check_content(dir.path()).unwrap_err();
+        let errs = check_content(&[dir.path().to_path_buf()]).unwrap_err();
         assert_eq!(errs.len(), 2);
     }
 
@@ -1823,7 +1864,7 @@ mod tests {
             "---\nname: multi\ndescription: a multi-file skill\n---\nbody.\n",
         );
         write(&skill_dir.join("setup.md"), "# Plain markdown.\n");
-        assert_eq!(check_content(dir.path()).unwrap(), 1);
+        assert_eq!(check_content(&[dir.path().to_path_buf()]).unwrap(), 1);
     }
 
     #[test]
@@ -1844,7 +1885,7 @@ mod tests {
             "or `just resources::browser-mcp-allow`\n",
         );
         write(&skill.join("notes.txt"), "just install\n");
-        let errs = check_content(dir.path()).unwrap_err();
+        let errs = check_content(&[dir.path().to_path_buf()]).unwrap_err();
         let at = |f: &str, n: usize| format!("{}:{n}:", skill.join(f).display());
         assert_eq!(errs.len(), 4, "{errs:?}");
         for (e, (f, n, pat)) in errs.iter().zip([
@@ -1868,7 +1909,7 @@ mod tests {
         write(&skill.join("phases/a.md"), "the user's own config\n");
         // A linked dir is not walked, so a cycle ends.
         std::os::unix::fs::symlink(&skill, skill.join("phases/loop")).unwrap();
-        assert_eq!(check_content(dir.path()).unwrap(), 1);
+        assert_eq!(check_content(&[dir.path().to_path_buf()]).unwrap(), 1);
     }
 
     // ── frontmatter (gray_matter + serde) ───────────────────────
@@ -1928,17 +1969,17 @@ mod tests {
             &dir.path().join("overlays/o/plugin.json"),
             r#"{"name":"o"}"#,
         );
-        assert_eq!(check_content(dir.path()).unwrap(), 0);
+        assert_eq!(check_content(&[dir.path().to_path_buf()]).unwrap(), 0);
         write(
             &dir.path().join("servers/s/server.json"),
             r#"{"name":"s","_meta":{"my-harness":{"scope":"turn","job":"j","rules":"README.md#x"}}}"#,
         );
-        let errs = check_content(dir.path()).unwrap_err();
+        let errs = check_content(&[dir.path().to_path_buf()]).unwrap_err();
         assert!(errs[0].contains("cannot read"), "{errs:?}");
         write(&dir.path().join("servers/s/README.md"), "## X\n\nfirst\n");
-        assert_eq!(check_content(dir.path()).unwrap(), 0);
+        assert_eq!(check_content(&[dir.path().to_path_buf()]).unwrap(), 0);
         write(&dir.path().join("overlays/o/plugin.json"), "not json");
-        let errs = check_content(dir.path()).unwrap_err();
+        let errs = check_content(&[dir.path().to_path_buf()]).unwrap_err();
         assert!(
             errs[0].contains("overlays/o/plugin.json") && errs[0].contains("not JSON"),
             "{errs:?}"
@@ -2235,7 +2276,7 @@ mod tests {
                 since: Some("2026-10-31".into())
             }
         );
-        assert_eq!(items[4].route(), maid_core::parts::Route::Report);
+        assert_eq!(items[4].route(), ghost::parts::Route::Report);
     }
 
     /// A profile with a stateful skill, the browser server's manifest and
@@ -2589,7 +2630,7 @@ mod tests {
         .unwrap();
         let memory = items.iter().find(|b| b.name == memory::SERVER).unwrap();
         assert_eq!(memory.source, None, "never mAId's project source");
-        assert_eq!(memory.route(), maid_core::parts::Route::Report);
+        assert_eq!(memory.route(), ghost::parts::Route::Report);
     }
 
     #[test]
@@ -2620,7 +2661,7 @@ mod tests {
 
     #[test]
     fn the_shipped_memory_declaration_names_its_package_store_and_index() {
-        use maid_core::contract::{read, Scope, Slot};
+        use ghost::contract::{read, Scope, Slot};
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../content");
         let path = root
             .join(memory::MANIFEST.trim_start_matches("share/maid/"))
@@ -2643,9 +2684,11 @@ mod tests {
 
     #[test]
     fn the_shipped_adapter_declaration_reads_from_a_plugin_manifest() {
-        use maid_core::contract::{read, Scope, Slot};
-        let shipped = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../content/adapters/claude/my-harness.json");
+        use ghost::contract::{read, Scope, Slot};
+        let shipped = crate::shared::repo_root()
+            .unwrap()
+            .join(crate::shared::GHOST_PLUGIN_DIR)
+            .join("my-harness.json");
         let decl: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(shipped).unwrap()).unwrap();
         // As the flake writes it into the Claude plugin manifest.
@@ -2708,7 +2751,7 @@ mod tests {
 
     #[test]
     fn civil_dates_are_right_across_leap_days() {
-        use maid_core::time::civil;
+        use ghost::time::civil;
         assert_eq!(civil(0), "1970-01-01");
         assert_eq!(civil(11_016), "2000-02-29");
         assert_eq!(civil(20_757), "2026-10-31");

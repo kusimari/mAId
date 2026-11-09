@@ -16,8 +16,8 @@ use std::path::{Path, PathBuf};
 const INDEX_LINES: usize = 200;
 const INDEX_BYTES: usize = 25 * 1024;
 
-use maid_core::claude::project_dir_name;
-use maid_core::config::ClaudeConfig;
+use shell_claude::config_dir::ConfigDir;
+use shell_claude::transcript::project_dir_name;
 
 const INDEX: &str = "MEMORY.md";
 
@@ -102,7 +102,7 @@ fn generated_line(bytes: &[u8], stem: &str) -> String {
 /// when given. The name is lossy (`a-b` and `a/b` look alike), so a prefix
 /// may take a sibling too; harvest prints every project it takes.
 fn claude_candidates(
-    claude: &ClaudeConfig,
+    claude: &ConfigDir,
     target: &Path,
     project: Option<&str>,
     report: &mut Harvest,
@@ -196,7 +196,7 @@ fn codex_candidates(codex_home: &Path) -> Result<Vec<Candidate>> {
 /// `project` prefix, only Claude's projects under it, and nothing of
 /// codex, which keeps no projects. `dir` must exist; it is never created.
 pub fn harvest(
-    claude: &ClaudeConfig,
+    claude: &ConfigDir,
     codex_home: &Path,
     dir: &Path,
     project: Option<&str>,
@@ -279,8 +279,8 @@ mod tests {
     use tempfile::TempDir;
 
     /// Claude's config under `home`, the variable unset.
-    fn cc(home: &Path) -> ClaudeConfig {
-        ClaudeConfig::new(home, None)
+    fn cc(home: &Path) -> ConfigDir {
+        ConfigDir::new(home, None)
     }
 
     struct Env {
@@ -373,7 +373,7 @@ mod tests {
         let mem = dir.join("projects/-cfg/memory");
         fs::create_dir_all(&mem).unwrap();
         fs::write(mem.join("c.md"), memory("c", "C")).unwrap();
-        let claude = ClaudeConfig::new(&e.home, Some(&dir));
+        let claude = ConfigDir::new(&e.home, Some(&dir));
         let r = harvest(
             &claude,
             &e.home.join(".codex"),

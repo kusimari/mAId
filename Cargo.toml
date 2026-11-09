@@ -1,3 +1,10 @@
 [workspace]
 resolver = "3"
-members = ["resources/core", "resources/build-tool", "kaimux"]
+members = [
+    "ghost-in-shell/ghost",
+    "ghost-in-shell/infusion",
+    "ghost-in-shell/shell/claude",
+    "ghost-in-shell/tests",
+    "resources/build-tool",
+    "kaimux",
+]

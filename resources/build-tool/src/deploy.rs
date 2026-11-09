@@ -19,7 +19,7 @@ use crate::shared::{
     PROFILE_MARKETPLACE_DIR,
 };
 use anyhow::{anyhow, Context, Result};
-use maid_core::config::ClaudeConfig;
+use shell_claude::config_dir::ConfigDir;
 use std::cell::RefCell;
 use std::fs;
 use std::io;
@@ -458,7 +458,7 @@ impl Deploy for Deployment {
 pub struct Plugins {
     pub home: PathBuf,
     /// Claude's config, which every `claude` started here is given.
-    pub claude: ClaudeConfig,
+    pub claude: ConfigDir,
     pub profile: PathBuf,
 }
 
@@ -799,7 +799,7 @@ impl Plugins {
 pub struct BringIns {
     pub home: PathBuf,
     /// Claude's config, which every `claude` started here is given.
-    pub claude: ClaudeConfig,
+    pub claude: ConfigDir,
     pub list: &'static [BringIn],
     owned: RefCell<Vec<(Agent, What, String)>>,
     failed: RefCell<Vec<(Agent, What, String)>>,
@@ -1086,7 +1086,7 @@ impl BringIns {
     /// Ownership is read once from mAId's part list in `parts`.
     pub fn new(
         home: PathBuf,
-        claude: ClaudeConfig,
+        claude: ConfigDir,
         list: &'static [BringIn],
         parts: &Path,
     ) -> Result<BringIns> {
@@ -1112,7 +1112,7 @@ impl BringIns {
     /// owned, and `status` says so instead of stopping.
     pub fn reporting(
         home: PathBuf,
-        claude: ClaudeConfig,
+        claude: ConfigDir,
         list: &'static [BringIn],
         parts: &Path,
     ) -> BringIns {
@@ -1448,7 +1448,7 @@ pub fn listed_marketplaces(
 }
 
 /// An agent's CLI with `home` as HOME; claude also gets `claude`'s config dir.
-fn cli_command(home: &Path, claude: &ClaudeConfig, agent: Agent) -> Command {
+fn cli_command(home: &Path, claude: &ConfigDir, agent: Agent) -> Command {
     let mut cmd = Command::new(agent.cli());
     cmd.env("HOME", home);
     if agent == Agent::Claude {
@@ -1458,7 +1458,7 @@ fn cli_command(home: &Path, claude: &ClaudeConfig, agent: Agent) -> Command {
 }
 
 /// Run an agent's CLI (see `cli_command`), returning stdout.
-fn run_cli(home: &Path, claude: &ClaudeConfig, agent: Agent, args: &[String]) -> Result<String> {
+fn run_cli(home: &Path, claude: &ConfigDir, agent: Agent, args: &[String]) -> Result<String> {
     let out = cli_command(home, claude, agent)
         .args(args)
         .output()
@@ -2511,8 +2511,8 @@ mod tests {
     }
 
     /// Claude's config under `home`, the variable unset.
-    fn cc(home: &Path) -> ClaudeConfig {
-        ClaudeConfig::new(home, None)
+    fn cc(home: &Path) -> ConfigDir {
+        ConfigDir::new(home, None)
     }
 
     #[test]
@@ -2525,7 +2525,7 @@ mod tests {
         let home = Path::new("/h");
         let unset = cli_command(home, &cc(home), Agent::Claude);
         assert_eq!(var(&unset), Some(None), "removed, not inherited");
-        let set = ClaudeConfig::new(home, Some(Path::new("/c")));
+        let set = ConfigDir::new(home, Some(Path::new("/c")));
         let cmd = cli_command(home, &set, Agent::Claude);
         assert_eq!(var(&cmd), Some(Some(PathBuf::from("/c"))));
         assert_eq!(var(&cli_command(home, &set, Agent::Codex)), None);
@@ -2534,7 +2534,7 @@ mod tests {
     fn plugins(home: &Path, profile: &Path) -> Plugins {
         Plugins {
             home: home.to_path_buf(),
-            claude: ClaudeConfig::new(home, None),
+            claude: ConfigDir::new(home, None),
             profile: profile.to_path_buf(),
         }
     }

@@ -5,13 +5,13 @@
 //! order (`stages` → `harness` → `shared`).
 
 use anyhow::{anyhow, Context, Result};
-use maid_core::config::ClaudeConfig;
+use shell_claude::config_dir::ConfigDir;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// The PATH rule every reader shares; see `maid_core::environment`.
-pub use maid_core::environment::find_on;
+/// The PATH rule every reader shares; see `ghost::environment`.
+pub use ghost::environment::find_on;
 
 /// A bad invocation — an unknown agent or kind, a kind belonging to the
 /// other stage. Distinct from a test failure so a wrapper can tell "your
@@ -118,7 +118,7 @@ pub const MARKETPLACE: &str = "maid";
 /// A vendor's plugin marketplace mAId registers with each plugin agent
 /// through its own CLI, and the plugins it installs from it. The content
 /// stays the vendor's: nothing of it is copied into the profile. (A ghost
-/// bring-in, what a part brings in, is `maid_core::parts::BringIn`.)
+/// bring-in, what a part brings in, is `ghost::parts::BringIn`.)
 #[derive(Debug, PartialEq, Eq)]
 pub struct BringIn {
     /// The name both CLIs list the marketplace under.
@@ -309,22 +309,38 @@ pub fn validate_agents(agents: Option<&str>) -> Result<Option<Vec<Agent>>> {
     }
 }
 
-/// Where skills are authored in the checkout.
+/// Where the person's resources are authored in the checkout.
 pub const CONTENT_DIR: &str = "resources/content";
+
+/// The ghost's own Claude plugin in the checkout: the skill and the agent
+/// that belong to the ghost are authored under it, and the build copies
+/// them into the plugin beside the rest.
+pub const GHOST_PLUGIN_DIR: &str = "ghost-in-shell/shell/claude/plugin";
+
+/// Every root a skill may be authored under, in the order they are read.
+pub fn skill_roots(checkout: &Path) -> Vec<PathBuf> {
+    [CONTENT_DIR, GHOST_PLUGIN_DIR]
+        .iter()
+        .map(|d| checkout.join(d))
+        .collect()
+}
 
 /// Where flake.nix puts that tree in the profile. Every REGISTRY row
 /// names its `skills/` child.
 pub const PROFILE_CONTENT_DIR: &str = "share/maid";
 
 /// Where `<skill>`'s SKILL.md lives in the checkout — the pre-install
-/// source. Agent-independent by design: before install there is only
-/// one copy, which is why the explicit test kinds need no deploy.
+/// source, from the first root that has it. Agent-independent by design:
+/// before install there is only one copy, which is why the explicit test
+/// kinds need no deploy.
 pub fn checkout_skill(checkout: &Path, skill: &str) -> PathBuf {
-    checkout
-        .join(CONTENT_DIR)
-        .join("skills")
-        .join(skill)
-        .join("SKILL.md")
+    let at = |root: &Path| root.join("skills").join(skill).join("SKILL.md");
+    let roots = skill_roots(checkout);
+    roots
+        .iter()
+        .map(|r| at(r))
+        .find(|p| p.is_file())
+        .unwrap_or_else(|| at(&roots[0]))
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -407,13 +423,13 @@ pub fn codex_home() -> Result<PathBuf> {
 }
 
 /// Claude Code's user config, as the environment places it.
-pub fn claude_config() -> Result<ClaudeConfig> {
-    ClaudeConfig::from_env()?.ok_or_else(|| anyhow!("HOME is not set"))
+pub fn claude_config() -> Result<ConfigDir> {
+    ConfigDir::from_env()?.ok_or_else(|| anyhow!("HOME is not set"))
 }
 
 /// Start `claude` for `config`: its HOME, and `CLAUDE_CONFIG_DIR` exactly
 /// as `config` has it, so the CLI and the files mAId reads agree.
-pub fn claude_env<'a>(cmd: &'a mut Command, config: &ClaudeConfig) -> &'a mut Command {
+pub fn claude_env<'a>(cmd: &'a mut Command, config: &ConfigDir) -> &'a mut Command {
     if let Some(h) = config.home() {
         cmd.env("HOME", h);
     }
@@ -454,11 +470,11 @@ mod tests {
         };
         let mut cmd = Command::new("claude");
         cmd.env("CLAUDE_CONFIG_DIR", "/elsewhere");
-        claude_env(&mut cmd, &ClaudeConfig::new(Path::new("/h"), None));
+        claude_env(&mut cmd, &ConfigDir::new(Path::new("/h"), None));
         assert_eq!(var(&cmd), Some(None), "removed, not inherited");
         claude_env(
             &mut cmd,
-            &ClaudeConfig::new(Path::new("/h"), Some(Path::new("/c"))),
+            &ConfigDir::new(Path::new("/h"), Some(Path::new("/c"))),
         );
         assert_eq!(var(&cmd), Some(Some(PathBuf::from("/c"))));
     }
@@ -618,10 +634,21 @@ mod tests {
     }
 
     #[test]
-    fn checkout_skill_is_agent_independent() {
+    fn checkout_skill_is_agent_independent_and_reads_either_root() {
         assert_eq!(
             checkout_skill(Path::new("/repo"), "notes"),
-            Path::new("/repo/resources/content/skills/notes/SKILL.md")
+            Path::new("/repo/resources/content/skills/notes/SKILL.md"),
+            "a skill neither root has is named in the first"
+        );
+        let repo = repo_root().expect("repo root resolves under cargo test");
+        assert_eq!(
+            checkout_skill(&repo, "notes"),
+            repo.join("resources/content/skills/notes/SKILL.md")
+        );
+        assert_eq!(
+            checkout_skill(&repo, "reflect"),
+            repo.join("ghost-in-shell/shell/claude/plugin/skills/reflect/SKILL.md"),
+            "the ghost's own skill is authored with the ghost"
         );
     }
 

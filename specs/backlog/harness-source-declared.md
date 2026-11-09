@@ -13,7 +13,9 @@ adapter's declaration: this unit ships the core) would remove the literal.
 
 Left from the sleep-and-adaptation stream (ringmaster review: a
 declaration field later). The literal ties the core to mAId's installer
-naming.
+naming. Since `ghost-in-shell-layout` it also breaks `infusion`'s "knows
+no shell": the literal lives in `infusion/src/adaptation.rs`, and it is
+the name of a Claude Code bring-in.
 
 ## Open questions
 

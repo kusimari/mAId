@@ -9,7 +9,7 @@ use build_tool::deploy::{BringIns, Deploy, Plugins, State};
 use build_tool::part::{self, Item, What};
 use build_tool::shared::{on_path, Agent, BRING_INS};
 use build_tool::stages;
-use maid_core::config::ClaudeConfig;
+use shell_claude::config_dir::ConfigDir;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -101,7 +101,7 @@ fn plugins_install_update_disable_and_uninstall_with_the_real_clis() {
     let claude_root = profile.join("share/maid/marketplace");
     let p = Plugins {
         home: h.to_path_buf(),
-        claude: ClaudeConfig::new(h, None),
+        claude: ConfigDir::new(h, None),
         profile: profile.clone(),
     };
     // A link an older mAId install left.
@@ -211,7 +211,7 @@ fn plugins_install_update_disable_and_uninstall_with_the_real_clis() {
     switch(&other_profile, &b);
     let other = Plugins {
         home: h.to_path_buf(),
-        claude: ClaudeConfig::new(h, None),
+        claude: ConfigDir::new(h, None),
         profile: other_profile,
     };
     other.install(None, false, false).unwrap();
@@ -271,15 +271,8 @@ fn bring_ins_install_and_uninstall_only_what_maid_added() {
     )
     .unwrap();
     // A fresh one per step, as each `just` run reads ownership anew.
-    let target = || {
-        BringIns::new(
-            h.to_path_buf(),
-            ClaudeConfig::new(h, None),
-            BRING_INS,
-            &parts,
-        )
-        .unwrap()
-    };
+    let target =
+        || BringIns::new(h.to_path_buf(), ConfigDir::new(h, None), BRING_INS, &parts).unwrap();
     let install = || stages::cmd_install(&target(), &content, &parts, false, false, None).unwrap();
     let uninstall = || stages::cmd_uninstall(&target(), &parts, false, false, None).unwrap();
     let b = &BRING_INS[0];
@@ -389,7 +382,7 @@ fn a_bring_in_that_cannot_be_reached_fails_the_run_and_is_recorded() {
     .unwrap();
     let target = BringIns::new(
         h.to_path_buf(),
-        ClaudeConfig::new(h, None),
+        ConfigDir::new(h, None),
         UNREACHABLE,
         &parts,
     )

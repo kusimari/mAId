@@ -7,8 +7,8 @@ use build_tool::stages::{
     cmd_install_bring_ins, cmd_install_memory, cmd_uninstall_memory, Checkout,
 };
 use build_tool::whole;
-use maid_core::config::ClaudeConfig;
-use maid_core::parts::{Source, SourceKind};
+use ghost::parts::{Source, SourceKind};
+use shell_claude::config_dir::ConfigDir;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -65,8 +65,8 @@ impl Env {
         self.root.join(p)
     }
     /// Claude's config under HOME, the variable unset.
-    fn cc(&self) -> ClaudeConfig {
-        ClaudeConfig::new(&self.at("home"), None)
+    fn cc(&self) -> ConfigDir {
+        ConfigDir::new(&self.at("home"), None)
     }
     fn install(&self) -> u8 {
         cmd_install_memory(

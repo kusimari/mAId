@@ -6,8 +6,8 @@ use crate::part::{Item, What, ANOTHER_PART};
 use crate::settings::{read_settings, write_atomic, write_settings, Outcome, NO_CLI};
 use crate::shared::claude_env;
 use anyhow::{anyhow, bail, Context, Result};
-use maid_core::config::ClaudeConfig;
 use serde_json::{Map, Value};
+use shell_claude::config_dir::ConfigDir;
 use std::collections::BTreeSet;
 use std::fs;
 use std::io;
@@ -81,7 +81,7 @@ pub fn set_store(file: &Path, path: &Path) -> Result<String> {
 
 /// The registered entry, if any. A config that cannot be read stops the
 /// step: whether mAId's entry is there is unknown.
-fn registered(claude: &ClaudeConfig) -> Result<Option<Value>> {
+fn registered(claude: &ConfigDir) -> Result<Option<Value>> {
     let at = claude.global();
     let map = read_settings(&at)?;
     match map.get("mcpServers") {
@@ -108,7 +108,7 @@ fn same_args(entry: &Value, want: &[String]) -> bool {
 }
 
 /// Run `claude mcp <args>` on `claude`; `Err` carries claude's first line.
-fn claude_mcp(claude: &ClaudeConfig, args: &[&str]) -> std::result::Result<(), String> {
+fn claude_mcp(claude: &ConfigDir, args: &[&str]) -> std::result::Result<(), String> {
     let out = claude_env(&mut Command::new("claude"), claude)
         .arg("mcp")
         .args(args)
@@ -124,12 +124,12 @@ fn claude_mcp(claude: &ClaudeConfig, args: &[&str]) -> std::result::Result<(), S
     }
 }
 
-fn remove_server(claude: &ClaudeConfig) -> std::result::Result<(), String> {
+fn remove_server(claude: &ConfigDir) -> std::result::Result<(), String> {
     claude_mcp(claude, &["remove", "-s", "user", SERVER])
 }
 
 /// Remove the entry, or on a dry run report that it would be.
-fn remove_unless(claude: &ClaudeConfig, dry_run: bool) -> std::result::Result<(), String> {
+fn remove_unless(claude: &ConfigDir, dry_run: bool) -> std::result::Result<(), String> {
     match dry_run {
         true => Ok(()),
         false => remove_server(claude),
@@ -169,7 +169,7 @@ fn failed(line: String, item: Option<Item>) -> ServerOutcome {
 }
 
 pub fn install_server(
-    claude: &ClaudeConfig,
+    claude: &ConfigDir,
     plan: &ServerPlan,
     dry_run: bool,
 ) -> Result<ServerOutcome> {
@@ -248,7 +248,7 @@ pub fn install_server(
 /// list records it. Without claude, or when claude fails to remove it, it
 /// stays recorded.
 pub fn uninstall_server(
-    claude: &ClaudeConfig,
+    claude: &ConfigDir,
     launcher: &Path,
     claimed: bool,
     cli_present: bool,
@@ -330,7 +330,7 @@ fn set_var(map: &mut Map<String, Value>, value: Option<Value>) {
 /// A part with a server that follows the same rules takes the value on at
 /// its next install.
 pub fn install_off(
-    claude: &ClaudeConfig,
+    claude: &ConfigDir,
     own: &Ownership,
     server: bool,
     cli_present: bool,
@@ -405,7 +405,7 @@ pub fn install_off(
 }
 
 /// Uninstall: remove the value only while it is mAId's.
-pub fn uninstall_off(claude: &ClaudeConfig, own: &Ownership, dry_run: bool) -> Result<Outcome> {
+pub fn uninstall_off(claude: &ConfigDir, own: &Ownership, dry_run: bool) -> Result<Outcome> {
     let tag = if dry_run { "(dry-run) " } else { "" };
     let at = claude.settings();
     let mut map = read_settings(&at)?;
@@ -426,7 +426,7 @@ pub fn uninstall_off(claude: &ClaudeConfig, own: &Ownership, dry_run: bool) -> R
 /// Remove the memory dir an older mAId set, when it is still exactly the
 /// value mAId recorded; anything else is left. `None` when nothing to say.
 pub fn remove_legacy(
-    claude: &ClaudeConfig,
+    claude: &ConfigDir,
     recorded: Option<&str>,
     dry_run: bool,
 ) -> Result<Option<String>> {
@@ -456,7 +456,7 @@ pub fn remove_legacy(
 // ─────────────────────────────────────────────────────────────────
 
 pub fn status(
-    claude: &ClaudeConfig,
+    claude: &ConfigDir,
     store: Option<&Path>,
     launcher: &Path,
     own: &Ownership,
@@ -508,8 +508,8 @@ mod tests {
     use tempfile::TempDir;
 
     /// Claude's config under `home`, the variable unset.
-    fn cc(home: &Path) -> ClaudeConfig {
-        ClaudeConfig::new(home, None)
+    fn cc(home: &Path) -> ConfigDir {
+        ConfigDir::new(home, None)
     }
 
     fn home() -> (TempDir, PathBuf) {

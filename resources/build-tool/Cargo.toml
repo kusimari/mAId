@@ -18,5 +18,7 @@ serde = { version = "1", features = ["derive"] }
 
 # The plugin CLIs list their state as JSON.
 serde_json = { version = "1", features = ["preserve_order"] }
-# The contract and part-list reader, shared with the installed core.
-maid-core = { path = "../core" }
+# What forms the ghost: the contract, the part-list schema and readiness.
+# And Claude Code's own config dir, from the shell the ghost runs in.
+ghost = { path = "../../ghost-in-shell/ghost" }
+shell-claude = { path = "../../ghost-in-shell/shell/claude" }

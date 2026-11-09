@@ -6,17 +6,18 @@ Codex, future tools). claude and codex install them as a plugin
 with their own plugin commands; kiro discovers them at its own
 skills path.
 
-The repo has two halves:
+The repo has three parts:
 
-- **`resources/`** — four layers in one directory:
+- **`resources/`** — three layers in one directory:
   the markdown content (`resources/content/`) the AI tools
   load; the Rust tooling (`resources/build-tool/`) that
-  validates, installs, and verifies it;
+  validates, installs, and verifies it; and
   the Justfile verbs (`resources::install-skills`,
   `resources::uninstall-skills`, `resources::status-skills`,
-  `resources::verify-skills`) that drive the tooling; and the
-  core (`resources/core/`, `maid-core`) that the plugin's hooks
-  call.
+  `resources::verify-skills`) that drive the tooling.
+- **`ghost-in-shell/`** — the core the plugin's hooks call
+  (`maid-core`), laid out as the design: `ghost`, `infusion`,
+  `shell/claude` and one tests crate.
 - **`kaimux/`** — sibling workspace member for the kaimux
   tmux-pane orchestrator. Built via `kaimux::build`.
 

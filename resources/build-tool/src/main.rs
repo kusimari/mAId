@@ -22,7 +22,7 @@ use build_tool::memory;
 use build_tool::part::What;
 use build_tool::shared::{
     claude_config, codex_home, config_dir, home_dir, memory_store_file, parts_dir, profile_dir,
-    repo_root, usage, validate_agent, validate_agents, Agent, UsageError, BRING_INS, CONTENT_DIR,
+    repo_root, skill_roots, usage, validate_agent, validate_agents, Agent, UsageError, BRING_INS,
     PROFILE_CONTENT_DIR,
 };
 use build_tool::stages;
@@ -211,7 +211,9 @@ fn run(cli: Cli) -> Result<u8> {
     match cli.cmd {
         // No deployment target at all: the guarantee is structural.
         Cmd::Check(args) => verify(Stage::Check, args, &NoDeploy, &root, false),
-        Cmd::Validate => stages::cmd_validate(&root.join(CONTENT_DIR)),
+        // In the checkout a skill is authored under the person's
+        // resources or with the ghost; the build puts them in one place.
+        Cmd::Validate => stages::cmd_validate(&skill_roots(&root)),
         Cmd::Install(a) => {
             let agent = validate_agent(a.agent.as_deref())?;
             let rc = stages::cmd_install(

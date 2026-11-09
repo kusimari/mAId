@@ -7,7 +7,7 @@ use build_tool::stages::{
     cmd_install_memory, cmd_install_reads, cmd_uninstall_memory, cmd_uninstall_reads,
 };
 use build_tool::whole;
-use maid_core::config::ClaudeConfig;
+use shell_claude::config_dir::ConfigDir;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use tempfile::TempDir;
@@ -34,7 +34,7 @@ fn install_adds_the_plugin_dir_keeps_the_rest_and_uninstall_puts_it_back() {
     fs::write(bin.join("claude"), "#!/bin/sh\n").unwrap();
     fs::set_permissions(bin.join("claude"), fs::Permissions::from_mode(0o755)).unwrap();
     std::env::set_var("PATH", &bin);
-    let cc = ClaudeConfig::new(&home, None);
+    let cc = ConfigDir::new(&home, None);
 
     let at = home.join(".claude/settings.json");
     let hand_rule = "Read(//elsewhere/marketplace/plugins/**)";

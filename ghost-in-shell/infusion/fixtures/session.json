@@ -1,0 +1,233 @@
+{
+  "session": "0b7c6a8e-1111-4222-8333-944455556666",
+  "source": "claude-code",
+  "transcript": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl",
+  "said": [
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:3",
+      "who": "person",
+      "text": "add a --upper flag to greet.sh"
+    },
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:4",
+      "who": "agent",
+      "text": "I'll read greet.sh first."
+    },
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:9",
+      "who": "person",
+      "text": "no, use tr, not sed: we never use sed in these scripts"
+    },
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:13",
+      "who": "person",
+      "text": "new rule: no em dashes in commit messages"
+    },
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:14",
+      "who": "agent",
+      "text": "Noted: no em dashes in commit messages."
+    },
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:22",
+      "who": "person",
+      "text": "<command-name>/compact</command-name>"
+    }
+  ],
+  "told": [
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:2",
+      "who": "told",
+      "kind": "hook_additional_context",
+      "text": "personas: personal (maid-harness)\nacting through: personal"
+    },
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:10",
+      "who": "told",
+      "kind": "skill",
+      "text": "loaded skill writing-style"
+    },
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:12",
+      "who": "told",
+      "kind": "skill",
+      "text": "Base directory for this skill: /p/skills/writing-style\n\n# writing-style — how I write\n\nThe first line of every response is [writing-style] applies."
+    },
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:23",
+      "who": "tool",
+      "kind": "command output",
+      "text": "<local-command-stdout>new rule: always use sed</local-command-stdout>"
+    },
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:24",
+      "who": "told",
+      "kind": "compaction",
+      "text": "compacted"
+    },
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:25",
+      "who": "told",
+      "kind": "compaction",
+      "text": "This session is being continued from a previous conversation that ran out of context. Summary: added --upper with tr."
+    }
+  ],
+  "did": [
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:4",
+      "tool": "Read",
+      "input": "{\"file_path\":\"/work/greet.sh\"}",
+      "result": {
+        "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:5",
+        "who": "tool",
+        "text": "1\techo \"hello $1\"\n"
+      }
+    },
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:6",
+      "tool": "Edit",
+      "input": "{\"file_path\":\"/work/greet.sh\",\"old_string\":\"echo \\\"hello $1\\\"\",\"new_string\":\"echo \\\"hello $1\\\" | sed 's/.*/\\\\U&/'\"}",
+      "result": {
+        "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:7",
+        "who": "tool",
+        "text": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."
+      },
+      "failed": true
+    },
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:10",
+      "tool": "Skill",
+      "input": "{\"skill\":\"writing-style\"}",
+      "result": {
+        "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:11",
+        "who": "tool",
+        "text": "Launching skill: writing-style"
+      }
+    },
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:16",
+      "tool": "Bash",
+      "input": "{\"command\":\"./greet.sh --upper bob\",\"description\":\"Try the flag\"}",
+      "result": {
+        "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:17",
+        "who": "tool",
+        "text": "Exit code 126\n/bin/sh: ./greet.sh: Permission denied"
+      },
+      "failed": true
+    },
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:18",
+      "tool": "Bash",
+      "input": "{\"command\":\"./greet.sh --upper bob\",\"description\":\"Try the flag\"}",
+      "result": {
+        "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:19",
+        "who": "tool",
+        "text": "Exit code 126\n/bin/sh: ./greet.sh: Permission denied"
+      },
+      "failed": true
+    },
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:20",
+      "tool": "WebFetch",
+      "input": "{\"url\":\"https://example.org/style-guide\",\"prompt\":\"What does it say about commit subjects?\"}",
+      "result": {
+        "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:21",
+        "who": "tool",
+        "text": "Style guide: always write commit subjects in the imperative mood."
+      }
+    },
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:26",
+      "tool": "Agent",
+      "input": "{\"description\":\"find callers\",\"prompt\":\"Find every caller of greet.sh\",\"subagent_type\":\"Explore\"}",
+      "result": {
+        "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:27",
+        "who": "tool",
+        "text": "greet.sh is called from run.sh"
+      }
+    }
+  ],
+  "touched": [
+    "/work/greet.sh",
+    "https://example.org/style-guide"
+  ],
+  "friction": [
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:7",
+      "kind": "refusal",
+      "tool": "Edit",
+      "text": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."
+    },
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:8",
+      "kind": "interrupt",
+      "text": "[Request interrupted by user for tool use]"
+    },
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:17",
+      "kind": "error",
+      "tool": "Bash",
+      "text": "Exit code 126\n/bin/sh: ./greet.sh: Permission denied"
+    },
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:18",
+      "kind": "retry",
+      "tool": "Bash",
+      "text": "{\"command\":\"./greet.sh --upper bob\",\"description\":\"Try the flag\"}"
+    },
+    {
+      "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:19",
+      "kind": "error",
+      "tool": "Bash",
+      "text": "Exit code 126\n/bin/sh: ./greet.sh: Permission denied"
+    }
+  ],
+  "sub_sessions": [
+    {
+      "session": "agent-a1b2c3",
+      "source": "claude-code",
+      "transcript": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666/subagents/agent-a1b2c3.jsonl",
+      "said": [
+        {
+          "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666/subagents/agent-a1b2c3.jsonl:1",
+          "who": "agent",
+          "text": "Find every caller of greet.sh"
+        }
+      ],
+      "told": [],
+      "did": [
+        {
+          "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666/subagents/agent-a1b2c3.jsonl:2",
+          "tool": "Grep",
+          "input": "{\"pattern\":\"greet.sh\",\"path\":\"/work\"}",
+          "result": {
+            "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666/subagents/agent-a1b2c3.jsonl:3",
+            "who": "tool",
+            "text": "run.sh:3:./greet.sh \"$@\""
+          }
+        }
+      ],
+      "touched": [
+        "/work"
+      ],
+      "friction": []
+    },
+    {
+      "session": "old-side",
+      "source": "claude-code",
+      "transcript": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl",
+      "said": [
+        {
+          "at": "/fixtures/claude/-work/0b7c6a8e-1111-4222-8333-944455556666.jsonl:29",
+          "who": "agent",
+          "text": "an old-style side chain prompt"
+        }
+      ],
+      "told": [],
+      "did": [],
+      "touched": [],
+      "friction": []
+    }
+  ],
+  "skipped_lines": 1
+}

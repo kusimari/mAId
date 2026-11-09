@@ -8,7 +8,7 @@
 
 use crate::shared::Agent;
 use anyhow::{anyhow, ensure, Context, Result};
-use maid_core::parts::BringIn;
+use ghost::parts::BringIn;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -622,7 +622,7 @@ mod tests {
     fn the_core_reads_what_this_writes() {
         let dir = TempDir::new().unwrap();
         record_bring_ins(dir.path(), vec![bring_in("notes")]).unwrap();
-        let (parts, refused) = maid_core::parts::read_all(dir.path()).unwrap();
+        let (parts, refused) = ghost::parts::read_all(dir.path()).unwrap();
         assert!(refused.is_empty());
         assert_eq!(parts[0].persona.as_deref(), Some("personal"));
         assert_eq!(parts[0].bring_ins, vec![Ok(bring_in("notes"))]);

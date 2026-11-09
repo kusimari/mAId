@@ -47,6 +47,10 @@
 
         pensieveServer = pensieve.packages.${system}.default;
 
+        # The ghost's own plugin assets, which the build copies in: they
+        # are no input to the binary, so editing one does not rebuild it.
+        ghostPlugin = ./ghost-in-shell/shell/claude/plugin;
+
         # The core every carrier calls, from the workspace's own lock. Only
         # the workspace's crates go in, so a content edit does not rebuild it.
         maid-core = (pkgs.makeRustPlatform { cargo = rustToolchain; rustc = rustToolchain; }).buildRustPackage {
@@ -57,13 +61,16 @@
             fileset = pkgs.lib.fileset.unions [
               ./Cargo.toml
               ./Cargo.lock
-              ./resources/core
+              # Not the plugin assets or the README: the binary is no
+              # input to them, so editing one must not rebuild it.
+              (pkgs.lib.fileset.difference ./ghost-in-shell
+                (pkgs.lib.fileset.unions [ ghostPlugin ./ghost-in-shell/README.md ]))
               ./resources/build-tool
               ./kaimux
             ];
           };
           cargoLock.lockFile = ./Cargo.lock;
-          cargoBuildFlags = [ "-p" "maid-core" ];
+          cargoBuildFlags = [ "-p" "shell-claude" "--bin" "maid-core" ];
           # `just test` runs the tests; this builds the binary.
           doCheck = false;
         };
@@ -99,7 +106,7 @@
           version = "@version@";
           inherit description;
           author.name = "mAId";
-          extensions."my-harness" = builtins.fromJSON (builtins.readFile ./resources/content/adapters/claude/my-harness.json);
+          extensions."my-harness" = builtins.fromJSON (builtins.readFile "${ghostPlugin}/my-harness.json");
           # Not the default `hooks/hooks.json` and `.mcp.json`: codex reads
           # those from the same plugin dir.
           hooks = "./hooks/claude.json";
@@ -110,8 +117,8 @@
         # plugin's version hash moves with the core.
         withCore = name: file: pkgs.writeText name (builtins.replaceStrings
           [ "@maid-core@" ] [ "${maid-core}/bin/maid-core" ] (builtins.readFile file));
-        claudeHooks = withCore "claude-hooks.json" ./resources/content/adapters/claude/hooks.json;
-        claudeMcp = withCore "claude-mcp.json" ./resources/content/adapters/claude/mcp.json;
+        claudeHooks = withCore "claude-hooks.json" "${ghostPlugin}/hooks.json";
+        claudeMcp = withCore "claude-mcp.json" "${ghostPlugin}/mcp.json";
         codexPlugin = manifest "codex-plugin.json" {
           name = "maid";
           version = "@version@";
@@ -132,7 +139,10 @@
             p=$m/plugins/maid
             mkdir -p $m/.claude-plugin $m/.agents/plugins $p/.claude-plugin $p/.codex-plugin $p/hooks $out/bin
             cp -r ${./resources/content/skills} $p/skills
-            cp -r ${./resources/content/agents} $p/agents
+            # The ghost's own skill and agent are authored with the ghost.
+            chmod u+w $p/skills
+            cp -r ${ghostPlugin}/skills/reflect $p/skills/reflect
+            cp -r ${ghostPlugin}/agents $p/agents
             # The reflect skill names the core as `@maid-core@`: this build's.
             chmod u+w $p/skills/reflect $p/skills/reflect/SKILL.md
             sed -i "s|@maid-core@|${maid-core}/bin/maid-core|g" $p/skills/reflect/SKILL.md

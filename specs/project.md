@@ -29,12 +29,12 @@ sibling workspace members with their own native cargo verbs.
      talk. Diagrams optional; words mandatory. Not a file-layout
      listing — see Layout for that. -->
 
-Two halves at the top level:
+Three parts at the top level:
 
-- **`resources/`** — four layers, working together:
+- **`resources/`** — three layers, working together:
   1. **Content** (`resources/content/skills/<name>/SKILL.md`) —
-     the skill definitions the AI tools load, beside the declarations,
-     adapter and agent the core uses (see Layout). Each tool
+     the skill definitions the AI tools load, beside the server and
+     overlay declarations the ghost reads (see Layout). Each tool
      auto-discovers the skills at its own skills path.
 
      A skill may ship **deferred modules** beside its `SKILL.md` —
@@ -101,9 +101,12 @@ Two halves at the top level:
      omit for all three). These are how a human or another tool
      consumes the
      tooling.
-  4. **Core** (`resources/core/`) — `maid-core`, installed in the
-     profile: the ghost's five entry points, which every shell's carriers
-     call (see "My harness").
+- **`ghost-in-shell/`** — the core, laid out as the concept: the crates
+  `ghost` (what forms the ghost), `infusion` (the five entry points) and
+  `shell/claude` (the wiring into Claude Code, which builds the installed
+  `maid-core` and holds the ghost's own plugin assets), beside one tests
+  crate. See the initiative spec `harness-core`, "System design", and
+  "My harness" below.
 - **`kaimux/`** — tmux-pane orchestrator for coding-agent
   sessions. Single-binary Rust crate (workspace member).
   Wraps `claude` / `kiro-cli` calls so each running agent
@@ -188,7 +191,7 @@ them rather than on the install before.
 this file is Claude Code's default. With `CLAUDE_CONFIG_DIR` set, Claude
 Code (checked on 2.1.314) keeps all of it in that dir, `.claude.json`
 included, and reads nothing from `~/.claude`; empty is unset. One resolver,
-`maid_core::config::ClaudeConfig`, places those paths for the core and
+`shell_claude::config_dir::ConfigDir`, places those paths for the core and
 build-tool alike. build-tool resolves it once, in `main`, and passes it as a
 value: nothing deeper reads the variable, so a test with a temp HOME can
 never reach a config dir the shell sets. Every `claude` build-tool starts
@@ -516,7 +519,7 @@ its standard's own description stands in for `job`.
 `rules` is `<file>#<anchor>`: `file` relative to the unit's manifest dir
 (never absolute, never through `..`), `anchor` a heading's slug as GitHub
 makes it. The rules are that heading's section, up to the next heading of
-the same or a higher level, fenced code skipped; `maid_core::contract::rules`
+the same or a higher level, fenced code skipped; `ghost::contract::rules`
 reads it, and content validation fails a skill whose declaration does not
 read or whose pointer names no heading. mAId keeps each to at most 30
 lines.
@@ -539,7 +542,7 @@ writes it.
 below) and the core's adapter on each shell it is built for. On Claude Code
 that is `claude-adapter`, declared in the Claude manifest of mAId's plugin
 (`extensions["my-harness"]`, which the flake fills from
-`resources/content/adapters/claude/my-harness.json`), whose hooks are the
+`ghost-in-shell/shell/claude/plugin/my-harness.json`), whose hooks are the
 core's carriers; it is recorded while `maid@maid` is placed on claude,
 source this repo, own. `claude plugin validate` warns on `extensions`, and
 `--strict` refuses it; that is known and accepted, since Claude Code ignores
@@ -562,9 +565,9 @@ browser step's `build-tool record` keeps it in step) and the document
 skills. None declares a file tier: writing-style keeps its rules in the
 persona's memory and says so in its `job` (see "Skill state").
 
-**The core.** `maid-core` (`resources/core`, in the profile as
-`bin/maid-core`) reads every part list, fuses the personas and bring-ins
-into the harness map on every call (never stored), derives the
+**The core.** `maid-core` (`ghost-in-shell/shell/claude`, in the profile
+as `bin/maid-core`) reads every part list, fuses the personas and bring-ins
+into the ghost on every call (never stored), derives the
 environment (each bring-in ready, or not and why), and answers the entry
 points `genome`, `expression`, `experience`, `sleep` and `adaptation` for
 any carrier: `--session <id>`, `--carrier append|transient|on-demand`,
@@ -635,7 +638,7 @@ state location holds the folder; otherwise not known. The genome makes
 the same guess from its input's `cwd`.
 
 **The Claude Code adapter** is data in mAId's plugin: `hooks/claude.json`
-and `claude-mcp.json` (from `resources/content/adapters/claude/`), named by
+and `claude-mcp.json` (from `ghost-in-shell/shell/claude/plugin/`), named by
 the Claude manifest's `hooks` and `mcpServers`, not codex's default
 `hooks/hooks.json` and `.mcp.json`, since codex reads the same plugin dir.
 Each command starts `@maid-core@`, which the flake replaces with this
@@ -1012,9 +1015,11 @@ codex, kiro-cli and agy reach the same servers by registration, later.
      only where version matters. -->
 
 - **Runtime:** Rust (cargo workspace) + Just for the verb
-  surface. The workspace members are `resources/core` (`maid-core`,
-  the installed core; it matches turn-fit globs with `globset`, the
-  matcher ripgrep uses), `resources/build-tool` and `kaimux/`.
+  surface. The workspace members are `ghost-in-shell/ghost`,
+  `ghost-in-shell/infusion` (it matches turn-fit globs with `globset`, the
+  matcher ripgrep uses), `ghost-in-shell/shell/claude` (which builds the
+  installed `maid-core`), `ghost-in-shell/tests`, `resources/build-tool`
+  and `kaimux/`.
 - **Isolation:** one flake, two outputs. `devShells.default`
   (loaded by `.envrc` via direnv) is the dev closure: the rust
   toolchain (rust-overlay), `just`, and `jq` (the install tests read
@@ -1099,7 +1104,8 @@ codex, kiro-cli and agy reach the same servers by registration, later.
 
 ```
 mAId/
-├── Cargo.toml              workspace root: members = ["resources/core", "resources/build-tool", "kaimux"]
+├── Cargo.toml              workspace root: members = ghost-in-shell/{ghost,infusion,shell/claude,tests},
+│                           resources/build-tool, kaimux
 ├── Cargo.lock              committed (binary-workspace policy)
 ├── Justfile                root verb surface (workspace hygiene + `mod resources` / `mod kaimux`)
 ├── install                 entry-point for setup walks: `just install`, via the dev shell if needed
@@ -1107,39 +1113,9 @@ mAId/
 ├── flake.nix / .envrc      dev shell (rust toolchain, just, jq) and the installable package
 ├── resources/
 │   ├── Justfile            `resources::*` verb surface (install/uninstall/status/verify)
-│   ├── core/               Rust crate maid-core, installed: entry points, map, environment
-│   │   ├── src/config.rs   where things are (parts dir, state dir)
-│   │   ├── src/contract.rs the bring-in contract, read from each standard's slot
-│   │   ├── src/parts.rs    each part's persona and bring-ins, as its list records them
-│   │   ├── src/map.rs      fusion: the harness map
-│   │   ├── src/environment.rs  each bring-in ready or not here; the PATH rule
-│   │   ├── src/delivery.rs the delivery record per session
-│   │   ├── src/here.rs     where a session is: folder, repo root, branch, globs
-│   │   ├── src/record.rs   the work's own record a turn bring-in points at
-│   │   ├── src/fit.rs      turn fit and the persona guess
-│   │   ├── src/select.rs   recall: the memory indexes and the Selector
-│   │   ├── src/source.rs   session sources: where a session is read from
-│   │   ├── src/claude.rs   Claude Code's transcripts, located and packed
-│   │   ├── src/experience.rs  a session as said, told, did, touched, friction
-│   │   ├── src/sleep.rs    sleep marks: sessions waiting to be reflected on
-│   │   ├── src/adapt.rs    findings, the guards, the decision batch, the routes (tests in adapt/)
-│   │   ├── src/adapt/moves.rs  what a session saved in memory, and a bring-in's rules moved into its text
-│   │   ├── src/memory.rs   a persona memory written through its server, MCP over stdio
-│   │   ├── src/ledger.rs   what reflections saw and the person decided
-│   │   ├── src/files.rs, src/time.rs  whole-file writes; UTC stamps
-│   │   ├── src/entry.rs    genome, expression, experience, sleep, adaptation
-│   │   ├── src/mcp.rs      the on-demand carrier as an MCP server on stdio
-│   │   ├── src/main.rs     the CLI
-│   │   ├── tests/cli.rs    the binary under a bare environment
-│   │   ├── tests/claude_hooks.rs  the shipped Claude hooks and MCP config, run as Claude Code runs them
-│   │   ├── tests/mcp.rs    the MCP server over stdio
-│   │   ├── tests/shipped_fit.rs  turn fit against this repo's own declarations
-│   │   ├── tests/claude_live.rs  ignored: Claude Code against a stub model API on loopback
-│   │   ├── tests/claude_paid.rs  ignored, paid: Claude Code with a real model, on the shell's HOME and model access
-│   │   ├── tests/adaptation.rs  close, reflect and decide through the binary, the real memory server, a store's travel
-│   │   └── tests/fixtures/claude/  a real-shaped Claude Code session and sub-agent
 │   ├── build-tool/         Rust crate — the pipeline (check/install/uninstall/status/smoke)
-│   │   ├── Cargo.toml      deps: clap, anyhow, gray_matter, serde, serde_json, tempfile, maid-core
+│   │   ├── Cargo.toml      deps: clap, anyhow, gray_matter, serde, serde_json, tempfile,
+│   │   │                    ghost (the contract, part lists, readiness), shell-claude (the config dir)
 │   │   ├── src/main.rs     the shim: clap surface + dispatch, in pipeline order
 │   │   ├── src/lib.rs      module wiring + the pipeline doc comment
 │   │   ├── src/shared.rs   Agent, REGISTRY, roots — what every stage speaks
@@ -1163,15 +1139,13 @@ mAId/
 │   │   ├── tests/conformance.rs  whole.rs against the conformance set
 │   │   ├── tests/conformance/  the whole-status conformance set, one dir per case
 │   │   └── tests/reads_install.rs   install's claude skill-reads step beside memory's
-│   ├── content/            the deployable skills (copied into the profile)
+│   ├── content/            the person's deployable resources (copied into the profile;
+│   │                        the ghost's own skill and agent are in ghost-in-shell/)
 │   │   ├── overlays/<plugin>/plugin.json  the declaration of a borrowed plugin
 │   │   ├── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
 │   │   ├── skills/kdevkit/  SKILL.md core + phases/, tiers/, setup.md, interviews.md
 │   │   ├── skills/kyodakit/ SKILL.md: developer judgement, any language
-│   │   ├── servers/<name>/server.json  each MCP server's declaration (copied to share/maid/servers/)
-│   │   ├── skills/reflect/  SKILL.md: close or reflect, the batch, the person's answer (names `@maid-core@`)
-│   │   ├── agents/reflector.md  the reflector, a read-only Claude Code sub-agent (into the plugin)
-│   │   └── adapters/claude/ the Claude Code adapter: my-harness.json (its declaration), hooks.json, mcp.json
+│   │   └── servers/<name>/server.json  each MCP server's declaration (copied to share/maid/servers/)
 │   ├── browser/            browser-control MCP (not symlinked — runnable)
 │   │   ├── launch          allowlist-enforcing launcher; the flake wraps it as maid-browser-mcp
 │   │   └── manage          data-driven MCP registrar (MCP_AGENTS table; every agent global, kiro by editing its config)
@@ -1182,6 +1156,54 @@ mAId/
 │       ├── verify-install       the installable Macro test, on the real install (`just verify-install`)
 │       ├── conversational-stream.txt  the --stressed prefix
 │       └── skills/<name>.smoke   fixtures: skill + playback/enact sections (runner owns the five kinds)
+├── ghost-in-shell/         the ghost, laid out as the concept (the initiative spec
+│                           `harness-core`, "System design", maps crate and file to concept)
+│   ├── ghost/              crate `ghost`: what forms the ghost. No shell, no entry point
+│   │   ├── src/config.rs   where the ghost keeps its own things (parts dir, state dir)
+│   │   ├── src/contract.rs the bring-in contract, read from each standard's slot
+│   │   ├── src/parts.rs    each part's persona and bring-ins, as its list records them
+│   │   ├── src/ghost.rs    fusion: `Ghost::from_roots(parts dirs)`
+│   │   ├── src/environment.rs  each bring-in ready or not here; the PATH rule
+│   │   └── src/time.rs     UTC stamps
+│   ├── infusion/           crate `infusion`: the five entry points, one file each. Knows no shell
+│   │   ├── src/call.rs     the call every carrier makes, and the items it answers with
+│   │   ├── src/genome.rs   who the session is, at its start
+│   │   ├── src/expression.rs   what this turn needs; with its own supporting code:
+│   │   │   ├── delivery.rs the delivery record per session
+│   │   │   ├── fit.rs      turn fit and the persona guess
+│   │   │   ├── select.rs   recall: the memory indexes and the Selector
+│   │   │   ├── record.rs   the work's own record a turn bring-in points at
+│   │   │   └── here.rs     where a session is: folder, repo root, branch, globs
+│   │   ├── src/experience.rs   a session as said, told, did, touched, friction
+│   │   │   └── source.rs   session sources: the traits a shell's own sources fill
+│   │   ├── src/sleep.rs    sleep marks: sessions waiting to be reflected on
+│   │   ├── src/adaptation.rs   findings, the guards, the decision batch, the routes
+│   │   │   ├── moves.rs    what a session saved in memory, and a bring-in's rules moved into its text
+│   │   │   ├── memory.rs   a persona memory written through its server, MCP over stdio
+│   │   │   └── ledger.rs   what reflections saw and the person decided
+│   │   ├── src/files.rs    whole-file writes
+│   │   └── fixtures/session.json  the fixture session packed, for the tests that read one
+│   ├── shell/claude/       crate `shell-claude`: the ghost in Claude Code; builds bin `maid-core`
+│   │   ├── src/main.rs     the CLI, and the hook answer in Claude's JSON (always exit 0)
+│   │   ├── src/hook.rs     Claude's own input, turned into the call infusion takes
+│   │   ├── src/config_dir.rs   `ConfigDir`: where Claude keeps its user config
+│   │   ├── src/transcript.rs   Claude's transcripts, located and packed: its session source
+│   │   ├── src/mcp.rs      the on-demand carrier as an MCP server on stdio
+│   │   └── plugin/         the ghost's own Claude plugin assets, which the build copies in:
+│   │                       my-harness.json (the adapter's declaration), hooks.json, mcp.json,
+│   │                       agents/reflector.md, skills/reflect/
+│   └── tests/              crate `ghost-in-shell-tests`: every test that spans crates or runs
+│       │                   Claude Code or the binary (unit tests stay in the file they test)
+│       ├── src/lib.rs      what they share: the roots, the fixture session, the built binary
+│       ├── tests/cli.rs    the binary under a bare environment
+│       ├── tests/claude_hooks.rs  the shipped Claude hooks and MCP config, run as Claude Code runs them
+│       ├── tests/mcp.rs    the MCP server over stdio
+│       ├── tests/entry_points.rs  the entry points over this shell's own session source
+│       ├── tests/shipped_fit.rs  turn fit against this repo's own declarations
+│       ├── tests/claude_live.rs  ignored: Claude Code against a stub model API on loopback
+│       ├── tests/claude_paid.rs  ignored, paid: Claude Code with a real model, on the shell's HOME and model access
+│       ├── tests/adaptation.rs  close, reflect and decide through the binary, the real memory server, a store's travel
+│       └── tests/fixtures/claude/  a real-shaped Claude Code session and sub-agent
 ├── kaimux/                 tmux-pane orchestrator for coding-agent sessions
 │   ├── Justfile            `kaimux::*` verb surface (build/test/integration)
 │   ├── Cargo.toml          deps: clap, anyhow, fd-lock, nix, notify, serde, serde_json
@@ -1207,11 +1229,13 @@ Two test layers, each scoped to what they verify.
 **`just test` — workspace unit tests.** Rust unit tests
 covering the content validator and the symlink state
 machine against a `tempfile`-fake `$HOME`, plus the kaimux
-crate's 53 unit tests against a tempdir `Store`, and the core's
-(`maid-core`: the contract readers, fusion, readiness, the delivery
-record, the entry points, turn fit, the work record, recall, the
-transcript packer on a real-shaped fixture, each guard and route against
-a stub memory server, the ledger, and its binary under a bare
+crate's 53 unit tests against a tempdir `Store`, and the ghost's own
+(`ghost`: the contract readers, fusion, readiness; `infusion`: the
+entry points, the delivery record, turn fit, the work record, recall,
+each guard and route against a stub memory server, the ledger;
+`shell-claude`: the config dir, Claude's hook input, the transcript
+packer on a real-shaped fixture; and in `ghost-in-shell-tests` what
+spans them and the binary under a bare
 environment: the shipped Claude hooks run through `sh -c` with a
 payload, the MCP server over stdio, turn fit against this repo's own
 declarations, and `tests/adaptation.rs`, which closes, reflects and
@@ -1231,7 +1255,7 @@ on a PATH it is handed, never the real ones, and `tests/conformance.rs`
 runs it, and the binary for the exit code, against every case of the
 conformance set (see "My harness").
 
-`cargo test -p maid-core --test claude_live -- --ignored` drives the real
+`cargo test -p ghost-in-shell-tests --test claude_live -- --ignored` drives the real
 Claude Code (`CLAUDE_BIN`, else `claude` on PATH) in a temp HOME with
 `--plugin-dir` on a plugin built from the adapter files and the cargo-built
 core, against a stub of the model API on `127.0.0.1` at a port the OS
@@ -1252,7 +1276,7 @@ kind of stub (the MCP server connects, the genome placed once), a new
 generation and a rollback, each followed with nothing registered again. It
 builds `maid-core` (dev profile) and is free.
 
-`cargo test -p maid-core --test claude_paid -- --ignored --test-threads 1`
+`cargo test -p ghost-in-shell-tests --test claude_paid -- --ignored --test-threads 1`
 with `MAID_PAID=1` (and `CLAUDE_BIN`) runs Claude Code with a real model:
 four model calls, only as granted. It keeps the shell's HOME and
 environment, so the model access is the shell's own and no credential is
@@ -1266,7 +1290,7 @@ given, its files checked against the dir as resolved) is undocumented:
 
 ```
 cargo test -p build-tool --test claude_installed -- --ignored
-cargo test -p maid-core --test claude_live -- --ignored
+cargo test -p ghost-in-shell-tests --test claude_live -- --ignored
 ```
 
 `cargo test -p build-tool --test plugins -- --ignored` drives the real
@@ -1731,7 +1755,8 @@ the experience is symmetric across resource kinds.
   destination, or the plugin's copies under claude's and codex's
   plugin dirs directly.** They are symlinks into the mAId profile (a
   read-only nix store path) or the agent's own cache. Edit the source
-  under `resources/content/` and `just install`. (This
+  under `resources/content/` (or, for the ghost's own skill and agent,
+  `ghost-in-shell/shell/claude/plugin/`) and `just install`. (This
   guardrail is mAId-project context — it protects mAId's own deploy
   invariant — which is why it lives here, not in a globally-installed
   preamble.)

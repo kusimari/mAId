@@ -12,8 +12,8 @@
 
 use build_tool::deploy::{Deploy, Plugins};
 use build_tool::shared::Agent;
-use maid_core::config::ClaudeConfig;
 use serde_json::{json, Value};
+use shell_claude::config_dir::ConfigDir;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -24,7 +24,7 @@ use tempfile::TempDir;
 
 type Log = Arc<Mutex<Vec<Value>>>;
 
-// The stub after resources/core/tests/claude_live.rs, answering text only.
+// The stub after ghost-in-shell/tests/tests/claude_live.rs, answering text only.
 fn stub() -> (String, Log) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -126,11 +126,18 @@ fn answer(path: &str, body: &Value) -> (&'static str, Vec<u8>) {
 fn core() -> PathBuf {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let built = Command::new(cargo)
-        .args(["build", "--quiet", "-p", "maid-core", "--bin", "maid-core"])
+        .args([
+            "build",
+            "--quiet",
+            "-p",
+            "shell-claude",
+            "--bin",
+            "maid-core",
+        ])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .status()
         .unwrap();
-    assert!(built.success(), "cargo build -p maid-core");
+    assert!(built.success(), "cargo build -p shell-claude");
     let core = Path::new(env!("CARGO_BIN_EXE_build-tool")).with_file_name("maid-core");
     assert!(core.is_file(), "no {}", core.display());
     core
@@ -154,7 +161,9 @@ fn generation(dir: &Path, tag: &str, core: &Path, parts: &Path) {
         &m.join(".agents/plugins/marketplace.json"),
         r#"{"name":"maid","plugins":[{"name":"maid","source":{"source":"local","path":"./plugins/maid"},"policy":{"installation":"AVAILABLE"}}]}"#,
     );
-    let adapter = Path::new(env!("CARGO_MANIFEST_DIR")).join("../content/adapters/claude");
+    let adapter = build_tool::shared::repo_root()
+        .unwrap()
+        .join(build_tool::shared::GHOST_PLUGIN_DIR);
     let decl: Value =
         serde_json::from_str(&fs::read_to_string(adapter.join("my-harness.json")).unwrap())
             .unwrap();
@@ -268,7 +277,7 @@ fn claude_code_runs_the_installed_plugins_hooks_and_follows_a_rollback() {
     switch(&profile, &a);
     let p = Plugins {
         home: home.clone(),
-        claude: ClaudeConfig::new(&home, None),
+        claude: ConfigDir::new(&home, None),
         profile: profile.clone(),
     };
     let run = |args: &[&str]| {

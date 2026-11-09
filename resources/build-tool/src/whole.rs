@@ -11,10 +11,10 @@ use crate::deploy::{listed_marketplaces, listed_plugins};
 use crate::part::What;
 use crate::shared::{claude_env, find_on, Agent};
 use anyhow::{Context, Result};
-use maid_core::config::ClaudeConfig;
-use maid_core::environment::{self, Host, Readiness};
+use ghost::environment::{self, Host, Readiness};
 use serde::Deserialize;
 use serde_json::Value;
+use shell_claude::config_dir::ConfigDir;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::{OsStr, OsString};
@@ -241,7 +241,7 @@ impl fmt::Display for Whole {
 pub fn cmd_whole(
     parts: &Path,
     home: &Path,
-    claude: &ClaudeConfig,
+    claude: &ConfigDir,
     agent: Option<Agent>,
 ) -> Result<u8> {
     let whole = check(parts, home, claude, std::env::var_os("PATH"), agent)?;
@@ -255,7 +255,7 @@ pub fn cmd_whole(
 pub fn check(
     dir: &Path,
     home: &Path,
-    claude: &ClaudeConfig,
+    claude: &ConfigDir,
     path: Option<OsString>,
     agent: Option<Agent>,
 ) -> Result<Whole> {
@@ -272,13 +272,13 @@ pub fn check_in(
     set: &BTreeSet<String>,
     agent: Option<Agent>,
 ) -> Result<Whole> {
-    check_at(dir, home, &ClaudeConfig::new(home, None), path, set, agent)
+    check_at(dir, home, &ConfigDir::new(home, None), path, set, agent)
 }
 
 fn check_at(
     dir: &Path,
     home: &Path,
-    claude: &ClaudeConfig,
+    claude: &ConfigDir,
     path: Option<OsString>,
     set: &BTreeSet<String>,
     agent: Option<Agent>,
@@ -332,13 +332,13 @@ fn check_at(
 }
 
 /// Every bring-in of every list this reader took, with its readiness. A
-/// list taken here whose bring-ins the core cannot read gets one `*` line.
+/// list taken here whose bring-ins the ghost cannot read gets one `*` line.
 fn bring_ins(dir: &Path, refused: &[Refused], host: &Host) -> Result<Vec<BringInLine>> {
-    let map =
-        maid_core::map::fuse(dir).with_context(|| format!("cannot read {}", dir.display()))?;
+    let ghost = ghost::Ghost::from_roots(std::slice::from_ref(&dir.to_path_buf()))
+        .with_context(|| format!("cannot read {}", dir.display()))?;
     // No entry of a refused list is checked (rule 3), bring-ins included.
     let taken = |part: &str| refused.iter().all(|r| r.file != format!("{part}.json"));
-    let mut out: Vec<BringInLine> = map
+    let mut out: Vec<BringInLine> = ghost
         .bring_ins
         .iter()
         .filter(|b| taken(&b.part))
@@ -349,9 +349,9 @@ fn bring_ins(dir: &Path, refused: &[Refused], host: &Host) -> Result<Vec<BringIn
             readiness: environment::readiness(b, host),
         })
         .collect();
-    // The core also refuses a list whose persona or bring-ins are not of
+    // The ghost also refuses a list whose persona or bring-ins are not of
     // their shape, which this reader takes: those get one `*` line.
-    for r in &map.refused {
+    for r in &ghost.refused {
         if refused.iter().all(|w| w.file != r.file) {
             out.push(BringInLine {
                 part: r.file.strip_suffix(".json").unwrap_or(&r.file).into(),
@@ -396,7 +396,7 @@ fn source(
     kind: What,
     scope: Option<&str>,
     home: &Path,
-    claude: &ClaudeConfig,
+    claude: &ConfigDir,
 ) -> Result<Source, String> {
     use Agent::{Claude, Codex, Kiro};
     use What::{Marketplace, Mcp, Plugin, Setting, Skill};
@@ -450,7 +450,7 @@ fn kind_name(kind: What) -> String {
 /// Reads each source at most once per run.
 struct Probe {
     home: PathBuf,
-    claude: ClaudeConfig,
+    claude: ConfigDir,
     path: Option<OsString>,
     seen: RefCell<HashMap<Source, Result<Listing, Found>>>,
 }
@@ -884,7 +884,7 @@ mod tests {
             check(
                 self.parts.path(),
                 self.home.path(),
-                &ClaudeConfig::new(self.home.path(), None),
+                &ConfigDir::new(self.home.path(), None),
                 path,
                 agent,
             )
@@ -990,7 +990,7 @@ mod tests {
         let whole = check(
             &w.parts.path().join("none"),
             w.home.path(),
-            &ClaudeConfig::new(w.home.path(), None),
+            &ConfigDir::new(w.home.path(), None),
             None,
             None,
         )
