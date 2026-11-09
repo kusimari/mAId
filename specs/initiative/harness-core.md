@@ -24,6 +24,13 @@ the next, on any base harness, without wrapping it.
   working, what they know and have learned, carried into any shell.
   Without it the shell is a **zombie**: it acts, often well, on instinct
   alone, with no self and nothing learned from last time.
+- **Plain, then the ghost.** The *plain* install puts the person's
+  resources (skills, servers, plugins) into each shell; a reader needs
+  nothing of this design to use it, and the shell runs them as they are, a
+  zombie with good tools. Installing the ghost adds only the ghost's own
+  plugin, which reads what the plain install placed. The ghost can be
+  switched on and off (everywhere, per project, or for one launch)
+  without reinstalling anything.
 - **One ghost, several personas, fused.** Each persona (work, personal,
   ...) comes from its own part. Every session carries the whole ghost,
   acts through the persona the work belongs to, and keeps each persona's
@@ -428,22 +435,48 @@ named.
 
 ### The parts
 
-| Program | Where | Role |
-|---|---|---|
-| `maid-core` | `resources/core` | the core: the five entry points and the readers they need; every carrier calls its CLI |
-| `build-tool` | `resources/build-tool` | builds and installs the package, wires each agent, reports status |
-| `pensieve` | its own repo, pinned | the memory server (MCP), called by the model |
+The code is laid out as the concept: one crate per idea, under
+`ghost-in-shell/`, beside the plain installer.
 
-`maid-core`'s modules are the concepts, one each: installed state
-(`config`, `parts`, `contract`, `map`, `environment`), what a session gets
-(`entry`, `delivery`, `here`, `fit`, `select`, `record`, `mcp`), learning
-(`sleep`, `source`, `claude` the transcript packer, `experience`, `adapt`
-with `adapt/moves`, `memory`, `ledger`), and `main`, the CLI.
+```
+resources/              the person's resources (skills, servers, plugins) and
+  build-tool/           the plain installer: puts them into claude, codex, kiro;
+                        writes the part list; `just install`, `just status`
+ghost-in-shell/
+  ghost/                what forms the ghost: Ghost::from_roots (the parts dirs)
+                        → parts, personas, bring-ins, fused; readiness; memory
+  infusion/             the five entry points: genome, expression, experience,
+                        sleep, adaptation; depends on ghost, knows no shell
+  shell/claude/         wires ghost and infusion into Claude Code: the binary,
+                        hook I/O, the transcript as an experience source, the
+                        config dir, the MCP server, and the `ghost` plugin
+                        (hooks, MCP config, the reflect skill, the reflector)
+  tests/                every test that spans files or runs Claude Code;
+                        unit tests stay inside each file
+```
+
+- **Plain and ghost on Claude Code.** The plain install places the `maid`
+  plugin (skills), the MCP servers and the settings. The ghost install
+  places the `ghost` plugin. The ghost reads the part list and the
+  declarations inside the installed resources; nothing of the plain
+  install is placed twice. On and off is Claude Code's own
+  `claude plugin enable|disable`, a project's settings, or `--settings`
+  for one launch. `just status` reports the plain install; `ghost status`
+  reports readiness and pending decisions.
+- *Decision:* the part list is the part's record, so the plain installer
+  writes it, using `ghost`'s schema as a library; it still installs with
+  no ghost present.
+- *Decision:* one binary per shell (`shell/claude` builds Claude's) until
+  one binary is shown to serve every shell; `infusion` stays shell-free so
+  that is a move, not a rewrite.
+- *Built today:* one crate, `resources/core` (`maid-core`), and the ghost's
+  carriers ship inside the `maid` plugin. Stream 13 lays out the crates;
+  stream 12 splits the ghost into its own plugin and install.
 
 mAId's part is `maid-harness`, persona `personal`. Its session bring-ins
 are `personal-memory` (package `pensieve`, own, sourced at pensieve's repo
-and the `flake.lock` pin) and `claude-adapter`, declared in the plugin's
-Claude manifest. MCP server declarations live at
+and the `flake.lock` pin) and the Claude adapter, declared in the ghost
+plugin's manifest. MCP server declarations live at
 `resources/content/servers/<name>/server.json`, overlays under
 `resources/content/overlays/`.
 
@@ -586,8 +619,9 @@ pattern), not by the packager.
 | 8 | claude-config-dir | from Macro test run 3: install, uninstall and status read and write Claude's user config at `$HOME/.claude` even when `CLAUDE_CONFIG_DIR` is set; the paid tests isolate through `CLAUDE_CONFIG_DIR`, not a scratch HOME | 7 | merged |
 | 9 | writing-style-memory | from Macro test run 3: writing-style's taught rules live in persona memory, not a file tier; the close batch says what was saved and offers to move them into the skill on its source; the reflector quotes only the person's words for a habit; the guard's label says what it checks | 8 | merged |
 | 10 | saved-in-session | from Macro test run 4: the genome names where a bring-in's bound files are, so a skill never falls back to a default path (R4-1); a persona memory saved during the session is shown in the close batch as saved in memory (R4-2) | 9 | merged |
-| 11 | prompt-prefix | Implementation design D1 and D2: Rust gathers and the agent judges (candidates in the prefix); the essentials go again on change and once drifted | 10 | planned |
-| 12 | build-install-layers | Implementation design D3: a Rust staging step builds the package; install is a PREFIX copy; the flake only runs build and install; wiring unchanged | 10 | planned |
+| 11 | prompt-prefix | Implementation design D1 and D2: Rust gathers and the agent judges (candidates in the prefix); the essentials go again on change and once drifted | 13 | planned |
+| 12 | ghost-package | the plain install and the ghost install split: the ghost as its own Claude plugin and install, on/off, `ghost status`; with D3: a Rust staging step builds each package, install is a PREFIX copy, the flake only runs build and install | 13 | planned |
+| 13 | ghost-in-shell-layout | the crates `ghost`, `infusion`, `shell/claude` and `tests` under `ghost-in-shell/`, laid out as the concept; no behaviour change | 10 | planned |
 
 The work part's own bring-ins take the contract in their own repo, outside
 this initiative.
@@ -879,3 +913,12 @@ this initiative.
   D1 B and D2 c are chosen for the prompt prefix; D3: build, install and
   wiring are three layers, everything mAId builds is cargo and Rust, and
   nix is one way to run build and install · streams 11 and 12 build them
+- Ruling (user, 2026-11-09): the code is laid out as the concept, under
+  `ghost-in-shell/`: `ghost` (what forms the ghost), `infusion` (the five
+  entry points), `shell/claude` (the wiring), and one tests crate. The
+  person's resources and the plain installer stay apart: "plain" is the
+  install a reader can use with no knowledge of this design; inside
+  ghost-in-shell a shell without the ghost is a zombie. The ghost is its
+  own plugin and install on top of plain, switched on and off with no
+  reinstall; plain status and ghost status are separate; one binary per
+  shell for now · streams 13, then 12, then 11
