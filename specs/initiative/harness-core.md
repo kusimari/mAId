@@ -488,6 +488,20 @@ ghost-in-shell/
                            unit tests stay inside each file
 ```
 
+| File | Concept | Spec section |
+|---|---|---|
+| `ghost/src/installed.rs` | what the shell has installed: `Installed`, `Unit` | Concept, "What the ghost reads" |
+| `ghost/src/contract.rs` | a unit's `Declaration`, from its standard's slot | Concept, "The bring-in contract" |
+| `ghost/src/parts.rs` | parts: a repo's persona and bring-ins, own or borrowed by declaration | "What forms the ghost", "What the ghost reads" |
+| `ghost/src/binding.rs` | bound values, from the registration through `bind` | "The bring-in contract" (`config`) |
+| `ghost/src/ghost.rs` | `Ghost`: fusion, `Ghost::from(&dyn Installed)` | "What forms the ghost" (fusion) |
+| `ghost/src/environment.rs` | the environment: ready, not ready, undeclared | "What forms the ghost" (environment) |
+| `ghost/src/config.rs` | where the ghost keeps its own state | this section |
+| `infusion/src/call.rs` | the call, and the `Shell` the ghost is in | Concept, "The five entry points" |
+| `infusion/src/{genome,expression,experience,sleep,adaptation}.rs` | the five entry points | Concept, "The five entry points" |
+| `shell/claude/src/installed.rs` | Claude Code's installs, from its own records, cached | On Claude Code; this section's decisions |
+| `resources/build-tool/src/install_record.rs` | plain's `InstallRecord` | "Installing and wiring" |
+
 - **Plain and ghost on Claude Code.** The plain install places the `maid`
   plugin (skills), the MCP servers and the settings. The ghost install
   places the `ghost` plugin. The ghost reads what Claude Code has
@@ -515,8 +529,8 @@ ghost-in-shell/
   is self-declared, so a project's skill can claim a part in that
   project's genome; it can reach no write.
 - *Decision:* Claude Code's records are read leniently per entry, but a
-  record file whose shape is not understood is named in the genome and
-  `ghost status`.
+  record file whose shape is not understood is named, with Claude Code's
+  version, in the genome and status, not read as nothing.
 - *Decision:* one binary per shell (`shell/claude` builds Claude's) until
   one binary is shown to serve every shell; `infusion` stays shell-free so
   that is a move, not a rewrite.
@@ -682,7 +696,7 @@ may bear on the work, whatever the agent loaded earlier.
 | 11 | prompt-prefix | Concept D1 and D2: Rust gathers and the agent judges (candidates in the prefix); the essentials go again on change and once drifted; paid runs compare with and without candidates | 12 | planned |
 | 12 | ghost-package | the plain install and the ghost install split: the ghost as its own Claude plugin and install, on/off, `ghost status`; with D3: a Rust staging step builds each package, install is a PREFIX copy, the flake only runs build and install | 14 | blocked: planning done, waits for 14 |
 | 13 | ghost-in-shell-layout | the crates `ghost`, `infusion`, `shell/claude` and `tests` under `ghost-in-shell/`, laid out as the concept; no behaviour change | 10 | merged |
-| 14 | live-shell | the ghost builds itself from the environment: `ghost` defines `Installed`, `shell/claude` implements it from Claude Code's own records (plugins, enabled, MCP registrations), cached; declarations gain `persona` (on memory), `repository`, `contract`; own or borrowed by declaration; the ghost stops reading part lists | 13 | running |
+| 14 | live-shell | the ghost builds itself from the environment: `ghost` defines `Installed`, `shell/claude` implements it from Claude Code's own records (plugins, enabled, MCP registrations), cached; declarations gain `persona` (on memory), `repository`, `contract`; own or borrowed by declaration; the ghost stops reading part lists | 13 | merged |
 
 The work part's own bring-ins take the contract in their own repo, outside
 this initiative.
