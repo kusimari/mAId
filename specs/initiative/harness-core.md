@@ -863,7 +863,7 @@ this initiative.
   whatever an agent does, and the store stays the package's · cost if
   wrong: the core carries a copy of the package's write
 - Ruling (ringmaster): stream 2 owns the plugin's hooks file, how hooks
-  find `bin/ghost-claude`, and the `session_id` fallback; stream 3 adds only
+  find `bin/maid-core`, and the `session_id` fallback; stream 3 adds only
   its SessionEnd entry · why: one owner for shared plumbing
 - Paid tests: 4 of 30 granted to stream 3 (one real transcript; three
   reflector runs on the Macro step-3 fixture).
