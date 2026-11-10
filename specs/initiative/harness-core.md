@@ -237,7 +237,7 @@ Two choices follow from this split (user's ruling, 2026-11-04):
 
 A bring-in stays a plain unit of its standard, so anyone can use it
 without this harness. The contract adds only what this design needs, in
-the standard's own extension slot under the namespace `my-harness`; a
+the standard's own extension slot under the namespace `ghost-in-shell`; a
 shell that does not know it ignores it.
 
 **Declared by the bring-in** (travels with it):
@@ -271,9 +271,9 @@ ships the declarations of units outside it: each MCP server it registers
 at `servers/<name>/server.json`, each overlay at `overlays/<name>/`. A
 part is named by its repository's last segment.
 
-**Slots:** an Agent Skill's frontmatter `metadata` (flat `my-harness.*`
-keys); a plugin manifest's `extensions["my-harness"]`; an MCP server's
-`server.json` `_meta["my-harness"]`; a sub-agent or hook through the plugin
+**Slots:** an Agent Skill's frontmatter `metadata` (flat `ghost-in-shell.*`
+keys); a plugin manifest's `extensions["ghost-in-shell"]`; an MCP server's
+`server.json` `_meta["ghost-in-shell"]`; a sub-agent or hook through the plugin
 that ships it. A borrowed unit is never read for its declaration: the part
 ships an **overlay**, a manifest in the unit's own standard holding only
 `name`, `description` and the slot. Name, version, licence, permissions and
@@ -364,16 +364,16 @@ and plugin surface moved twice during this initiative.
   work's own records.
 - **Paid tests:** up to 30 model runs for the initiative.
 - **Claude Code first.** The other shells are mapped, not built.
-- **Build base.** `my-harness` (parts, part lists, whole-status, the
+- **Build base.** `ghost-in-shell` (parts, part lists, whole-status, the
   memory server) is not on `main` yet. It comes in by merging the local
-  `initiative/my-harness` into this branch: a merge, not a rebase, so
+  `initiative/ghost-in-shell` into this branch: a merge, not a rebase, so
   nothing already pushed is rewritten.
 - **Nothing reaches main until the end.** Each stream branches from this
   one and is squash-merged back locally, one commit per stream; stream
   branches are never pushed or reviewed. The only push is this branch,
   once, after every stream has merged and the memory server is pinned to
   its published commit (no local path). Its PR carries everything,
-  `my-harness` included, and lands on `main` as a squash (user,
+  `ghost-in-shell` included, and lands on `main` as a squash (user,
   2026-11-01; it replaced a merge commit).
 - **Finish:** one review brief for the whole initiative, by design area,
   with where to focus first.
@@ -417,7 +417,7 @@ settle by a probe before it is built.
 | `sleep` mark | SessionEnd | session end *(test)* | stop *(test)* | *(test)* |
 | session source | transcript JSONL with sub-agent files | rollouts and thread edges | session files *(test)* | *(test)* |
 
-kiro's loading of the `my-harness.*` skill frontmatter is unverified: the
+kiro's loading of the `ghost-in-shell.*` skill frontmatter is unverified: the
 only check would repoint the real HOME's skill links.
 
 **Agent frameworks** (transient carriers; one registration line by the
@@ -607,7 +607,7 @@ extension points calls which entry point, and how the ghost is wired in.
  /exit ──────────►   SessionEnd ──────────────►  sleep: mark the session done
 ```
 
-On demand, `ghost-claude mcp` serves resource `my-harness://genome`, prompt
+On demand, `ghost-claude mcp` serves resource `ghost-in-shell://genome`, prompt
 `genome` and tool `expression`; the reflect skill and the CLI reach sleep,
 experience and adaptation.
 
@@ -701,6 +701,7 @@ may bear on the work, whatever the agent loaded earlier.
 | 9 | writing-style-memory | from Macro test run 3: writing-style's taught rules live in persona memory, not a file tier; the close batch says what was saved and offers to move them into the skill on its source; the reflector quotes only the person's words for a habit; the guard's label says what it checks | 8 | merged |
 | 10 | saved-in-session | from Macro test run 4: the genome names where a bring-in's bound files are, so a skill never falls back to a default path (R4-1); a persona memory saved during the session is shown in the close batch as saved in memory (R4-2) | 9 | merged |
 | 11 | prompt-prefix | Concept D1 and D2: Rust gathers and the agent judges (candidates in the prefix); the essentials go again on change and once drifted; paid runs compare with and without candidates | 12 | running |
+| 15 | ghost-in-shell-name | the name `my-harness` becomes `ghost-in-shell` everywhere: the declaration namespace in every slot, the prefix lines, the MCP server and its resource, the env vars, the ghost's state dir (the old ones read for one release) | 11 | planned |
 | 12 | ghost-package | the plain install and the ghost install split: the ghost as its own Claude plugin and install, on/off, `ghost status`; with D3: a Rust staging step builds each package, install is a PREFIX copy, the flake only runs build and install | 14 | merged |
 | 13 | ghost-in-shell-layout | the crates `ghost`, `infusion`, `shell/claude` and `tests` under `ghost-in-shell/`, laid out as the concept; no behaviour change | 10 | merged |
 | 14 | live-shell | the ghost builds itself from the environment: `ghost` defines `Installed`, `shell/claude` implements it from Claude Code's own records (plugins, enabled, MCP registrations), cached; declarations gain `persona` (on memory), `repository`, `contract`; own or borrowed by declaration; the ghost stops reading part lists | 13 | merged |
@@ -1074,3 +1075,6 @@ this initiative.
   `#default` on each ghost install is accepted (cached); `ghost uninstall`
   names the project and local switches it leaves; Justfile argument
   quoting is backlog
+- Ruling (user, 2026-11-11): the concept's name is ghost-in-shell; "my
+  harness" is only what it means to the person. `my-harness` is renamed
+  `ghost-in-shell` everywhere · stream 15
