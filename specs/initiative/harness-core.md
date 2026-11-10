@@ -250,11 +250,12 @@ shell that does not know it ignores it.
 | `rules` | `<file>#<heading slug>`: the few lines, at most 30, that come first while it applies | expression |
 | `record` | optional, on a turn bring-in: where the work keeps its own record (`<file glob>#<heading slug>`; kdevkit points at a feature spec's Handoff) | expression |
 | `package` | the implementation it runs, if any | install, environment |
-| `config` | every key it needs per environment or part, secrets marked, every state location included | the part binds values |
+| `config` | every key it needs per environment or part, secrets marked, every state location included; each key's `bind` says how it is read from the shell's registration of the unit (`arg:<flag>`, `command`, `env:<NAME>`, `value:`, `path:<template>`) | bound from the registration |
 | `state` | none, or which config keys hold its local and permanent tiers and the promotion rule; a bring-in that keeps what it learns in persona memory declares none and says so in its `job` | genome, selector, adaptation |
 | `requires` | what must be present for it to be ready | environment |
 | `persona` | on a memory bring-in only: the persona it remembers for; a part's persona is the one its memory declares | genome, route |
-| `repository` | where a change to it is proposed (with the build revision stamped in); on a plugin, its standard `repository` field | adaptation |
+| `repository` | where a change to it is proposed; on a plugin, its standard `repository` field; the plugin's content-hash version stands as its revision, and a proposal carries it with the install date | adaptation |
+| `name` | a plugin's own bring-in name, where the plugin's name is not it (the adapter: `claude-adapter`) | genome |
 | `contract` | the contract version the declaration follows; an unknown one is refused, and named | everything |
 
 **What the ghost reads.** The ghost builds itself from what is installed
@@ -265,7 +266,10 @@ declaration from there. A unit whose author declared it is **own**, and
 changes to it are proposed on its `repository`; a unit with no
 declaration, or declared only by an overlay, is **borrowed** and only
 reported. An installer's own record of what it placed is its business
-(for its own uninstall and status); the ghost never reads it.
+(for its own uninstall and status); the ghost never reads it. A plugin
+ships the declarations of units outside it: each MCP server it registers
+at `servers/<name>/server.json`, each overlay at `overlays/<name>/`. A
+part is named by its repository's last segment.
 
 **Slots:** an Agent Skill's frontmatter `metadata` (flat `my-harness.*`
 keys); a plugin manifest's `extensions["my-harness"]`; an MCP server's
@@ -455,8 +459,10 @@ resources/                 the person's resources (skills, servers, plugins) and
 ghost-in-shell/
   ghost/                   what forms the ghost; no shell knowledge
     ghost.rs               Ghost::from(installed): every unit the shell has, fused
-    installed.rs           the trait a shell adapter implements: what is installed, where
-    contract.rs            a bring-in's declaration, from its standard's slot
+    installed.rs           Installed, Unit: what the shell has installed, where, enabled
+    contract.rs            a unit's Declaration, from its standard's slot
+    parts.rs               each repo's persona and bring-ins, own or borrowed by declaration
+    binding.rs             a config key's value, from how the shell registered the unit
     environment.rs         ready, not ready (why), undeclared; memory's store and index
     config.rs              where the ghost's own state lives
   infusion/                the five entry points; depends on ghost; knows no shell
@@ -472,6 +478,7 @@ ghost-in-shell/
   shell/claude/            Claude Code's adapter: builds the `maid-core` binary
     main.rs                the CLI every carrier calls; Claude's hook output
     hook.rs                Claude's hook input → the neutral call
+    installed.rs           Claude Code's installs, from its own records, cached
     transcript.rs          Claude's transcript as a session source
     config_dir.rs          CLAUDE_CONFIG_DIR
     mcp.rs                 the on-demand carrier
@@ -500,6 +507,16 @@ ghost-in-shell/
   hooks run on every prompt.
 - *Decision:* each package has its own profile and generations, so the
   ghost and plain roll back apart; the ghost always reads what is live.
+- *Decision:* a directory marketplace's plugin is read where Claude Code
+  runs it (the marketplace dir), not from its registry copy, which lags a
+  profile link's move.
+- *Decision:* adaptation reads the user's scope only, so nothing a project
+  ships reaches the command it runs or a proposal. A unit's `repository`
+  is self-declared, so a project's skill can claim a part in that
+  project's genome; it can reach no write.
+- *Decision:* Claude Code's records are read leniently per entry, but a
+  record file whose shape is not understood is named in the genome and
+  `ghost status`.
 - *Decision:* one binary per shell (`shell/claude` builds Claude's) until
   one binary is shown to serve every shell; `infusion` stays shell-free so
   that is a move, not a rewrite.
@@ -507,12 +524,14 @@ ghost-in-shell/
   named `maid-core`, and the ghost's carriers still ship inside the `maid`
   plugin. Stream 12 splits the ghost into its own plugin and install.
 
-mAId's part is `maid-harness`, persona `personal`. Its session bring-ins
-are `personal-memory` (package `pensieve`, own, sourced at pensieve's repo
-and the `flake.lock` pin) and the Claude adapter, declared in the ghost
-plugin's manifest. MCP server declarations live at
-`resources/content/servers/<name>/server.json`, overlays under
-`resources/content/overlays/`.
+mAId's part is `mAId`, named by its repository; its memory declares
+persona `personal`. Its session bring-ins are `personal-memory` (package
+`pensieve`, own, declared in `servers/personal-memory/server.json` inside
+mAId's plugin, its store bound from the registered `--store`) and
+`claude-adapter`, declared by `name` in the plugin manifest's slot. Server
+declarations live at `resources/content/servers/<registered name>/server.json`
+and overlays under `resources/content/overlays/`; both ship inside the
+plugin.
 
 ### Building the packages (D3)
 
