@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
-use ghost_in_shell_tests::core;
+use ghost_in_shell_tests::{core, ClaudeHome};
 
 type Log = Arc<Mutex<Vec<Value>>>;
 
@@ -211,35 +211,67 @@ impl World {
     fn build(acting: bool) -> World {
         let dir = TempDir::new().unwrap();
         let d = dir.path();
-        let parts = d.join("home/.local/state/my-harness/parts");
-        fs::create_dir_all(&parts).unwrap();
         fs::create_dir_all(d.join("work")).unwrap();
-        let unit = d.join("units/deployer/SKILL.md");
-        fs::create_dir_all(unit.parent().unwrap()).unwrap();
-        fs::write(&unit, "---\nname: deployer\ndescription: deploy things\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: deploy a release\n  my-harness.signals.jobs: deploy\n  my-harness.rules: SKILL.md#rules\n---\n## Rules\n\nTAG FIRST, THEN DEPLOY\n").unwrap();
-        let store = d.join("store");
-        fs::create_dir_all(store.join("memory")).unwrap();
+        // What the ghost finds installed in Claude Code: mAId's part (a
+        // skill and its memory) and a second part with its own memory.
+        let claude = ClaudeHome::at(&d.join("home"));
+        let deployer = "---\nname: deployer\ndescription: deploy things\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: deploy a release\n  my-harness.signals.jobs: deploy\n  my-harness.rules: SKILL.md#rules\n---\n## Rules\n\nTAG FIRST, THEN DEPLOY\n";
+        let planner = acting.then_some("---\nname: planner\ndescription: plan work\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: plan the work\n  my-harness.signals.locations: work\n---\n");
+        for (name, repo, persona, skill) in [
+            (
+                "maid",
+                "https://example.org/me/maid",
+                "personal",
+                Some(("deployer", deployer)),
+            ),
+            (
+                "work",
+                "https://example.org/me/work-part",
+                "work",
+                planner.map(|p| ("planner", p)),
+            ),
+        ] {
+            let at = d.join("units").join(name);
+            fs::create_dir_all(at.join(".claude-plugin")).unwrap();
+            fs::write(
+                at.join(".claude-plugin/plugin.json"),
+                json!({"name": name, "version": "1.0.0", "repository": repo}).to_string(),
+            )
+            .unwrap();
+            if let Some((s, text)) = skill {
+                fs::create_dir_all(at.join("skills").join(s)).unwrap();
+                fs::write(at.join("skills").join(s).join("SKILL.md"), text).unwrap();
+            }
+            let mut server: Value = serde_json::from_str(
+                &fs::read_to_string(
+                    ghost_in_shell_tests::content().join("servers/personal-memory/server.json"),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            server["_meta"]["my-harness"]["persona"] = persona.into();
+            let memory = format!("{persona}-memory");
+            fs::create_dir_all(at.join("servers").join(&memory)).unwrap();
+            fs::write(
+                at.join("servers").join(&memory).join("server.json"),
+                server.to_string(),
+            )
+            .unwrap();
+            claude.plugin(&format!("{name}@{name}"), &at);
+            let store = d.join(format!("{persona}-store"));
+            fs::create_dir_all(store.join("memory")).unwrap();
+            claude.mcp(
+                &memory,
+                "/bin/true",
+                &["--store", &store.display().to_string()],
+            );
+        }
+        // The personal memory's store holds the index the selector reads.
         fs::write(
-            store.join("memory/MEMORY.md"),
+            d.join("personal-store/memory/MEMORY.md"),
             "- [Deploy steps](deploy.md) - how a release is deployed\n",
         )
         .unwrap();
-        let server = ghost_in_shell_tests::content().join("servers/personal-memory/server.json");
-        let mine = json!({"format": 1, "part": "maid-harness", "persona": "personal", "harnesses": {},
-            "bring_ins": [
-                {"name": "deployer", "unit": {"standard": "skill", "path": unit}},
-                {"name": "personal-memory", "unit": {"standard": "mcp", "path": server.canonicalize().unwrap()},
-                    "values": {"store": store, "index": "memory/MEMORY.md"}}]});
-        let mut theirs = json!({"format": 1, "part": "work-part", "persona": "work", "harnesses": {}, "bring_ins": []});
-        if acting {
-            let planner = d.join("units/planner/SKILL.md");
-            fs::create_dir_all(planner.parent().unwrap()).unwrap();
-            fs::write(&planner, "---\nname: planner\ndescription: plan work\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: plan the work\n  my-harness.signals.locations: work\n---\n").unwrap();
-            theirs["bring_ins"] =
-                json!([{"name": "planner", "unit": {"standard": "skill", "path": planner}}]);
-        }
-        fs::write(parts.join("maid-harness.json"), mine.to_string()).unwrap();
-        fs::write(parts.join("work-part.json"), theirs.to_string()).unwrap();
         let adapter = ghost_in_shell_tests::plugin();
         let plugin = d.join("plugin");
         fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
@@ -332,7 +364,7 @@ fn count(text: &str, what: &str) -> usize {
     text.matches(what).count()
 }
 
-const GENOME: &str = "personas: personal (maid-harness), work (work-part)";
+const GENOME: &str = "personas: personal (maid), work (work-part)";
 
 #[test]
 #[ignore = "needs claude; run with --ignored"]

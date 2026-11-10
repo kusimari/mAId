@@ -18,10 +18,10 @@
 use anyhow::{Context, Result};
 use build_tool::deploy::{BringIns, Deployment, NoDeploy, Plugins, Symlinks};
 use build_tool::harness::{Selection, Stage};
+use build_tool::install_record::What;
 use build_tool::memory;
-use build_tool::part::What;
 use build_tool::shared::{
-    claude_config, codex_home, config_dir, home_dir, memory_store_file, parts_dir, profile_dir,
+    claude_config, codex_home, config_dir, home_dir, manifest_dirs, memory_store_file, profile_dir,
     repo_root, skill_roots, usage, validate_agent, validate_agents, Agent, UsageError, BRING_INS,
     PROFILE_CONTENT_DIR,
 };
@@ -103,9 +103,10 @@ enum Cmd {
     Uninstall(DeployArgs),
     /// Report what is deployed and whether it points where it should.
     Status(DeployArgs),
-    /// Check every part list in the parts dir against each harness's own
-    /// listing or config. Exits 1 when anything placed is missing or
-    /// unreadable, or a list was refused.
+    /// Check every package's install record (and old part list) against
+    /// each agent's own listing or config, then report the ghost's
+    /// bring-ins on Claude Code. Exits 1 when anything placed is missing
+    /// or unreadable, or a record was refused.
     Whole {
         /// Scope to one coding agent (claude|kiro|codex|agy); default all.
         #[arg(long)]
@@ -117,7 +118,7 @@ enum Cmd {
     /// Both verification stages. Runs the second even when the first
     /// reports failures, so one sweep is one report.
     Verify(VerifyArgs),
-    /// Record, in mAId's part list, what a step outside install placed on
+    /// Record, in mAId's install record, what a step outside install placed on
     /// one agent: replaces that agent's entries of this kind and scope.
     Record {
         #[arg(long)]
@@ -187,7 +188,7 @@ fn run(cli: Cli) -> Result<u8> {
     // coupling that stage exists to avoid.
     //
     // Only install and uninstall act on what mAId owns, so only they stop
-    // on a part list that cannot be read; the rest report it.
+    // on an install record that cannot be read; the rest report it.
     let deployment_for = |acting: bool| -> Result<Deployment> {
         Ok(Deployment {
             links: Symlinks {
@@ -200,9 +201,9 @@ fn run(cli: Cli) -> Result<u8> {
                 profile: profile_dir()?,
             },
             bring_ins: match acting {
-                true => BringIns::new(home_dir()?, claude_config()?, BRING_INS, &parts_dir()?)?,
+                true => BringIns::new(home_dir()?, claude_config()?, BRING_INS, &manifest_dirs()?)?,
                 false => {
-                    BringIns::reporting(home_dir()?, claude_config()?, BRING_INS, &parts_dir()?)
+                    BringIns::reporting(home_dir()?, claude_config()?, BRING_INS, &manifest_dirs()?)
                 }
             },
         })
@@ -219,7 +220,7 @@ fn run(cli: Cli) -> Result<u8> {
             let rc = stages::cmd_install(
                 &deployment_for(true)?,
                 &profile_dir()?.join(PROFILE_CONTENT_DIR),
-                &parts_dir()?,
+                &manifest_dirs()?,
                 a.dry_run,
                 a.force,
                 agent,
@@ -228,7 +229,7 @@ fn run(cli: Cli) -> Result<u8> {
                 &claude_config()?,
                 &memory_store_file()?,
                 &profile_dir()?,
-                &parts_dir()?,
+                &manifest_dirs()?,
                 a.dry_run,
                 agent,
             )?;
@@ -236,27 +237,25 @@ fn run(cli: Cli) -> Result<u8> {
                 &claude_config()?,
                 &profile_dir()?,
                 &config_dir()?,
-                &parts_dir()?,
+                &manifest_dirs()?,
                 a.dry_run,
                 agent,
             )?;
-            // What the ghost is made of, whichever harness was selected.
-            let bring_ins = stages::cmd_install_bring_ins(
-                &parts_dir()?,
+            // mAId as a package, whichever agent was selected.
+            let package = stages::cmd_install_package(
+                &manifest_dirs()?,
                 &profile_dir()?,
                 &config_dir()?,
                 stages::Checkout::read(&root),
-                &memory_store_file()?,
-                BRING_INS,
                 a.dry_run,
             )?;
-            Ok(rc.max(memory).max(reads).max(bring_ins))
+            Ok(rc.max(memory).max(reads).max(package))
         }
         Cmd::Uninstall(a) => {
             let agent = validate_agent(a.agent.as_deref())?;
             let rc = stages::cmd_uninstall(
                 &deployment_for(true)?,
-                &parts_dir()?,
+                &manifest_dirs()?,
                 a.dry_run,
                 a.force,
                 agent,
@@ -264,18 +263,21 @@ fn run(cli: Cli) -> Result<u8> {
             let memory = stages::cmd_uninstall_memory(
                 &claude_config()?,
                 &profile_dir()?,
-                &parts_dir()?,
+                &manifest_dirs()?,
                 a.dry_run,
                 agent,
             )?;
-            let reads =
-                stages::cmd_uninstall_reads(&claude_config()?, &parts_dir()?, a.dry_run, agent)?;
-            let bring_ins = stages::cmd_uninstall_bring_ins(&parts_dir()?, BRING_INS, a.dry_run)?;
-            Ok(rc.max(memory).max(reads).max(bring_ins))
+            let reads = stages::cmd_uninstall_reads(
+                &claude_config()?,
+                &manifest_dirs()?,
+                a.dry_run,
+                agent,
+            )?;
+            Ok(rc.max(memory).max(reads))
         }
         Cmd::Status(a) => stages::cmd_status(&deployment()?, validate_agent(a.agent.as_deref())?),
         Cmd::Whole { agent } => build_tool::whole::cmd_whole(
-            &parts_dir()?,
+            &manifest_dirs()?,
             &home_dir()?,
             &claude_config()?,
             validate_agent(agent.as_deref())?,
@@ -297,7 +299,7 @@ fn run(cli: Cli) -> Result<u8> {
             let kind = What::parse(&kind).map_err(|e| usage(e.to_string()))?;
             // Resolved before anything is written, so a missing one fails
             // the call with the list untouched.
-            let (parts, profile) = (parts_dir()?, profile_dir()?);
+            let (parts, profile) = (manifest_dirs()?, profile_dir()?);
             let rc = stages::cmd_record(
                 &parts,
                 Agent::parse(&agent)?,
@@ -308,9 +310,10 @@ fn run(cli: Cli) -> Result<u8> {
                 &names,
             )?;
             if kind == What::Mcp {
-                let checkout = stages::Checkout::read(&root);
-                stages::sync_browser_bring_in(&parts, &profile, checkout)
-                    .context("the entry is recorded; the browser server's bring-in is not")?;
+                let content = profile.join(build_tool::shared::PROFILE_CONTENT_DIR);
+                let pensieve = stages::Checkout::read(&root).pensieve;
+                stages::place(&parts, &content, pensieve.as_ref())
+                    .context("the entry is recorded; where its files are is not")?;
             }
             Ok(rc)
         }
@@ -323,7 +326,7 @@ fn run(cli: Cli) -> Result<u8> {
                 &claude_config()?,
                 &memory_store_file()?,
                 &profile_dir()?,
-                &parts_dir()?,
+                &manifest_dirs()?,
             ),
             MemoryCmd::Harvest { to, project } => {
                 stages::cmd_harvest(&claude_config()?, &codex_home()?, &to, project.as_deref())

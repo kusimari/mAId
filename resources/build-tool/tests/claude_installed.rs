@@ -144,9 +144,10 @@ fn core() -> PathBuf {
 }
 
 /// A profile generation laid out as flake.nix builds it, from the repo's
-/// Claude adapter files. Its hooks read the parts dir `parts`, so a session
-/// shows which generation's hooks ran by the persona its genome names.
-fn generation(dir: &Path, tag: &str, core: &Path, parts: &Path) {
+/// Claude adapter files, and the declaration of a memory for the persona
+/// `tag`, so a session shows which generation Claude Code has by the
+/// persona its genome names.
+fn generation(dir: &Path, tag: &str, core: &Path) {
     let m = dir.join("share/maid/marketplace");
     let p = m.join("plugins/maid");
     let put = |at: &Path, text: &str| {
@@ -169,14 +170,15 @@ fn generation(dir: &Path, tag: &str, core: &Path, parts: &Path) {
             .unwrap();
     let version = format!("1.0.0-{tag}");
     let manifest = json!({"name": "maid", "version": version, "description": "mAId's skills",
-        "author": {"name": "mAId"}, "extensions": {"my-harness": decl},
+        "author": {"name": "mAId"}, "repository": "https://example.org/me/maid",
+        "extensions": {"my-harness": decl},
         "hooks": "./hooks/claude.json", "mcpServers": "./claude-mcp.json"});
     put(&p.join(".claude-plugin/plugin.json"), &manifest.to_string());
     put(
         &p.join(".codex-plugin/plugin.json"),
         &json!({"name": "maid", "version": version}).to_string(),
     );
-    let hook_core = format!("MY_HARNESS_PARTS={} {}", parts.display(), core.display());
+    let hook_core = core.display().to_string();
     put(
         &p.join("hooks/claude.json"),
         &fs::read_to_string(adapter.join("hooks.json"))
@@ -189,9 +191,10 @@ fn generation(dir: &Path, tag: &str, core: &Path, parts: &Path) {
             .unwrap()
             .replace("@maid-core@", &core.display().to_string()),
     );
-    fs::create_dir_all(parts).unwrap();
-    let list = json!({"format": 1, "part": "maid-harness", "persona": tag, "harnesses": {}, "bring_ins": []});
-    put(&parts.join("maid-harness.json"), &list.to_string());
+    let memory = json!({"name": "mem", "_meta": {"my-harness": {"contract": 1, "scope": "session",
+        "job": "memory", "persona": tag, "config": {"store": {"about": "s", "bind": "arg:--store"}},
+        "state": {"permanent": "store", "promote": "off"}}}});
+    put(&p.join("servers/mem/server.json"), &memory.to_string());
 }
 
 /// What `just rollback` and an install do to the profile: move its link.
@@ -269,8 +272,8 @@ fn claude_code_runs_the_installed_plugins_hooks_and_follows_a_rollback() {
     fs::create_dir_all(&work).unwrap();
     // Generations outside the state dir, as the nix store holds them.
     let (a, b) = (d.join("store/gen-a"), d.join("store/gen-b"));
-    generation(&a, "alpha", &core, &d.join("parts-a"));
-    generation(&b, "beta", &core, &d.join("parts-b"));
+    generation(&a, "alpha", &core);
+    generation(&b, "beta", &core);
     let state = home.join(".local/state/maid");
     fs::create_dir_all(&state).unwrap();
     let profile = state.join("profile");
@@ -298,6 +301,7 @@ fn claude_code_runs_the_installed_plugins_hooks_and_follows_a_rollback() {
         )
         .unwrap();
     }
+    run(&["mcp", "add", "-s", "user", "mem", "--", "/bin/true"]);
     run(&["plugin", "marketplace", "add", links.to_str().unwrap()]);
     run(&["plugin", "install", "maid@maid", "--scope", "user"]);
 
@@ -311,7 +315,7 @@ fn claude_code_runs_the_installed_plugins_hooks_and_follows_a_rollback() {
     );
     let first = first_prompt(&log);
     assert_eq!(
-        first.matches("personas: alpha (maid-harness)").count(),
+        first.matches("personas: alpha (maid)").count(),
         1,
         "the start hook placed the genome once:\n{first}"
     );
@@ -338,7 +342,7 @@ fn claude_code_runs_the_installed_plugins_hooks_and_follows_a_rollback() {
     session(&claude, &home, &work, &url);
     let first = first_prompt(&log);
     assert_eq!(
-        first.matches("personas: beta (maid-harness)").count(),
+        first.matches("personas: beta (maid)").count(),
         1,
         "the new generation's hooks run:\n{first}"
     );
@@ -349,7 +353,7 @@ fn claude_code_runs_the_installed_plugins_hooks_and_follows_a_rollback() {
     session(&claude, &home, &work, &url);
     let first = first_prompt(&log);
     assert_eq!(
-        first.matches("personas: alpha (maid-harness)").count(),
+        first.matches("personas: alpha (maid)").count(),
         1,
         "after the link moves back, the previous generation's hooks run:\n{first}"
     );

@@ -1,0 +1,24 @@
+{
+  "about": "the old parts folder's entries are still checked, a list with only harnesses and one with its persona and bring-ins alike; no bring-in is read from either",
+  "harness": "kiro-cli",
+  "expect": {
+    "exit": 0,
+    "entries": [
+      {
+        "harness": "kiro-cli",
+        "part": "work",
+        "kind": "skill",
+        "name": "triage",
+        "state": "present"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "rich",
+        "kind": "skill",
+        "name": "r",
+        "state": "present"
+      }
+    ],
+    "refused": []
+  }
+}

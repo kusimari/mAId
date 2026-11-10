@@ -200,16 +200,16 @@ mod tests {
         let skill = dir.join("SKILL.md");
         fs::write(
             &skill,
-            "---\nname: m\ndescription: d\nmetadata:\n  my-harness.scope: session\n  my-harness.job: memory\n  my-harness.config.store: the store\n  my-harness.config.token: \"[secret] [optional] a token\"\n  my-harness.config.colour: \"[optional] a colour\"\n  my-harness.state.local: store\n  my-harness.requires: tool\n---\n",
+            "---\nname: m\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: session\n  my-harness.job: memory\n  my-harness.config.store: the store\n  my-harness.config.token: \"[secret] [optional] a token\"\n  my-harness.config.colour: \"[optional] a colour\"\n  my-harness.state.local: store\n  my-harness.requires: tool\n---\n",
         )
         .unwrap();
-        let parts = dir.join("parts");
-        fs::create_dir_all(&parts).unwrap();
-        let list = json!({"format": 1, "part": "a", "harnesses": {}, "persona": "p", "bring_ins": [
+        of(json!({"part": "a", "persona": "p", "bring_ins": [
             {"name": "m", "unit": {"standard": "skill", "path": skill}, "values": values}
-        ]});
-        fs::write(parts.join("a.json"), list.to_string()).unwrap();
-        Ghost::from_roots(&[parts]).unwrap()
+        ]}))
+    }
+
+    fn of(part: serde_json::Value) -> Ghost {
+        Ghost::of(&[crate::parts::Part::from_json(&part).unwrap()])
     }
 
     fn host(dir: &Path, with_tool: bool, set: &[&str]) -> Host {
@@ -266,15 +266,13 @@ mod tests {
         let skill = dir.path().join("SKILL.md");
         fs::write(
             &skill,
-            "---\nname: w\ndescription: d\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: write\n  my-harness.config.learned: \"[optional] pending\"\n  my-harness.config.kept: kept\n  my-harness.state.local: learned\n  my-harness.state.permanent: kept\n---\n",
+            "---\nname: w\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: write\n  my-harness.config.learned: \"[optional] pending\"\n  my-harness.config.kept: kept\n  my-harness.state.local: learned\n  my-harness.state.permanent: kept\n---\n",
         )
         .unwrap();
-        let list = json!({"format": 1, "part": "a", "harnesses": {}, "bring_ins": [
+        let ghost = of(json!({"part": "a", "bring_ins": [
             {"name": "w", "unit": {"standard": "skill", "path": skill},
              "values": {"learned": "/nowhere/learned.md", "kept": "/nowhere/kept.md"}}
-        ]});
-        fs::write(dir.path().join("a.json"), list.to_string()).unwrap();
-        let ghost = Ghost::from_roots(&[dir.path().to_path_buf()]).unwrap();
+        ]}));
         assert_eq!(
             why(&ghost, &Host::default()),
             ["kept at /nowhere/kept.md not there"]
@@ -283,14 +281,11 @@ mod tests {
 
     #[test]
     fn undeclared_and_unreadable_are_their_own_states() {
-        let dir = TempDir::new().unwrap();
-        let list = json!({"format": 1, "part": "a", "harnesses": {}, "bring_ins": [
-            {"name": "plain"},
-            {"name": "gone", "unit": {"standard": "mcp", "path": "/nowhere/server.json"}}
-        ]});
-        fs::write(dir.path().join("a.json"), list.to_string()).unwrap();
         let rows = derive(
-            &Ghost::from_roots(&[dir.path().to_path_buf()]).unwrap(),
+            &of(json!({"part": "a", "bring_ins": [
+                {"name": "plain"},
+                {"name": "gone", "unit": {"standard": "mcp", "path": "/nowhere/server.json"}}
+            ]})),
             &Host::default(),
         );
         assert_eq!(rows[0].readiness, Readiness::Undeclared);

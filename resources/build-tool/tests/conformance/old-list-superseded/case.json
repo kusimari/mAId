@@ -1,0 +1,17 @@
+{
+  "about": "an old part list whose name an install manifest also has is not read",
+  "harness": "kiro-cli",
+  "expect": {
+    "exit": 0,
+    "entries": [
+      {
+        "harness": "kiro-cli",
+        "part": "w",
+        "kind": "skill",
+        "name": "new",
+        "state": "present"
+      }
+    ],
+    "refused": []
+  }
+}

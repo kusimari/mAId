@@ -29,16 +29,16 @@ impl World {
         let dir = TempDir::new().unwrap();
         let root = dir.path().to_path_buf();
         let config = Config {
-            parts: root.join("parts"),
             state: root.join("state"),
         };
+        let parts = root.join("parts");
         let (stub, log) = memory::tests::stub(&root);
         let serve = serve.unwrap_or(stub);
         let units = root.join("units");
         fs::create_dir_all(&units).unwrap();
         let mem = |name: &str| {
             let p = units.join(format!("{name}.json"));
-            let decl = json!({"scope": "session", "job": format!("{name} memory"), "package": "pensieve",
+            let decl = json!({"contract": 1, "scope": "session", "job": format!("{name} memory"), "package": "pensieve",
                 "config": {"store": {"about": "s"}, "index": {"about": "i"}, "serve": {"about": "c"}},
                 "state": {"permanent": "store", "promote": "off"}});
             fs::write(
@@ -51,14 +51,14 @@ impl World {
         let style = units.join("writing-style.md");
         fs::write(
             &style,
-            "---\nname: writing-style\ndescription: d\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: write in my voice\n  my-harness.config.learned: \"[optional] pending\"\n  my-harness.config.promoted: \"[optional] promoted\"\n  my-harness.state.local: learned\n  my-harness.state.permanent: promoted\n  my-harness.state.promote: propose\n---\n",
+            "---\nname: writing-style\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: write in my voice\n  my-harness.config.learned: \"[optional] pending\"\n  my-harness.config.promoted: \"[optional] promoted\"\n  my-harness.state.local: learned\n  my-harness.state.permanent: promoted\n  my-harness.state.promote: propose\n---\n",
         )
         .unwrap();
         let plugin = |name: &str| {
             let p = units.join(format!("{name}.plugin.json"));
             fs::write(
                 &p,
-                json!({"name": name, "extensions": {"my-harness": {"scope": "turn", "job": format!("{name} job")}}})
+                json!({"name": name, "extensions": {"my-harness": {"contract": 1, "scope": "turn", "job": format!("{name} job")}}})
                     .to_string(),
             )
             .unwrap();
@@ -87,10 +87,10 @@ impl World {
         let work = json!({"format": 1, "part": "work-part", "persona": "work", "harnesses": {},
             "bring_ins": [{"name": "work-memory", "unit": {"standard": "mcp", "path": mem("work-memory")},
                 "values": {"store": work_store, "index": "memory/MEMORY.md", "serve": "[\"/nowhere/server\"]"}}]});
-        fs::create_dir_all(&config.parts).unwrap();
-        fs::write(config.parts.join("maid-harness.json"), personal.to_string()).unwrap();
-        fs::write(config.parts.join("work-part.json"), work.to_string()).unwrap();
-        let ghost = Ghost::from_roots(std::slice::from_ref(&config.parts)).unwrap();
+        fs::create_dir_all(&parts).unwrap();
+        fs::write(parts.join("maid-harness.json"), personal.to_string()).unwrap();
+        fs::write(parts.join("work-part.json"), work.to_string()).unwrap();
+        let ghost = crate::testing::ghost_of(&parts);
         let bundle: Bundle = serde_json::from_str(SESSION).unwrap();
         World {
             _dir: dir,
@@ -782,7 +782,7 @@ fn a_memory_file_not_in_the_index_is_not_written_over() {
 fn an_item_is_placed_again_on_the_map_as_it_is_when_decided() {
     let w = World::new();
     w.check(json!([habit_style()]));
-    let list = w.config.parts.join("maid-harness.json");
+    let list = w.root.join("parts").join("maid-harness.json");
     let text = fs::read_to_string(&list).unwrap();
     let mut v: Value = serde_json::from_str(&text).unwrap();
     v["bring_ins"][1]["values"]
@@ -790,7 +790,7 @@ fn an_item_is_placed_again_on_the_map_as_it_is_when_decided() {
         .unwrap()
         .remove("learned");
     fs::write(&list, v.to_string()).unwrap();
-    let g = Ghost::from_roots(std::slice::from_ref(&w.config.parts)).unwrap();
+    let g = crate::testing::ghost_of(&w.root.join("parts"));
     let out = decide(&w.config, &g, &w.bundle.session, &json!("ok")).unwrap();
     assert_eq!(out[0].outcome, "failed");
     assert!(
@@ -848,11 +848,11 @@ fn an_item_ok_took_that_now_needs_an_answer_waits() {
     let mut h = habit_memory();
     h["persona"] = json!("personal");
     w.check(json!([h]));
-    let list = w.config.parts.join("maid-harness.json");
+    let list = w.root.join("parts").join("maid-harness.json");
     let mut v: Value = serde_json::from_str(&fs::read_to_string(&list).unwrap()).unwrap();
     v["persona"] = json!("home");
     fs::write(&list, v.to_string()).unwrap();
-    let g = Ghost::from_roots(std::slice::from_ref(&w.config.parts)).unwrap();
+    let g = crate::testing::ghost_of(&w.root.join("parts"));
     let out = decide(&w.config, &g, &w.bundle.session, &json!("ok")).unwrap();
     assert_eq!(out[0].outcome, "waiting", "{out:?}");
     assert!(!w.log.exists());
@@ -864,6 +864,7 @@ fn a_proposal_says_when_its_source_records_no_remote() {
         kind: ghost::parts::SourceKind::Project,
         at: None,
         rev: Some("abc123".into()),
+        installed: None,
     };
     assert_eq!(source_at(Some(&local)), "its source (no remote recorded)");
     assert_eq!(source_at(None), "its source (not recorded)");
@@ -877,10 +878,10 @@ impl World {
     fn style_in_memory(&mut self) {
         fs::write(
             self.root.join("units/writing-style.md"),
-            "---\nname: writing-style\ndescription: d\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: write in my voice, rules in my persona's memory\n  my-harness.config.learned: \"[optional] older\"\n  my-harness.config.promoted: \"[optional] older\"\n---\n",
+            "---\nname: writing-style\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: write in my voice, rules in my persona's memory\n  my-harness.config.learned: \"[optional] older\"\n  my-harness.config.promoted: \"[optional] older\"\n---\n",
         )
         .unwrap();
-        self.ghost = Ghost::from_roots(std::slice::from_ref(&self.config.parts)).unwrap();
+        self.ghost = crate::testing::ghost_of(&self.root.join("parts"));
     }
 
     /// A memory tool call in the session, and the file it left in the
@@ -1174,7 +1175,7 @@ fn a_borrowed_bring_ins_files_are_never_a_source_for_a_move() {
         "## Learned rules\n\n- 2026-05-22 · older rule\n",
     )
     .unwrap();
-    let parts = w.config.parts.join("maid-harness.json");
+    let parts = w.root.join("parts").join("maid-harness.json");
     let mut list: Value = serde_json::from_str(&fs::read_to_string(&parts).unwrap()).unwrap();
     for b in list["bring_ins"].as_array_mut().unwrap() {
         if b["name"] == "writing-style" {
@@ -1182,7 +1183,7 @@ fn a_borrowed_bring_ins_files_are_never_a_source_for_a_move() {
         }
     }
     fs::write(&parts, list.to_string()).unwrap();
-    w.ghost = Ghost::from_roots(std::slice::from_ref(&w.config.parts)).unwrap();
+    w.ghost = crate::testing::ghost_of(&w.root.join("parts"));
     assert!(moves::items(&w.ghost, &[], &BTreeSet::new()).is_empty());
 }
 

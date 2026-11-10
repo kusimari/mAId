@@ -14,7 +14,7 @@ use crate::call::{Call, Carrier, Ctx, Item};
 use crate::expression::delivery::{deliver_within, Record};
 use crate::expression::here::Here;
 use crate::expression::select::Selector;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use ghost::contract::{self, Scope};
 use ghost::{BringIn, Ghost};
 use std::fmt::Write as _;
@@ -34,9 +34,8 @@ const FIELD_BYTES: usize = 300;
 /// the first rules of each bring-in that fits, and the memories that bear
 /// on it. Never the catalog. Reads the call's prompt and folder.
 pub fn expression(ctx: &Ctx, call: &Call) -> Result<Vec<Item>> {
-    let ghost = Ghost::from_roots(std::slice::from_ref(&ctx.config.parts))
-        .with_context(|| format!("cannot read {}", ctx.config.parts.display()))?;
     let here = Here::at(call.at.cwd.as_deref());
+    let ghost = ctx.shell.ghost(here.cwd.as_deref())?;
     let prompt = call.prompt.as_deref().unwrap_or_default();
     let acting = fit::persona(&ghost, &here);
     let record = work_record(&ghost, &here);
@@ -277,14 +276,14 @@ mod tests {
         for (name, job, rule) in skills {
             let unit = dir.join(format!("units/{part_name}/{name}/SKILL.md"));
             fs::create_dir_all(unit.parent().unwrap()).unwrap();
-            fs::write(&unit, format!("---\nname: {name}\ndescription: d\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: {name} work\n  my-harness.signals.jobs: {job}\n  my-harness.rules: SKILL.md#rules\n---\n## Rules\n\n{rule}\n\n## Other\n\nnot sent\n")).unwrap();
+            fs::write(&unit, format!("---\nname: {name}\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: {name} work\n  my-harness.signals.jobs: {job}\n  my-harness.rules: SKILL.md#rules\n---\n## Rules\n\n{rule}\n\n## Other\n\nnot sent\n")).unwrap();
             bring_ins.push(json!({"name": name, "unit": {"standard": "skill", "path": unit}}));
         }
         let store = dir.join(format!("{part_name}-store"));
         fs::create_dir_all(store.join("memory")).unwrap();
         fs::write(store.join("memory/MEMORY.md"), memories).unwrap();
         let server = dir.join("server.json");
-        let decl = json!({"scope": "session", "job": "memory",
+        let decl = json!({"contract": 1, "scope": "session", "job": "memory",
             "config": {"store": {"about": "s"}, "index": {"about": "i"}},
             "state": {"permanent": "store", "promote": "off"}});
         fs::write(
@@ -408,7 +407,7 @@ mod tests {
         .unwrap();
         let unit = dir.path().join("units/kit/SKILL.md");
         fs::create_dir_all(unit.parent().unwrap()).unwrap();
-        fs::write(&unit, "---\nname: kit\ndescription: d\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: specs\n  my-harness.signals.files: specs/feature/*.md\n  my-harness.record: specs/feature/*.md#handoff\n---\n").unwrap();
+        fs::write(&unit, "---\nname: kit\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: specs\n  my-harness.signals.files: specs/feature/*.md\n  my-harness.record: specs/feature/*.md#handoff\n---\n").unwrap();
         let parts = dir.path().join("parts/home.json");
         let mut v: Value = serde_json::from_str(&fs::read_to_string(&parts).unwrap()).unwrap();
         v["bring_ins"]
@@ -492,7 +491,7 @@ mod tests {
         part(dir.path(), "job", "work", json!([]));
         let unit = dir.path().join("units/garden/SKILL.md");
         fs::create_dir_all(unit.parent().unwrap()).unwrap();
-        fs::write(&unit, "---\nname: garden\ndescription: d\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: plan the beds\n  my-harness.signals.locations: garden-*\n---\n").unwrap();
+        fs::write(&unit, "---\nname: garden\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: plan the beds\n  my-harness.signals.locations: garden-*\n---\n").unwrap();
         let parts = dir.path().join("parts/home.json");
         let mut v: Value = serde_json::from_str(&fs::read_to_string(&parts).unwrap()).unwrap();
         v["bring_ins"]

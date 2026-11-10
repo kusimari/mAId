@@ -2,7 +2,7 @@
 //! binary, because it empties PATH for the whole process.
 
 use build_tool::deploy::{Deploy, Plugins, State};
-use build_tool::part::{Item, What};
+use build_tool::install_record::{Item, What};
 use build_tool::shared::Agent;
 use shell_claude::config_dir::ConfigDir;
 use std::fs;
@@ -88,7 +88,7 @@ fn bring_ins_are_skipped_naming_the_missing_cli() {
 #[test]
 fn bring_ins_maid_placed_stay_its_own_with_no_cli() {
     use build_tool::deploy::BringIns;
-    use build_tool::part;
+    use build_tool::install_record;
     use build_tool::shared::BRING_INS;
     let home = TempDir::new().unwrap();
     let parts = home.path().join("parts");
@@ -98,7 +98,7 @@ fn bring_ins_maid_placed_stay_its_own_with_no_cli() {
         Item::placed(What::Plugin, b.plugin_id(b.plugins[0])),
     ];
     let kinds = &[What::Marketplace, What::Plugin];
-    part::record(&parts, Agent::Claude, kinds, None, ours.to_vec()).unwrap();
+    install_record::record(&parts, Agent::Claude, kinds, None, ours.to_vec()).unwrap();
     let empty = TempDir::new().unwrap();
     std::env::set_var("PATH", empty.path());
     let target = BringIns::new(

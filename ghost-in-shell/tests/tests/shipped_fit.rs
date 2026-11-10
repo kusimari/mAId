@@ -1,13 +1,16 @@
 //! Turn fit and expression against the declarations this repo ships: the
-//! six skills, the browser server and the document-skills overlay, read
-//! from `resources/content` as a part list records them. Spans crates:
-//! `infusion`'s entry points over this shell's own session source.
+//! six skills, the browser server and the document-skills overlay, in
+//! mAId's plugin as Claude Code holds it, read back through this shell's
+//! adapter. Spans crates: `infusion`'s entry points over this shell.
 
 use ghost::config::Config;
 use ghost::environment::Host;
+use ghost_in_shell_tests::{maid_plugin, ClaudeHome};
 use infusion::call::{Call, Carrier, Ctx, Where};
 use infusion::expression;
-use serde_json::{json, Value};
+use serde_json::Value;
+use shell_claude::config_dir::ConfigDir;
+use shell_claude::installed::Claude;
 use shell_claude::transcript::Transcripts;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,30 +20,33 @@ fn content() -> PathBuf {
     ghost_in_shell_tests::content()
 }
 
+/// This repo's install as Claude Code holds it: mAId's plugin, the vendor's
+/// document skills and the browser server, read back by the adapter.
 fn setup() -> (TempDir, Ctx) {
     let dir = TempDir::new().unwrap();
-    let c = content().canonicalize().unwrap();
-    let mut bring_ins: Vec<Value> = ["kdevkit", "kyodakit", "kreviewkit", "writing-style", "notes", "browser"]
-        .iter()
-        .map(|s| json!({"name": s, "unit": {"standard": "skill", "path": c.join(format!("skills/{s}/SKILL.md"))}}))
-        .collect();
-    bring_ins.push(json!({"name": "chrome-devtools",
-        "unit": {"standard": "mcp", "path": c.join("servers/browser/server.json")}}));
-    bring_ins.push(json!({"name": "document-skills",
-        "unit": {"standard": "plugin", "path": c.join("overlays/document-skills/plugin.json")},
-        "tenure": {"kind": "borrowed", "from": "the vendor"}}));
-    let parts = dir.path().join("parts");
-    fs::create_dir_all(&parts).unwrap();
-    let list = json!({"format": 1, "part": "maid-harness", "persona": "personal",
-        "harnesses": {}, "bring_ins": bring_ins});
-    fs::write(parts.join("maid-harness.json"), list.to_string()).unwrap();
+    let claude = ClaudeHome::at(&dir.path().join("home"));
+    claude.plugin("maid@maid", &maid_plugin(&dir.path().join("plugin")));
+    let vendor = dir.path().join("vendor");
+    fs::create_dir_all(vendor.join(".claude-plugin")).unwrap();
+    fs::write(
+        vendor.join(".claude-plugin/plugin.json"),
+        r#"{"name":"document-skills"}"#,
+    )
+    .unwrap();
+    claude.plugin("document-skills@anthropic-agent-skills", &vendor);
+    claude.mcp("chrome-devtools", "/bin/true", &[]);
+    let conf = dir.path().join("config/maid");
     let ctx = Ctx {
         config: Config {
-            parts,
             state: dir.path().join("state"),
         },
         host: Host::default(),
         sources: Box::new(Transcripts { projects: None }),
+        shell: Box::new(Claude {
+            config: Some(ConfigDir::new(&claude.home, None)),
+            cache: None,
+            vars: Some([("MAID_CONFIG".to_string(), conf.display().to_string())].into()),
+        }),
     };
     (dir, ctx)
 }
@@ -75,7 +81,7 @@ fn the_shipped_declarations_fit_the_work_they_name() {
     fs::create_dir_all(&plain).unwrap();
 
     let spec = fits(&ctx, "plan a feature for the parser", &repo);
-    assert_eq!(spec[0].0, "fit.maid-harness.kdevkit", "{spec:?}");
+    assert_eq!(spec[0].0, "fit.mAId.kdevkit", "{spec:?}");
     assert!(
         spec[0].1.contains("### Phase-gating cues"),
         "kdevkit's rules section:\n{}",
@@ -84,13 +90,13 @@ fn the_shipped_declarations_fit_the_work_they_name() {
 
     let write = fits(&ctx, "rewrite this paragraph", &plain);
     assert_eq!(write.len(), 1, "{write:?}");
-    assert_eq!(write[0].0, "fit.maid-harness.writing-style");
+    assert_eq!(write[0].0, "fit.mAId.writing-style");
 
     let form = fits(&ctx, "fill a form on the booking page", &plain);
-    assert_eq!(form[0].0, "fit.maid-harness.browser");
+    assert_eq!(form[0].0, "fit.mAId.browser");
 
     let docs = fits(&ctx, "sum the totals in report.xlsx", &plain);
-    assert_eq!(docs[0].0, "fit.maid-harness.document-skills");
+    assert_eq!(docs[0].0, "fit.mAId.document-skills");
 
     assert!(fits(&ctx, "hello there", &plain).is_empty(), "nothing fits");
 }
@@ -136,40 +142,42 @@ const GENOME_BYTES: usize = 8_000;
 #[test]
 fn the_genome_of_this_repos_install_with_a_second_part_stays_small() {
     let (dir, ctx) = setup();
-    let c = content().canonicalize().unwrap();
-    let parts = dir.path().join("parts");
+    let claude = ClaudeHome::at(&dir.path().join("home"));
     let store = dir.path().join("personal-store");
     fs::create_dir_all(&store).unwrap();
-    let adapter = dir.path().join("plugin.json");
-    let decl: Value = serde_json::from_str(
-        &fs::read_to_string(ghost_in_shell_tests::plugin().join("my-harness.json")).unwrap(),
-    )
-    .unwrap();
+    let store = store.display().to_string();
+    claude.mcp("personal-memory", "/bin/pensieve", &["--store", &store]);
+    // A second part, its own plugin with its memory and two skills.
+    let work = dir.path().join("work-plugin");
+    fs::create_dir_all(work.join(".claude-plugin")).unwrap();
     fs::write(
-        &adapter,
-        json!({"name": "maid", "extensions": {"my-harness": decl}}).to_string(),
+        work.join(".claude-plugin/plugin.json"),
+        r#"{"name":"work","repository":"https://example.org/me/work"}"#,
     )
     .unwrap();
-    let mine = parts.join("maid-harness.json");
-    let mut list: Value = serde_json::from_str(&fs::read_to_string(&mine).unwrap()).unwrap();
-    let more = list["bring_ins"].as_array_mut().unwrap();
-    let conf = dir.path().join("config/maid/writing-style");
-    for b in more.iter_mut().filter(|b| b["name"] == "writing-style") {
-        b["values"] =
-            json!({"learned": conf.join("learned.md"), "promoted": conf.join("promoted.md")});
+    for (to, from) in [("work-notes", "notes"), ("work-review", "kreviewkit")] {
+        fs::create_dir_all(work.join("skills").join(to)).unwrap();
+        fs::copy(
+            content().join(format!("skills/{from}/SKILL.md")),
+            work.join(format!("skills/{to}/SKILL.md")),
+        )
+        .unwrap();
     }
-    more.push(json!({"name": "personal-memory",
-        "unit": {"standard": "mcp", "path": c.join("servers/personal-memory/server.json")},
-        "values": {"store": store, "index": "memory/MEMORY.md"}}));
-    more.push(json!({"name": "claude-adapter", "unit": {"standard": "plugin", "path": adapter}}));
-    fs::write(&mine, list.to_string()).unwrap();
-    let other = json!({"format": 1, "part": "work-part", "persona": "work", "harnesses": {},
-        "bring_ins": [
-            {"name": "work-memory", "unit": {"standard": "mcp", "path": c.join("servers/personal-memory/server.json")},
-                "values": {"store": dir.path().join("work-store"), "index": "memory/MEMORY.md"}},
-            {"name": "work-notes", "unit": {"standard": "skill", "path": c.join("skills/notes/SKILL.md")}},
-            {"name": "work-review", "unit": {"standard": "skill", "path": c.join("skills/kreviewkit/SKILL.md")}}]});
-    fs::write(parts.join("work-part.json"), other.to_string()).unwrap();
+    let mut server: Value = serde_json::from_str(
+        &fs::read_to_string(content().join("servers/personal-memory/server.json")).unwrap(),
+    )
+    .unwrap();
+    server["_meta"]["my-harness"]["persona"] = "work".into();
+    fs::create_dir_all(work.join("servers/work-memory")).unwrap();
+    fs::write(
+        work.join("servers/work-memory/server.json"),
+        server.to_string(),
+    )
+    .unwrap();
+    claude.plugin("work@work", &work);
+    let work_store = dir.path().join("work-store").display().to_string();
+    claude.mcp("work-memory", "/bin/pensieve", &["--store", &work_store]);
+    let conf = dir.path().join("config/maid/writing-style");
     let call = Call {
         carrier: Carrier::Transient,
         at: Where {

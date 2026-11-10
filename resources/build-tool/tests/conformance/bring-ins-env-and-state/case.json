@@ -1,16 +1,34 @@
 {
-  "about": "an unset env: secret and an absent state location are not ready, a secret held as a value is unreadable, and bring-ins are reported whatever harness is selected",
+  "about": "a server's values come from how Claude Code registered it: an unset env: secret, a secret registered as written (never held, so not bound) and an absent state location are not ready, and bring-ins are reported whatever harness is selected",
   "harness": "claude",
-  "env": ["SET_TOKEN"],
+  "env": [
+    "SET_TOKEN"
+  ],
   "expect": {
     "exit": 0,
     "entries": [],
     "refused": [],
     "bring_ins": [
-      { "part": "a", "name": "set", "state": "ready" },
-      { "part": "a", "name": "unset", "state": "not ready" },
-      { "part": "a", "name": "no-store", "state": "not ready" },
-      { "part": "a", "name": "literal", "state": "unreadable" }
+      {
+        "part": "a",
+        "name": "set",
+        "state": "ready"
+      },
+      {
+        "part": "a",
+        "name": "unset",
+        "state": "not ready"
+      },
+      {
+        "part": "a",
+        "name": "no-store",
+        "state": "not ready"
+      },
+      {
+        "part": "a",
+        "name": "literal",
+        "state": "not ready"
+      }
     ]
   }
 }

@@ -4,6 +4,7 @@ description: 'Brief a human before they review a change — "review what was don
 version: 1.3.0
 tags: [review, pr, cr, briefing, reviewer, spec, diff, independent]
 metadata:
+  my-harness.contract: "1"
   my-harness.scope: turn
   my-harness.job: brief a human reviewer on a change from its spec and diff
   my-harness.signals.jobs: brief a review, write a PR body

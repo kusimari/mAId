@@ -12,8 +12,8 @@
 //! ```
 //!
 //! Claude Code keeps the shell's HOME and environment, so its model access
-//! is the shell's own and no credential is handed over. Four locations go to
-//! a temp world: `CLAUDE_CONFIG_DIR`, `MY_HARNESS_STATE`, `MY_HARNESS_PARTS`,
+//! is the shell's own and no credential is handed over. Three locations go to
+//! a temp world: `CLAUDE_CONFIG_DIR`, `MY_HARNESS_STATE`
 //! and `XDG_CACHE_HOME`, where Claude Code keeps its MCP logs whatever its
 //! config dir. A run refuses to start if any of them, or the world, would
 //! land under HOME. On a stub of the model API, nothing else was written
@@ -27,37 +27,47 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 
-use ghost_in_shell_tests::core;
+use ghost_in_shell_tests::{core, ClaudeHome};
 const RUNS: usize = 2;
 const MARKER: &str = "DEPLOY-MARKER-7";
 
-/// A temp world with Claude's config dir, the ghost's state and parts holding
-/// mAId's part (a memory on a store, a turn skill whose
-/// first rule asks for a marker) and a plugin built from the repo's Claude
-/// adapter files with the cargo-built core.
+/// A temp world with Claude's config dir holding mAId's part (a memory on a
+/// store, a turn skill whose first rule asks for a marker), the ghost's
+/// state, and a plugin built from the repo's Claude adapter files with the
+/// cargo-built core.
 fn world() -> TempDir {
     let dir = TempDir::new().unwrap();
     let d = dir.path();
-    let parts = d.join("state/parts");
-    fs::create_dir_all(&parts).unwrap();
     fs::create_dir_all(d.join("claude-config")).unwrap();
     fs::create_dir_all(d.join("cache")).unwrap();
     fs::create_dir_all(d.join("work")).unwrap();
-    let unit = d.join("units/deployer/SKILL.md");
-    fs::create_dir_all(unit.parent().unwrap()).unwrap();
-    fs::write(&unit, format!("---\nname: deployer\ndescription: deploy things\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: deploy a release\n  my-harness.signals.jobs: deploy\n  my-harness.rules: SKILL.md#rules\n---\n## Rules\n\nThe first line of every reply about a deploy is the literal line {MARKER}.\n")).unwrap();
+    // mAId's part as Claude Code holds it: a plugin with the turn skill and
+    // the memory's declaration, and the memory registered on its store.
+    let kit = d.join("units/maid");
+    fs::create_dir_all(kit.join(".claude-plugin")).unwrap();
+    fs::write(
+        kit.join(".claude-plugin/plugin.json"),
+        json!({"name": "kit", "version": "1.0.0", "repository": "https://example.org/me/maid"})
+            .to_string(),
+    )
+    .unwrap();
+    fs::create_dir_all(kit.join("skills/deployer")).unwrap();
+    fs::write(kit.join("skills/deployer/SKILL.md"), format!("---\nname: deployer\ndescription: deploy things\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: deploy a release\n  my-harness.signals.jobs: deploy\n  my-harness.rules: SKILL.md#rules\n---\n## Rules\n\nThe first line of every reply about a deploy is the literal line {MARKER}.\n")).unwrap();
+    fs::create_dir_all(kit.join("servers/personal-memory")).unwrap();
+    fs::copy(
+        ghost_in_shell_tests::content().join("servers/personal-memory/server.json"),
+        kit.join("servers/personal-memory/server.json"),
+    )
+    .unwrap();
+    let claude = ClaudeHome::in_dir(&d.join("claude-config"));
+    claude.plugin("kit@kit", &kit);
     let store = d.join("personal-store");
     fs::create_dir_all(store.join("memory")).unwrap();
-    let server = ghost_in_shell_tests::content()
-        .join("servers/personal-memory/server.json")
-        .canonicalize()
-        .unwrap();
-    let mine = json!({"format": 1, "part": "maid-harness", "persona": "personal", "harnesses": {},
-        "bring_ins": [
-            {"name": "deployer", "unit": {"standard": "skill", "path": unit}},
-            {"name": "personal-memory", "unit": {"standard": "mcp", "path": server},
-                "values": {"store": store, "index": "memory/MEMORY.md"}}]});
-    fs::write(parts.join("maid-harness.json"), mine.to_string()).unwrap();
+    claude.mcp(
+        "personal-memory",
+        "/bin/true",
+        &["--store", &store.display().to_string()],
+    );
     let adapter = ghost_in_shell_tests::plugin();
     let plugin = d.join("plugin");
     fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
@@ -128,7 +138,6 @@ fn ask(world: &Path, prompt: &str) -> String {
         .current_dir(world.join("work"))
         .env("CLAUDE_CONFIG_DIR", &config)
         .env("MY_HARNESS_STATE", &state)
-        .env("MY_HARNESS_PARTS", state.join("parts"))
         .env("XDG_CACHE_HOME", &cache);
     let out = cmd.output().unwrap();
     assert!(

@@ -1,0 +1,11 @@
+{
+  "name": "docs",
+  "description": "borrowed",
+  "extensions": {
+    "my-harness": {
+      "contract": 1,
+      "scope": "turn",
+      "job": "docs"
+    }
+  }
+}

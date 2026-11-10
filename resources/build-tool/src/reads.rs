@@ -5,10 +5,10 @@
 //! See project.md "Skill reads" and "Skill state".
 //!
 //! Each is an element of a list another part or the user also writes: mAId
-//! owns the elements its part list records, and an identical element it
+//! owns the elements its install record records, and an identical element it
 //! found there (adopted); any other element is left alone.
 
-use crate::part::{Item, What, ANOTHER_PART};
+use crate::install_record::{Item, What, ANOTHER_PART};
 use crate::settings::{read_settings, write_settings, NO_CLI};
 use crate::shared::{agent_marketplace, Agent, PLUGIN_ID};
 use anyhow::Result;
@@ -55,7 +55,7 @@ impl List {
     }
 
     /// Whether a recorded value has the shape mAId writes here: a
-    /// hand-edited part list cannot make mAId remove another grant.
+    /// hand-edited install record cannot make mAId remove another grant.
     fn ours(self, value: &str) -> bool {
         let path = match self {
             List::Dirs => Some(value).filter(|v| {
@@ -188,7 +188,7 @@ fn holds(list: &[Value], element: &str) -> bool {
     list.iter().any(|v| v.as_str() == Some(element))
 }
 
-/// What mAId's part list recorded in `list`, while it has mAId's shape.
+/// What mAId's install record recorded in `list`, while it has mAId's shape.
 fn recorded(list: List, own: &[Item]) -> Vec<&str> {
     own.iter()
         .filter_map(|i| i.value.as_deref())
@@ -198,7 +198,7 @@ fn recorded(list: List, own: &[Item]) -> Vec<&str> {
 
 /// Install: add each element mAId wants, or adopt the identical one already
 /// there unless another part's list records it (`claimed`). `own` is what
-/// mAId's part list recorded for this setting.
+/// mAId's install record recorded for this setting.
 pub fn install_claude(
     claude: &ConfigDir,
     grant: &Grant,

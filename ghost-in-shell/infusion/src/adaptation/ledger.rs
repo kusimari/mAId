@@ -296,7 +296,6 @@ mod tests {
 
     fn config(dir: &std::path::Path) -> Config {
         Config {
-            parts: dir.join("parts"),
             state: dir.join("state"),
         }
     }

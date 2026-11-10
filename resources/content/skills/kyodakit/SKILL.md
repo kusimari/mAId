@@ -4,6 +4,7 @@ description: 'Work like the experienced developer beside the user on any coding 
 version: 1.0.0
 tags: [coding, design, judgement, review-feedback, testing, plain-language, independent]
 metadata:
+  my-harness.contract: "1"
   my-harness.scope: turn
   my-harness.job: developer judgement on any coding work, in any language
   my-harness.signals.jobs: design, build, fix, refactor, test, act on review feedback

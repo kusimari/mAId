@@ -1,7 +1,7 @@
 //! Claude's user settings file, read and written so every other key and
 //! its order is kept. Shared by each step that owns one setting there.
 
-use crate::part::Item;
+use crate::install_record::Item;
 use anyhow::{bail, Context, Result};
 use std::fs;
 use std::io::{self, Write};

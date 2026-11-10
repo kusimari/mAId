@@ -5,12 +5,14 @@
 //! `harness-core`, "System design" and "On Claude Code".
 //!
 //!   config_dir   where Claude Code keeps its user config
+//!   installed    what Claude Code has installed, from its own records, cached
 //!   hook         Claude's hook and CLI input, as the call infusion takes
 //!   transcript   Claude's transcripts, located and packed: its session source
 //!   mcp          the on-demand carrier: an MCP server over the entry points
 
 pub mod config_dir;
 pub mod hook;
+pub mod installed;
 pub mod mcp;
 pub mod transcript;
 

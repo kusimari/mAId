@@ -120,7 +120,7 @@ mod tests {
     impl Fixture {
         fn new() -> Fixture {
             let dir = TempDir::new().unwrap();
-            let decl = json!({"scope": "session", "job": "memory",
+            let decl = json!({"contract": 1, "scope": "session", "job": "memory",
                 "config": {"store": {"about": "s"}, "index": {"about": "i"}},
                 "state": {"permanent": "store", "promote": "off"}});
             fs::write(
@@ -151,7 +151,7 @@ mod tests {
         }
 
         fn ghost(&self) -> Ghost {
-            Ghost::from_roots(&[self.dir.path().join("parts")]).unwrap()
+            crate::testing::ghost_of(&self.dir.path().join("parts"))
         }
     }
 

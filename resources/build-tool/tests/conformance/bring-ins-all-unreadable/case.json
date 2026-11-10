@@ -1,0 +1,20 @@
+{
+  "about": "a part whose only declarations cannot be read is still reported, each one unreadable, as is a unit put in by hand that tried to declare",
+  "expect": {
+    "exit": 0,
+    "entries": [],
+    "refused": [],
+    "bring_ins": [
+      {
+        "part": "a",
+        "name": "next",
+        "state": "unreadable"
+      },
+      {
+        "part": "local",
+        "name": "alone",
+        "state": "unreadable"
+      }
+    ]
+  }
+}

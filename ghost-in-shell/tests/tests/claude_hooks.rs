@@ -10,6 +10,7 @@ use std::process::{Command, Output, Stdio};
 use tempfile::TempDir;
 
 use ghost_in_shell_tests::core;
+use ghost_in_shell_tests::{maid_plugin, ClaudeHome};
 
 fn hooks() -> Value {
     let path = ghost_in_shell_tests::plugin().join("hooks.json");
@@ -34,13 +35,13 @@ fn command(event: &str, source: Option<&str>) -> String {
     hook["command"].as_str().unwrap().to_string()
 }
 
+/// A HOME whose Claude Code has mAId's plugin and its memory installed.
 fn home() -> TempDir {
     let home = TempDir::new().unwrap();
-    let parts = home.path().join(".local/state/my-harness/parts");
-    fs::create_dir_all(&parts).unwrap();
-    let list = json!({"format": 1, "part": "maid-harness", "persona": "personal",
-        "harnesses": {}, "bring_ins": []});
-    fs::write(parts.join("maid-harness.json"), list.to_string()).unwrap();
+    let claude = ClaudeHome::at(home.path());
+    claude.plugin("maid@maid", &maid_plugin(&home.path().join("plugin")));
+    let store = home.path().join("store").display().to_string();
+    claude.mcp("personal-memory", "/bin/pensieve", &["--store", &store]);
     home
 }
 
@@ -189,18 +190,16 @@ fn a_failing_hook_exits_0_with_nothing_on_stdout() {
     );
     assert!(out.status.success());
     assert!(out.stdout.is_empty());
-    fs::remove_dir_all(home.path().join(".local/state/my-harness/parts")).unwrap();
-    fs::write(
-        home.path().join(".local/state/my-harness/parts"),
-        "not a dir",
-    )
-    .unwrap();
+    let state = home.path().join(".local/state/my-harness");
+    let _ = fs::remove_dir_all(&state);
+    fs::create_dir_all(state.parent().unwrap()).unwrap();
+    fs::write(&state, "not a dir").unwrap();
     let out = run(
         home.path(),
         &cmd,
         &json!({"session_id": "s9", "prompt": "x"}),
     );
-    assert!(out.status.success(), "a parts dir that cannot be read");
+    assert!(out.status.success(), "a state dir that cannot be written");
     assert!(out.stdout.is_empty());
     let renamed = cmd.replace("--carrier append", "--carrier-renamed append");
     let out = run(

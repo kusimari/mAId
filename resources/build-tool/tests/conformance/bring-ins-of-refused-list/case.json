@@ -1,8 +1,0 @@
-{
-  "about": "a refused list's bring-ins are not reported",
-  "expect": {
-    "exit": 1,
-    "entries": [],
-    "refused": ["r.json"]
-  }
-}

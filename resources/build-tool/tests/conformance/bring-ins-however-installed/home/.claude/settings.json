@@ -1,0 +1,7 @@
+{
+  "enabledPlugins": {
+    "kit@kit": true,
+    "docs@vendor": true,
+    "off@kit": false
+  }
+}

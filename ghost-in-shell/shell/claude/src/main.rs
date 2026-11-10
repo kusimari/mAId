@@ -12,6 +12,7 @@ use infusion::adaptation::ledger;
 use infusion::call::{Call, Carrier, Ctx, Item, Slice};
 use serde_json::{json, Value};
 use shell_claude::config_dir::ConfigDir;
+use shell_claude::installed::Claude;
 use shell_claude::transcript::Transcripts;
 use shell_claude::{hook, mcp};
 use std::io::Read;
@@ -167,12 +168,18 @@ fn run(cli: Cli) -> Result<()> {
     // Where this shell keeps its own things, read the same way for every
     // command, so a config dir it cannot take fails them all alike.
     let dir = ConfigDir::from_env()?;
+    let installed = Claude {
+        config: dir.clone(),
+        cache: Some(config.shells().join("claude")),
+        vars: None,
+    };
     let ctx = Ctx {
         config,
         host: Host::from_env(),
         sources: Box::new(Transcripts {
             projects: dir.map(|d| d.projects()),
         }),
+        shell: Box::new(installed),
     };
     type Entry = fn(&Ctx, &Call) -> Result<Vec<Item>>;
     let (entry, a): (Entry, &CallArgs) = match &cli.cmd {
@@ -213,7 +220,8 @@ fn run(cli: Cli) -> Result<()> {
             return Ok(());
         }
         Cmd::Environment { json } => {
-            let rows = environment::derive(&fuse(&ctx)?, &ctx.host);
+            let ghost = fuse(&ctx)?;
+            let rows = environment::derive(&ghost, &ctx.host);
             match json {
                 true => println!("{}", serde_json::to_string_pretty(&rows)?),
                 false => {
@@ -224,6 +232,9 @@ fn run(cli: Cli) -> Result<()> {
                             .map(|w| format!(" ({w})"))
                             .unwrap_or_default();
                         println!("{:<11} {} ({}){why}", r.readiness.label(), r.name, r.part);
+                    }
+                    for n in &ghost.not_understood {
+                        println!("not understood {n}");
                     }
                 }
             }
@@ -246,8 +257,7 @@ fn run(cli: Cli) -> Result<()> {
 }
 
 fn fuse(ctx: &Ctx) -> Result<Ghost> {
-    Ghost::from_roots(std::slice::from_ref(&ctx.config.parts))
-        .with_context(|| format!("cannot read {}", ctx.config.parts.display()))
+    ctx.shell.ghost(std::env::current_dir().ok().as_deref())
 }
 
 fn call(a: &CallArgs) -> Result<Call> {

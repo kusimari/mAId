@@ -1,20 +1,21 @@
-//! Whole-status: every part's list, each entry checked against the base
-//! harness's own listing or config. Any part's list, not only mAId's; see
-//! project.md "My harness".
+//! Whole-status: every package's install record (and, for one release,
+//! old part list), each entry checked against the agent's own listing or
+//! config; any package's, not only mAId's. Then the ghost's bring-ins on
+//! Claude Code, ready or not, as the ghost finds them in what Claude Code
+//! has installed (reader rule 15). See project.md "Plain install".
 //!
-//! Reads only: files under `$HOME`, the harnesses' listing commands, and
-//! the unit manifests and state locations the part lists name.
-//! Each part's bring-ins are reported too, ready or not, from the core's
-//! reading of the same lists (reader rule 15).
+//! Reads only: files under `$HOME`, the agents' listing commands, and the
+//! units and state locations what is installed names.
 
 use crate::deploy::{listed_marketplaces, listed_plugins};
-use crate::part::What;
+use crate::install_record::What;
 use crate::shared::{claude_env, find_on, Agent};
 use anyhow::{Context, Result};
 use ghost::environment::{self, Host, Readiness};
 use serde::Deserialize;
 use serde_json::Value;
 use shell_claude::config_dir::ConfigDir;
+use shell_claude::installed::Claude;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::{OsStr, OsString};
@@ -38,50 +39,66 @@ pub struct Entry {
     pub value: Option<Value>,
 }
 
-#[derive(Deserialize)]
-struct List {
-    part: String,
-    harnesses: BTreeMap<String, Vec<Entry>>,
-}
-
-/// A part list as read from the parts dir.
+/// A package's install record, or an old part list, as read.
 #[derive(Debug)]
 pub struct Part {
     pub name: String,
     harnesses: BTreeMap<String, Vec<Entry>>,
+    /// An install record, not an old part list.
+    manifest: bool,
 }
 
-/// A file in the parts dir this reader would not take, and why.
+/// A file this reader would not take, and why.
 #[derive(Debug, PartialEq)]
 pub struct Refused {
     pub file: String,
     pub why: String,
 }
 
-/// Every non-dot `*.json` in `dir`, in name order. A missing dir has none.
-pub fn read_parts(dir: &Path) -> Result<(Vec<Part>, Vec<Refused>)> {
-    let mut files: Vec<PathBuf> = match fs::read_dir(dir) {
-        Ok(rd) => rd
-            .map(|e| e.map(|e| e.path()))
-            .collect::<io::Result<_>>()
-            .with_context(|| format!("cannot read {}", dir.display()))?,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => vec![],
-        Err(e) => return Err(e).with_context(|| format!("cannot read {}", dir.display())),
-    };
-    files.retain(|p| {
-        let name = p.file_name().unwrap_or_default().to_string_lossy();
-        !name.starts_with('.') && p.extension() == Some(OsStr::new("json"))
-    });
-    files.sort();
+/// Every non-dot `*.json` in each root, roots in order, files in name
+/// order. A missing root has none. An old part list is not read when an
+/// install record has its name.
+pub fn read_parts(roots: &[PathBuf]) -> Result<(Vec<Part>, Vec<Refused>)> {
+    let mut files: Vec<PathBuf> = vec![];
+    for dir in roots {
+        let mut here: Vec<PathBuf> = match fs::read_dir(dir) {
+            Ok(rd) => rd
+                .map(|e| e.map(|e| e.path()))
+                .collect::<io::Result<_>>()
+                .with_context(|| format!("cannot read {}", dir.display()))?,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => vec![],
+            Err(e) => return Err(e).with_context(|| format!("cannot read {}", dir.display())),
+        };
+        here.retain(|p| {
+            let name = p.file_name().unwrap_or_default().to_string_lossy();
+            !name.starts_with('.') && p.extension() == Some(OsStr::new("json"))
+        });
+        here.sort();
+        files.extend(here);
+    }
+    let read: Vec<(String, Result<Part, String>)> = files
+        .iter()
+        .map(|p| {
+            (
+                p.file_name().unwrap_or_default().to_string_lossy().into(),
+                read_part(p),
+            )
+        })
+        .collect();
+    let manifests: BTreeSet<String> = read
+        .iter()
+        .filter_map(|(_, p)| {
+            p.as_ref()
+                .ok()
+                .filter(|p| p.manifest)
+                .map(|p| p.name.clone())
+        })
+        .collect();
     let (mut parts, mut refused) = (vec![], vec![]);
-    for path in files {
-        let file = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into();
-        match read_part(&path) {
-            Ok(part) => parts.push(part),
+    for (file, part) in read {
+        match part {
+            Ok(p) if !p.manifest && manifests.contains(&p.name) => {}
+            Ok(p) => parts.push(p),
             Err(why) => refused.push(Refused { file, why }),
         }
     }
@@ -98,14 +115,26 @@ fn read_part(path: &Path) -> Result<Part, String> {
         Value::Null => return Err("no format".into()),
         other => return Err(format!("format {other} is not one this reader knows")),
     }
-    let list: List = serde_json::from_value(v).map_err(|e| format!("not a part list: {e}"))?;
+    let manifest = !v["package"].is_null();
+    let (name, key, what) = match manifest {
+        true => ("package", "agents", "an install record"),
+        false => ("part", "harnesses", "a part list"),
+    };
+    let name: String =
+        serde_json::from_value(v[name].clone()).map_err(|e| format!("not {what}: {name}: {e}"))?;
+    let harnesses: BTreeMap<String, Vec<Entry>> =
+        serde_json::from_value(v[key].clone()).map_err(|e| format!("not {what}: {key}: {e}"))?;
     let stem = path.file_stem().unwrap_or_default().to_string_lossy();
-    if list.part != stem {
-        return Err(format!("part {:?} is not the file's name", list.part));
+    if name != stem {
+        return Err(format!(
+            "{} {name:?} is not the file's name",
+            if manifest { "package" } else { "part" }
+        ));
     }
     Ok(Part {
-        name: list.part,
-        harnesses: list.harnesses,
+        name,
+        harnesses,
+        manifest,
     })
 }
 
@@ -164,12 +193,15 @@ pub struct BringInLine {
 /// refused file.
 #[derive(Debug)]
 pub struct Whole {
-    pub dir: PathBuf,
+    /// The folders read: install records, then the old part lists.
+    pub dirs: Vec<PathBuf>,
     /// How many lists were read, whatever the agent selected.
     pub parts: usize,
     pub lines: Vec<Line>,
     /// Never selected by harness: a bring-in belongs to the part.
     pub bring_ins: Vec<BringInLine>,
+    /// Claude Code's records whose shape the ghost did not understand.
+    pub not_understood: Vec<String>,
     pub refused: Vec<Refused>,
 }
 
@@ -186,9 +218,17 @@ impl Whole {
 
 impl fmt::Display for Whole {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.lines.is_empty() && self.refused.is_empty() && self.bring_ins.is_empty() {
+        if self.lines.is_empty()
+            && self.refused.is_empty()
+            && self.bring_ins.is_empty()
+            && self.not_understood.is_empty()
+        {
             return match self.parts {
-                0 => writeln!(f, "no part lists in {}", self.dir.display()),
+                0 => {
+                    let dirs: Vec<String> =
+                        self.dirs.iter().map(|d| d.display().to_string()).collect();
+                    writeln!(f, "no install records in {}", dirs.join(" or "))
+                }
                 _ => writeln!(f, "no entries to check"),
             };
         }
@@ -230,6 +270,9 @@ impl fmt::Display for Whole {
                 None => writeln!(f)?,
             }
         }
+        for n in &self.not_understood {
+            writeln!(f, "not understood  {n}")?;
+        }
         for r in &self.refused {
             writeln!(f, "refused  {}: {}", r.file, r.why)?;
         }
@@ -237,53 +280,56 @@ impl fmt::Display for Whole {
     }
 }
 
-/// Every part's list, checked against the harnesses on this PATH.
+/// Every package's install record (and old part list), checked against
+/// the harnesses on this PATH.
 pub fn cmd_whole(
-    parts: &Path,
+    lists: &crate::install_record::Lists,
     home: &Path,
     claude: &ConfigDir,
     agent: Option<Agent>,
 ) -> Result<u8> {
-    let whole = check(parts, home, claude, std::env::var_os("PATH"), agent)?;
+    let roots = [lists.manifests.clone(), lists.old.clone()];
+    let whole = check(&roots, home, claude, std::env::var_os("PATH"), agent)?;
     print!("{whole}");
     Ok(u8::from(whole.failed()))
 }
 
-/// Check every part list in `dir` against the harnesses under `home`,
+/// Check every install record and old part list in `dirs` against the
+/// agents under `home`,
 /// Claude's in `claude`, running their CLIs from `path`. `agent` scopes to
 /// one harness.
 pub fn check(
-    dir: &Path,
+    dirs: &[PathBuf],
     home: &Path,
     claude: &ConfigDir,
     path: Option<OsString>,
     agent: Option<Agent>,
 ) -> Result<Whole> {
-    check_at(dir, home, claude, path, &Host::from_env().set, agent)
+    check_at(dirs, home, claude, path, &Host::from_env().set, agent)
 }
 
 /// The same, with `set` the names of the variables a bring-in's `env:`
 /// values may name, so a test does not depend on the machine, and Claude's
 /// config under `home` with `CLAUDE_CONFIG_DIR` unset.
 pub fn check_in(
-    dir: &Path,
+    dirs: &[PathBuf],
     home: &Path,
     path: Option<OsString>,
     set: &BTreeSet<String>,
     agent: Option<Agent>,
 ) -> Result<Whole> {
-    check_at(dir, home, &ConfigDir::new(home, None), path, set, agent)
+    check_at(dirs, home, &ConfigDir::new(home, None), path, set, agent)
 }
 
 fn check_at(
-    dir: &Path,
+    dirs: &[PathBuf],
     home: &Path,
     claude: &ConfigDir,
     path: Option<OsString>,
     set: &BTreeSet<String>,
     agent: Option<Agent>,
 ) -> Result<Whole> {
-    let (parts, refused) = read_parts(dir)?;
+    let (parts, refused) = read_parts(dirs)?;
     let probe = Probe {
         home: home.to_path_buf(),
         claude: claude.clone(),
@@ -321,27 +367,37 @@ fn check_at(
         path: probe.path.clone(),
         set: set.clone(),
     };
-    let bring_ins = bring_ins(dir, &refused, &host)?;
+    let (bring_ins, not_understood) = bring_ins(claude, &host)?;
     Ok(Whole {
-        dir: dir.to_path_buf(),
+        dirs: dirs.to_vec(),
         parts: parts.len(),
         lines,
         bring_ins,
+        not_understood,
         refused,
     })
 }
 
-/// Every bring-in of every list this reader took, with its readiness. A
-/// list taken here whose bring-ins the ghost cannot read gets one `*` line.
-fn bring_ins(dir: &Path, refused: &[Refused], host: &Host) -> Result<Vec<BringInLine>> {
-    let ghost = ghost::Ghost::from_roots(std::slice::from_ref(&dir.to_path_buf()))
-        .with_context(|| format!("cannot read {}", dir.display()))?;
-    // No entry of a refused list is checked (rule 3), bring-ins included.
-    let taken = |part: &str| refused.iter().all(|r| r.file != format!("{part}.json"));
-    let mut out: Vec<BringInLine> = ghost
+/// The ghost's bring-ins on Claude Code, from what it has installed, with
+/// their readiness: those of each part that declares itself. A part that
+/// declares nothing is the entries above, all status knows of it.
+fn bring_ins(claude: &ConfigDir, host: &Host) -> Result<(Vec<BringInLine>, Vec<String>)> {
+    let installed = Claude {
+        config: Some(claude.clone()),
+        cache: None,
+        vars: None,
+    };
+    let ghost = ghost::Ghost::from(&installed, None).context("cannot read what Claude Code has")?;
+    let declared: BTreeSet<&str> = ghost
+        .personas
+        .iter()
+        .filter(|p| p.declared)
+        .map(|p| p.part.as_str())
+        .collect();
+    let lines = ghost
         .bring_ins
         .iter()
-        .filter(|b| taken(&b.part))
+        .filter(|b| declared.contains(b.part.as_str()))
         .map(|b| BringInLine {
             part: b.part.clone(),
             persona: b.persona.clone(),
@@ -349,19 +405,7 @@ fn bring_ins(dir: &Path, refused: &[Refused], host: &Host) -> Result<Vec<BringIn
             readiness: environment::readiness(b, host),
         })
         .collect();
-    // The ghost also refuses a list whose persona or bring-ins are not of
-    // their shape, which this reader takes: those get one `*` line.
-    for r in &ghost.refused {
-        if refused.iter().all(|w| w.file != r.file) {
-            out.push(BringInLine {
-                part: r.file.strip_suffix(".json").unwrap_or(&r.file).into(),
-                persona: None,
-                name: "*".into(),
-                readiness: Readiness::Unreadable(r.why.clone()),
-            });
-        }
-    }
-    Ok(out)
+    Ok((lines, ghost.not_understood.clone()))
 }
 
 /// Where the names of one kind on one harness are read from.
@@ -882,7 +926,7 @@ mod tests {
         fn run(&self, agent: Option<Agent>) -> Whole {
             let path = Some(self.bin.path().as_os_str().to_owned());
             check(
-                self.parts.path(),
+                &[self.parts.path().to_path_buf()],
                 self.home.path(),
                 &ConfigDir::new(self.home.path(), None),
                 path,
@@ -934,7 +978,7 @@ mod tests {
         );
         w.part(".c.json", "half a list");
         w.part("notes.txt", "not a list");
-        let (parts, refused) = read_parts(w.parts.path()).unwrap();
+        let (parts, refused) = read_parts(&[w.parts.path().to_path_buf()]).unwrap();
         let names: Vec<_> = parts.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, ["a", "b"]);
         assert_eq!(refused, vec![]);
@@ -955,7 +999,7 @@ mod tests {
             "xentry.json",
             r#"{"format":1,"part":"xentry","harnesses":{"agy":[{"name":"s"}]}}"#,
         );
-        let (parts, refused) = read_parts(w.parts.path()).unwrap();
+        let (parts, refused) = read_parts(&[w.parts.path().to_path_buf()]).unwrap();
         assert!(parts.is_empty());
         let why: Vec<_> = refused.iter().map(|r| (r.file.as_str(), &r.why)).collect();
         assert!(
@@ -988,7 +1032,7 @@ mod tests {
     fn no_parts_dir_is_no_parts() {
         let w = World::new();
         let whole = check(
-            &w.parts.path().join("none"),
+            &[w.parts.path().join("none")],
             w.home.path(),
             &ConfigDir::new(w.home.path(), None),
             None,
@@ -996,7 +1040,7 @@ mod tests {
         )
         .unwrap();
         assert!(!whole.failed());
-        assert!(whole.to_string().starts_with("no part lists in"));
+        assert!(whole.to_string().starts_with("no install records in"));
     }
 
     #[test]

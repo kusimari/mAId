@@ -106,6 +106,9 @@
           version = "@version@";
           inherit description;
           author.name = "mAId";
+          # Where a change to mAId's units is proposed; its skills, server
+          # declarations and overlays inside the plugin inherit it.
+          repository = "https://github.com/kusimari/mAId";
           extensions."my-harness" = builtins.fromJSON (builtins.readFile "${ghostPlugin}/my-harness.json");
           # Not the default `hooks/hooks.json` and `.mcp.json`: codex reads
           # those from the same plugin dir.
@@ -146,10 +149,11 @@
             # The reflect skill names the core as `@maid-core@`: this build's.
             chmod u+w $p/skills/reflect $p/skills/reflect/SKILL.md
             sed -i "s|@maid-core@|${maid-core}/bin/maid-core|g" $p/skills/reflect/SKILL.md
-            # Bring-in declarations outside the plugin: MCP servers', and
-            # overlays for borrowed units mAId does not own.
-            cp -r ${./resources/content/servers} $out/share/maid/servers
-            cp -r ${./resources/content/overlays} $out/share/maid/overlays
+            # Declarations the plugin ships for units outside it: each MCP
+            # server it registers, by name, and an overlay for each unit it
+            # borrows. The shell copies them with the plugin.
+            cp -r ${./resources/content/servers} $p/servers
+            cp -r ${./resources/content/overlays} $p/overlays
             cp ${claudeMarketplace} $m/.claude-plugin/marketplace.json
             cp ${codexMarketplace} $m/.agents/plugins/marketplace.json
             cp ${claudePlugin} $p/.claude-plugin/plugin.json
@@ -162,6 +166,8 @@
             chmod u+w $p/.claude-plugin/plugin.json $p/.codex-plugin/plugin.json
             sed -i "s/@version@/1.0.0-$hash/" $p/.claude-plugin/plugin.json $p/.codex-plugin/plugin.json
             ln -s marketplace/plugins/maid/skills $out/share/maid/skills
+            ln -s marketplace/plugins/maid/servers $out/share/maid/servers
+            ln -s marketplace/plugins/maid/overlays $out/share/maid/overlays
             ln -s ${maid-browser-mcp}/bin/maid-browser-mcp $out/bin/maid-browser-mcp
             ln -s ${pensieveServer}/bin/pensieve $out/bin/pensieve
             ln -s ${maid-core}/bin/maid-core $out/bin/maid-core

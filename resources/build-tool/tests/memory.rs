@@ -28,6 +28,7 @@ impl Env {
             .env("MAID_MEMORY_STORE", self.at("config/memory-store"))
             .env("MAID_PROFILE", self.at("profile"))
             .env("MY_HARNESS_PARTS", self.at("state"))
+            .env("INSTALL_MANIFESTS", self.at("install-manifests"))
             .env_remove("CODEX_HOME")
             .env_remove("CLAUDE_CONFIG_DIR")
             .output()

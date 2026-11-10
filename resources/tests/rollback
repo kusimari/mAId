@@ -21,7 +21,7 @@ export MAID_PROFILE=$work/state/maid/profile
 export CARGO_HOME=${CARGO_HOME:-$HOME/.cargo} CARGO_TARGET_DIR=$here/target
 # nix keeps its settings and fetch cache under these; the agents do not.
 export XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config} XDG_CACHE_HOME=${XDG_CACHE_HOME:-$HOME/.cache}
-unset CODEX_HOME CLAUDE_CONFIG_DIR XDG_STATE_HOME MY_HARNESS_PARTS
+unset CODEX_HOME CLAUDE_CONFIG_DIR XDG_STATE_HOME MY_HARNESS_PARTS INSTALL_MANIFESTS
 # XDG_CONFIG_HOME stays real for nix, so mAId's config dir must not.
 export MAID_CONFIG=$work/config/maid MAID_MEMORY_STORE=$work/config/maid/memory-store
 # A personal store, so install registers and records the memory server.
@@ -49,9 +49,12 @@ codex_has_marker() { grep -rqs "$marker" "$th/.codex/plugins/cache"; }
 kiro_has_marker() { grep -qs "$marker" "$th/.kiro/skills/notes/SKILL.md"; }
 skills() { inhome just resources::install-skills >"$work/log" 2>&1 || { cat "$work/log"; return 1; }; }
 rollback() { inhome just rollback >"$work/out" 2>&1; }
-partlist=$th/.local/state/my-harness/parts/maid-harness.json
-# The entries one harness has in mAId's part list, one `kind name [skipped]` per line.
-entries() { jq -r --arg h "$1" '.harnesses[$h][]? | "\(.kind) \(.name)\(if .skipped then " skipped" else "" end)"' "$partlist" 2>/dev/null; }
+partlist=$th/.local/state/install-manifests/maid.json
+oldlist=$th/.local/state/my-harness/parts/maid-harness.json
+# The entries one agent has in mAId's install record, one `kind name [skipped]` per line.
+entries() { jq -r --arg h "$1" '.agents[$h][]? | "\(.kind) \(.name)\(if .skipped then " skipped" else "" end)"' "$partlist" 2>/dev/null; }
+# mAId's claude entry named $1.
+claude_entry() { jq -e --arg n "$1" '.agents.claude[] | select(.name == $n)' "$partlist"; }
 mcp_entry() { entries "$1" | grep -qx "mcp chrome-devtools\( skipped\)\?"; }
 
 # Three installs: one older than the plugin marketplace (C), this
@@ -89,7 +92,7 @@ placed_on_all() {
   done
   entries kiro-cli | grep -qx "skill notes" && mcp_entry kiro-cli
 }
-check "the part list names what install placed on claude, codex and kiro" placed_on_all
+check "the install record names what install placed on claude, codex and kiro" placed_on_all
 grant=$MAID_PROFILE/share/maid/marketplace/plugins/maid
 granted() { jq -e --arg d "$grant" '.permissions.additionalDirectories | index($d)' "$th/.claude/settings.json" >/dev/null 2>&1; }
 check "install lets claude read mAId's plugin dir, and records it" \
@@ -105,17 +108,28 @@ brought_in() {
   done
   entries kiro-cli | grep -qx "marketplace $vendor skipped"
 }
-check "the part list names the vendor marketplace placed on claude and codex, skipped on kiro" brought_in
+check "the install record names the vendor marketplace placed on claude and codex, skipped on kiro" brought_in
 
-# The core runs from the profile alone, and reads the persona and bring-ins
-# install recorded.
+# The core runs from the profile alone, and finds mAId's persona and
+# bring-ins in what Claude Code has installed.
 core_bare() {
   env -i HOME="$th" "$MAID_PROFILE/bin/maid-core" genome >"$work/genome" 2>&1 &&
-    grep -q '^personas: personal (maid-harness)$' "$work/genome" &&
+    grep -qE '^personas: personal \(mAId\)(, |$)' "$work/genome" &&
     grep -q '^  notes: ' "$work/genome" &&
     grep -q 'document-skills: .*borrowed from anthropic-agent-skills' "$work/genome"
 }
 check "the profile's maid-core shows mAId's persona and bring-ins under a bare environment" core_bare
+# A skill put into Claude Code by hand joins the ghost by its own
+# declaration, in the part its repository names; plain records nothing of it.
+by_hand() {
+  mkdir -p "$th/.claude/skills/garden"
+  printf -- '---\nname: garden\ndescription: d\nmetadata:\n  my-harness.contract: "1"\n  my-harness.repository: https://example.org/me/garden\n  my-harness.scope: turn\n  my-harness.job: tend the garden\n---\n' \
+    >"$th/.claude/skills/garden/SKILL.md"
+  env -i HOME="$th" "$MAID_PROFILE/bin/maid-core" genome >"$work/hand" 2>&1
+  rm -r "$th/.claude/skills/garden"
+  grep -q '^  garden: tend the garden \[garden, own\]$' "$work/hand" && ! grep -q garden "$partlist"
+}
+check "a skill installed by hand joins the ghost by its declaration" by_hand
 # The Claude plugin's hooks and MCP server call this profile's own core, and
 # a hook placed as Claude Code runs it answers with the genome.
 plugin="$MAID_PROFILE/share/maid/marketplace/plugins/maid"
@@ -144,16 +158,16 @@ session_bring_ins() {
 check "the genome lists the declared memory with its store, and the adapter, as session bring-ins" session_bring_ins
 pin=$(jq -r .nodes.pensieve.locked.rev "$here/flake.lock")
 memory_source() {
-  jq -e --arg pin "$pin" '.bring_ins[] | select(.name == "personal-memory")
-    | .source.at == "https://github.com/kusimari/pensieve" and .source.rev == $pin
-      and .tenure.kind == "own" and .values.index == "memory/MEMORY.md"' "$partlist" >/dev/null
+  claude_entry personal-memory | jq -e --arg pin "$pin" --arg at "$MAID_PROFILE/share/maid/servers/personal-memory" '
+    .source.repo == "https://github.com/kusimari/pensieve" and .source.rev == $pin
+      and .at == $at and .values.index == "memory/MEMORY.md"' >/dev/null
 }
-check "the part list records the memory's source as its package at the flake's pin" memory_source
+check "the install record records the memory's source as its package at the flake's pin" memory_source
 # Every bring-in mAId installs declares the contract; writing-style's tiers
 # are optional, so it is ready before any rule is written.
 declared() {
   env -i HOME="$th" "$MAID_PROFILE/bin/maid-core" environment --json >"$work/env" 2>&1 &&
-    jq -e '[.[] | select(.part == "maid-harness")] as $m
+    jq -e '[.[] | select(.part == "mAId")] as $m
       | ([$m[] | select(.readiness.is == "undeclared" or .readiness.is == "unreadable")] | length) == 0
       and (["browser", "kdevkit", "kreviewkit", "kyodakit", "notes", "writing-style", "document-skills"]
         | all(. as $n | any($m[]; .name == $n)))
@@ -175,20 +189,37 @@ reflection_ships() {
 check "the reflector ships, the reflect skill's core runs, and claude validates the plugin" reflection_ships
 # The memory's serve value is the command install registers on claude.
 serve_bound() {
-  jq -e --arg p "$MAID_PROFILE/bin/pensieve" --arg s "$store" '.bring_ins[]
-    | select(.name == "personal-memory") | .values.serve | fromjson == [$p, "--store", $s]' "$partlist" >/dev/null
+  claude_entry personal-memory | jq -e --arg p "$MAID_PROFILE/bin/pensieve" --arg s "$store" '
+    .values.serve | fromjson == [$p, "--store", $s]' >/dev/null
 }
-check "the part list binds the memory's serve to the profile's pensieve on the store" serve_bound
+check "the install record binds the memory's serve to the profile's pensieve on the store" serve_bound
 # Install runs from this checkout, so it records this checkout's revision,
 # marked dirty when the tree has changes.
 rev=$(git -C "$here" rev-parse HEAD)
 [ -z "$(git -C "$here" status --porcelain --untracked-files=no)" ] || rev=$rev-dirty
-recorded_bring_ins() {
-  jq -e --arg rev "$rev" '.persona == "personal"
-    and (.bring_ins[] | select(.name == "notes") | .tenure.kind == "own" and .source.rev == $rev)
-    and (.bring_ins[] | select(.name == "document-skills") | .tenure.kind == "borrowed")' "$partlist" >/dev/null
+recorded_package() {
+  jq -e --arg rev "$rev" --arg root "$MAID_PROFILE/share/maid" '
+    .package == "maid" and .source.rev == $rev and .root == $root and (.installed | test("^[0-9]{4}-"))
+      and ([.. | objects | keys[]] | any(. == "persona" or . == "bring_ins" or . == "tenure" or . == "extensions") | not)' "$partlist" >/dev/null &&
+    claude_entry "document-skills@$vendor" | jq -e '.source.repo == "https://github.com/anthropics/skills.git"' >/dev/null
 }
-check "the part list records mAId's bring-ins with tenure and revision" recorded_bring_ins
+check "the install record holds mAId's revision and no ghost fact" recorded_package
+# An install over an old maid-harness.json takes its entries as its own
+# (nothing adopted anew, nothing placed again), and leaves no old file.
+migrated() {
+  mkdir -p "$(dirname "$oldlist")"
+  jq '{format, part: "maid-harness", persona: "personal", harnesses: .agents,
+       bring_ins: [{name: "document-skills", tenure: {kind: "borrowed", from: "x", since: "2026-10-31"}}]}' \
+    "$partlist" >"$oldlist" && rm "$partlist" &&
+    jq -S '.harnesses | map_values(map({kind, name, skipped, adopted}))' "$oldlist" >"$work/old-entries" &&
+    v=$(listed claude) &&
+    skills && inhome just resources::install-browser-mcp >"$work/log" 2>&1 &&
+    [ ! -e "$oldlist" ] && [ "$(listed claude)" = "$v" ] &&
+    jq -S '.agents | map_values(map({kind, name, skipped, adopted}))' "$partlist" >"$work/new-entries" &&
+    diff "$work/old-entries" "$work/new-entries" >/dev/null &&
+    jq -e '.installed == "2026-10-31"' "$partlist" >/dev/null
+}
+check "an install migrates an old maid-harness.json: same entries, nothing placed again, the old file gone" migrated
 
 # Whole-status reads each harness's own listing: everything mAId placed is
 # there, and a second part's list beside mAId's is checked the same way.
@@ -209,13 +240,13 @@ vendor_whole() {
 }
 check "status --whole finds the vendor marketplace and plugin on claude and codex" vendor_whole
 other=$(dirname "$partlist")/other.json
-echo '{"format":1,"part":"other","harnesses":{"claude":[{"kind":"marketplace","name":"maid"},{"kind":"plugin","name":"absent@nowhere"}]}}' >"$other"
+echo '{"format":1,"package":"other","agents":{"claude":[{"kind":"marketplace","name":"maid"},{"kind":"plugin","name":"absent@nowhere"}]}}' >"$other"
 whole
 rc=$?
-check "status --whole reports a second part beside mAId's and fails on what it lacks" \
-  eval '[ $rc != 0 ] && grep -qx "  other" "$work/whole" && grep -qx "  maid-harness" "$work/whole" && grep -qx "    missing        plugin absent@nowhere" "$work/whole"'
+check "status --whole reports a second package beside mAId's and fails on what it lacks" \
+  eval '[ $rc != 0 ] && grep -qx "  other" "$work/whole" && grep -qx "  maid" "$work/whole" && grep -qx "    missing        plugin absent@nowhere" "$work/whole"'
 rm "$other"
-check "removing that list leaves mAId whole" maid_whole
+check "removing that manifest leaves mAId whole" maid_whole
 
 rollback
 rc=$?
@@ -294,11 +325,11 @@ rollback
 rc=$?
 check "rollback past a link mAId did not write still moves the agents" \
   eval '[ $rc != 0 ] && [ "$(gen)" = 3 ] && both_at "$vD" && [ "$(readlink "$th/.gemini/config/skills")" = "$work/elsewhere" ]'
-check "the part list names agy's skills as skipped past that link" \
+check "the install record names agy's skills as skipped past that link" \
   eval 'entries agy | grep -qx "skill notes skipped"'
 
 # With claude and codex off PATH, install and uninstall cannot list the
-# bring-ins, so the part list keeps them as mAId's; the uninstall below,
+# bring-ins, so the install record keeps them as mAId's; the uninstall below,
 # with the CLIs back, still removes them.
 nocli=$(tr ':' '\n' <<<"$PATH" | while read -r d; do
   [ -x "$d/claude" ] || [ -x "$d/codex" ] || printf '%s:' "$d"
@@ -317,7 +348,7 @@ check "uninstall with no claude or codex on PATH keeps the vendor marketplace mA
 
 inhome just resources::uninstall-skills >/dev/null 2>&1
 inhome just resources::uninstall-browser-mcp >/dev/null 2>&1
-check "uninstall removes the part list" eval '[ ! -e "$partlist" ]'
+check "uninstall removes the install record" eval '[ ! -e "$partlist" ] && [ ! -e "$oldlist" ]'
 check "uninstall takes the plugin-dir grant away" eval '! granted'
 check "uninstall takes the config-dir grant away" eval '! writable'
 # A listing that is not JSON must not pass as "removed".

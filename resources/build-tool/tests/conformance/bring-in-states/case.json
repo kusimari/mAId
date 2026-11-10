@@ -1,15 +1,28 @@
 {
-  "about": "each bring-in is ready, not ready, undeclared or unreadable, and none of them changes the exit code",
-  "clis": { "tool": {} },
+  "about": "each bring-in Claude Code has installed is ready, not ready or unreadable; a skill of a plugin with no declaration is the plugin's; none of them changes the exit code",
+  "clis": {
+    "tool": {}
+  },
   "expect": {
     "exit": 0,
     "entries": [],
     "refused": [],
     "bring_ins": [
-      { "part": "a", "name": "ready", "state": "ready" },
-      { "part": "a", "name": "needs", "state": "not ready" },
-      { "part": "a", "name": "plain", "state": "undeclared" },
-      { "part": "a", "name": "gone", "state": "unreadable" }
+      {
+        "part": "a",
+        "name": "ready",
+        "state": "ready"
+      },
+      {
+        "part": "a",
+        "name": "needs",
+        "state": "not ready"
+      },
+      {
+        "part": "a",
+        "name": "gone",
+        "state": "unreadable"
+      }
     ]
   }
 }

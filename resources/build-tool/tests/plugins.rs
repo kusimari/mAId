@@ -6,7 +6,7 @@
 //!   cargo test -p build-tool --test plugins -- --ignored
 
 use build_tool::deploy::{BringIns, Deploy, Plugins, State};
-use build_tool::part::{self, Item, What};
+use build_tool::install_record::{self, Item, What};
 use build_tool::shared::{on_path, Agent, BRING_INS};
 use build_tool::stages;
 use shell_claude::config_dir::ConfigDir;
@@ -278,7 +278,7 @@ fn bring_ins_install_and_uninstall_only_what_maid_added() {
     let b = &BRING_INS[0];
     let (market, plugin) = (b.marketplace, b.plugin_id(b.plugins[0]));
     let other = format!("example-skills@{market}");
-    let entries = |a: Agent| part::placed(&parts, a).unwrap();
+    let entries = |a: Agent| install_record::placed(&parts, a).unwrap();
     let listed = |cli: &str, id: &str| run(h, cli, &["plugin", "list", "--json"]).contains(id);
     let has_market =
         |cli: &str| run(h, cli, &["plugin", "marketplace", "list", "--json"]).contains(market);
@@ -335,7 +335,7 @@ fn bring_ins_install_and_uninstall_only_what_maid_added() {
     for cli in ["claude", "codex"] {
         assert!(!has_market(cli), "{cli}");
     }
-    assert!(!part::path(&parts).exists());
+    assert!(!install_record::path(&parts).exists());
 
     // The user's own marketplace: kept and not claimed; mAId's plugin from
     // it is mAId's, and goes on uninstall.

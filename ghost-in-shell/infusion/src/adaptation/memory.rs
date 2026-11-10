@@ -35,8 +35,9 @@ pub fn argv(serve: &str) -> Result<Vec<String>> {
 /// memory it points at) did not. Answers the text of each call made, the
 /// last one an error when one failed.
 ///
-/// `serve` comes from a part list, which the core trusts as it trusts
-/// every part list: it runs with the core's environment.
+/// `serve` is the command Claude Code registered for the memory server at
+/// the user's scope, which the core runs as Claude Code would, with the
+/// core's environment.
 pub fn call(argv: &[String], calls: &[(&str, Value)]) -> Result<Vec<Result<String, String>>> {
     let (cmd, args) = argv
         .split_first()

@@ -69,8 +69,8 @@ fn install_adds_the_plugin_dir_keeps_the_rest_and_uninstall_puts_it_back() {
         serde_json::json!([hand_rule, edit, resolved])
     );
 
-    // Both claude settings are in the part list; neither step erased the other.
-    let list = fs::read_to_string(parts.join("maid-harness.json")).unwrap();
+    // Both claude settings are in the install manifest; neither step erased the other.
+    let list = fs::read_to_string(parts.join("maid.json")).unwrap();
     assert!(
         list.contains("\"name\": \"env.CLAUDE_CODE_DISABLE_AUTO_MEMORY\""),
         "{list}"
@@ -89,7 +89,7 @@ fn install_adds_the_plugin_dir_keeps_the_rest_and_uninstall_puts_it_back() {
 
     let check = || {
         whole::check(
-            &parts,
+            std::slice::from_ref(&parts),
             &home,
             &cc,
             Some(bin.clone().into_os_string()),
@@ -117,22 +117,22 @@ fn install_adds_the_plugin_dir_keeps_the_rest_and_uninstall_puts_it_back() {
     cmd_uninstall_reads(&cc, &parts, false, None).unwrap();
     cmd_uninstall_memory(&cc, &profile, &parts, false, None).unwrap();
     assert_eq!(fs::read_to_string(&at).unwrap(), before);
-    assert!(!parts.join("maid-harness.json").exists());
+    assert!(!parts.join("maid.json").exists());
 
-    // The same element, set by hand and recorded in another part's list: not
+    // The same element, set by hand and recorded in another package's manifest: not
     // adopted, so only one list claims it, and uninstall leaves it.
     let dir = mine.display().to_string();
     let theirs = serde_json::json!({"permissions": {"additionalDirectories": [dir]}}).to_string();
     fs::write(&at, &theirs).unwrap();
     fs::write(
         parts.join("other.json"),
-        serde_json::json!({"format": 1, "part": "other", "harnesses": {"claude": [
+        serde_json::json!({"format": 1, "package": "other", "agents": {"claude": [
             {"kind": "setting", "name": "permissions.additionalDirectories", "value": dir}]}})
         .to_string(),
     )
     .unwrap();
     cmd_install_reads(&cc, &profile, &config.join("maid"), &parts, false, None).unwrap();
-    let list = fs::read_to_string(parts.join("maid-harness.json")).unwrap();
+    let list = fs::read_to_string(parts.join("maid.json")).unwrap();
     assert!(list.contains("\"skipped\": \"another part's\""), "{list}");
     assert!(!list.contains("adopted"), "{list}");
     cmd_uninstall_reads(&cc, &parts, false, None).unwrap();

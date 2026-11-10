@@ -18,15 +18,12 @@ use crate::harness::{
     Stage, Stress, Verdict, KIRO_READONLY_AGENT, KIRO_READONLY_NAME,
 };
 use crate::harvest;
+use crate::install_record::{self, Dirs, Item, Package, Repo, What};
 use crate::memory;
-use crate::part::{self, Item, What};
 use crate::reads;
-use crate::shared::{
-    checkout_skill, on_path, usage, Agent, BringIn as Marketplace, BROWSER_SERVER,
-};
+use crate::shared::{checkout_skill, on_path, usage, Agent, BROWSER_SERVER};
 use anyhow::{anyhow, Context, Result};
 use ghost::contract::{Slot, Standard};
-use ghost::parts::{BringIn, Source, SourceKind, Tenure, Unit};
 use shell_claude::config_dir::ConfigDir;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -236,7 +233,7 @@ pub fn cmd_validate(roots: &[PathBuf]) -> Result<u8> {
 pub fn cmd_install(
     target: &impl Deploy,
     content_dir: &Path,
-    parts: &Path,
+    parts: &(impl Dirs + ?Sized),
     dry_run: bool,
     force: bool,
     agent: Option<Agent>,
@@ -264,7 +261,7 @@ pub fn cmd_install(
 
 pub fn cmd_uninstall(
     target: &impl Deploy,
-    parts: &Path,
+    parts: &(impl Dirs + ?Sized),
     dry_run: bool,
     force: bool,
     agent: Option<Agent>,
@@ -287,18 +284,18 @@ pub fn cmd_uninstall(
 /// still said.
 fn warn_unrecorded(recorded: &Result<()>) {
     if let Err(e) = recorded {
-        eprintln!("build-tool: part list not updated: {e:#}");
+        eprintln!("build-tool: install record not updated: {e:#}");
     }
 }
 
 /// What `Deploy` places; the browser MCP is recorded by its own script.
 const DEPLOYED_KINDS: &[What] = &[What::Skill, What::Plugin, What::Marketplace];
 
-/// Write what the target reports placed into the part list, for each
+/// Write what the target reports placed into the install record, for each
 /// selected agent.
 fn record_placed(
     target: &impl Deploy,
-    parts: &Path,
+    parts: &(impl Dirs + ?Sized),
     agent: Option<Agent>,
     keep: impl Fn(&Item) -> bool,
 ) -> Result<()> {
@@ -312,15 +309,15 @@ fn record_placed(
             .filter(|(g, i)| *g == a && keep(i))
             .map(|(_, i)| i.clone())
             .collect();
-        part::record(parts, a, DEPLOYED_KINDS, None, items)?;
+        install_record::record(parts, a, DEPLOYED_KINDS, None, items)?;
     }
     Ok(())
 }
 
-/// Record one kind of entry on one agent in the part list, for a step
+/// Record one kind of entry on one agent in the install record, for a step
 /// outside `Deploy` (the browser MCP). No names clears that kind.
 pub fn cmd_record(
-    parts: &Path,
+    parts: &(impl Dirs + ?Sized),
     agent: Agent,
     kind: What,
     scope: Option<&str>,
@@ -344,286 +341,80 @@ pub fn cmd_record(
         Some(name) if names.iter().any(|n| n != name) => {
             return Err(usage(format!("--only {name} records that name only")))
         }
-        Some(name) => part::record_named(parts, agent, kind, scope, name, items)?,
-        None => part::record(parts, agent, &[kind], scope, items)?,
+        Some(name) => install_record::record_named(parts, agent, kind, scope, name, items)?,
+        None => install_record::record(parts, agent, &[kind], scope, items)?,
     }
     Ok(0)
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Bring-ins — what mAId's part brings into the ghost, for the core.
+// The package — what install records of mAId as a whole, and where each
+// placed thing's files are and where it came from.
 // ─────────────────────────────────────────────────────────────────
 
-/// Record mAId's persona and its bring-ins in its part list: each shipped
-/// skill with its state bound under `config`, the core's adapter on Claude
-/// Code, the personal memory server when a store is set (its source the
-/// memory package), the browser server, and each vendor plugin, borrowed. See project.md "My harness".
-pub fn cmd_install_bring_ins(
-    parts: &Path,
+/// Record mAId as a package in its install record: this repo at its
+/// revision, where its files and config are, and each entry's files and
+/// source. See project.md "Plain install".
+pub fn cmd_install_package(
+    parts: &(impl Dirs + ?Sized),
     profile: &Path,
     config: &Path,
     checkout: Checkout,
-    store_file: &Path,
-    vendors: &[Marketplace],
     dry_run: bool,
 ) -> Result<u8> {
-    // A bring-in is recorded only while install has it placed somewhere.
-    let mut items = bring_ins(
-        profile,
-        &Sources {
-            pensieve: checkout.pensieve.clone(),
-            project: project_source(checkout),
+    if dry_run {
+        return Ok(0);
+    }
+    let root = profile.join(crate::shared::PROFILE_CONTENT_DIR);
+    let pensieve = checkout.pensieve.clone();
+    install_record::record_package(
+        parts,
+        Package {
+            source: Some(project_source(checkout)),
+            root: Some(root.clone()),
+            config: Some(config.to_path_buf()),
         },
-        memory::store(store_file)?.as_deref(),
-        vendors,
-        &Placed::read(parts)?,
-        &part::bring_ins(parts)?,
-        &today(),
     )?;
-    bind_state(&mut items, config);
-    println!(
-        "bring-ins: {} recorded for persona {}",
-        items.len(),
-        part::PERSONA
-    );
-    if !dry_run {
-        part::record_bring_ins(parts, items)?;
-    }
+    place(parts, &root, pensieve.as_ref())?;
     Ok(0)
 }
 
-/// Uninstall keeps only the bring-ins some harness still has placed, so a
-/// whole uninstall clears them with the persona.
-pub fn cmd_uninstall_bring_ins(parts: &Path, vendors: &[Marketplace], dry_run: bool) -> Result<u8> {
-    let placed = Placed::read(parts)?;
-    let mut kept = part::bring_ins(parts)?;
-    kept.retain(|b| still_placed(b, &placed, vendors));
-    if !dry_run {
-        part::record_bring_ins(parts, kept)?;
-    }
-    Ok(0)
-}
-
-/// Where mAId's bring-ins come from: this repo, and the memory package as
-/// `flake.lock` pins it.
-struct Sources {
-    project: Source,
-    pensieve: Option<Source>,
-}
-
-/// What mAId's list records placed: on any harness, and on claude alone,
-/// where the core's adapter is.
-#[derive(Default)]
-struct Placed {
-    anywhere: Vec<Item>,
-    claude: Vec<Item>,
-}
-
-impl Placed {
-    fn read(parts: &Path) -> Result<Placed> {
-        let mut anywhere = vec![];
-        for agent in Agent::ALL {
-            anywhere.extend(part::placed(parts, *agent)?);
+/// Name each placed entry's files and, when not this repo, its source:
+/// mAId's plugin and skills under the profile, its servers' dirs, the
+/// vendor's plugins at their pinned revision, the memory server's package
+/// at the flake's pin. Rerun after the browser step records its server.
+pub fn place(parts: &(impl Dirs + ?Sized), root: &Path, pensieve: Option<&Repo>) -> Result<()> {
+    install_record::amend(parts, |i| {
+        if i.skipped.is_none() {
+            facts(i, root, pensieve);
         }
-        Ok(Placed {
-            anywhere,
-            claude: part::placed(parts, Agent::Claude)?,
-        })
-    }
+    })
 }
 
-/// The core's adapter on Claude Code, declared in mAId's plugin manifest.
-const ADAPTER: &str = "claude-adapter";
-const ADAPTER_MANIFEST: &str = "share/maid/marketplace/plugins/maid/.claude-plugin/plugin.json";
-/// The browser step records its server after install's own step, so
-/// every record of an MCP entry keeps the browser server's bring-in in
-/// step with what is placed now, and leaves the other bring-ins alone. A
-/// bring-in already recorded is kept as install recorded it.
-pub fn sync_browser_bring_in(parts: &Path, profile: &Path, checkout: Checkout) -> Result<()> {
-    let recorded = part::bring_ins(parts)?;
-    let (mut ours, mut items): (Vec<BringIn>, Vec<BringIn>) = recorded
-        .iter()
-        .cloned()
-        .partition(|b| b.name == BROWSER_SERVER);
-    let server = ours
-        .pop()
-        .unwrap_or_else(|| browser_bring_in(profile, &project_source(checkout)));
-    if still_placed(&server, &Placed::read(parts)?, &[]) {
-        items.push(server);
-    }
-    items.sort_by(|a, b| a.name.cmp(&b.name));
-    if items != recorded {
-        part::record_bring_ins(parts, items)?;
-    }
-    Ok(())
-}
-
-fn browser_bring_in(profile: &Path, project: &Source) -> BringIn {
-    let manifest = profile
-        .join(crate::shared::PROFILE_CONTENT_DIR)
-        .join("servers/browser/server.json");
-    BringIn {
-        name: BROWSER_SERVER.into(),
-        unit: manifest.is_file().then_some(Unit {
-            standard: Standard::Mcp,
-            path: manifest,
-        }),
-        source: Some(project.clone()),
-        tenure: Tenure::Own,
-        route: None,
-        values: Default::default(),
-    }
-}
-
-/// Bind each skill's config keys, each to `<config>/<skill>/<key>.md`: a
-/// skill's config key is a file in its own dir under the config dir (today
-/// only writing-style's older rules files), never a secret or a value.
-fn bind_state(items: &mut [BringIn], config: &Path) {
-    for b in items {
-        let Some(Unit {
-            standard: Standard::Skill,
-            path,
-        }) = &b.unit
-        else {
-            continue;
-        };
-        let Ok(Slot::Declared(d)) = ghost::contract::read(Standard::Skill, path) else {
-            continue;
-        };
-        for k in d.config.keys() {
-            let at = config.join(&b.name).join(format!("{k}.md"));
-            b.values.insert(k.to_string(), at.display().to_string());
-        }
-    }
-}
-
-fn bring_ins(
-    profile: &Path,
-    sources: &Sources,
-    store: Option<&Path>,
-    vendors: &[Marketplace],
-    placed: &Placed,
-    recorded: &[BringIn],
-    today: &str,
-) -> Result<Vec<BringIn>> {
-    let project = &sources.project;
-    let own = |name: &str| BringIn {
-        name: name.into(),
-        unit: None,
-        source: Some(project.clone()),
-        tenure: Tenure::Own,
-        route: None,
-        values: Default::default(),
-    };
-    let skills = profile
-        .join(crate::shared::PROFILE_CONTENT_DIR)
-        .join("skills");
-    let mut names: Vec<String> = fs::read_dir(&skills)
-        .with_context(|| format!("cannot list {}", skills.display()))?
-        .flatten()
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| skills.join(n).join("SKILL.md").is_file())
-        .collect();
-    names.sort();
-    let mut items: Vec<BringIn> = names
-        .iter()
-        .map(|n| BringIn {
-            unit: Some(Unit {
-                standard: Standard::Skill,
-                path: skills.join(n).join("SKILL.md"),
-            }),
-            ..own(n)
-        })
-        .collect();
-    items.push(BringIn {
-        unit: Some(Unit {
-            standard: Standard::Plugin,
-            path: profile.join(ADAPTER_MANIFEST),
-        }),
-        ..own(ADAPTER)
+fn facts(i: &mut Item, root: &Path, pensieve: Option<&Repo>) {
+    let dir = |rel: &str| Some(root.join(rel)).filter(|d| d.is_dir());
+    let vendor = crate::shared::BRING_INS.iter().find(|v| match i.kind {
+        What::Marketplace => i.name == v.marketplace,
+        What::Plugin => v.plugins.iter().any(|p| i.name == v.plugin_id(p)),
+        _ => false,
     });
-    items.push(browser_bring_in(profile, project));
-    if let Some(store) = store {
-        items.push(BringIn {
-            unit: Some(Unit {
-                standard: Standard::Mcp,
-                path: profile.join(memory::MANIFEST),
-            }),
-            source: sources.pensieve.clone(),
-            values: [
-                ("store".to_string(), store.display().to_string()),
-                ("index".to_string(), memory::INDEX.to_string()),
-                ("serve".to_string(), serve(profile, store)),
-            ]
-            .into(),
-            ..own(memory::SERVER)
+    if let Some(v) = vendor {
+        i.source = Some(Repo {
+            repo: Some(v.source.into()),
+            rev: Some(v.rev.into()),
         });
+        return;
     }
-    for v in vendors {
-        for plugin in v.plugins {
-            // When it was first brought in, which a rerun keeps.
-            let since = recorded
-                .iter()
-                .find(|b| b.name == *plugin)
-                .and_then(|b| match &b.tenure {
-                    Tenure::Borrowed { since, .. } => since.clone(),
-                    Tenure::Own => None,
-                })
-                .unwrap_or_else(|| today.into());
-            // The vendor's files are never read for the declaration: mAId
-            // ships an overlay in the plugin's own standard that holds it.
-            let overlay = profile
-                .join(crate::shared::PROFILE_CONTENT_DIR)
-                .join("overlays")
-                .join(plugin)
-                .join("plugin.json");
-            items.push(BringIn {
-                name: plugin.to_string(),
-                unit: overlay.is_file().then_some(Unit {
-                    standard: Standard::Plugin,
-                    path: overlay,
-                }),
-                source: Some(Source {
-                    kind: SourceKind::Vendor,
-                    at: Some(v.source.into()),
-                    rev: Some(v.rev.into()),
-                }),
-                tenure: Tenure::Borrowed {
-                    from: v.marketplace.into(),
-                    since: Some(since),
-                },
-                route: None,
-                values: Default::default(),
-            });
+    match (i.kind, i.name.as_str()) {
+        (What::Plugin, crate::shared::PLUGIN_ID) => i.at = dir("marketplace/plugins/maid"),
+        (What::Skill, n) => i.at = dir(&format!("skills/{n}")),
+        (What::Mcp, BROWSER_SERVER) => i.at = dir(&format!("servers/{BROWSER_SERVER}")),
+        (What::Mcp, memory::SERVER) => {
+            i.at = dir(&format!("servers/{}", memory::SERVER));
+            i.source = pensieve.cloned();
         }
+        _ => {}
     }
-    items.retain(|b| still_placed(b, placed, vendors));
-    Ok(items)
-}
-
-/// Whether some harness still has what this bring-in needs placed: the
-/// memory server or the browser server, the vendor's plugin, mAId's plugin
-/// on claude for the adapter, or mAId's skills (through the plugin or as
-/// links).
-fn still_placed(b: &BringIn, placed: &Placed, vendors: &[Marketplace]) -> bool {
-    let on = |items: &[Item], kind: What, name: &str| {
-        items.iter().any(|i| i.kind == kind && i.name == name)
-    };
-    let has = |kind: What, name: &str| on(&placed.anywhere, kind, name);
-    if b.name == memory::SERVER || b.name == BROWSER_SERVER {
-        return has(What::Mcp, &b.name);
-    }
-    if b.name == ADAPTER {
-        return on(&placed.claude, What::Plugin, crate::shared::PLUGIN_ID);
-    }
-    if let Tenure::Borrowed { from, .. } = &b.tenure {
-        return vendors
-            .iter()
-            .filter(|v| v.marketplace == from)
-            .any(|v| has(What::Plugin, &v.plugin_id(&b.name)));
-    }
-    has(What::Plugin, crate::shared::PLUGIN_ID)
-        || placed.anywhere.iter().any(|i| i.kind == What::Skill)
 }
 
 /// What install reads from the checkout it runs from: its `origin` URL, its
@@ -636,7 +427,7 @@ pub struct Checkout {
     pub head: Option<String>,
     pub dirty: bool,
     /// The memory package as the checkout's `flake.lock` pins it.
-    pub pensieve: Option<Source>,
+    pub pensieve: Option<Repo>,
 }
 
 impl Checkout {
@@ -679,7 +470,7 @@ impl Checkout {
 }
 
 /// The memory package as the `flake.lock` in `dir` pins it.
-fn locked_pensieve(dir: &Path) -> Option<Source> {
+fn locked_pensieve(dir: &Path) -> Option<Repo> {
     pinned(
         &fs::read_to_string(dir.join("flake.lock")).ok()?,
         "pensieve",
@@ -688,7 +479,7 @@ fn locked_pensieve(dir: &Path) -> Option<Source> {
 
 /// An input `flake.lock` pins on GitHub, as a project source. Any other pin
 /// (a path on this machine, say) gives none, so no local path is recorded.
-fn pinned(lock: &str, input: &str) -> Option<Source> {
+fn pinned(lock: &str, input: &str) -> Option<Repo> {
     let lock: serde_json::Value = serde_json::from_str(lock).ok()?;
     // The root's inputs name each input's node, which may differ from it.
     let root = lock["root"].as_str().unwrap_or("root");
@@ -700,9 +491,8 @@ fn pinned(lock: &str, input: &str) -> Option<Source> {
     if field("type")? != "github" {
         return None;
     }
-    Some(Source {
-        kind: SourceKind::Project,
-        at: Some(format!(
+    Some(Repo {
+        repo: Some(format!(
             "https://github.com/{}/{}",
             field("owner")?,
             field("repo")?
@@ -712,10 +502,9 @@ fn pinned(lock: &str, input: &str) -> Option<Source> {
 }
 
 /// This repo as a source.
-fn project_source(c: Checkout) -> Source {
-    Source {
-        kind: SourceKind::Project,
-        at: c.origin.and_then(|u| remote(&u)),
+fn project_source(c: Checkout) -> Repo {
+    Repo {
+        repo: c.origin.and_then(|u| remote(&u)),
         rev: c.head.map(|h| match c.dirty {
             true => format!("{h}-dirty"),
             false => h,
@@ -723,7 +512,7 @@ fn project_source(c: Checkout) -> Source {
     }
 }
 
-/// A remote as the part list may hold it: a URL or `host:path`, with any
+/// A remote as the install record may hold it: a URL or `host:path`, with any
 /// user or token taken out. A path on this machine is left out, since
 /// nothing installed names a checkout.
 fn remote(url: &str) -> Option<String> {
@@ -742,8 +531,6 @@ fn remote(url: &str) -> Option<String> {
     (!host.is_empty() && !host.contains('/') && !host.starts_with('~') && !host.starts_with('.'))
         .then(|| format!("{host}:{path}"))
 }
-
-use ghost::time::today;
 
 // ─────────────────────────────────────────────────────────────────
 // Memory — the personal store's server, Claude's own memory, harvest.
@@ -767,12 +554,12 @@ fn launcher(profile: &Path) -> PathBuf {
 
 /// Install's claude memory step: register `personal-memory` on the
 /// personal store, turn Claude's own automatic memory off, and take away
-/// the memory dir an older mAId set. Each is recorded in the part list.
+/// the memory dir an older mAId set. Each is recorded in the install record.
 pub fn cmd_install_memory(
     claude: &ConfigDir,
     store_file: &Path,
     profile: &Path,
-    parts: &Path,
+    parts: &(impl Dirs + ?Sized),
     dry_run: bool,
     agent: Option<Agent>,
 ) -> Result<u8> {
@@ -785,7 +572,7 @@ pub fn cmd_install_memory(
     let plan = memory::ServerPlan {
         launcher: &launcher,
         store: store.as_deref(),
-        claimed: part::placed_by_others(parts, Agent::Claude, What::Mcp, memory::SERVER),
+        claimed: install_record::placed_by_others(parts, Agent::Claude, What::Mcp, memory::SERVER),
         cli_present,
     };
     let memory::ServerOutcome {
@@ -801,19 +588,31 @@ pub fn cmd_install_memory(
         // mAId owns only what it recorded, so an unrecorded change is the user's to undo.
         let unrecorded =
             |what: &str| format!("claude {what} may be set but is not recorded; check it by hand");
-        part::record_named(
+        // The settings the server was bound with.
+        let item = server.item.map(|mut i| {
+            if let (None, Some(store)) = (&i.skipped, &store) {
+                i.values = [
+                    ("store".to_string(), store.display().to_string()),
+                    ("index".to_string(), memory::INDEX.to_string()),
+                    ("serve".to_string(), serve(profile, store)),
+                ]
+                .into();
+            }
+            i
+        });
+        install_record::record_named(
             parts,
             Agent::Claude,
             What::Mcp,
             None,
             memory::SERVER,
-            server.item.into_iter().collect(),
+            item.into_iter().collect(),
         )
         .with_context(|| unrecorded(memory::SERVER))?;
-        part::record_setting(parts, Agent::Claude, memory::SETTING, off.item)
+        install_record::record_setting(parts, Agent::Claude, memory::SETTING, off.item)
             .with_context(|| unrecorded(memory::SETTING))?;
         if legacy {
-            part::record_setting(parts, Agent::Claude, memory::LEGACY_SETTING, None)?;
+            install_record::record_setting(parts, Agent::Claude, memory::LEGACY_SETTING, None)?;
         }
     }
     Ok(u8::from(failed))
@@ -822,7 +621,7 @@ pub fn cmd_install_memory(
 pub fn cmd_uninstall_memory(
     claude: &ConfigDir,
     profile: &Path,
-    parts: &Path,
+    parts: &(impl Dirs + ?Sized),
     dry_run: bool,
     agent: Option<Agent>,
 ) -> Result<u8> {
@@ -835,7 +634,7 @@ pub fn cmd_uninstall_memory(
     } = memory::uninstall_server(
         claude,
         &launcher(profile),
-        part::placed_by_others(parts, Agent::Claude, What::Mcp, memory::SERVER),
+        install_record::placed_by_others(parts, Agent::Claude, What::Mcp, memory::SERVER),
         on_path(Agent::Claude.cli()),
         dry_run,
     )?;
@@ -844,7 +643,7 @@ pub fn cmd_uninstall_memory(
     println!("{}", off.line);
     let legacy = legacy_setting(claude, parts, dry_run)?;
     if !dry_run {
-        part::record_named(
+        install_record::record_named(
             parts,
             Agent::Claude,
             What::Mcp,
@@ -852,19 +651,20 @@ pub fn cmd_uninstall_memory(
             memory::SERVER,
             server.item.into_iter().collect(),
         )?;
-        part::record_setting(parts, Agent::Claude, memory::SETTING, None)?;
+        install_record::record_setting(parts, Agent::Claude, memory::SETTING, None)?;
         if legacy {
-            part::record_setting(parts, Agent::Claude, memory::LEGACY_SETTING, None)?;
+            install_record::record_setting(parts, Agent::Claude, memory::LEGACY_SETTING, None)?;
         }
     }
     Ok(u8::from(failed))
 }
 
 /// Remove the memory dir an older mAId set, while it is the value mAId
-/// recorded. Whether the part list holds an entry for it to clear: one
+/// recorded. Whether the install record holds an entry for it to clear: one
 /// recorded as skipped has no value and nothing to remove, but still goes.
-fn legacy_setting(claude: &ConfigDir, parts: &Path, dry_run: bool) -> Result<bool> {
-    let Some(item) = part::recorded(parts, Agent::Claude, What::Setting, memory::LEGACY_SETTING)?
+fn legacy_setting(claude: &ConfigDir, parts: &(impl Dirs + ?Sized), dry_run: bool) -> Result<bool> {
+    let Some(item) =
+        install_record::recorded(parts, Agent::Claude, What::Setting, memory::LEGACY_SETTING)?
     else {
         return Ok(false);
     };
@@ -881,7 +681,7 @@ pub fn cmd_install_reads(
     claude: &ConfigDir,
     profile: &Path,
     config: &Path,
-    parts: &Path,
+    parts: &(impl Dirs + ?Sized),
     dry_run: bool,
     agent: Option<Agent>,
 ) -> Result<u8> {
@@ -894,13 +694,13 @@ pub fn cmd_install_reads(
             claude,
             &grant,
             &recorded_settings(parts, setting)?,
-            &part::claimed_by_others(parts, Agent::Claude, setting),
+            &install_record::claimed_by_others(parts, Agent::Claude, setting),
             on_path(Agent::Claude.cli()),
             dry_run,
         )?;
         out.lines.iter().for_each(|l| println!("{l}"));
         if !dry_run {
-            part::record_named(parts, Agent::Claude, What::Setting, None, setting, out.items)
+            install_record::record_named(parts, Agent::Claude, What::Setting, None, setting, out.items)
                 .with_context(|| {
                     format!(
                         "claude {setting} may hold mAId's elements but they are not recorded; check it by hand"
@@ -915,7 +715,7 @@ pub fn cmd_install_reads(
 /// recorded elements only.
 pub fn cmd_uninstall_reads(
     claude: &ConfigDir,
-    parts: &Path,
+    parts: &(impl Dirs + ?Sized),
     dry_run: bool,
     agent: Option<Agent>,
 ) -> Result<u8> {
@@ -929,36 +729,36 @@ pub fn cmd_uninstall_reads(
             .iter()
             .for_each(|l| println!("{l}"));
         if !dry_run {
-            part::record_setting(parts, Agent::Claude, setting, None)?;
+            install_record::record_setting(parts, Agent::Claude, setting, None)?;
         }
     }
     Ok(0)
 }
 
-/// Every element of the list setting `name` mAId's part list records
+/// Every element of the list setting `name` mAId's install record records
 /// placed on claude.
-fn recorded_settings(parts: &Path, name: &str) -> Result<Vec<Item>> {
-    Ok(part::placed(parts, Agent::Claude)?
+fn recorded_settings(parts: &(impl Dirs + ?Sized), name: &str) -> Result<Vec<Item>> {
+    Ok(install_record::placed(parts, Agent::Claude)?
         .into_iter()
         .filter(|i| i.kind == What::Setting && i.name == name)
         .collect())
 }
 
-/// The setting `name` as mAId's part list records it placed on claude.
-fn recorded_setting(parts: &Path, name: &str) -> Result<Option<Item>> {
-    Ok(part::placed(parts, Agent::Claude)?
+/// The setting `name` as mAId's install record records it placed on claude.
+fn recorded_setting(parts: &(impl Dirs + ?Sized), name: &str) -> Result<Option<Item>> {
+    Ok(install_record::placed(parts, Agent::Claude)?
         .into_iter()
         .find(|i| i.kind == What::Setting && i.name == name))
 }
 
-/// What mAId owns of Claude's automatic-memory setting: what its part list
+/// What mAId owns of Claude's automatic-memory setting: what its install record
 /// says it set or adopted.
-fn ownership(parts: &Path) -> Result<memory::Ownership> {
+fn ownership(parts: &(impl Dirs + ?Sized)) -> Result<memory::Ownership> {
     let item = recorded_setting(parts, memory::SETTING)?;
     Ok(memory::Ownership {
         adopted: item.as_ref().is_some_and(|i| i.adopted),
         recorded: item.and_then(|i| i.value),
-        claimed: part::claimed_by_others(parts, Agent::Claude, memory::SETTING),
+        claimed: install_record::claimed_by_others(parts, Agent::Claude, memory::SETTING),
     })
 }
 
@@ -966,7 +766,7 @@ pub fn cmd_memory_status(
     claude: &ConfigDir,
     store_file: &Path,
     profile: &Path,
-    parts: &Path,
+    parts: &(impl Dirs + ?Sized),
 ) -> Result<u8> {
     let store = memory::store(store_file)?;
     memory::status(
@@ -1684,13 +1484,13 @@ mod tests {
     fn install_writes_the_part_list_and_uninstall_removes_it() {
         let (dir, target, parts) = installable();
         cmd_install(&target, &content(&dir), &parts, false, false, None).unwrap();
-        let text = fs::read_to_string(part::path(&parts)).unwrap();
+        let text = fs::read_to_string(install_record::path(&parts)).unwrap();
         for harness in ["kiro-cli", "agy"] {
             assert!(text.contains(&format!("\"{harness}\"")), "{text}");
         }
         assert!(text.contains(r#""name": "notes""#), "{text}");
         cmd_uninstall(&target, &parts, false, false, None).unwrap();
-        assert!(!part::path(&parts).exists());
+        assert!(!install_record::path(&parts).exists());
     }
 
     /// Installs into kiro, then fails before the rest.
@@ -1729,7 +1529,7 @@ mod tests {
         let (dir, _, parts) = installable();
         let err = cmd_install(&Partway, &content(&dir), &parts, false, false, None).unwrap_err();
         assert!(err.to_string().contains("codex"), "{err}");
-        let text = fs::read_to_string(part::path(&parts)).unwrap();
+        let text = fs::read_to_string(install_record::path(&parts)).unwrap();
         assert!(text.contains(r#""name": "notes""#), "{text}");
     }
 
@@ -1772,7 +1572,7 @@ mod tests {
         rec(Some("personal-memory"), &["personal-memory"]).unwrap();
         rec(Some("chrome-devtools"), &["chrome-devtools"]).unwrap();
         rec(Some("chrome-devtools"), &[]).unwrap();
-        let names: Vec<_> = part::placed(&parts, Agent::Claude)
+        let names: Vec<_> = install_record::placed(&parts, Agent::Claude)
             .unwrap()
             .into_iter()
             .map(|i| i.name)
@@ -1797,11 +1597,11 @@ mod tests {
         // agy's skills dir is the user's, so install skips it.
         write(&dir.path().join("home/.gemini/config/skills/x"), "mine");
         cmd_install(&target, &content(&dir), &parts, false, false, None).unwrap();
-        assert!(fs::read_to_string(part::path(&parts))
+        assert!(fs::read_to_string(install_record::path(&parts))
             .unwrap()
             .contains("skipped"));
         cmd_uninstall(&target, &parts, false, false, None).unwrap();
-        let text = fs::read_to_string(part::path(&parts)).unwrap();
+        let text = fs::read_to_string(install_record::path(&parts)).unwrap();
         assert!(
             !text.contains("skipped") && !text.contains("notes"),
             "{text}"
@@ -1963,7 +1763,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         write(
             &dir.path().join("servers/s/server.json"),
-            r#"{"name":"s","_meta":{"my-harness":{"scope":"turn","job":"j"}}}"#,
+            r#"{"name":"s","_meta":{"my-harness":{"contract":1,"scope":"turn","job":"j"}}}"#,
         );
         write(
             &dir.path().join("overlays/o/plugin.json"),
@@ -1972,7 +1772,7 @@ mod tests {
         assert_eq!(check_content(&[dir.path().to_path_buf()]).unwrap(), 0);
         write(
             &dir.path().join("servers/s/server.json"),
-            r#"{"name":"s","_meta":{"my-harness":{"scope":"turn","job":"j","rules":"README.md#x"}}}"#,
+            r#"{"name":"s","_meta":{"my-harness":{"contract":1,"scope":"turn","job":"j","rules":"README.md#x"}}}"#,
         );
         let errs = check_content(&[dir.path().to_path_buf()]).unwrap_err();
         assert!(errs[0].contains("cannot read"), "{errs:?}");
@@ -1989,12 +1789,12 @@ mod tests {
     #[test]
     fn a_declaration_must_read_and_its_rules_resolve() {
         let decl = |rules: &str| {
-            format!("---\nname: foo\ndescription: bar\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: j\n  my-harness.rules: {rules}\n---\n## Rules\n\nfirst\n")
+            format!("---\nname: foo\ndescription: bar\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: j\n  my-harness.rules: {rules}\n---\n## Rules\n\nfirst\n")
         };
         assert!(frontmatter_of(&decl("SKILL.md#rules")).is_ok());
         let e = frontmatter_of(&decl("SKILL.md#renamed")).unwrap_err();
         assert!(e.contains("no heading"), "{e}");
-        let e = frontmatter_of("---\nname: foo\ndescription: bar\nmetadata:\n  my-harness.scope: always\n  my-harness.job: j\n---\n").unwrap_err();
+        let e = frontmatter_of("---\nname: foo\ndescription: bar\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: always\n  my-harness.job: j\n---\n").unwrap_err();
         assert!(e.contains("declaration"), "{e}");
     }
 
@@ -2077,509 +1877,171 @@ mod tests {
         assert!(err.to_string().contains("typo-of-real"));
     }
 
-    // ── bring-ins ────────────────────────────────────────────────
+    // ── the package ──────────────────────────────────────────────
 
-    const VENDOR: Marketplace = Marketplace {
-        marketplace: "a-vendor",
-        source: "https://example.org/skills.git",
-        rev: "abc",
-        plugins: &["docs"],
-        needs: &[],
-    };
-
-    fn profile_with(skills: &[&str]) -> TempDir {
-        let p = TempDir::new().unwrap();
-        for s in skills {
-            let d = p.path().join("share/maid/skills").join(s);
-            fs::create_dir_all(&d).unwrap();
-            fs::write(d.join("SKILL.md"), "---\nname: x\ndescription: y\n---\n").unwrap();
-        }
-        fs::create_dir_all(p.path().join("share/maid/skills/not-a-skill")).unwrap();
-        p
-    }
-
-    /// mAId's plugin, the vendor's and the memory server, placed somewhere.
-    fn all_placed() -> Vec<Item> {
-        vec![
-            Item::placed(What::Plugin, crate::shared::PLUGIN_ID),
-            Item::placed(What::Plugin, VENDOR.plugin_id("docs")),
-            Item::placed(What::Mcp, memory::SERVER),
-        ]
-    }
-
-    #[test]
-    fn uninstall_drops_a_borrowed_plugin_no_harness_still_has() {
-        let p = profile_with(&["notes"]);
-        let parts = TempDir::new().unwrap();
-        let plugins = vec![
-            Item::placed(What::Plugin, crate::shared::PLUGIN_ID),
-            Item::placed(What::Plugin, VENDOR.plugin_id("docs")),
-        ];
-        part::record(parts.path(), Agent::Codex, &[What::Plugin], None, plugins).unwrap();
-        let none = Path::new("/nowhere/memory-store");
-        cmd_install_bring_ins(
-            parts.path(),
-            p.path(),
-            Path::new("/c"),
-            Checkout::default(),
-            none,
-            &[VENDOR],
-            false,
-        )
-        .unwrap();
-        let names = || -> Vec<String> {
-            part::bring_ins(parts.path())
-                .unwrap()
-                .into_iter()
-                .map(|b| b.name)
-                .collect()
-        };
-        assert_eq!(names(), ["docs", "notes"]);
-        let mine = vec![Item::placed(What::Plugin, crate::shared::PLUGIN_ID)];
-        part::record(parts.path(), Agent::Codex, &[What::Plugin], None, mine).unwrap();
-        cmd_uninstall_bring_ins(parts.path(), &[VENDOR], false).unwrap();
-        assert_eq!(names(), ["notes"]);
-    }
-
-    #[test]
-    fn what_install_did_not_place_is_not_a_bring_in() {
-        let p = profile_with(&["notes"]);
-        let none = bring_ins(
-            p.path(),
-            &sources(),
-            None,
-            &[VENDOR],
-            &Placed::default(),
-            &[],
-            "2026-10-31",
-        )
-        .unwrap();
-        assert!(none.is_empty(), "{none:?}");
-        let links = [Item::placed(What::Skill, "notes")];
-        let skills = bring_ins(
-            p.path(),
-            &sources(),
-            None,
-            &[VENDOR],
-            &anywhere(links.to_vec()),
-            &[],
-            "2026-10-31",
-        )
-        .unwrap();
-        let names: Vec<_> = skills.iter().map(|b| b.name.as_str()).collect();
-        assert_eq!(names, ["notes"]);
-    }
-
-    fn project() -> Source {
-        Source {
-            kind: SourceKind::Project,
-            at: None,
-            rev: Some("r1".into()),
-        }
-    }
-
-    fn pensieve() -> Source {
-        Source {
-            kind: SourceKind::Project,
-            at: Some("https://github.com/me/pensieve".into()),
+    fn pensieve() -> Repo {
+        Repo {
+            repo: Some("https://github.com/me/pensieve".into()),
             rev: Some("p1".into()),
         }
     }
 
-    fn sources() -> Sources {
-        Sources {
-            project: project(),
-            pensieve: Some(pensieve()),
+    /// A profile laid out as the flake lays it out.
+    fn profile() -> TempDir {
+        let p = TempDir::new().unwrap();
+        let root = p.path().join("share/maid");
+        for d in [
+            "skills/notes",
+            "marketplace/plugins/maid",
+            "servers/chrome-devtools",
+            "servers/personal-memory",
+        ] {
+            fs::create_dir_all(root.join(d)).unwrap();
         }
-    }
-
-    /// Placed on some harness, not on claude.
-    fn anywhere(items: Vec<Item>) -> Placed {
-        Placed {
-            anywhere: items,
-            claude: vec![],
-        }
-    }
-
-    /// Placed on claude, so on some harness too.
-    fn on_claude(items: Vec<Item>) -> Placed {
-        Placed {
-            anywhere: items.clone(),
-            claude: items,
-        }
-    }
-
-    #[test]
-    fn install_records_each_skill_the_memory_server_and_the_vendor_borrowed() {
-        let p = profile_with(&["notes", "kdevkit"]);
-        let items = bring_ins(
-            p.path(),
-            &sources(),
-            Some(Path::new("/s")),
-            &[VENDOR],
-            &on_claude(all_placed()),
-            &[],
-            "2026-10-31",
-        )
-        .unwrap();
-        let names: Vec<_> = items.iter().map(|b| b.name.as_str()).collect();
-        assert_eq!(
-            names,
-            [
-                "kdevkit",
-                "notes",
-                "claude-adapter",
-                "personal-memory",
-                "docs"
-            ]
-        );
-        let notes = &items[1];
-        assert_eq!(
-            notes.unit.as_ref().unwrap().path,
-            p.path().join("share/maid/skills/notes/SKILL.md")
-        );
-        assert_eq!(
-            (&notes.tenure, notes.source.as_ref()),
-            (&Tenure::Own, Some(&project()))
-        );
-        let adapter = &items[2];
-        assert_eq!(
-            adapter.unit,
-            Some(Unit {
-                standard: Standard::Plugin,
-                path: p.path().join(ADAPTER_MANIFEST)
-            })
-        );
-        assert_eq!(adapter.source.as_ref(), Some(&project()));
-        let memory = &items[3];
-        assert_eq!(
-            memory.unit,
-            Some(Unit {
-                standard: Standard::Mcp,
-                path: p.path().join(memory::MANIFEST)
-            })
-        );
-        assert_eq!(
-            (&memory.tenure, memory.source.as_ref()),
-            (&Tenure::Own, Some(&pensieve())),
-            "the memory's source is its package, not mAId"
-        );
-        assert_eq!(memory.values["store"], "/s");
-        assert_eq!(memory.values["index"], "memory/MEMORY.md");
-        let serve: Vec<String> = serde_json::from_str(&memory.values["serve"]).unwrap();
-        assert_eq!(serve[1..], ["--store", "/s"]);
-        assert!(serve[0].ends_with("/bin/pensieve"), "{serve:?}");
-        assert_eq!(
-            items[4].tenure,
-            Tenure::Borrowed {
-                from: "a-vendor".into(),
-                since: Some("2026-10-31".into())
-            }
-        );
-        assert_eq!(items[4].route(), ghost::parts::Route::Report);
-    }
-
-    /// A profile with a stateful skill, the browser server's manifest and
-    /// the vendor plugin's overlay, as the flake lays them out.
-    fn declared_profile() -> TempDir {
-        let p = profile_with(&["notes"]);
-        let at = |rel: &str, text: &str| {
-            let f = p.path().join("share/maid").join(rel);
-            fs::create_dir_all(f.parent().unwrap()).unwrap();
-            fs::write(f, text).unwrap();
-        };
-        at(
-            "skills/style/SKILL.md",
-            "---\nname: style\ndescription: d\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: j\n  my-harness.config.learned: \"[optional] p\"\n  my-harness.config.promoted: \"[optional] k\"\n---\n",
-        );
-        at("servers/browser/server.json", "{}");
-        at("overlays/docs/plugin.json", "{}");
         p
     }
 
-    #[test]
-    fn install_binds_skill_config_and_records_the_overlay_and_the_browser_server() {
-        let p = declared_profile();
-        let mut placed = all_placed();
-        placed.push(Item::placed(What::Mcp, BROWSER_SERVER));
-        let mut items = bring_ins(
-            p.path(),
-            &sources(),
-            None,
-            &[VENDOR],
-            &anywhere(placed),
-            &[],
-            "2026-10-31",
-        )
-        .unwrap();
-        bind_state(&mut items, Path::new("/c"));
-        let by = |n: &str| items.iter().find(|b| b.name == n).expect(n);
-        let style = by("style");
-        assert_eq!(style.values["learned"], "/c/style/learned.md");
-        assert_eq!(style.values["promoted"], "/c/style/promoted.md");
-        assert!(by("notes").values.is_empty());
-        let docs = by("docs").unit.as_ref().unwrap();
-        assert_eq!(
-            (docs.standard, &docs.path),
-            (
-                Standard::Plugin,
-                &p.path().join("share/maid/overlays/docs/plugin.json")
-            )
-        );
-        assert!(matches!(by("docs").tenure, Tenure::Borrowed { .. }));
-        let server = by(BROWSER_SERVER);
-        assert_eq!(
-            server.unit.as_ref().unwrap().path,
-            p.path().join("share/maid/servers/browser/server.json")
-        );
-        assert_eq!(server.tenure, Tenure::Own);
-        let unplaced = bring_ins(
-            p.path(),
-            &sources(),
-            None,
-            &[VENDOR],
-            &anywhere(all_placed()),
-            &[],
-            "2026-10-31",
-        )
-        .unwrap();
-        assert!(unplaced.iter().all(|b| b.name != BROWSER_SERVER));
+    fn json(parts: &Path) -> serde_json::Value {
+        serde_json::from_str(&fs::read_to_string(install_record::path(parts)).unwrap()).unwrap()
     }
 
     #[test]
-    fn recording_the_browser_server_keeps_its_bring_in_in_step() {
-        let p = declared_profile();
-        let parts = TempDir::new().unwrap();
-        let plugin = vec![Item::placed(What::Plugin, crate::shared::PLUGIN_ID)];
-        part::record(parts.path(), Agent::Claude, &[What::Plugin], None, plugin).unwrap();
-        let none = Path::new("/nowhere/memory-store");
-        let install = || {
-            cmd_install_bring_ins(
-                parts.path(),
-                p.path(),
-                Path::new("/c"),
-                Checkout::default(),
-                none,
-                &[],
-                false,
-            )
-            .unwrap()
+    fn install_records_the_package_and_where_each_thing_came_from() {
+        let (p, parts, config) = (profile(), TempDir::new().unwrap(), Path::new("/c/maid"));
+        let on = |agent, items: Vec<Item>| {
+            for i in items {
+                install_record::record_named(
+                    parts.path(),
+                    agent,
+                    i.kind,
+                    None,
+                    &i.name.clone(),
+                    vec![i],
+                )
+                .unwrap();
+            }
         };
-        install();
-        let names = || -> Vec<String> {
-            part::bring_ins(parts.path())
-                .unwrap()
-                .into_iter()
-                .map(|b| b.name)
-                .collect()
-        };
-        assert_eq!(names(), [ADAPTER, "notes", "style"]);
-        let server = |names: &[&str]| {
-            let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
-            cmd_record(
-                parts.path(),
-                Agent::Kiro,
-                What::Mcp,
-                None,
-                None,
-                Some(BROWSER_SERVER),
-                &names,
-            )
-            .unwrap();
-            sync_browser_bring_in(parts.path(), p.path(), Checkout::default()).unwrap();
-        };
-        server(&[BROWSER_SERVER]);
-        assert_eq!(names(), [BROWSER_SERVER, ADAPTER, "notes", "style"]);
-        // A later record from another checkout keeps install's record.
-        let elsewhere = Checkout {
-            head: Some("other".into()),
-            ..Checkout::default()
-        };
-        let kept = part::bring_ins(parts.path()).unwrap();
-        cmd_record(
-            parts.path(),
-            Agent::Codex,
-            What::Mcp,
-            None,
-            None,
-            Some(BROWSER_SERVER),
-            &[BROWSER_SERVER.to_string()],
-        )
-        .unwrap();
-        sync_browser_bring_in(parts.path(), p.path(), elsewhere).unwrap();
-        assert_eq!(part::bring_ins(parts.path()).unwrap(), kept);
-        cmd_record(
-            parts.path(),
-            Agent::Codex,
-            What::Mcp,
-            None,
-            None,
-            Some(BROWSER_SERVER),
-            &[],
-        )
-        .unwrap();
-        let before = fs::read(part::path(parts.path())).unwrap();
-        install();
-        assert_eq!(
-            fs::read(part::path(parts.path())).unwrap(),
-            before,
-            "a rerun keeps it"
-        );
-        server(&[]);
-        assert_eq!(names(), [ADAPTER, "notes", "style"]);
-        let skipped = Item::skipped(What::Mcp, BROWSER_SERVER, "no graphical Chrome");
-        part::record_named(
-            parts.path(),
+        on(
             Agent::Claude,
-            What::Mcp,
-            None,
-            BROWSER_SERVER,
-            vec![skipped],
-        )
-        .unwrap();
-        sync_browser_bring_in(parts.path(), p.path(), Checkout::default()).unwrap();
-        assert_eq!(
-            names(),
-            [ADAPTER, "notes", "style"],
-            "a skipped server is no bring-in"
+            vec![
+                Item::placed(What::Plugin, "maid@maid"),
+                Item::placed(What::Plugin, "document-skills@anthropic-agent-skills"),
+                Item::placed(What::Marketplace, "anthropic-agent-skills"),
+                Item::placed(What::Mcp, memory::SERVER),
+                Item::placed(What::Mcp, BROWSER_SERVER),
+            ],
         );
-    }
-
-    #[test]
-    fn no_store_records_no_memory_server_and_a_rerun_keeps_since() {
-        let p = profile_with(&["notes"]);
-        let first = bring_ins(
-            p.path(),
-            &sources(),
-            None,
-            &[VENDOR],
-            &anywhere(all_placed()),
-            &[],
-            "2026-01-01",
-        )
-        .unwrap();
-        assert!(first.iter().all(|b| b.name != "personal-memory"));
-        let again = bring_ins(
-            p.path(),
-            &sources(),
-            None,
-            &[VENDOR],
-            &anywhere(all_placed()),
-            &first,
-            "2026-10-31",
-        )
-        .unwrap();
-        assert_eq!(again, first);
-    }
-
-    #[test]
-    fn the_memory_server_is_a_bring_in_only_while_install_has_it_placed() {
-        let p = profile_with(&["notes"]);
-        let (parts, conf) = (TempDir::new().unwrap(), TempDir::new().unwrap());
-        let store_file = conf.path().join("memory-store");
-        fs::write(&store_file, "/s/personal\n").unwrap();
-        let names = || -> Vec<String> {
-            part::bring_ins(parts.path())
-                .unwrap()
-                .into_iter()
-                .map(|b| b.name)
-                .collect()
+        on(
+            Agent::Kiro,
+            vec![
+                Item::placed(What::Skill, "notes"),
+                Item::skipped(What::Skill, "gone", "why"),
+            ],
+        );
+        let checkout = Checkout {
+            origin: Some("git@github.com:me/mAId.git".into()),
+            head: Some("abc".into()),
+            dirty: false,
+            pensieve: Some(pensieve()),
         };
-        let plugin = vec![Item::placed(What::Plugin, crate::shared::PLUGIN_ID)];
-        part::record(parts.path(), Agent::Claude, &[What::Plugin], None, plugin).unwrap();
-        let skipped = Item::skipped(What::Mcp, memory::SERVER, memory::STORE_MISSING);
-        part::record_named(
-            parts.path(),
-            Agent::Claude,
-            What::Mcp,
-            None,
-            memory::SERVER,
-            vec![skipped],
-        )
-        .unwrap();
-        cmd_install_bring_ins(
+        cmd_install_package(parts.path(), p.path(), config, checkout, false).unwrap();
+        let m = json(parts.path());
+        let root = p.path().join("share/maid");
+        assert_eq!(
+            m["source"],
+            serde_json::json!({"repo": "github.com:me/mAId.git", "rev": "abc"})
+        );
+        assert_eq!(m["root"], root.display().to_string());
+        assert_eq!(m["config"], "/c/maid");
+        assert_eq!(m["installed"], ghost::time::today());
+        let entry = |agent: &str, name: &str| {
+            m["agents"][agent]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["name"] == name)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(
+            entry("claude", "maid@maid")["at"],
+            root.join("marketplace/plugins/maid").display().to_string()
+        );
+        assert_eq!(
+            entry("claude", "maid@maid")["source"],
+            serde_json::Value::Null,
+            "this repo's own"
+        );
+        let vendor = &crate::shared::BRING_INS[0];
+        for name in [
+            "document-skills@anthropic-agent-skills",
+            "anthropic-agent-skills",
+        ] {
+            assert_eq!(
+                entry("claude", name)["source"],
+                serde_json::json!({"repo": vendor.source, "rev": vendor.rev})
+            );
+        }
+        let mem = entry("claude", memory::SERVER);
+        assert_eq!(
+            mem["at"],
+            root.join("servers/personal-memory").display().to_string()
+        );
+        assert_eq!(mem["source"]["rev"], "p1");
+        assert_eq!(
+            entry("claude", BROWSER_SERVER)["at"],
+            root.join("servers/chrome-devtools").display().to_string()
+        );
+        assert_eq!(
+            entry("kiro-cli", "notes")["at"],
+            root.join("skills/notes").display().to_string()
+        );
+        assert_eq!(entry("kiro-cli", "gone")["at"], serde_json::Value::Null);
+        let text = m.to_string();
+        for ghostly in [
+            "\"persona\"",
+            "\"bring_ins\"",
+            "\"tenure\"",
+            "\"route\"",
+            "\"unit\"",
+        ] {
+            assert!(!text.contains(ghostly), "{ghostly} in the record: {text}");
+        }
+    }
+
+    #[test]
+    fn a_dry_run_or_nothing_placed_writes_no_package() {
+        let (p, parts) = (profile(), TempDir::new().unwrap());
+        cmd_install_package(
             parts.path(),
             p.path(),
             Path::new("/c"),
             Checkout::default(),
-            &store_file,
-            &[],
             false,
         )
         .unwrap();
-        assert_eq!(names(), ["claude-adapter", "notes"]);
-        let placed = Item::placed(What::Mcp, memory::SERVER);
-        part::record_named(
+        assert!(!install_record::path(parts.path()).exists());
+        install_record::record(
             parts.path(),
-            Agent::Claude,
-            What::Mcp,
+            Agent::Agy,
+            &[What::Skill],
             None,
-            memory::SERVER,
-            vec![placed],
+            vec![Item::placed(What::Skill, "notes")],
         )
         .unwrap();
-        cmd_install_bring_ins(
+        let before = fs::read(install_record::path(parts.path())).unwrap();
+        cmd_install_package(
             parts.path(),
             p.path(),
             Path::new("/c"),
             Checkout::default(),
-            &store_file,
-            &[],
-            false,
+            true,
         )
         .unwrap();
-        assert_eq!(names(), ["claude-adapter", "notes", "personal-memory"]);
-        part::record_named(
-            parts.path(),
-            Agent::Claude,
-            What::Mcp,
-            None,
-            memory::SERVER,
-            vec![],
-        )
-        .unwrap();
-        cmd_uninstall_bring_ins(parts.path(), &[], false).unwrap();
         assert_eq!(
-            names(),
-            ["claude-adapter", "notes"],
-            "removing the memory server keeps the skills the plugin still places"
+            fs::read(install_record::path(parts.path())).unwrap(),
+            before
         );
-        part::record(parts.path(), Agent::Claude, &[What::Plugin], None, vec![]).unwrap();
-        cmd_uninstall_bring_ins(parts.path(), &[], false).unwrap();
-        assert!(names().is_empty());
-        assert!(
-            !part::path(parts.path()).exists(),
-            "the list goes with its last bring-in"
-        );
-    }
-
-    #[test]
-    fn the_adapter_is_a_bring_in_only_while_maids_plugin_is_on_claude() {
-        let p = profile_with(&["notes"]);
-        let plugin = vec![Item::placed(What::Plugin, crate::shared::PLUGIN_ID)];
-        let names = |placed: &Placed| -> Vec<String> {
-            bring_ins(p.path(), &sources(), None, &[], placed, &[], "2026-10-31")
-                .unwrap()
-                .into_iter()
-                .map(|b| b.name)
-                .collect()
-        };
-        assert_eq!(names(&anywhere(plugin.clone())), ["notes"], "codex only");
-        assert_eq!(names(&on_claude(plugin)), ["notes", "claude-adapter"]);
-        let adapter = bring_ins(
-            p.path(),
-            &sources(),
-            None,
-            &[],
-            &on_claude(vec![Item::placed(What::Plugin, crate::shared::PLUGIN_ID)]),
-            &[],
-            "2026-10-31",
-        )
-        .unwrap()
-        .pop()
-        .unwrap();
-        let left = anywhere(vec![Item::placed(What::Plugin, crate::shared::PLUGIN_ID)]);
-        assert!(!still_placed(&adapter, &left, &[]), "uninstall drops it");
     }
 
     #[test]
@@ -2612,28 +2074,6 @@ mod tests {
     }
 
     #[test]
-    fn with_no_github_pin_the_memory_has_no_source_and_only_reports() {
-        let p = profile_with(&[]);
-        let unpinned = Sources {
-            project: project(),
-            pensieve: None,
-        };
-        let items = bring_ins(
-            p.path(),
-            &unpinned,
-            Some(Path::new("/s")),
-            &[],
-            &anywhere(all_placed()),
-            &[],
-            "2026-10-31",
-        )
-        .unwrap();
-        let memory = items.iter().find(|b| b.name == memory::SERVER).unwrap();
-        assert_eq!(memory.source, None, "never mAId's project source");
-        assert_eq!(memory.route(), ghost::parts::Route::Report);
-    }
-
-    #[test]
     fn the_checkouts_lock_is_read_from_its_dir() {
         let dir = TempDir::new().unwrap();
         assert_eq!(locked_pensieve(dir.path()), None);
@@ -2649,7 +2089,7 @@ mod tests {
         let lock = fs::read_to_string(root.join("flake.lock")).unwrap();
         let got = pinned(&lock, "pensieve").expect("pensieve pinned on GitHub");
         assert_eq!(
-            got.at.as_deref(),
+            got.repo.as_deref(),
             Some("https://github.com/kusimari/pensieve")
         );
         let rev = got.rev.unwrap();

@@ -110,6 +110,7 @@ impl Env {
             )
             .env("MAID_PROFILE", self.at("profile"))
             .env("MY_HARNESS_PARTS", self.at("parts"))
+            .env("INSTALL_MANIFESTS", self.at("install-manifests"))
             .env("MAID_CONFIG", self.at("config"))
             .env("MAID_MEMORY_STORE", self.at("memory-store"))
             .output()
@@ -181,7 +182,7 @@ fn install_status_and_uninstall_use_the_config_dir_only() {
     let e = Env::new();
     // The steps find claude on the process PATH; this binary's own.
     std::env::set_var("PATH", e.at("bin"));
-    let (c, profile, parts) = (e.claude(), e.at("profile"), e.at("parts"));
+    let (c, profile, parts) = (e.claude(), e.at("profile"), e.at("install-manifests"));
     put(&e.at("claude-config/settings.json"), r#"{"theme":"dark"}"#);
     let store_file = e.at("memory-store");
     cmd_install_memory(

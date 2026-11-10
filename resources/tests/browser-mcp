@@ -15,10 +15,11 @@ mkdir -p "$th/.kiro/settings" "$work/bin" "$work/profile/bin"
 export CARGO_HOME=${CARGO_HOME:-$HOME/.cargo} CARGO_TARGET_DIR=$here/target
 unset XDG_STATE_HOME XDG_CONFIG_HOME MAID_BROWSER_ALLOWLIST
 export MY_HARNESS_PARTS=$th/.local/state/my-harness/parts
-# The profile the server's bring-in names its manifest in.
+export INSTALL_MANIFESTS=$th/.local/state/install-manifests
+# The profile the server's entry names its files in.
 export MAID_PROFILE=$work/profile
-mkdir -p "$MAID_PROFILE/share/maid/servers/browser"
-cp resources/content/servers/browser/server.json "$MAID_PROFILE/share/maid/servers/browser/"
+mkdir -p "$MAID_PROFILE/share/maid/servers/chrome-devtools"
+cp resources/content/servers/chrome-devtools/server.json "$MAID_PROFILE/share/maid/servers/chrome-devtools/"
 
 # kiro-cli is a stub that leaves a mark if anything runs it.
 printf '#!/bin/sh\ntouch %q\nexit 1\n' "$work/kiro-cli-ran" >"$work/bin/kiro-cli"
@@ -29,7 +30,7 @@ chmod +x "$work/bin/"* "$launcher"
 export PATH=$work/bin:$PATH
 
 cfg=$th/.kiro/settings/mcp.json
-partlist=$MY_HARNESS_PARTS/maid-harness.json
+partlist=$INSTALL_MANIFESTS/maid.json
 fails=0
 check() {
   local what=$1
@@ -37,13 +38,13 @@ check() {
   if "$@" >/dev/null; then echo "PASS  $what"; else echo "FAIL  $what"; fails=$((fails + 1)); fi
 }
 manage() { HOME=$th resources/browser/manage "$1" "$launcher" kiro >"$work/out" 2>&1; }
-# kiro's mcp entries in mAId's part list, one `name scope skipped` per line.
+# kiro's mcp entries in mAId's install record, one `name scope skipped` per line.
 kiro_mcp() {
-  jq -r '.harnesses["kiro-cli"][]? | select(.kind == "mcp") | "\(.name) \(.scope // "-") \(.skipped // "-")"' \
+  jq -r '.agents["kiro-cli"][]? | select(.kind == "mcp") | "\(.name) \(.scope // "-") \(.skipped // "-")"' \
     "$partlist" 2>/dev/null
 }
-# mAId's bring-ins as `name unit`, one per line.
-bring_ins() { jq -r '.bring_ins[]? | "\(.name) \(.unit.path // "-")"' "$partlist" 2>/dev/null; }
+# Where each placed MCP entry's files are, as `name at`, one per line.
+files_at() { jq -r '.agents[][]? | select(.kind == "mcp" and .skipped == null) | "\(.name) \(.at // "-")"' "$partlist" 2>/dev/null; }
 same_json() { [ "$(jq -S . "$1")" = "$(jq -S . "$2")" ]; }
 without_ours() { jq -S 'del(.mcpServers["chrome-devtools"])' "$cfg"; }
 
@@ -55,9 +56,9 @@ manage install
 check "install points chrome-devtools at the launcher" \
   jq -e --arg c "$launcher" '.mcpServers["chrome-devtools"] == {command: $c, args: []}' "$cfg"
 check "install keeps every other server and key" eval '[ "$(without_ours)" = "$(jq -S . "$work/seed")" ]'
-check "the part list names kiro's server with no scope" eval '[ "$(kiro_mcp)" = "chrome-devtools - -" ]'
-check "the server is a bring-in, declared in the profile's server.json" \
-  eval '[ "$(bring_ins)" = "chrome-devtools $MAID_PROFILE/share/maid/servers/browser/server.json" ]'
+check "the install record names kiro's server with no scope" eval '[ "$(kiro_mcp)" = "chrome-devtools - -" ]'
+check "the entry names the server's files in the profile" \
+  eval '[ "$(files_at)" = "chrome-devtools $MAID_PROFILE/share/maid/servers/chrome-devtools" ]'
 HOME=$th just status --whole kiro >"$work/whole" 2>&1
 check "whole-status finds kiro's server present" grep -qE '^ +present +mcp chrome-devtools$' "$work/whole"
 
@@ -73,8 +74,8 @@ check "status reports kiro's server as registered" grep -qE 'kiro +\(chrome-devt
 
 manage uninstall
 check "uninstall removes only chrome-devtools" same_json "$cfg" "$work/seed"
-check "uninstall clears kiro's server from the part list" eval '[ -z "$(kiro_mcp)" ]'
-check "uninstall drops the server's bring-in" eval '[ -z "$(bring_ins)" ]'
+check "uninstall clears kiro's server from the install record" eval '[ -z "$(kiro_mcp)" ]'
+check "uninstall drops the entry and its files" eval '[ -z "$(files_at)" ]'
 
 rm -f "$cfg"
 (umask 022 && manage install)
@@ -89,11 +90,11 @@ printf 'not json {' >"$cfg"
 cp "$cfg" "$work/bad"
 manage install
 check "a config that is not JSON is left as it is" cmp -s "$cfg" "$work/bad"
-check "the part list says why kiro's server was skipped" eval '[ "$(kiro_mcp)" = "chrome-devtools - mcp add failed" ]'
+check "the install record says why kiro's server was skipped" eval '[ "$(kiro_mcp)" = "chrome-devtools - mcp add failed" ]'
 manage status
 check "status says the config is not JSON" grep -qF "not one JSON object" "$work/out"
 manage uninstall
-check "uninstall over a config that is not JSON leaves it and the part list" \
+check "uninstall over a config that is not JSON leaves it and the install record" \
   eval 'cmp -s "$cfg" "$work/bad" && [ "$(kiro_mcp)" = "chrome-devtools - mcp add failed" ]'
 
 # A config kept elsewhere, linked in by a relative link, with its own mode.
@@ -118,7 +119,7 @@ printf '%s' '{"mcpServers":{"chrome-devtools":{"command":"/elsewhere/chrome-devt
 cp "$cfg" "$work/theirs"
 manage install
 check "install leaves a chrome-devtools that is not mAId's" cmp -s "$cfg" "$work/theirs"
-check "the part list says that chrome-devtools is not mAId's" eval '[ "$(kiro_mcp)" = "chrome-devtools - not mAId'"'"'s" ]'
+check "the install record says that chrome-devtools is not mAId's" eval '[ "$(kiro_mcp)" = "chrome-devtools - not mAId'"'"'s" ]'
 manage status
 check "status says that chrome-devtools is not mAId's" grep -qF "registered, not mAId's" "$work/out"
 manage uninstall

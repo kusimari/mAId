@@ -8,18 +8,12 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use tempfile::TempDir;
 
-use ghost_in_shell_tests::core;
+use ghost_in_shell_tests::{core, ClaudeHome};
 
+/// A HOME whose Claude Code has a skill put in by hand that declares itself.
 fn home() -> TempDir {
     let home = TempDir::new().unwrap();
-    let parts = home.path().join(".local/state/my-harness/parts");
-    fs::create_dir_all(&parts).unwrap();
-    let unit = home.path().join("deployer/SKILL.md");
-    fs::create_dir_all(unit.parent().unwrap()).unwrap();
-    fs::write(&unit, "---\nname: deployer\ndescription: d\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: deploys\n  my-harness.signals.jobs: deploy\n  my-harness.rules: SKILL.md#rules\n---\n## Rules\n\nTAG FIRST\n").unwrap();
-    let list = json!({"format": 1, "part": "maid-harness", "persona": "personal", "harnesses": {},
-        "bring_ins": [{"name": "deployer", "unit": {"standard": "skill", "path": unit}}]});
-    fs::write(parts.join("maid-harness.json"), list.to_string()).unwrap();
+    ClaudeHome::at(home.path()).skill("deployer", "---\nname: deployer\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.repository: https://example.org/me/kit\n  my-harness.scope: turn\n  my-harness.job: deploys\n  my-harness.signals.jobs: deploy\n  my-harness.rules: SKILL.md#rules\n---\n## Rules\n\nTAG FIRST\n");
     home
 }
 
@@ -139,18 +133,7 @@ fn the_tool_answers_only_for_folders_under_its_own() {
         "# Elsewhere\n\n## Handoff\n\n- **Stage:** SECRET\n",
     )
     .unwrap();
-    let unit = home.path().join("kit/SKILL.md");
-    fs::create_dir_all(unit.parent().unwrap()).unwrap();
-    fs::write(&unit, "---\nname: kit\ndescription: d\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: k\n  my-harness.record: notes.md#handoff\n---\n").unwrap();
-    let parts = home
-        .path()
-        .join(".local/state/my-harness/parts/maid-harness.json");
-    let mut list: Value = serde_json::from_str(&fs::read_to_string(&parts).unwrap()).unwrap();
-    list["bring_ins"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({"name": "kit", "unit": {"standard": "skill", "path": unit}}));
-    fs::write(&parts, list.to_string()).unwrap();
+    ClaudeHome::at(home.path()).skill("kit", "---\nname: kit\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.repository: https://example.org/me/kit\n  my-harness.scope: turn\n  my-harness.job: k\n  my-harness.record: notes.md#handoff\n---\n");
     std::os::unix::fs::symlink(outside.path(), home.path().join("link")).unwrap();
     let up = format!(
         "{}/../{}",

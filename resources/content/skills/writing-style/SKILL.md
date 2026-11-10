@@ -4,12 +4,15 @@ description: Rewrite, format, clean up, tighten, or reword prose in my voice; dr
 version: 1.3.1
 tags: [narrative, writing, email, announcement, formatter, learning]
 metadata:
+  my-harness.contract: "1"
   my-harness.scope: turn
   my-harness.job: write and rewrite prose in my voice, and keep the style rules I teach in my persona's memory until they move into this skill
   my-harness.signals.jobs: rewrite, draft an email, draft a doc, teach a style rule
   my-harness.rules: SKILL.md#voice
   my-harness.config.learned: "[optional] an older pending rules file, read until its rules move into this skill"
   my-harness.config.promoted: "[optional] an older promoted rules file, read until its rules move into this skill"
+  my-harness.bind.learned: "path:${MAID_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/maid}/writing-style/learned.md"
+  my-harness.bind.promoted: "path:${MAID_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/maid}/writing-style/promoted.md"
 ---
 
 # writing-style — how I write

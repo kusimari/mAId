@@ -12,7 +12,7 @@
 //! one of the two, then has `BringIns` register the vendor marketplaces
 //! with the plugin agents, and nothing in `stages` knows which.
 
-use crate::part::{self, Item, What};
+use crate::install_record::{self, Dirs, Item, What};
 use crate::shared::{
     agent_marketplace, claude_env, marketplace_root, on_path, selected_entries, Agent, BringIn,
     Entry, Kind, Link, LEGACY_LINKS, MARKETPLACE, PLUGIN_AGENTS, PLUGIN_ID,
@@ -1088,12 +1088,12 @@ impl BringIns {
         home: PathBuf,
         claude: ConfigDir,
         list: &'static [BringIn],
-        parts: &Path,
+        parts: &(impl Dirs + ?Sized),
     ) -> Result<BringIns> {
         let mut owned = Vec::new();
         for (a, ..) in PLUGIN_AGENTS {
             owned.extend(
-                part::placed(parts, *a)?
+                install_record::placed(parts, *a)?
                     .into_iter()
                     .map(|i| (*a, i.kind, i.name)),
             );
@@ -1114,7 +1114,7 @@ impl BringIns {
         home: PathBuf,
         claude: ConfigDir,
         list: &'static [BringIn],
-        parts: &Path,
+        parts: &(impl Dirs + ?Sized),
     ) -> BringIns {
         BringIns::new(home.clone(), claude.clone(), list, parts).unwrap_or_else(|e| BringIns {
             home,
@@ -2415,8 +2415,8 @@ mod tests {
     #[test]
     fn status_reports_a_part_list_it_cannot_read_and_carries_on() {
         let parts = TempDir::new().unwrap();
-        let text = r#"{"format":2,"part":"maid-harness","harnesses":{}}"#;
-        fs::write(part::path(parts.path()), text).unwrap();
+        let text = r#"{"format":2,"package":"maid","agents":{}}"#;
+        fs::write(install_record::path(parts.path()), text).unwrap();
         let home = PathBuf::from("/nowhere");
         assert!(BringIns::new(home.clone(), cc(&home), &[VENDOR], parts.path()).is_err());
         let b = BringIns::reporting(home.clone(), cc(&home), &[VENDOR], parts.path());
@@ -2466,7 +2466,7 @@ mod tests {
             Item::placed(What::Marketplace, "vend"),
             Item::skipped(What::Plugin, "docs@vend", "not mAId's"),
         ];
-        part::record(parts.path(), Agent::Claude, kinds, None, mine).unwrap();
+        install_record::record(parts.path(), Agent::Claude, kinds, None, mine).unwrap();
         let b = BringIns::new(
             PathBuf::from("/nowhere"),
             cc(Path::new("/nowhere")),

@@ -4,6 +4,7 @@ description: 'Reflect on a session so the next one is better: "reflect", "close 
 version: 1.0.0
 tags: [reflection, learning, memory, harness]
 metadata:
+  my-harness.contract: "1"
   my-harness.scope: turn
   my-harness.job: reflect on a session and let the person decide what the ghost learns from it
   my-harness.signals.outcomes: done

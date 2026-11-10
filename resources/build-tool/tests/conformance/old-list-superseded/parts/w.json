@@ -1,0 +1,12 @@
+{
+  "format": 1,
+  "part": "w",
+  "harnesses": {
+    "kiro-cli": [
+      {
+        "kind": "skill",
+        "name": "old"
+      }
+    ]
+  }
+}

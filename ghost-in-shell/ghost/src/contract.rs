@@ -15,6 +15,10 @@ use std::path::Path;
 
 pub const NAMESPACE: &str = "my-harness";
 
+/// The contract version this ghost reads. A declaration of any other, or
+/// of none, is refused.
+pub const CONTRACT: u64 = 1;
+
 /// The standard a unit follows, which says where its slot is.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 #[serde(rename_all = "lowercase")]
@@ -50,11 +54,17 @@ pub struct Signals {
 pub struct Key {
     #[serde(default)]
     pub about: String,
-    /// Its value is never written into a part list, only where it comes from.
+    /// Its value is never held, only where it comes from (`env:<NAME>`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub secret: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub optional: bool,
+    /// Where its value comes from where the unit runs: `arg:<flag>` (the
+    /// registered argument after the flag), `command` (the registered
+    /// command and arguments), `env:<NAME>` (the registered environment),
+    /// `value:<text>` or `path:<template>` (`$NAME`, `${NAME:-default}`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bind: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -85,6 +95,11 @@ impl State {
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 pub struct Declaration {
+    /// The contract version it follows.
+    pub contract: u64,
+    /// The bring-in's name, where its standard's name is not it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub scope: Scope,
     pub job: String,
     #[serde(default)]
@@ -105,6 +120,13 @@ pub struct Declaration {
     /// `<file glob>#<heading slug>`, each relative to the session's location.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub record: Vec<String>,
+    /// On a memory bring-in only: the persona it remembers for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persona: Option<String>,
+    /// Where a change to it is proposed. On a plugin, its standard
+    /// `repository` field when the slot names none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
 }
 
 /// What a unit's slot holds.
@@ -246,13 +268,27 @@ pub fn read_small(path: &Path) -> std::io::Result<String> {
     Ok(text)
 }
 
-fn from_manifest(text: &str, slot: &str) -> Result<Slot, String> {
+fn from_manifest(text: &str, slot_name: &str) -> Result<Slot, String> {
     let v: Value = serde_json::from_str(text).map_err(|e| format!("not JSON: {e}"))?;
     let description = v["description"].as_str().map(str::to_string);
-    match &v[slot][NAMESPACE] {
-        Value::Null => Ok(Slot::Undeclared { description }),
-        decl => parse(decl.clone()),
+    let slot = match &v[slot_name][NAMESPACE] {
+        Value::Null => return Ok(Slot::Undeclared { description }),
+        decl => parse(decl.clone())?,
+    };
+    if slot_name != "extensions" {
+        return Ok(slot);
     }
+    // A plugin's standard `repository` field, a URL or `{ "url" }`.
+    let standard = v["repository"]
+        .as_str()
+        .or_else(|| v["repository"]["url"].as_str());
+    Ok(match (slot, standard) {
+        (Slot::Declared(mut d), Some(r)) if d.repository.is_none() => {
+            d.repository = Some(r.into());
+            Slot::Declared(d)
+        }
+        (slot, _) => slot,
+    })
 }
 
 fn from_skill(text: &str) -> Result<Slot, String> {
@@ -305,8 +341,14 @@ fn unflatten(flat: &BTreeMap<String, String>) -> Value {
     for (field, value) in flat {
         let (head, rest) = field.split_once('.').unwrap_or((field, ""));
         match (head, rest) {
-            ("scope" | "job" | "rules" | "package", "") => {
+            ("scope" | "job" | "rules" | "package" | "persona" | "repository" | "name", "") => {
                 obj.insert(head.into(), json!(value));
+            }
+            ("contract", "") => {
+                obj.insert(
+                    head.into(),
+                    value.parse::<u64>().map_or(json!(value), |n| json!(n)),
+                );
             }
             ("requires" | "record", "") => {
                 obj.insert(head.into(), list(value));
@@ -315,7 +357,11 @@ fn unflatten(flat: &BTreeMap<String, String>) -> Value {
                 signals.insert(kind.into(), list(value));
             }
             ("config", key) if !key.is_empty() => {
-                config.insert(key.into(), key_of(value));
+                let mut k = key_of(value);
+                if let Some(b) = flat.get(&format!("bind.{key}")) {
+                    k["bind"] = json!(b);
+                }
+                config.insert(key.into(), k);
             }
             ("state", part) if !part.is_empty() => {
                 state.insert(part.into(), json!(value));
@@ -350,6 +396,14 @@ fn parse(decl: Value) -> Result<Slot, String> {
     if !decl.is_object() {
         return Err(format!("the {NAMESPACE} declaration is not an object"));
     }
+    match &decl["contract"] {
+        Value::Null => return Err(format!("the {NAMESPACE} declaration names no contract")),
+        Value::Number(n) if n.as_u64() == Some(CONTRACT) => {}
+        other => {
+            let why = format!("follows contract {other}, which this ghost does not know");
+            return Err(format!("the {NAMESPACE} declaration {why}"));
+        }
+    }
     let d: Declaration =
         serde_json::from_value(decl).map_err(|e| format!("the {NAMESPACE} declaration: {e}"))?;
     if let Some(state) = &d.state {
@@ -381,6 +435,8 @@ mod tests {
     /// One declaration, written in each slot's own form, reads the same.
     fn full() -> Declaration {
         Declaration {
+            contract: 1,
+            name: None,
             scope: Scope::Session,
             job: "memory for the personal persona".into(),
             signals: Signals {
@@ -394,6 +450,7 @@ mod tests {
                     "store".into(),
                     Key {
                         about: "the persona's store".into(),
+                        bind: Some("arg:--store".into()),
                         ..Key::default()
                     },
                 ),
@@ -403,6 +460,7 @@ mod tests {
                         about: "a sync token".into(),
                         secret: true,
                         optional: true,
+                        bind: None,
                     },
                 ),
             ]),
@@ -413,6 +471,8 @@ mod tests {
             }),
             requires: vec!["git".into(), "python".into()],
             record: vec!["specs/*.md#handoff".into(), "docs/*.md#handoff".into()],
+            persona: Some("personal".into()),
+            repository: Some("https://example.org/me/kit".into()),
         }
     }
 
@@ -422,7 +482,7 @@ mod tests {
         let p = write(
             &dir,
             "SKILL.md",
-            "---\nname: s\ndescription: d\nmetadata:\n  other.key: kept out\n  my-harness.scope: session\n  my-harness.job: memory for the personal persona\n  my-harness.signals.jobs: recall, save\n  my-harness.rules: SKILL.md#rules\n  my-harness.package: pensieve\n  my-harness.config.store: the persona's store\n  my-harness.config.token: \"[secret] [optional] a sync token\"\n  my-harness.state.local: store\n  my-harness.state.promote: auto\n  my-harness.requires: git, python\n  my-harness.record: specs/*.md#handoff, docs/*.md#handoff\n  my-harness.future: ignored\n---\nbody\n",
+            "---\nname: s\ndescription: d\nmetadata:\n  other.key: kept out\n  my-harness.contract: \"1\"\n  my-harness.persona: personal\n  my-harness.repository: https://example.org/me/kit\n  my-harness.bind.store: arg:--store\n  my-harness.scope: session\n  my-harness.job: memory for the personal persona\n  my-harness.signals.jobs: recall, save\n  my-harness.rules: SKILL.md#rules\n  my-harness.package: pensieve\n  my-harness.config.store: the persona's store\n  my-harness.config.token: \"[secret] [optional] a sync token\"\n  my-harness.state.local: store\n  my-harness.state.promote: auto\n  my-harness.requires: git, python\n  my-harness.record: specs/*.md#handoff, docs/*.md#handoff\n  my-harness.future: ignored\n---\nbody\n",
         );
         assert_eq!(declared(read(Standard::Skill, &p)), full());
     }
@@ -446,6 +506,46 @@ mod tests {
     }
 
     #[test]
+    fn a_plugins_standard_repository_stands_when_its_slot_names_none() {
+        let dir = TempDir::new().unwrap();
+        let mut decl = serde_json::to_value(full()).unwrap();
+        decl.as_object_mut().unwrap().remove("repository");
+        let plugin = write(
+            &dir,
+            "plugin.json",
+            &json!({"name": "p", "repository": "https://example.org/p", "extensions": {"my-harness": decl}}).to_string(),
+        );
+        assert_eq!(
+            declared(read(Standard::Plugin, &plugin))
+                .repository
+                .as_deref(),
+            Some("https://example.org/p")
+        );
+        // A server's standard repository is its code's, not where its
+        // declaration changes.
+        let server = write(
+            &dir,
+            "server.json",
+            &json!({"name": "s", "repository": {"url": "https://example.org/code"}, "_meta": {"my-harness": decl}}).to_string(),
+        );
+        assert_eq!(declared(read(Standard::Mcp, &server)).repository, None);
+    }
+
+    #[test]
+    fn a_declaration_of_no_contract_or_another_is_refused() {
+        let dir = TempDir::new().unwrap();
+        for (file, contract, why) in [
+            ("a.md", "", "names no contract"),
+            ("b.md", "  my-harness.contract: \"2\"\n", "contract 2"),
+            ("c.md", "  my-harness.contract: one\n", "contract \"one\""),
+        ] {
+            let text = format!("---\nname: s\nmetadata:\n{contract}  my-harness.scope: turn\n  my-harness.job: j\n---\n");
+            let err = read(Standard::Skill, &write(&dir, file, &text)).unwrap_err();
+            assert!(err.contains(why), "{file}: {err}");
+        }
+    }
+
+    #[test]
     fn a_unit_without_a_declaration_is_undeclared_with_its_description() {
         let dir = TempDir::new().unwrap();
         let skill = write(&dir, "SKILL.md", "---\nname: s\ndescription: writes\n---\n");
@@ -464,9 +564,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let cases = [
             ("a.md", "---\nname: s\nmetadata:\n  my-harness.scope: 3\n---\n", "not a string"),
-            ("b.md", "---\nname: s\nmetadata:\n  my-harness.scope: always\n  my-harness.job: j\n---\n", "declaration"),
-            ("c.md", "---\nname: s\nmetadata:\n  my-harness.job: j\n---\n", "scope"),
-            ("d.md", "---\nname: s\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: j\n  my-harness.state.local: nowhere\n---\n", "not a config key"),
+            ("b.md", "---\nname: s\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: always\n  my-harness.job: j\n---\n", "declaration"),
+            ("c.md", "---\nname: s\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.job: j\n---\n", "scope"),
+            ("d.md", "---\nname: s\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: j\n  my-harness.state.local: nowhere\n---\n", "not a config key"),
         ];
         for (file, text, why) in cases {
             let err = read(Standard::Skill, &write(&dir, file, text)).unwrap_err();

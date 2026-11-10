@@ -15,7 +15,7 @@
 //!   shared.rs   vocabulary every stage speaks (agents, registry, roots)
 //!   harness.rs  driving an agent and scoring the reply; used by the two
 //!               verification stages, owned by neither
-//!   part.rs     the part list: what mAId placed on each base harness
+//!   install_record.rs  the install record: what mAId placed on each agent
 //!   memory.rs   the personal store, its memory server on claude, and
 //!               Claude's own automatic memory turned off
 //!   harvest.rs  copying each harness's own memory into a store
@@ -25,7 +25,7 @@
 //!               about $HOME layout, behind a swappable trait
 //!   stages.rs   the pipeline: content, check, install, smoke. Declares
 //!               what it wants; `deploy` and `harness` do it.
-//!   whole.rs    whole-status: every part's list, checked against each
+//!   whole.rs    whole-status: every install record, checked against each
 //!               base harness's own listing or config
 //!
 //! Dependencies run one direction — later stages may read earlier ones
@@ -39,8 +39,8 @@
 pub mod deploy;
 pub mod harness;
 pub mod harvest;
+pub mod install_record;
 pub mod memory;
-pub mod part;
 pub mod reads;
 pub mod settings;
 pub mod shared;

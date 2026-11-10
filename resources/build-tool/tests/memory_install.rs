@@ -2,12 +2,10 @@
 //! that keeps `~/.claude.json` and logs each call. One test, run in
 //! order, because the step finds claude through the process-wide PATH.
 
+use build_tool::install_record::Repo;
 use build_tool::shared::Agent;
-use build_tool::stages::{
-    cmd_install_bring_ins, cmd_install_memory, cmd_uninstall_memory, Checkout,
-};
+use build_tool::stages::{cmd_install_memory, cmd_install_package, cmd_uninstall_memory, Checkout};
 use build_tool::whole;
-use ghost::parts::{Source, SourceKind};
 use shell_claude::config_dir::ConfigDir;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -99,11 +97,11 @@ impl Env {
         serde_json::from_str(&fs::read_to_string(self.at(p)).unwrap()).unwrap()
     }
     fn list(&self) -> String {
-        fs::read_to_string(self.at("state/maid-harness.json")).unwrap_or_default()
+        fs::read_to_string(self.at("state/maid.json")).unwrap_or_default()
     }
     fn whole(&self) -> String {
         whole::check(
-            &self.at("state"),
+            &[self.at("state")],
             &self.at("home"),
             &self.cc(),
             Some(self.at("bin").into_os_string()),
@@ -181,7 +179,7 @@ fn registers_turns_memory_off_and_whole_status_sees_both() {
         fs::read_to_string(e.at("home/.claude/settings.json")).unwrap(),
         before
     );
-    assert!(!e.at("state/maid-harness.json").exists());
+    assert!(!e.at("state/maid.json").exists());
 }
 
 fn the_memory_bring_in_is_declared_and_ready_by_its_store() {
@@ -195,36 +193,60 @@ fn the_memory_bring_in_is_declared_and_ready_by_its_store() {
     let shipped = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../content/servers/personal-memory/server.json");
     fs::copy(shipped, &unit).unwrap();
-    let pensieve = Source {
-        kind: SourceKind::Project,
-        at: Some("https://github.com/me/pensieve".into()),
+    let pensieve = Repo {
+        repo: Some("https://github.com/me/pensieve".into()),
         rev: Some("p1".into()),
     };
     let checkout = Checkout {
         pensieve: Some(pensieve.clone()),
         ..Checkout::default()
     };
-    let rc = cmd_install_bring_ins(
+    let rc = cmd_install_package(
         &e.at("state"),
         &e.at("profile"),
         &e.at("config"),
         checkout,
-        &e.at("store-file"),
-        &[],
         false,
     )
     .unwrap();
     assert_eq!(rc, 0);
-    let list = e.json("state/maid-harness.json");
-    let memory = list["bring_ins"]
+    let list = e.json("state/maid.json");
+    let memory = list["agents"]["claude"]
         .as_array()
         .unwrap()
         .iter()
         .find(|b| b["name"] == "personal-memory")
         .unwrap();
-    assert_eq!(memory["unit"]["path"], unit.display().to_string());
+    assert_eq!(memory["at"], unit.parent().unwrap().display().to_string());
     assert_eq!(memory["source"], serde_json::to_value(&pensieve).unwrap());
     assert_eq!(memory["values"]["index"], "memory/MEMORY.md");
+    assert_eq!(
+        memory["values"]["store"],
+        e.at("stores/personal").display().to_string()
+    );
+    // mAId's plugin as Claude Code holds it, shipping the server's
+    // declaration: the ghost finds the registered server through it.
+    let plugin = e.at("home/.claude/plugins/cache/maid/maid/1");
+    fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
+    fs::write(
+        plugin.join(".claude-plugin/plugin.json"),
+        r#"{"name":"maid","repository":"https://example.org/me/mAId"}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(plugin.join("servers/personal-memory")).unwrap();
+    fs::copy(&unit, plugin.join("servers/personal-memory/server.json")).unwrap();
+    fs::write(
+        e.at("home/.claude/plugins/installed_plugins.json"),
+        serde_json::json!({"version": 2, "plugins": {"maid@maid": [
+            {"scope": "user", "installPath": plugin}]}})
+        .to_string(),
+    )
+    .unwrap();
+    let settings = e.at("home/.claude/settings.json");
+    let mut s: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&settings).unwrap_or("{}".into())).unwrap();
+    s["enabledPlugins"]["maid@maid"] = true.into();
+    fs::write(&settings, s.to_string()).unwrap();
     let report = e.whole();
     assert!(
         report.contains("    ready          personal-memory\n"),
@@ -312,7 +334,7 @@ fn another_entry_or_claim_is_left_alone() {
         theirs
     );
 
-    // Another part's list records the server and the setting: neither taken.
+    // Another package records the server and the setting: neither taken.
     let e = Env::new(true);
     settings(
         &e,
@@ -320,7 +342,7 @@ fn another_entry_or_claim_is_left_alone() {
     );
     fs::write(
         e.at("state/other.json"),
-        serde_json::json!({"format": 1, "part": "other", "harnesses": {"claude": [
+        serde_json::json!({"format": 1, "package": "other", "agents": {"claude": [
             {"kind": "mcp", "name": "personal-memory"},
             {"kind": "setting", "name": "env.CLAUDE_CODE_DISABLE_AUTO_MEMORY", "value": "1"}]}})
         .to_string(),
@@ -340,13 +362,13 @@ fn another_entry_or_claim_is_left_alone() {
         "1"
     );
 
-    // mAId's own entry, then claimed by another part: install and uninstall
-    // agree it is theirs, so neither removes it.
+    // mAId's own entry, then claimed by another package: install and
+    // uninstall agree it is theirs, so neither removes it.
     let e = Env::new(true);
     e.install();
     fs::write(
         e.at("state/other.json"),
-        serde_json::json!({"format": 1, "part": "other", "harnesses": {"claude": [
+        serde_json::json!({"format": 1, "package": "other", "agents": {"claude": [
             {"kind": "mcp", "name": "personal-memory"}]}})
         .to_string(),
     )
@@ -426,8 +448,8 @@ fn the_old_memory_dir_goes_only_when_it_is_maids() {
         &serde_json::json!({"autoMemoryDirectory": old}).to_string(),
     );
     fs::write(
-        e.at("state/maid-harness.json"),
-        serde_json::json!({"format": 1, "part": "maid-harness", "harnesses": {"claude": [
+        e.at("state/maid.json"),
+        serde_json::json!({"format": 1, "package": "maid", "agents": {"claude": [
             {"kind": "setting", "name": "autoMemoryDirectory", "value": old}]}})
         .to_string(),
     )
@@ -440,8 +462,8 @@ fn the_old_memory_dir_goes_only_when_it_is_maids() {
     // One an older install recorded as skipped goes from the list too.
     let e = Env::new(true);
     fs::write(
-        e.at("state/maid-harness.json"),
-        serde_json::json!({"format": 1, "part": "maid-harness", "harnesses": {"claude": [
+        e.at("state/maid.json"),
+        serde_json::json!({"format": 1, "package": "maid", "agents": {"claude": [
             {"kind": "setting", "name": "autoMemoryDirectory",
              "skipped": "mAId names no default memory store"}]}})
         .to_string(),
@@ -450,7 +472,7 @@ fn the_old_memory_dir_goes_only_when_it_is_maids() {
     e.install();
     assert!(!e.list().contains("autoMemoryDirectory"));
     e.uninstall();
-    assert!(!e.at("state/maid-harness.json").exists());
+    assert!(!e.at("state/maid.json").exists());
 
     // A hand-set one stays.
     let e = Env::new(true);

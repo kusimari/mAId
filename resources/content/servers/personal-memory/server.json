@@ -8,15 +8,29 @@
   },
   "_meta": {
     "my-harness": {
+      "contract": 1,
       "scope": "session",
       "job": "the personal persona's memory: what agents keep across sessions",
       "package": "pensieve",
       "config": {
-        "store": { "about": "the persona's store, a git checkout the person owns" },
-        "index": { "about": "the memory index, a path relative to store" },
-        "serve": { "about": "the command that serves store over MCP stdio, a JSON array of strings" }
+        "store": {
+          "about": "the persona's store, a git checkout the person owns",
+          "bind": "arg:--store"
+        },
+        "index": {
+          "about": "the memory index, a path relative to store",
+          "bind": "value:memory/MEMORY.md"
+        },
+        "serve": {
+          "about": "the command that serves store over MCP stdio, a JSON array of strings",
+          "bind": "command"
+        }
       },
-      "state": { "permanent": "store", "promote": "off" }
+      "state": {
+        "permanent": "store",
+        "promote": "off"
+      },
+      "persona": "personal"
     }
   }
 }

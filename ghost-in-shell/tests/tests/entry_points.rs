@@ -7,9 +7,7 @@ use ghost::environment::Host;
 use infusion::call::{Call, Carrier, Close, Ctx, Where};
 use infusion::genome::{picture, render};
 use infusion::{experience, sleep};
-use serde_json::json;
 use shell_claude::transcript::Transcripts;
-use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
@@ -20,11 +18,11 @@ use ghost_in_shell_tests::{claude_projects, SESSION as S};
 fn ctx(dir: &Path, projects: Option<PathBuf>) -> Ctx {
     Ctx {
         config: Config {
-            parts: dir.join("parts"),
             state: dir.join("state"),
         },
         host: Host::default(),
         sources: Box::new(Transcripts { projects }),
+        shell: Box::new(Vec::<ghost::installed::Unit>::new()),
     }
 }
 
@@ -36,20 +34,11 @@ fn call(session: Option<&str>, carrier: Carrier) -> Call {
     }
 }
 
-fn part(dir: &Path) {
-    let parts = dir.join("parts");
-    fs::create_dir_all(&parts).unwrap();
-    let v = json!({"format": 1, "part": "a", "harnesses": {}, "persona": "personal",
-        "bring_ins": []});
-    fs::write(parts.join("a.json"), v.to_string()).unwrap();
-}
-
 #[test]
 fn an_end_event_marks_the_session_and_the_genome_counts_it_waiting() {
     let dir = TempDir::new().unwrap();
     let projects = claude_projects(dir.path());
     let c = ctx(dir.path(), Some(projects.clone()));
-    part(dir.path());
     let end = Call {
         close: Some(Close::End),
         at: Where {

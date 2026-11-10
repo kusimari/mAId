@@ -7,10 +7,9 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
-    /// Every part's list: `MY_HARNESS_PARTS`, default `<state>/parts`.
-    pub parts: PathBuf,
-    /// The ghost's own state (delivery record, pending decisions):
-    /// `MY_HARNESS_STATE`, default `${XDG_STATE_HOME:-$HOME/.local/state}/my-harness`.
+    /// The ghost's own state (delivery record, pending decisions, what an
+    /// adapter cached of the shell): `MY_HARNESS_STATE`, default
+    /// `${XDG_STATE_HOME:-$HOME/.local/state}/my-harness`.
     pub state: PathBuf,
 }
 
@@ -50,8 +49,12 @@ impl Config {
                 base.join("my-harness")
             }
         };
-        let parts = get("MY_HARNESS_PARTS")?.unwrap_or_else(|| state.join("parts"));
-        Ok(Config { parts, state })
+        Ok(Config { state })
+    }
+
+    /// Where a shell's adapter keeps what it derived of the shell.
+    pub fn shells(&self) -> PathBuf {
+        self.state.join("shells")
     }
 
     pub fn delivery(&self) -> PathBuf {
@@ -104,23 +107,22 @@ mod tests {
     }
 
     #[test]
-    fn defaults_sit_under_the_users_state_dir() {
+    fn the_state_sits_under_the_users_state_dir() {
         let c = from(&[("HOME", "/h")]).unwrap();
         assert_eq!(c.state, PathBuf::from("/h/.local/state/my-harness"));
-        assert_eq!(c.parts, PathBuf::from("/h/.local/state/my-harness/parts"));
+        assert_eq!(
+            c.shells(),
+            PathBuf::from("/h/.local/state/my-harness/shells")
+        );
         let c = from(&[("HOME", "/h"), ("XDG_STATE_HOME", "/x")]).unwrap();
-        assert_eq!(c.parts, PathBuf::from("/x/my-harness/parts"));
-    }
-
-    #[test]
-    fn each_location_can_be_set_on_its_own() {
-        let c = from(&[("MY_HARNESS_STATE", "/s"), ("MY_HARNESS_PARTS", "/p")]).unwrap();
-        assert_eq!((c.state, c.parts), ("/s".into(), "/p".into()));
+        assert_eq!(c.state, PathBuf::from("/x/my-harness"));
+        let c = from(&[("MY_HARNESS_STATE", "/s")]).unwrap();
+        assert_eq!(c.state, PathBuf::from("/s"));
     }
 
     #[test]
     fn a_relative_location_is_refused_and_a_relative_xdg_ignored() {
-        assert!(from(&[("HOME", "/h"), ("MY_HARNESS_PARTS", "p")]).is_err());
+        assert!(from(&[("HOME", "/h"), ("MY_HARNESS_STATE", "s")]).is_err());
         let c = from(&[("HOME", "/h"), ("XDG_STATE_HOME", "x")]).unwrap();
         assert_eq!(c.state, PathBuf::from("/h/.local/state/my-harness"));
         assert!(from(&[]).is_err());

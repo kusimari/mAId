@@ -23,7 +23,7 @@ pub mod genome;
 pub mod sleep;
 
 pub use adaptation::adaptation;
-pub use call::{Call, Carrier, Close, Ctx, Item, Slice, Where};
+pub use call::{Call, Carrier, Close, Ctx, Item, Shell, Slice, Where};
 pub use experience::experience;
 pub use expression::expression;
 pub use genome::genome;
@@ -32,12 +32,43 @@ pub use sleep::sleep;
 /// What the modules' own tests share.
 #[cfg(test)]
 pub(crate) mod testing {
-    use crate::call::{Call, Carrier, Ctx};
+    use crate::call::{Call, Carrier, Ctx, Shell};
     use crate::experience::source::{SessionSource, Sources};
     use anyhow::{bail, Result};
     use ghost::config::Config;
     use ghost::environment::Host;
-    use std::path::Path;
+    use ghost::parts::Part;
+    use ghost::Ghost;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    /// A shell whose ghost is the parts written as JSON in a dir, one
+    /// `<part>.json` each, so a test says the parts outright.
+    pub struct Parts(pub PathBuf);
+
+    impl Shell for Parts {
+        fn ghost(&self, _: Option<&Path>) -> Result<Ghost> {
+            Ok(ghost_of(&self.0))
+        }
+    }
+
+    /// The ghost of the parts written in `dir`.
+    pub fn ghost_of(dir: &Path) -> Ghost {
+        let mut files: Vec<PathBuf> = fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "json"))
+            .collect();
+        files.sort();
+        let parts: Vec<Part> = files
+            .iter()
+            .filter_map(|p| serde_json::from_str(&fs::read_to_string(p).ok()?).ok())
+            .filter_map(|v| Part::from_json(&v).ok())
+            .collect();
+        Ghost::of(&parts)
+    }
 
     /// A shell with no session source: what a test that reads no session
     /// hands in. Reading one says so rather than reaching for a file.
@@ -52,15 +83,16 @@ pub(crate) mod testing {
         }
     }
 
-    /// A context over `<dir>/parts` and `<dir>/state`, reading no session.
+    /// A context whose ghost is the parts in `<dir>/parts`, its state in
+    /// `<dir>/state`, reading no session.
     pub fn ctx(dir: &Path) -> Ctx {
         Ctx {
             config: Config {
-                parts: dir.join("parts"),
                 state: dir.join("state"),
             },
             host: Host::default(),
             sources: Box::new(NoSources),
+            shell: Box::new(Parts(dir.join("parts"))),
         }
     }
 

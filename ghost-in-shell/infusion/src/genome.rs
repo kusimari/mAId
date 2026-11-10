@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use ghost::contract::Scope;
 use ghost::environment::{self, Readiness};
 use ghost::parts::Tenure;
-use ghost::{BringIn, Declared, Ghost, Persona};
+use ghost::{BringIn, Declared, Persona};
 use serde::Serialize;
 use std::fmt::Write as _;
 use std::fs;
@@ -29,11 +29,11 @@ pub struct Picture {
     pub session: Vec<Line>,
     pub turn: Vec<Line>,
     pub environment: Vec<environment::Row>,
-    /// Part lists the ghost would not take, so the picture is of part of
-    /// the ghost.
-    pub refused: usize,
     /// Bring-in names more than one part records.
     pub clashes: Vec<String>,
+    /// The shell's records whose shape was not understood, each with why.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub not_understood: Vec<String>,
     pub pending: Pending,
     /// Sessions marked for sleep and not yet reflected on.
     pub waiting: usize,
@@ -80,8 +80,7 @@ pub fn picture(ctx: &Ctx) -> Result<Picture> {
 
 /// The picture as seen from `here`, which the persona guess reads.
 pub fn picture_at(ctx: &Ctx, here: &Here) -> Result<Picture> {
-    let ghost = Ghost::from_roots(std::slice::from_ref(&ctx.config.parts))
-        .with_context(|| format!("cannot read {}", ctx.config.parts.display()))?;
+    let ghost = ctx.shell.ghost(here.cwd.as_deref())?;
     let acting = fit::persona(&ghost, here);
     let (mut session, mut turn) = (vec![], vec![]);
     for b in &ghost.bring_ins {
@@ -98,8 +97,8 @@ pub fn picture_at(ctx: &Ctx, here: &Here) -> Result<Picture> {
         session,
         turn,
         environment: environment::derive(&ghost, &ctx.host),
-        refused: ghost.refused.len(),
         clashes: ghost.clashes.clone(),
+        not_understood: ghost.not_understood.clone(),
         pending: pending(ctx)?,
         waiting: sleep::waiting(&ctx.config)?.len(),
     })
@@ -176,6 +175,7 @@ pub fn render_slice(p: &Picture, slice: Slice) -> String {
         .iter()
         .map(|x| match &x.persona {
             Some(name) => format!("{name} ({})", x.part),
+            None if !x.declared => format!("no persona ({}, nothing declared)", x.part),
             None => format!("no persona ({})", x.part),
         })
         .collect();
@@ -183,7 +183,7 @@ pub fn render_slice(p: &Picture, slice: Slice) -> String {
         s,
         "personas: {}",
         match personas.is_empty() {
-            true => "none (no part lists)".to_string(),
+            true => "none (nothing installed says)".to_string(),
             false => personas.join(", "),
         }
     );
@@ -258,12 +258,8 @@ pub fn render_slice(p: &Picture, slice: Slice) -> String {
             );
         }
     }
-    match p.refused {
-        0 => {}
-        1 => s.push_str("  refused: 1 part list (see maid-core map)\n"),
-        n => {
-            let _ = writeln!(s, "  refused: {n} part lists (see maid-core map)");
-        }
+    for n in &p.not_understood {
+        let _ = writeln!(s, "  not understood: {n}");
     }
     if !p.clashes.is_empty() {
         let _ = writeln!(
@@ -305,7 +301,7 @@ mod tests {
 
     fn memory(dir: &Path) -> String {
         let p = dir.join("mem.json");
-        let decl = json!({"scope": "session", "job": "memory for the persona",
+        let decl = json!({"contract": 1, "scope": "session", "job": "memory for the persona",
             "config": {"store": {"about": "the store"}}, "state": {"local": "store"}});
         fs::write(
             &p,
@@ -383,7 +379,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let skill = dir.path().join("style/SKILL.md");
         fs::create_dir_all(skill.parent().unwrap()).unwrap();
-        fs::write(&skill, "---\nname: style\ndescription: d\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: write\n  my-harness.config.learned: \"[optional] older\"\n  my-harness.config.promoted: \"[optional] older\"\n  my-harness.config.token: \"[secret] a token\"\n  my-harness.config.serve: a command\n  my-harness.config.index: relative\n---\n").unwrap();
+        fs::write(&skill, "---\nname: style\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: write\n  my-harness.config.learned: \"[optional] older\"\n  my-harness.config.promoted: \"[optional] older\"\n  my-harness.config.token: \"[secret] a token\"\n  my-harness.config.serve: a command\n  my-harness.config.index: relative\n---\n").unwrap();
         part(
             dir.path(),
             "home",
@@ -485,22 +481,74 @@ mod tests {
     }
 
     #[test]
-    fn refused_lists_and_clashes_get_a_line_only_when_there_are_any() {
+    fn clashes_get_a_line_only_when_there_are_any() {
         let dir = TempDir::new().unwrap();
         part(dir.path(), "a", "personal", json!([{"name": "mem"}]));
         let quiet = render(&picture(&ctx(dir.path())).unwrap());
-        assert!(
-            !quiet.contains("refused") && !quiet.contains("clashes"),
-            "{quiet}"
-        );
+        assert!(!quiet.contains("clashes"), "{quiet}");
         part(dir.path(), "b", "work", json!([{"name": "mem"}]));
-        fs::write(dir.path().join("parts/c.json"), "not json").unwrap();
         let text = render(&picture(&ctx(dir.path())).unwrap());
+        assert!(text.contains("  clashes: 1 (mem)\n"), "{text}");
+    }
+
+    #[test]
+    fn a_unit_of_an_unknown_contract_is_named_and_an_undeclared_one_has_no_persona() {
+        use ghost::installed::{Kind, Unit};
+        let dir = TempDir::new().unwrap();
+        let skill = |name: &str, contract: &str| {
+            let d = dir.path().join(name);
+            fs::create_dir_all(&d).unwrap();
+            let meta = match contract {
+                "" => String::new(),
+                c => format!("metadata:\n  my-harness.contract: \"{c}\"\n  my-harness.scope: turn\n  my-harness.job: j\n  my-harness.repository: https://example.org/me/next\n"),
+            };
+            fs::write(
+                d.join("SKILL.md"),
+                format!("---\nname: {name}\ndescription: about {name}\n{meta}---\n"),
+            )
+            .unwrap();
+            let mut u = Unit::new(Kind::Skill, name);
+            u.manifest = Some(d.join("SKILL.md"));
+            u
+        };
+        let mut c = ctx(dir.path());
+        c.shell = Box::new(vec![skill("next-skill", "2"), skill("plain-skill", "")]);
+        let text = render(&picture(&c).unwrap());
+        assert!(text.starts_with("personas: no persona (local)\n"), "{text}");
         assert!(
-            text.contains("  refused: 1 part list (see maid-core map)\n"),
+            text.contains("  unreadable next-skill (local): the my-harness declaration follows contract 2, which this ghost does not know\n"),
             "{text}"
         );
-        assert!(text.contains("  clashes: 1 (mem)\n"), "{text}");
+        assert!(
+            text.contains("  plain-skill: about plain-skill [local, borrowed from local]"),
+            "{text}"
+        );
+        assert!(text.contains("  undeclared: plain-skill\n"), "{text}");
+    }
+
+    #[test]
+    fn a_shell_record_not_understood_is_named_in_the_environment() {
+        use ghost::installed::{Installed, Unit};
+        struct Changed;
+        impl Installed for Changed {
+            fn units(&self, _: Option<&Path>) -> anyhow::Result<Vec<Unit>> {
+                Ok(vec![])
+            }
+            fn not_understood(&self, _: Option<&Path>) -> Vec<String> {
+                vec![
+                    "/c/plugins/installed_plugins.json: shape not understood (Claude Code 9.9.9)"
+                        .into(),
+                ]
+            }
+        }
+        let dir = TempDir::new().unwrap();
+        let mut c = ctx(dir.path());
+        c.shell = Box::new(Changed);
+        let text = render(&picture(&c).unwrap());
+        assert!(
+            text.contains("environment: 0 of 0 bring-ins ready\n  not understood: /c/plugins/installed_plugins.json: shape not understood (Claude Code 9.9.9)\n"),
+            "{text}"
+        );
     }
 
     #[test]

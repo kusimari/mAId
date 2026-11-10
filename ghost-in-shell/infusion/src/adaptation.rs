@@ -1047,8 +1047,8 @@ pub fn decide(
                     p.finding.persona = Some(name.clone());
                 }
                 // Placed again on the ghost as it is now: a pending file
-                // only records what was shown, and the part lists may
-                // have changed since.
+                // only records what was shown, and the ghost may have
+                // changed since.
                 match place(ghost, &p.finding) {
                     Ok((_, _, Action::Unplaced, _)) => {
                         out.push(Outcome {
@@ -1305,7 +1305,7 @@ fn quotes(f: &Finding) -> String {
         .collect()
 }
 
-/// Where a proposal goes, as the part list records it.
+/// Where a proposal goes, as the bring-in's source says.
 fn source_at(source: Option<&Source>) -> String {
     match source {
         Some(Source { at: Some(at), .. }) => at.clone(),
@@ -1340,6 +1340,10 @@ fn propose(
             .and_then(|s| s.rev.as_deref())
             .map(|r| format!(" at {r}"))
             .unwrap_or_default()
+            + &source
+                .and_then(|s| s.installed.as_deref())
+                .map(|d| format!(", installed {d}"))
+                .unwrap_or_default()
     );
     let how = match worktree {
         true => "Work it in a worktree on the source, into a PR.",
@@ -1449,8 +1453,7 @@ fn briefed(ctx: &Ctx, call: &Call) -> Result<Bundle> {
 /// decisions: what was applied.
 pub fn adaptation(ctx: &Ctx, call: &Call) -> Result<Vec<Item>> {
     let input = &call.input;
-    let ghost = Ghost::from_roots(std::slice::from_ref(&ctx.config.parts))
-        .with_context(|| format!("cannot read {}", ctx.config.parts.display()))?;
+    let ghost = ctx.shell.ghost(None)?;
     let item = if !input["dismiss"].is_null() {
         let sessions: Vec<String> = match &input["dismiss"] {
             Value::String(s) if s == "all" => sleep::waiting(&ctx.config)?

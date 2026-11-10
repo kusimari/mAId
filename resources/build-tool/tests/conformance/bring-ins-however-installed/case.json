@@ -1,0 +1,20 @@
+{
+  "about": "a skill put in by hand joins by its own declaration in the part its repository names; a borrowed plugin is declared by the overlay another part ships; a disabled plugin and a unit that declares nothing are not reported",
+  "expect": {
+    "exit": 0,
+    "entries": [],
+    "refused": [],
+    "bring_ins": [
+      {
+        "part": "a",
+        "name": "docs",
+        "state": "ready"
+      },
+      {
+        "part": "garden",
+        "name": "garden",
+        "state": "ready"
+      }
+    ]
+  }
+}

@@ -4,6 +4,7 @@ description: 'Spec-driven dev on a repo with specs/: plan or start a feature, ru
 version: 4.8.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, initiative, public-repo]
 metadata:
+  my-harness.contract: "1"
   my-harness.scope: turn
   my-harness.job: spec-driven feature work on a repo with a spec tree, from plan through gates to close
   my-harness.signals.jobs: plan a feature, run an initiative, act on review comments, close a feature, add to backlog

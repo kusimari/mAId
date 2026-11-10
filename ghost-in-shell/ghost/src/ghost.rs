@@ -1,19 +1,23 @@
-//! Fusion: the ghost, every part's persona and bring-ins in one model,
-//! each persona kept distinct. Derived on every call from the part lists
-//! and each unit's slot, never stored: a part that installs later cannot
-//! call the ghost to refresh a stored copy.
+//! The ghost: every part's persona and bring-ins fused into one model,
+//! each persona kept distinct. Built on every call from what the shell has
+//! installed and each unit's declaration, never stored: a unit installed
+//! later, by any means, joins the next call. See the initiative spec
+//! `harness-core`, "What forms the ghost".
 
 use crate::contract::{self, Declaration, Slot};
-use crate::parts::{self, BringIn as Record, Refused, Route};
+use crate::installed::Installed;
+use crate::parts::{self, BringIn as Record, Route};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
-use std::io;
-use std::path::PathBuf;
+use std::path::Path;
 
 #[derive(Serialize, Debug, Clone, PartialEq)]
 pub struct Persona {
     pub part: String,
     pub persona: Option<String>,
+    /// Whether the part says what it means; without it, its persona is not
+    /// known and none of its units is read for a declaration.
+    pub declared: bool,
 }
 
 /// What the ghost knows of one bring-in's declaration.
@@ -74,33 +78,30 @@ pub struct Ghost {
     pub personas: Vec<Persona>,
     /// In part order, then the order each part lists them.
     pub bring_ins: Vec<BringIn>,
-    /// Bring-in names more than one part records.
+    /// Bring-in names more than one part brings in.
     pub clashes: Vec<String>,
-    pub refused: Vec<Refused>,
+    /// The shell's records it could not read the shape of, each with why.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub not_understood: Vec<String>,
 }
 
 impl Ghost {
-    /// Every part list under each root, fused. Each root is read in turn
-    /// and the parts of all of them make one ghost. Several roots, because
-    /// a shell may be told where parts are by more than one place; there
-    /// is one today (the config's parts dir).
-    pub fn from_roots(roots: &[PathBuf]) -> io::Result<Ghost> {
-        let (mut parts, mut refused) = (vec![], vec![]);
-        for root in roots {
-            let (p, r) = parts::read_all(root)?;
-            parts.extend(p);
-            refused.extend(r);
-        }
-        Ok(Ghost::of(&parts, refused))
+    /// The ghost of what the shell has installed, as seen from `here`.
+    pub fn from(installed: &dyn Installed, here: Option<&Path>) -> anyhow::Result<Ghost> {
+        Ok(Ghost {
+            not_understood: installed.not_understood(here),
+            ..Ghost::of(&parts::of(installed, here)?)
+        })
     }
 
-    /// The ghost of parts already read.
-    fn of(parts: &[parts::Part], refused: Vec<Refused>) -> Ghost {
+    /// The ghost of parts already found.
+    pub fn of(parts: &[parts::Part]) -> Ghost {
         let personas = parts
             .iter()
             .map(|p| Persona {
                 part: p.part.clone(),
                 persona: p.persona.clone(),
+                declared: p.declared,
             })
             .collect();
         let bring_ins: Vec<BringIn> = parts
@@ -142,17 +143,18 @@ impl Ghost {
             personas,
             bring_ins,
             clashes,
-            refused,
+            not_understood: vec![],
         }
     }
 }
 
-/// Shown in place of a secret a part list holds as a value.
+/// Shown in place of a secret held as a value.
 pub const HIDDEN: &str = "(secret, not shown)";
 
-/// The record as the ghost keeps it, and its declaration. A part list is a
-/// plain file, so a secret lives elsewhere and the list only names where;
-/// a secret held as a value makes the bring-in unreadable and is never kept.
+/// The record as the ghost keeps it, and its declaration. A secret lives
+/// elsewhere and a value only names where (`env:<NAME>`); a registration
+/// that holds a secret as written makes the bring-in unreadable, and the
+/// value is never kept.
 fn take(r: &Record) -> (Record, Declared) {
     let slot = match &r.unit {
         None => Slot::Undeclared { description: None },
@@ -190,26 +192,20 @@ fn take(r: &Record) -> (Record, Declared) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::installed::{Kind, Unit};
     use serde_json::json;
     use std::fs;
-    use std::path::Path;
     use tempfile::TempDir;
 
-    /// The ghost of the one parts dir `dir`.
-    fn one(dir: &Path) -> Ghost {
-        Ghost::from_roots(&[dir.to_path_buf()]).unwrap()
-    }
-
-    fn list(dir: &Path, part: &str, persona: &str, bring_ins: serde_json::Value) {
-        let v = json!({"format": 1, "part": part, "harnesses": {}, "persona": persona, "bring_ins": bring_ins});
-        fs::write(dir.join(format!("{part}.json")), v.to_string()).unwrap();
+    fn part(v: serde_json::Value) -> parts::Part {
+        parts::Part::from_json(&v).unwrap()
     }
 
     fn skill(dir: &Path, name: &str, meta: &str) -> String {
         let p = dir.join(format!("{name}.md"));
         fs::write(
             &p,
-            format!("---\nname: {name}\ndescription: about {name}\nmetadata:\n{meta}---\n"),
+            format!("---\nname: {name}\ndescription: about {name}\nmetadata:\n  my-harness.contract: \"1\"\n{meta}---\n"),
         )
         .unwrap();
         p.display().to_string()
@@ -223,14 +219,11 @@ mod tests {
             "notes",
             "  my-harness.scope: turn\n  my-harness.job: capture notes\n",
         );
-        list(
-            dir.path(),
-            "home",
-            "personal",
-            json!([{"name": "notes", "unit": {"standard": "skill", "path": notes}}]),
-        );
-        list(dir.path(), "job", "work", json!([{"name": "triage"}]));
-        let g = one(dir.path());
+        let g = Ghost::of(&[
+            part(json!({"part": "home", "persona": "personal",
+                "bring_ins": [{"name": "notes", "unit": {"standard": "skill", "path": notes}}]})),
+            part(json!({"part": "job", "persona": "work", "bring_ins": [{"name": "triage"}]})),
+        ]);
         let personas: Vec<_> = g
             .personas
             .iter()
@@ -239,18 +232,6 @@ mod tests {
         assert_eq!(
             personas,
             [("home", Some("personal")), ("job", Some("work"))]
-        );
-        let b: Vec<_> = g
-            .bring_ins
-            .iter()
-            .map(|b| (b.part.as_str(), b.name.as_str(), b.persona.as_deref()))
-            .collect();
-        assert_eq!(
-            b,
-            [
-                ("home", "notes", Some("personal")),
-                ("job", "triage", Some("work"))
-            ]
         );
         assert_eq!(g.bring_ins[0].job(), Some("capture notes"));
         assert_eq!(
@@ -262,81 +243,21 @@ mod tests {
 
     #[test]
     fn the_same_bring_in_from_two_parts_is_kept_twice_and_a_clash() {
-        let dir = TempDir::new().unwrap();
-        list(dir.path(), "a", "personal", json!([{"name": "mem"}]));
-        list(
-            dir.path(),
-            "b",
-            "work",
-            json!([{"name": "mem"}, {"name": "other"}]),
-        );
-        let g = one(dir.path());
+        let g = Ghost::of(&[
+            part(json!({"part": "a", "bring_ins": [{"name": "mem"}]})),
+            part(json!({"part": "b", "bring_ins": [{"name": "mem"}, {"name": "other"}]})),
+        ]);
         assert_eq!(g.bring_ins.iter().filter(|b| b.name == "mem").count(), 2);
         assert_eq!(g.clashes, ["mem"]);
-    }
-
-    #[test]
-    fn several_roots_fuse_into_one_ghost_in_the_order_given() {
-        let (one_dir, two_dir) = (TempDir::new().unwrap(), TempDir::new().unwrap());
-        list(one_dir.path(), "a", "p", json!([{"name": "x"}]));
-        list(
-            two_dir.path(),
-            "b",
-            "q",
-            json!([{"name": "x"}, {"name": "y"}]),
-        );
-        let roots = [one_dir.path().to_path_buf(), two_dir.path().to_path_buf()];
-        let g = Ghost::from_roots(&roots).unwrap();
-        let parts: Vec<&str> = g.personas.iter().map(|p| p.part.as_str()).collect();
-        assert_eq!(parts, ["a", "b"]);
-        let names: Vec<&str> = g.bring_ins.iter().map(|b| b.name.as_str()).collect();
-        assert_eq!(names, ["x", "x", "y"]);
-        assert_eq!(g.clashes, ["x"], "a name two roots record clashes too");
-        // One root is that parts dir and nothing else.
-        let first = Ghost::from_roots(&roots[..1]).unwrap();
-        assert_eq!(
-            first
-                .personas
-                .iter()
-                .map(|p| (p.part.as_str(), p.persona.as_deref()))
-                .collect::<Vec<_>>(),
-            [("a", Some("p"))]
-        );
-        assert_eq!(
-            first
-                .bring_ins
-                .iter()
-                .map(|b| (b.part.as_str(), b.name.as_str()))
-                .collect::<Vec<_>>(),
-            [("a", "x")]
-        );
-        assert!(first.clashes.is_empty() && first.refused.is_empty());
-    }
-
-    #[test]
-    fn the_ghost_does_not_depend_on_the_order_files_are_written() {
-        let (one_dir, two_dir) = (TempDir::new().unwrap(), TempDir::new().unwrap());
-        list(one_dir.path(), "a", "p", json!([{"name": "x"}]));
-        list(one_dir.path(), "b", "q", json!([{"name": "y"}]));
-        list(two_dir.path(), "b", "q", json!([{"name": "y"}]));
-        list(two_dir.path(), "a", "p", json!([{"name": "x"}]));
-        assert_eq!(one(one_dir.path()), one(two_dir.path()));
     }
 
     #[test]
     fn a_secret_held_as_a_value_makes_that_bring_in_unreadable_and_is_never_echoed() {
         let dir = TempDir::new().unwrap();
         let s = skill(dir.path(), "s", "  my-harness.scope: session\n  my-harness.job: j\n  my-harness.config.token: \"[secret] t\"\n");
-        list(
-            dir.path(),
-            "a",
-            "p",
-            json!([
-                {"name": "leaky", "unit": {"standard": "skill", "path": s}, "values": {"token": "hunter2"}},
-                {"name": "fine", "unit": {"standard": "skill", "path": s}, "values": {"token": "env:TOKEN"}}
-            ]),
-        );
-        let g = one(dir.path());
+        let g = Ghost::of(&[part(json!({"part": "a", "persona": "p", "bring_ins": [
+            {"name": "leaky", "unit": {"standard": "skill", "path": s}, "values": {"token": "hunter2"}},
+            {"name": "fine", "unit": {"standard": "skill", "path": s}, "values": {"token": "env:TOKEN"}}]}))]);
         match &g.bring_ins[0].declared {
             Declared::Unreadable { why } => assert!(
                 why.contains("env:<NAME>") && !why.contains("hunter2"),
@@ -345,23 +266,14 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert!(g.bring_ins[1].declaration().is_some());
-        let all = serde_json::to_string(&g).unwrap();
-        assert!(!all.contains("hunter2"), "{all}");
+        assert!(!serde_json::to_string(&g).unwrap().contains("hunter2"));
     }
 
     #[test]
     fn an_unreadable_record_or_unit_is_kept_with_why() {
-        let dir = TempDir::new().unwrap();
-        list(
-            dir.path(),
-            "a",
-            "p",
-            json!([
-                {"name": "bad", "route": "sometimes"},
-                {"name": "gone", "unit": {"standard": "skill", "path": "/nowhere/SKILL.md"}}
-            ]),
-        );
-        let g = one(dir.path());
+        let g = Ghost::of(&[part(json!({"part": "a", "bring_ins": [
+            {"name": "bad", "route": "sometimes"},
+            {"name": "gone", "unit": {"standard": "skill", "path": "/nowhere/SKILL.md"}}]}))]);
         assert!(g.bring_ins[0].record.is_none());
         assert!(matches!(
             g.bring_ins[0].declared,
@@ -370,5 +282,20 @@ mod tests {
         assert!(
             matches!(&g.bring_ins[1].declared, Declared::Unreadable { why } if why.contains("cannot read"))
         );
+    }
+
+    #[test]
+    fn the_ghost_is_built_from_what_is_installed() {
+        let dir = TempDir::new().unwrap();
+        let d = dir.path().join("garden");
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("SKILL.md"), "---\nname: garden\ndescription: d\nmetadata:\n  my-harness.contract: \"2\"\n  my-harness.scope: turn\n  my-harness.job: j\n---\n").unwrap();
+        let mut u = Unit::new(Kind::Skill, "garden");
+        u.manifest = Some(d.join("SKILL.md"));
+        let g = Ghost::from(&vec![u], None).unwrap();
+        match &g.bring_ins[0].declared {
+            Declared::Unreadable { why } => assert!(why.contains("contract 2"), "{why}"),
+            other => panic!("an unknown contract is refused and named: {other:?}"),
+        }
     }
 }

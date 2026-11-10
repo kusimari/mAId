@@ -5,8 +5,16 @@
     "entries": [],
     "refused": [],
     "bring_ins": [
-      { "part": "a", "name": "fresh", "state": "ready" },
-      { "part": "a", "name": "kept-gone", "state": "not ready" }
+      {
+        "part": "a",
+        "name": "fresh",
+        "state": "ready"
+      },
+      {
+        "part": "a",
+        "name": "kept-gone",
+        "state": "not ready"
+      }
     ]
   }
 }

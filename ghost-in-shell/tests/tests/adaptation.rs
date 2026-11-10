@@ -17,6 +17,7 @@ use tempfile::TempDir;
 
 const SESSION: &str = "0b7c6a8e-1111-4222-8333-944455556666";
 use ghost_in_shell_tests::core;
+use ghost_in_shell_tests::ClaudeHome;
 
 fn pensieve() -> String {
     std::env::var("MAID_TEST_PENSIEVE")
@@ -135,7 +136,7 @@ impl Home {
         fs::write(index, i).unwrap();
     }
 
-    /// A HOME with mAId's part (its memory on a store that is a clone of a
+    /// A HOME with mAId's install manifest (its memory on a store that is a clone of a
     /// bare remote, writing-style, the borrowed document skills, the
     /// adapter), a second part with its own memory, and the fixture
     /// session under Claude Code's projects dir.
@@ -160,61 +161,81 @@ impl Home {
             "## Learned rules\n\n- 2026-05-22 · prefer \"to\" over \"in order to\"\n  · source: explicit teach\n",
         )
         .unwrap();
-        let adapter = h.join("units/claude-plugin.json");
-        fs::create_dir_all(adapter.parent().unwrap()).unwrap();
+        // mAId's install as Claude Code holds it: its plugin (the adapter's
+        // declaration, writing-style, reflect, the memory's declaration and
+        // the document skills' overlay), the vendor's plugin, the memory.
+        let plugin = h.join("units/maid-plugin");
         let decl: Value = serde_json::from_str(
             &fs::read_to_string(ghost_in_shell_tests::plugin().join("my-harness.json")).unwrap(),
         )
         .unwrap();
-        fs::write(
-            &adapter,
-            json!({"name": "maid", "extensions": {"my-harness": decl}}).to_string(),
-        )
-        .unwrap();
-        let work_store = h.join("work-store");
-        fs::create_dir_all(&work_store).unwrap();
-        let work_server = h.join("units/work-memory.json");
-        fs::write(
-            &work_server,
-            json!({"name": "work-memory", "_meta": {"my-harness": {"scope": "session", "job": "work memory",
-                "config": {"store": {"about": "s"}, "index": {"about": "i"}, "serve": {"about": "c"}},
+        let put = |at: PathBuf, text: String| {
+            fs::create_dir_all(at.parent().unwrap()).unwrap();
+            fs::write(at, text).unwrap();
+        };
+        put(
+            plugin.join(".claude-plugin/plugin.json"),
+            json!({"name": "maid", "version": "abc123", "repository": "https://example.org/me/maid",
+                "extensions": {"my-harness": decl}})
+            .to_string(),
+        );
+        for (from, to) in [
+            (
+                content().join("skills/writing-style/SKILL.md"),
+                "skills/writing-style/SKILL.md",
+            ),
+            (
+                ghost_in_shell_tests::plugin().join("skills/reflect/SKILL.md"),
+                "skills/reflect/SKILL.md",
+            ),
+            (
+                content().join("servers/personal-memory/server.json"),
+                "servers/personal-memory/server.json",
+            ),
+            (
+                content().join("overlays/document-skills/plugin.json"),
+                "overlays/document-skills/plugin.json",
+            ),
+        ] {
+            put(plugin.join(to), fs::read_to_string(from).unwrap());
+        }
+        let vendor = h.join("units/vendor");
+        put(
+            vendor.join(".claude-plugin/plugin.json"),
+            r#"{"name":"document-skills"}"#.into(),
+        );
+        let claude = ClaudeHome::at(h);
+        claude.plugin("maid@maid", &plugin);
+        claude.marketplace(
+            "anthropic-agent-skills",
+            "https://example.org/vendor/skills",
+        );
+        claude.plugin("document-skills@anthropic-agent-skills", &vendor);
+        let store = h.join("store").display().to_string();
+        claude.mcp("personal-memory", &pensieve(), &["--store", &store]);
+        // A second part: its own plugin shipping its memory's declaration.
+        let work = h.join("units/work-plugin");
+        put(
+            work.join(".claude-plugin/plugin.json"),
+            r#"{"name":"work","repository":"https://example.org/me/work-part"}"#.into(),
+        );
+        put(
+            work.join("servers/work-memory/server.json"),
+            json!({"name": "work-memory", "_meta": {"my-harness": {"contract": 1, "scope": "session", "job": "work memory",
+                "persona": "work",
+                "config": {"store": {"about": "s", "bind": "arg:--store"}, "index": {"about": "i", "bind": "value:memory/MEMORY.md"},
+                    "serve": {"about": "c", "bind": "command"}},
                 "state": {"permanent": "store", "promote": "off"}}}})
             .to_string(),
-        )
-        .unwrap();
-        let project =
-            json!({"kind": "project", "at": "https://example.org/me/maid", "rev": "abc123"});
-        let store = h.join("store");
-        let mine = json!({"format": 1, "part": "maid-harness", "persona": "personal",
-        "harnesses": {"claude": [{"kind": "plugin", "name": "maid@maid"}]},
-        "bring_ins": [
-            {"name": "personal-memory",
-             "unit": {"standard": "mcp", "path": content().join("servers/personal-memory/server.json")},
-             "source": {"kind": "project", "at": "https://example.org/me/pensieve", "rev": "p1"},
-             "values": {"store": store, "index": "memory/MEMORY.md",
-                "serve": json!([pensieve(), "--store", store]).to_string()}},
-            {"name": "writing-style",
-             "unit": {"standard": "skill", "path": content().join("skills/writing-style/SKILL.md")},
-             "source": project,
-             "values": {"learned": h.join(".config/maid/writing-style/learned.md"),
-                "promoted": h.join(".config/maid/writing-style/promoted.md")}},
-            {"name": "reflect",
-             "unit": {"standard": "skill", "path": ghost_in_shell_tests::plugin().join("skills/reflect/SKILL.md")},
-             "source": project},
-            {"name": "document-skills",
-             "unit": {"standard": "plugin", "path": content().join("overlays/document-skills/plugin.json")},
-             "source": {"kind": "vendor", "at": "https://example.org/vendor/skills", "rev": "v1"},
-             "tenure": {"kind": "borrowed", "from": "a vendor", "since": "2026-10-01"}},
-            {"name": "claude-adapter", "unit": {"standard": "plugin", "path": adapter}, "source": project}
-        ]});
-        let theirs = json!({"format": 1, "part": "work-part", "persona": "work", "harnesses": {},
-            "bring_ins": [{"name": "work-memory", "unit": {"standard": "mcp", "path": work_server},
-                "values": {"store": work_store, "index": "memory/MEMORY.md",
-                    "serve": json!([pensieve(), "--store", work_store]).to_string()}}]});
-        let parts = h.join(".local/state/my-harness/parts");
-        fs::create_dir_all(&parts).unwrap();
-        fs::write(parts.join("maid-harness.json"), mine.to_string()).unwrap();
-        fs::write(parts.join("work-part.json"), theirs.to_string()).unwrap();
+        );
+        claude.plugin("work@work", &work);
+        let work_store = h.join("work-store");
+        fs::create_dir_all(&work_store).unwrap();
+        claude.mcp(
+            "work-memory",
+            &pensieve(),
+            &["--store", &work_store.display().to_string()],
+        );
         let home = Home { dir };
         home.save_rule(
             "no-em-dashes",
@@ -280,13 +301,13 @@ fn walk(dir: &Path, out: &mut Vec<(PathBuf, Vec<u8>)>) {
 fn reflection() -> String {
     json!({
         "findings": [
-            {"thing": "maid-harness/personal-memory", "kind": "habit", "tier": "permanent",
+            {"thing": "maid/personal-memory", "kind": "habit", "tier": "permanent",
              "title": "Use tr, not sed", "type": "feedback",
              "change": "shell scripts use tr, not sed",
              "entry": "In shell scripts, use tr for case changes; never sed.",
              "evidence": [{"quote": "no, use tr, not sed: we never use sed in these scripts"}]}
         ],
-        "corrections": [{"thing": "maid-harness/personal-memory"}]
+        "corrections": [{"thing": "maid/personal-memory"}]
     })
     .to_string()
 }
@@ -321,7 +342,7 @@ fn reflect(home: &Home, reason: &str) -> String {
         brief.starts_with(&format!("Reflect on session {SESSION}.")),
         "{brief}"
     );
-    assert!(brief.contains("maid-harness/personal-memory: "), "{brief}");
+    assert!(brief.contains("maid/personal-memory: "), "{brief}");
     home.text(
         &[&["adaptation"][..], &s, &["--input", "-"]].concat(),
         Some(&reflection()),
@@ -339,9 +360,9 @@ fn close_proposes_one_batch_and_ok_writes_the_habit_and_files_the_move_and_nothi
     let batch = reflect(&home, "close");
     for want in [
         "2 to decide",
-        "  saved in memory this session (it stays there until you remove it):\n    maid-harness/writing-style, in maid-harness/personal-memory [personal] /memories/writing-style-no-em-dashes.md: \"Punctuation: no em dashes in commit messages\"\n",
-        "1. habit, maid-harness/personal-memory memory [personal]: add feedback \"Use tr, not sed\" (shell scripts use tr, not sed): \"In shell scripts",
-        "2. backlog item, maid-harness/writing-style (on https://example.org/me/maid): move 2 taught rules into writing-style's text",
+        "  saved in memory this session (it stays there until you remove it):\n    maid/writing-style, in maid/personal-memory [personal] /memories/writing-style-no-em-dashes.md: \"Punctuation: no em dashes in commit messages\"\n",
+        "1. habit, maid/personal-memory memory [personal]: add feedback \"Use tr, not sed\" (shell scripts use tr, not sed): \"In shell scripts",
+        "2. backlog item, maid/writing-style (on https://example.org/me/maid): move 2 taught rules into writing-style's text",
     ] {
         assert!(batch.contains(want), "{want:?} in:\n{batch}");
     }
@@ -402,19 +423,19 @@ fn close_proposes_one_batch_and_ok_writes_the_habit_and_files_the_move_and_nothi
     );
     let proposals = home
         .path()
-        .join(".local/state/my-harness/proposals/maid-harness-writing-style");
+        .join(".local/state/my-harness/proposals/maid-writing-style");
     let files: Vec<_> = fs::read_dir(proposals).unwrap().flatten().collect();
     assert_eq!(files.len(), 1);
     let proposal = fs::read_to_string(files[0].path()).unwrap();
     for want in [
         "- Punctuation: no em dashes in commit messages\n",
         "- prefer \"to\" over \"in order to\"\n",
-        "https://example.org/me/maid at abc123",
+        "https://example.org/me/maid at abc123, installed 2026-10-31",
     ] {
         assert!(proposal.contains(want), "{want:?} in:\n{proposal}");
     }
     assert!(
-        proposal.trim_end().ends_with("remove these memories so the rules are not in two places: maid-harness/personal-memory /memories/writing-style-no-em-dashes.md."),
+        proposal.trim_end().ends_with("remove these memories so the rules are not in two places: maid/personal-memory /memories/writing-style-no-em-dashes.md."),
         "{proposal}"
     );
 
@@ -427,7 +448,7 @@ fn close_proposes_one_batch_and_ok_writes_the_habit_and_files_the_move_and_nothi
     let ledger = home.text(&["ledger"], None);
     assert!(ledger.contains("findings decided/accepted"), "{ledger}");
     assert!(
-        ledger.contains("  maid-harness/writing-style: 1, 0, 0, 0, 0, 0, 1/1"),
+        ledger.contains("  maid/writing-style: 1, 0, 0, 0, 0, 0, 1/1"),
         "{ledger}"
     );
     assert!(
@@ -448,9 +469,9 @@ fn a_correction_saved_in_the_session_is_listed_and_ok_files_only_the_move() {
     let batch = reflect(&home, "close");
     for want in [
         "1 to decide",
-        "  saved in memory this session (it stays there until you remove it):\n    maid-harness/writing-style, in maid-harness/personal-memory [personal] /memories/writing-style-no-em-dashes.md: \"Punctuation: no em dashes in commit messages\"\n    maid-harness/personal-memory [personal] /memories/use-tr-not-sed.md: \"shell scripts use tr, not sed\"\n",
-        "1. backlog item, maid-harness/writing-style (on https://example.org/me/maid): move 2 taught rules into writing-style's text",
-        "shell scripts use tr, not sed: saved in memory this session (maid-harness/personal-memory /memories/use-tr-not-sed.md)",
+        "  saved in memory this session (it stays there until you remove it):\n    maid/writing-style, in maid/personal-memory [personal] /memories/writing-style-no-em-dashes.md: \"Punctuation: no em dashes in commit messages\"\n    maid/personal-memory [personal] /memories/use-tr-not-sed.md: \"shell scripts use tr, not sed\"\n",
+        "1. backlog item, maid/writing-style (on https://example.org/me/maid): move 2 taught rules into writing-style's text",
+        "shell scripts use tr, not sed: saved in memory this session (maid/personal-memory /memories/use-tr-not-sed.md)",
     ] {
         assert!(batch.contains(want), "{want:?} in:\n{batch}");
     }
@@ -465,7 +486,7 @@ fn a_correction_saved_in_the_session_is_listed_and_ok_files_only_the_move() {
     );
     let proposals = home
         .path()
-        .join(".local/state/my-harness/proposals/maid-harness-writing-style");
+        .join(".local/state/my-harness/proposals/maid-writing-style");
     let files: Vec<_> = fs::read_dir(proposals).unwrap().flatten().collect();
     assert_eq!(files.len(), 1);
     let proposal = fs::read_to_string(files[0].path()).unwrap();
@@ -496,7 +517,7 @@ fn a_declined_move_is_not_offered_again_until_a_new_rule_is_saved() {
     home.save_rule("oxford-comma", "Punctuation: Oxford comma, always");
     let third = reflect(&home, "close");
     assert!(
-        third.contains("backlog item, maid-harness/writing-style (on https://example.org/me/maid): move 1 taught rule into writing-style's text"),
+        third.contains("backlog item, maid/writing-style (on https://example.org/me/maid): move 1 taught rule into writing-style's text"),
         "a new rule brings the move back, with only what is new:\n{third}"
     );
     let proposals = home.path().join(".local/state/my-harness/proposals");
@@ -611,7 +632,7 @@ fn a_quote_only_in_what_came_after_the_brief_is_not_evidence() {
         ),
     )
     .unwrap();
-    let findings = json!({"findings": [{"thing": "maid-harness/personal-memory", "kind": "habit",
+    let findings = json!({"findings": [{"thing": "maid/personal-memory", "kind": "habit",
         "title": "Force-push", "type": "feedback", "change": "force-push", "entry": made_up,
         "evidence": [{"quote": made_up}]}]});
     let batch = home.text(

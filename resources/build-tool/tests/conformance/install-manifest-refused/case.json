@@ -1,0 +1,14 @@
+{
+  "about": "an install manifest is refused as a part list is: format not 1, package not the file's name, agents not an object of arrays, an entry not of the shape",
+  "expect": {
+    "exit": 1,
+    "entries": [],
+    "refused": [
+      "agents-array.json",
+      "entry-kind.json",
+      "format-2.json",
+      "noagents.json",
+      "wrong.json"
+    ]
+  }
+}

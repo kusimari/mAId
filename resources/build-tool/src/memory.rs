@@ -2,7 +2,7 @@
 //! server bound to it, and Claude's own automatic memory turned off. See
 //! project.md "My harness", Memory.
 
-use crate::part::{Item, What, ANOTHER_PART};
+use crate::install_record::{Item, What, ANOTHER_PART};
 use crate::settings::{read_settings, write_atomic, write_settings, Outcome, NO_CLI};
 use crate::shared::claude_env;
 use anyhow::{anyhow, bail, Context, Result};
@@ -280,7 +280,7 @@ pub fn uninstall_server(
 // Claude's automatic memory, off: one value (rules 2 and 3).
 // ─────────────────────────────────────────────────────────────────
 
-/// What mAId owns of the setting: what its part list says it set or
+/// What mAId owns of the setting: what its install record says it set or
 /// adopted, and the values other parts' lists record (never taken).
 #[derive(Debug, Default)]
 pub struct Ownership {

@@ -54,10 +54,12 @@ fn run(case: &Path, cat: &Path) -> Result<Option<String>, String> {
         tmp.path().join("home"),
         tmp.path().join("bin"),
     );
+    let manifests = tmp.path().join("install-manifests");
     copy(&case.join("parts"), &parts, case);
+    copy(&case.join("install-manifests"), &manifests, case);
     copy(&case.join("home"), &home, case);
     copy(&case.join("units"), &tmp.path().join("units"), case);
-    run_dir_in(&parts, tmp.path());
+    run_dir_in(tmp.path(), tmp.path());
     fs::create_dir_all(&home).unwrap();
     fs::create_dir_all(&bin).unwrap();
     for (cli, answers) in spec["clis"].as_object().into_iter().flatten() {
@@ -83,7 +85,7 @@ fn run(case: &Path, cat: &Path) -> Result<Option<String>, String> {
         true => Ok(Some(
             "a path without read permission can still be read (root?)".into(),
         )),
-        false => compare(&spec, &parts, &home, &bin),
+        false => compare(&spec, &[manifests, parts], &home, &bin),
     }
 }
 
@@ -99,7 +101,13 @@ impl Drop for Restore {
     }
 }
 
-fn compare(spec: &Value, parts: &Path, home: &Path, bin: &Path) -> Result<Option<String>, String> {
+/// `roots`: the install-manifest folder, then the old parts folder.
+fn compare(
+    spec: &Value,
+    roots: &[PathBuf; 2],
+    home: &Path,
+    bin: &Path,
+) -> Result<Option<String>, String> {
     let expect = &spec["expect"];
     let harness = spec["harness"].as_str();
     let agent = harness.map(|h| *Agent::ALL.iter().find(|a| a.cli() == h).unwrap());
@@ -118,7 +126,7 @@ fn compare(spec: &Value, parts: &Path, home: &Path, bin: &Path) -> Result<Option
         .flatten()
         .map(|v| v.as_str().unwrap().to_string())
         .collect();
-    let checked = check_in(parts, home, Some(path.clone()), &set, agent);
+    let checked = check_in(roots, home, Some(path.clone()), &set, agent);
     std::env::set_current_dir(cwd).unwrap();
 
     match checked {
@@ -221,7 +229,8 @@ fn compare(spec: &Value, parts: &Path, home: &Path, bin: &Path) -> Result<Option
         .current_dir(bin)
         .env_clear()
         .env("HOME", home)
-        .env("MY_HARNESS_PARTS", parts)
+        .env("INSTALL_MANIFESTS", &roots[0])
+        .env("MY_HARNESS_PARTS", &roots[1])
         .env("PATH", &path)
         .env("CARGO_MANIFEST_DIR", env!("CARGO_MANIFEST_DIR"));
     for name in &set {
@@ -292,11 +301,16 @@ fn stub(case: &Path, tmp: &Path, cli: &str, answers: &Value, cat: &Path) {
     fs::set_permissions(&at, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
-/// A part list names its units by absolute path, so a case writes `@RUN@`
-/// for the run dir and it is filled in here.
-fn run_dir_in(parts: &Path, run: &Path) {
-    for e in fs::read_dir(parts).into_iter().flatten().flatten() {
+/// Claude Code's records and a declaration name files by absolute path, so
+/// a case writes `@RUN@` for the run dir and it is filled in here, in every
+/// file under `dir`.
+fn run_dir_in(dir: &Path, run: &Path) {
+    for e in fs::read_dir(dir).into_iter().flatten().flatten() {
         let p = e.path();
+        if fs::symlink_metadata(&p).is_ok_and(|m| m.is_dir()) {
+            run_dir_in(&p, run);
+            continue;
+        }
         if let Ok(text) = fs::read_to_string(&p) {
             if text.contains("@RUN@") {
                 fs::write(&p, text.replace("@RUN@", &run.display().to_string())).unwrap();

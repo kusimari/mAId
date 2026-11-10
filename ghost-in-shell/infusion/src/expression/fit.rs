@@ -241,7 +241,7 @@ mod tests {
     }
 
     fn turn(job: &str, signals: &str) -> String {
-        format!("  my-harness.scope: turn\n  my-harness.job: {job}\n{signals}")
+        format!("  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: {job}\n{signals}")
     }
 
     fn names(fits: &[Fit]) -> Vec<String> {
@@ -285,7 +285,7 @@ mod tests {
                 ),
             ],
         );
-        let m = Ghost::from_roots(&[dir.path().join("parts")]).unwrap();
+        let m = crate::testing::ghost_of(&dir.path().join("parts"));
         let here = Here::at(Some(&work));
         assert_eq!(names(&fit(&m, "", None, &here)), ["loc", "files"]);
         let below = work.join("deep/er");
@@ -348,7 +348,7 @@ mod tests {
             &[("plain", &turn("capture voice transcripts", ""))],
         );
         part(dir.path(), "b", "personal", &[]);
-        let m = Ghost::from_roots(&[dir.path().join("parts")]).unwrap();
+        let m = crate::testing::ghost_of(&dir.path().join("parts"));
         let h = Here::default();
         assert!(fit(&m, "a voice memo", None, &h).is_empty());
         assert_eq!(
@@ -378,11 +378,11 @@ mod tests {
             .iter()
             .map(|(a, b)| (a.as_str(), b.as_str()))
             .collect();
-        let session = "  my-harness.scope: session\n  my-harness.job: deploy things\n  my-harness.signals.jobs: deploy\n";
+        let session = "  my-harness.contract: \"1\"\n  my-harness.scope: session\n  my-harness.job: deploy things\n  my-harness.signals.jobs: deploy\n";
         all.push(("mem", session));
         all.push(("bare", "  other.key: x\n"));
         part(dir.path(), "a", "personal", &all);
-        let m = Ghost::from_roots(&[dir.path().join("parts")]).unwrap();
+        let m = crate::testing::ghost_of(&dir.path().join("parts"));
         let fits = fit(&m, "deploy the release", None, &Here::default());
         assert_eq!(names(&fits), ["s4", "s0", "s1"]);
         assert_eq!(fits[0].score, 2);
@@ -420,7 +420,7 @@ mod tests {
                 &turn("j", "  my-harness.signals.files: service.toml\n"),
             )],
         );
-        let m = Ghost::from_roots(&[dir.path().join("parts")]).unwrap();
+        let m = crate::testing::ghost_of(&dir.path().join("parts"));
         assert_eq!(
             persona(&m, &Here::at(Some(&home))).as_deref(),
             Some("personal")
@@ -437,7 +437,7 @@ mod tests {
         let store = dir.path().join("store");
         fs::create_dir_all(store.join("memory")).unwrap();
         let server = dir.path().join("server.json");
-        let decl = json!({"scope": "session", "job": "memory",
+        let decl = json!({"contract": 1, "scope": "session", "job": "memory",
             "config": {"store": {"about": "s"}}, "state": {"permanent": "store"}});
         fs::write(
             &server,
@@ -449,7 +449,7 @@ mod tests {
         let v = json!({"format": 1, "part": "theirs", "harnesses": {}, "persona": "work",
             "bring_ins": [{"name": "m", "unit": {"standard": "mcp", "path": server}, "values": {"store": store}}]});
         fs::write(parts.join("theirs.json"), v.to_string()).unwrap();
-        let m = Ghost::from_roots(std::slice::from_ref(&parts)).unwrap();
+        let m = crate::testing::ghost_of(&parts);
         assert_eq!(
             persona(&m, &Here::at(Some(&store.join("memory")))).as_deref(),
             Some("work")
@@ -461,7 +461,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         part(dir.path(), "a", "personal", &[]);
         part(dir.path(), "b", "personal", &[]);
-        let m = Ghost::from_roots(&[dir.path().join("parts")]).unwrap();
+        let m = crate::testing::ghost_of(&dir.path().join("parts"));
         assert_eq!(persona(&m, &Here::default()).as_deref(), Some("personal"));
     }
 }

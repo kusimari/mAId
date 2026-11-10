@@ -4,6 +4,7 @@ description: Drive my logged-in Chrome — open a page, navigate, fill a form, c
 version: 1.0.1
 tags: [browser, chrome, mcp, automation, web, forms, navigation, safety]
 metadata:
+  my-harness.contract: "1"
   my-harness.scope: turn
   my-harness.job: drive my logged-in Chrome on allowlisted sites, attended
   my-harness.signals.jobs: open a page, fill a form, click, read a value off a page

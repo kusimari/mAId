@@ -7,6 +7,8 @@
 use crate::expression::delivery;
 use ghost::config::Config;
 use ghost::environment::Host;
+use ghost::installed::Installed;
+use ghost::Ghost;
 use serde::Serialize;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -119,6 +121,20 @@ pub struct Ctx {
     pub config: Config,
     pub host: Host,
     pub sources: Box<dyn crate::experience::source::Sources>,
+    /// The shell the ghost is in, which says what is installed.
+    pub shell: Box<dyn Shell>,
+}
+
+/// The shell the ghost is infused into: the ghost as it is there now.
+/// Every shell whose adapter says what it has `Installed` is one.
+pub trait Shell {
+    fn ghost(&self, here: Option<&std::path::Path>) -> anyhow::Result<Ghost>;
+}
+
+impl<T: Installed> Shell for T {
+    fn ghost(&self, here: Option<&std::path::Path>) -> anyhow::Result<Ghost> {
+        Ghost::from(self, here)
+    }
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 //! The binary, as a hook or a person calls it: a bare environment holding
-//! only HOME, a temp state dir with mAId's list and a fixture second part.
+//! only HOME, whose Claude Code has mAId's part and a second part installed.
 
 use serde_json::{json, Value};
 use std::fs;
@@ -7,36 +7,56 @@ use std::path::Path;
 use std::process::{Command, Output};
 use tempfile::TempDir;
 
-fn setup() -> TempDir {
-    let home = TempDir::new().unwrap();
-    let parts = home.path().join(".local/state/my-harness/parts");
-    fs::create_dir_all(&parts).unwrap();
-    let skill = home.path().join("notes/SKILL.md");
-    fs::create_dir_all(skill.parent().unwrap()).unwrap();
+/// A plugin at `<home>/<name>` of the repo `repo`, with a skill `notes`
+/// when given and the declaration of a memory server for `persona`.
+fn plugin(home: &Path, name: &str, repo: &str, persona: &str, notes: bool) -> std::path::PathBuf {
+    let at = home.join(name);
+    fs::create_dir_all(at.join(".claude-plugin")).unwrap();
     fs::write(
-        &skill,
-        "---\nname: notes\ndescription: capture notes\nmetadata:\n  my-harness.scope: turn\n  my-harness.job: capture a note\n---\n",
+        at.join(".claude-plugin/plugin.json"),
+        json!({"name": name, "repository": repo}).to_string(),
     )
     .unwrap();
-    let store = home.path().join("work-store");
-    fs::create_dir_all(&store).unwrap();
-    let server = home.path().join("server.json");
-    let decl = json!({"scope": "session", "job": "memory for work",
-        "config": {"store": {"about": "the store"}}, "state": {"local": "store"}});
+    if notes {
+        fs::create_dir_all(at.join("skills/notes")).unwrap();
+        fs::write(
+            at.join("skills/notes/SKILL.md"),
+            "---\nname: notes\ndescription: capture notes\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: capture a note\n---\n",
+        )
+        .unwrap();
+    }
+    let decl = json!({"contract": 1, "scope": "session", "job": format!("memory for {persona}"),
+        "persona": persona,
+        "config": {"store": {"about": "the store", "bind": "arg:--store"}}, "state": {"permanent": "store", "promote": "off"}});
+    let server = at.join(format!("servers/{persona}-memory/server.json"));
+    fs::create_dir_all(server.parent().unwrap()).unwrap();
     fs::write(
         &server,
-        json!({"name": "work-memory", "_meta": {"my-harness": decl}}).to_string(),
+        json!({"name": format!("{persona}-memory"), "_meta": {"my-harness": decl}}).to_string(),
     )
     .unwrap();
-    let mine = json!({"format": 1, "part": "maid-harness", "persona": "personal",
-        "harnesses": {"claude": [{"kind": "plugin", "name": "maid@maid"}]},
-        "bring_ins": [{"name": "notes", "unit": {"standard": "skill", "path": skill},
-            "source": {"kind": "project", "rev": "abc"}}]});
-    let theirs = json!({"format": 1, "part": "work-part", "harnesses": {}, "persona": "work",
-        "bring_ins": [{"name": "work-memory", "unit": {"standard": "mcp", "path": server},
-            "values": {"store": store}}]});
-    fs::write(parts.join("maid-harness.json"), mine.to_string()).unwrap();
-    fs::write(parts.join("work-part.json"), theirs.to_string()).unwrap();
+    at
+}
+
+/// A HOME whose Claude Code has mAId's part (its notes and memory) and a
+/// second part with its own memory.
+fn setup() -> TempDir {
+    let home = TempDir::new().unwrap();
+    let claude = ghost_in_shell_tests::ClaudeHome::at(home.path());
+    let h = home.path();
+    claude.plugin(
+        "maid@maid",
+        &plugin(h, "maid", "https://example.org/me/mAId", "personal", true),
+    );
+    claude.plugin(
+        "work@work",
+        &plugin(h, "work", "https://example.org/me/work-part", "work", false),
+    );
+    for (server, store) in [("personal-memory", "store"), ("work-memory", "work-store")] {
+        fs::create_dir_all(h.join(store)).unwrap();
+        let store = h.join(store).display().to_string();
+        claude.mcp(server, "/bin/pensieve", &["--store", &store]);
+    }
     home
 }
 
@@ -64,10 +84,10 @@ fn genome_on_demand_shows_both_parts_with_no_checkout_and_a_bare_environment() {
     let home = setup();
     let out = text(home.path(), &["genome"]);
     for want in [
-        "personas: personal (maid-harness), work (work-part)",
+        "personas: personal (mAId), work (work-part)",
         "  work-memory: memory for work [work, own]; state: ",
         "  notes: capture a note [personal, own]",
-        "environment: 2 of 2 bring-ins ready",
+        "environment: 3 of 3 bring-ins ready",
         "pending: 0 decisions",
     ] {
         assert!(out.contains(want), "{want:?} in:\n{out}");
@@ -135,7 +155,7 @@ fn map_and_environment_print_their_views() {
     assert_eq!(map["bring_ins"][0]["route"], "worktree");
     assert_eq!(map["bring_ins"][0]["declared"]["is"], "declared");
     let env = text(home.path(), &["environment"]);
-    assert!(env.contains("ready       notes (maid-harness)"), "{env}");
+    assert!(env.contains("ready       notes (mAId)"), "{env}");
 }
 
 #[test]

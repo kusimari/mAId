@@ -137,11 +137,20 @@ fn shipped_skills_declare_the_contract() {
             panic!("{name} is not declared");
         };
         assert_eq!(d.scope, Scope::Turn, "{name}");
+        assert_eq!(d.contract, 1, "{name}");
         assert!(!d.job.is_empty(), "{name}");
+        // Its repository is the plugin's it ships in.
+        assert_eq!(d.repository, None, "{name}");
         // A skill reads a location only where the session names it, so no
-        // run reaches the person's real config through a default.
+        // run reaches the person's real config through a default. Where a
+        // config key binds is the ghost's to resolve and name.
         for file in files_under(dir) {
-            let text = std::fs::read_to_string(&file).unwrap_or_default();
+            let text: String = std::fs::read_to_string(&file)
+                .unwrap_or_default()
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("my-harness.bind."))
+                .collect::<Vec<_>>()
+                .join("\n");
             for default in [
                 "XDG_CONFIG_HOME",
                 "~/.config",
@@ -166,6 +175,10 @@ fn shipped_skills_declare_the_contract() {
             "writing-style" => {
                 assert_eq!(keys, ["learned", "promoted"]);
                 assert!(d.config.values().all(|k| k.optional));
+                assert!(d
+                    .config
+                    .values()
+                    .all(|k| k.bind.as_deref().is_some_and(|b| b.starts_with("path:"))));
                 assert!(d.job.contains("persona's memory"), "{}", d.job);
             }
             _ => assert!(keys.is_empty(), "{name} binds no config"),
@@ -188,8 +201,23 @@ fn shipped_servers_and_overlays_declare_the_contract() {
         Ok(Slot::Declared(d)) => d,
         other => panic!("{rel}: {other:?}"),
     };
-    let server = declared(Standard::Mcp, "servers/browser/server.json");
+    let server = declared(Standard::Mcp, "servers/chrome-devtools/server.json");
     assert_eq!(server.scope, Scope::Turn);
+    let memory = declared(Standard::Mcp, "servers/personal-memory/server.json");
+    assert_eq!(memory.persona.as_deref(), Some("personal"));
+    let binds: Vec<(&str, Option<&str>)> = memory
+        .config
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.bind.as_deref()))
+        .collect();
+    assert_eq!(
+        binds,
+        [
+            ("index", Some("value:memory/MEMORY.md")),
+            ("serve", Some("command")),
+            ("store", Some("arg:--store"))
+        ]
+    );
     for vendor in BRING_INS {
         for plugin in vendor.plugins {
             let d = declared(Standard::Plugin, &format!("overlays/{plugin}/plugin.json"));

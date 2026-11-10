@@ -1,0 +1,22 @@
+{
+  "format": 1,
+  "part": "rich",
+  "persona": "personal",
+  "harnesses": {
+    "kiro-cli": [
+      {
+        "kind": "skill",
+        "name": "r"
+      }
+    ]
+  },
+  "bring_ins": [
+    {
+      "name": "r",
+      "unit": {
+        "standard": "skill",
+        "path": "@RUN@/units/r/SKILL.md"
+      }
+    }
+  ]
+}

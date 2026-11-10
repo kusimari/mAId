@@ -1,0 +1,12 @@
+{
+  "format": 1,
+  "part": "work",
+  "harnesses": {
+    "kiro-cli": [
+      {
+        "kind": "skill",
+        "name": "triage"
+      }
+    ]
+  }
+}
