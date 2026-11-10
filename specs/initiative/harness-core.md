@@ -453,9 +453,9 @@ The code is laid out as the concept: one crate per idea, under
 concept's parts by name.
 
 ```
-resources/                 the person's resources (skills, servers, plugins) and
-  build-tool/              the plain installer: puts them into claude, codex, kiro;
-                           keeps its own install record; `just install`, `just status`
+resources/                 the person's resources (skills, servers, plugins, overlays)
+plain/                     the plain installer: validate, stage, profile, install, place,
+                           record, uninstall, status; uses nothing of the ghost
 ghost-in-shell/
   ghost/                   what forms the ghost; no shell knowledge
     ghost.rs               Ghost::from(installed): every unit the shell has, fused
@@ -475,15 +475,16 @@ ghost-in-shell/
     sleep.rs               marks
     adaptation.rs          guards, batch, decide, with adaptation/: moves,
                            ledger, memory (writes a habit through the server)
-  shell/claude/            Claude Code's adapter: builds the `maid-core` binary
+  shell/claude/            Claude Code's adapter: builds the `ghost-claude` binary
     main.rs                the CLI every carrier calls; Claude's hook output
     hook.rs                Claude's hook input → the neutral call
     installed.rs           Claude Code's installs, from its own records, cached
     transcript.rs          Claude's transcript as a session source
-    config_dir.rs          CLAUDE_CONFIG_DIR
+    package.rs, install.rs, reuse.rs, plugins.rs, switch.rs, status.rs,
+    uninstall.rs, rollback.rs, validate.rs   the ghost's install, on/off, status
     mcp.rs                 the on-demand carrier
-    plugin/                hooks, MCP config, the adapter's declaration,
-                           skills/reflect, agents/reflector
+    plugin/                .claude-plugin/plugin.json (the adapter), hooks/hooks.json,
+                           .mcp.json, skills/reflect, agents/reflector
   tests/                   every test that spans crates or runs Claude Code;
                            unit tests stay inside each file
 ```
@@ -500,7 +501,7 @@ ghost-in-shell/
 | `infusion/src/call.rs` | the call, and the `Shell` the ghost is in | Concept, "The five entry points" |
 | `infusion/src/{genome,expression,experience,sleep,adaptation}.rs` | the five entry points | Concept, "The five entry points" |
 | `shell/claude/src/installed.rs` | Claude Code's installs, from its own records, cached | On Claude Code; this section's decisions |
-| `resources/build-tool/src/install_record.rs` | plain's `InstallRecord` | "Installing and wiring" |
+| `plain/src/record.rs` | plain's `InstallRecord` (any package's, the ghost's too) | "Installing and wiring" |
 
 - **Plain and ghost on Claude Code.** The plain install places the `maid`
   plugin (skills), the MCP servers and the settings. The ghost install
@@ -508,8 +509,11 @@ ghost-in-shell/
   installed and enabled, through the adapter, and the declarations
   inside it; nothing of the plain install is placed twice. On and off is Claude Code's own
   `claude plugin enable|disable`, a project's settings, or `--settings`
-  for one launch. `just status` reports the plain install; `ghost status`
-  reports readiness and pending decisions.
+  for one launch. `just status` reports what plain installed (each item there,
+  registered, runnable); `ghost status` the ghost's view (each bring-in
+  declared, its persona, bound, ready), the revision warning and any
+  record not understood. The genome names any part's plugin that is
+  turned off.
 - *Decision:* the ghost builds itself from the environment. `ghost`
   defines what it needs to know (`Installed`: the units a shell has, where,
   enabled or not, with which registered settings); each `shell/<agent>`
@@ -534,47 +538,50 @@ ghost-in-shell/
 - *Decision:* one binary per shell (`shell/claude` builds Claude's) until
   one binary is shown to serve every shell; `infusion` stays shell-free so
   that is a move, not a rewrite.
-- *Built today:* the crates as above (stream 13); the binary is still
-  named `maid-core`, and the ghost's carriers still ship inside the `maid`
-  plugin. Stream 12 splits the ghost into its own plugin and install.
+- *Decision:* the ghost install reuses plain when Claude Code has this
+  checkout's `maid@maid` (by version, read through the adapter, never an
+  installer's record), reuses one the person turned off and says so,
+  and otherwise installs plain from this checkout through `plain` as a
+  library. A plain and ghost revision mismatch warns, never refuses.
 
 mAId's part is `mAId`, named by its repository; its memory declares
 persona `personal`. Its session bring-ins are `personal-memory` (package
 `pensieve`, own, declared in `servers/personal-memory/server.json` inside
 mAId's plugin, its store bound from the registered `--store`) and
 `claude-adapter`, declared by `name` in the plugin manifest's slot. Server
-declarations live at `resources/content/servers/<registered name>/server.json`
-and overlays under `resources/content/overlays/`; both ship inside the
+declarations live at `resources/servers/<registered name>/server.json`
+and overlays under `resources/overlays/`; both ship inside the
 plugin.
 
 ### Building the packages (D3)
 
 *Decision (D3, user's):* everything mAId builds is cargo and Rust. Build,
-install and wiring are three layers, and nix is one way to run the first
-two: the build knows nothing of packaging, install copies into a standard
-layout under a prefix, and a packager wraps those two. Non-binary
-artefacts are staged by a Rust step in the workspace (the "xtask"
-pattern), not by the packager.
+install and wiring are three layers: the build knows nothing of
+packaging; each package's own Rust install validates, stages and copies
+it into a prefix; nix only runs those with `PREFIX=$out`. Without nix the
+same installs run into a directory, and only generations are lost.
 
 ```
- cargo build (workspace)               a Rust staging step                      target/maid/ (staged tree)
- ───────────────────────               ──────────────────                       ──────────────────────────
- shell/claude        ─► maid-core  ──┐                                          bin/maid-core
- resources/build-tool ─► build-tool  ├─► validate every declaration and rules ─► share/maid/marketplace/plugins/maid/
- resources/content ──────────────────┘   pointer; copy skills, agent, server      skills/, agents/, hooks/claude.json,
-                                          declarations, overlays; write the        claude-mcp.json, manifests
-                                          claude and codex manifests; fill        share/maid/servers/, overlays/
-                                          @maid-core@ with <prefix>/bin/maid-core;
-                                          version = hash of the plugin's content
+ package   built by                         staged and installed by              into the prefix
+ ───────   ────────                         ───────────────────────              ───────────────
+ plain     cargo build -p plain             plain install --prefix P             share/maid/marketplace/plugins/maid/
+                                            (validate resources/, stage,           skills, servers, overlays, manifests
+                                            hash, copy)                          bin/<pinned runtimes>
+ ghost     cargo build --bin ghost-claude   ghost-claude install --prefix P      bin/ghost-claude
+                                            (validate its plugin and the           share/ghost/marketplace/plugins/ghost/
+                                            declarations, stage, fill the          plugin.json (the adapter), hooks,
+                                            binary's path, hash, copy)             .mcp.json, reflect, reflector
+ flake outputs: plain-bin, ghost-bin, default (plain install), ghost (ghost-claude install)
 ```
 
-- **The plugin's version** is the hash of its content. Agents cache a
-  plugin by version, so the version changes exactly when the content does;
-  a docs-only commit gives the same package.
-- **Third-party runtimes** are pinned dependencies, not built by mAId:
-  pensieve, and the browser server's node package.
-- *Built today:* the flake assembles the plugin in a shell step. Stream 12
-  moves it into the Rust staging step.
+- **A plugin's version** is the hash of its content (paths, exec bits,
+  bytes). Agents cache a plugin by version, so it changes exactly when the
+  content does, and it stands as the package's revision.
+- **A `--prefix`** that holds anything other than an earlier install of
+  that package is refused.
+- **Pieces from other repos** (pensieve, the browser server's node
+  package) are pinned and recorded with their repo and revision; when nix
+  did not provide one, it is recorded as found (path, reported version).
 
 ## On Claude Code
 
@@ -584,7 +591,7 @@ extension points calls which entry point, and how the ghost is wired in.
 ### In a session
 
 ```
- you                 Claude Code                 maid-core                                on disk
+ you                 Claude Code                 ghost-claude                                on disk
  launch claude ───►  SessionStart ────────────►  genome: read what Claude has     ◄──── Claude's config, the units
                                                  bring-in's declaration, fuse the
                                                  map, check readiness
@@ -600,7 +607,7 @@ extension points calls which entry point, and how the ghost is wired in.
  /exit ──────────►   SessionEnd ──────────────►  sleep: mark the session done
 ```
 
-On demand, `maid-core mcp` serves resource `my-harness://genome`, prompt
+On demand, `ghost-claude mcp` serves resource `my-harness://genome`, prompt
 `genome` and tool `expression`; the reflect skill and the CLI reach sleep,
 experience and adaptation.
 
@@ -625,7 +632,7 @@ may bear on the work, whatever the agent loaded earlier.
  reflect skill ─ sleep ──────────────► mark done
                ─ adaptation ─────────► pack the transcript (said, told, did, touched,
                                        friction); keep the briefed copy; print the brief
-               ─ maid:reflector ─────► read-only agent (Read, Grep, Glob): findings as JSON
+               ─ ghost:reflector ─────► read-only agent (Read, Grep, Glob): findings as JSON
                ─ adaptation findings ► guards; "saved in memory" lines; move item; one batch
  you answer ───► adaptation decide ──► habit: the memory server's own write
                                        skill or harness: a proposal file
@@ -694,7 +701,7 @@ may bear on the work, whatever the agent loaded earlier.
 | 9 | writing-style-memory | from Macro test run 3: writing-style's taught rules live in persona memory, not a file tier; the close batch says what was saved and offers to move them into the skill on its source; the reflector quotes only the person's words for a habit; the guard's label says what it checks | 8 | merged |
 | 10 | saved-in-session | from Macro test run 4: the genome names where a bring-in's bound files are, so a skill never falls back to a default path (R4-1); a persona memory saved during the session is shown in the close batch as saved in memory (R4-2) | 9 | merged |
 | 11 | prompt-prefix | Concept D1 and D2: Rust gathers and the agent judges (candidates in the prefix); the essentials go again on change and once drifted; paid runs compare with and without candidates | 12 | planned |
-| 12 | ghost-package | the plain install and the ghost install split: the ghost as its own Claude plugin and install, on/off, `ghost status`; with D3: a Rust staging step builds each package, install is a PREFIX copy, the flake only runs build and install | 14 | running |
+| 12 | ghost-package | the plain install and the ghost install split: the ghost as its own Claude plugin and install, on/off, `ghost status`; with D3: a Rust staging step builds each package, install is a PREFIX copy, the flake only runs build and install | 14 | merged |
 | 13 | ghost-in-shell-layout | the crates `ghost`, `infusion`, `shell/claude` and `tests` under `ghost-in-shell/`, laid out as the concept; no behaviour change | 10 | merged |
 | 14 | live-shell | the ghost builds itself from the environment: `ghost` defines `Installed`, `shell/claude` implements it from Claude Code's own records (plugins, enabled, MCP registrations), cached; declarations gain `persona` (on memory), `repository`, `contract`; own or borrowed by declaration; the ghost stops reading part lists | 13 | merged |
 
@@ -856,7 +863,7 @@ this initiative.
   whatever an agent does, and the store stays the package's · cost if
   wrong: the core carries a copy of the package's write
 - Ruling (ringmaster): stream 2 owns the plugin's hooks file, how hooks
-  find `bin/maid-core`, and the `session_id` fallback; stream 3 adds only
+  find `bin/ghost-claude`, and the `session_id` fallback; stream 3 adds only
   its SessionEnd entry · why: one owner for shared plumbing
 - Paid tests: 4 of 30 granted to stream 3 (one real transcript; three
   reflector runs on the Macro step-3 fixture).
@@ -1061,3 +1068,9 @@ this initiative.
   status` the bring-ins; the adapter shows `[personal, own]`; a plain and
   ghost revision mismatch warns, never refuses; plain uses nothing of the
   ghost, and the declaration checks move to `ghost-claude validate`
+- Ruling (ringmaster, stream 12 closure): a disabled `maid@maid` is
+  reused and named, never re-enabled; `just install` is one plain verb;
+  pensieve is recorded as found when nix did not provide it; building
+  `#default` on each ghost install is accepted (cached); `ghost uninstall`
+  names the project and local switches it leaves; Justfile argument
+  quoting is backlog
