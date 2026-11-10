@@ -1048,3 +1048,16 @@ this initiative.
   concept's name (`Ghost`, `Persona`, `BringIn`, `Declaration`,
   `Installed`, `Tenure`, the five entry points), one concept per file,
   each module's doc naming its concept and spec section
+- Ruling (user, 2026-11-11, stream 12 planning): plain installs the AI
+  resources (skills, agents, servers, plugins) into each base harness, our
+  one place to manage what we install; the ghost sees them as bring-ins
+  (session or turn), reuses all of plain's, and installs its own (the
+  adapter, reflect, the reflector, the hooks). The person launches plain
+  or the ghost harness. mAId is a monorepo of personal parts: plain
+  resources, ghost bring-ins, plain tooling (simple wiring), ghost tooling
+  (install, wire, hook). A resource or bring-in may point at another repo
+  (as pensieve does); mAId records that it installs it. Each installer's
+  record is its own; plain status reports what plain installed, `ghost
+  status` the bring-ins; the adapter shows `[personal, own]`; a plain and
+  ghost revision mismatch warns, never refuses; plain uses nothing of the
+  ghost, and the declaration checks move to `ghost-claude validate`
