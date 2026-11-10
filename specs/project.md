@@ -32,7 +32,7 @@ sibling workspace members with their own native cargo verbs.
 Three parts at the top level:
 
 - **`resources/`** — three layers, working together:
-  1. **Content** (`resources/content/skills/<name>/SKILL.md`) —
+  1. **Content** (`resources/skills/<name>/SKILL.md`) —
      the skill definitions the AI tools load, beside the server and
      overlay declarations the ghost reads (see Layout). Each tool
      auto-discovers the skills at its own skills path.
@@ -43,7 +43,7 @@ Three parts at the top level:
      fires. `SKILL.md` stays the only validated and discovered
      file; modules ride along because a skill is installed as a whole
      *directory* (copied into the plugin, or linked), so adding one
-     needs no build-tool change.
+     needs no plain change.
      This is how an always-on file stays lean as a workflow grows:
      new phase-specific rules land in a module, not in the file
      loaded every session. `kdevkit` is the worked example
@@ -65,7 +65,7 @@ Three parts at the top level:
      it a **safety floor** — limits the dispatched skill cannot widen
      by asking, since a role it fills may be resolved from content it
      doesn't control.
-  2. **Tooling** (`resources/build-tool/`) — Rust crate
+  2. **Tooling** (`plain/`) — Rust crate
      organised as the pipeline it performs: validate content,
      check each skill in isolation, install into each agent (plugin
      or `$HOME` symlinks), then smoke-test what is deployed. One file per
@@ -84,7 +84,7 @@ Three parts at the top level:
      $HOME-layout knowledge, `Link`/`FanOut` registry expansion,
      `--force` semantics) covers the agents with no such command (kiro,
      agy). `Deployment` routes each agent to one of them, then runs
-     `BringIns` (the vendor marketplaces, below), so nothing in
+     `Vendors` (the vendor marketplaces, below), so nothing in
      `stages.rs` knows which. `check` needs no deployment at all — it receives a
      `NoDeploy` target and runs with no `$HOME`, which is what makes
      "check needs no install" a structural fact rather than a
@@ -92,19 +92,24 @@ Three parts at the top level:
      whole pipeline is what is genuinely shell — a fixture's
      `--- setup ---` / `--- assert ---` blocks, executed by the runner.
   3. **Verbs** (Justfile recipes that use the tooling) —
-     `just resources::install-skills`, `…::uninstall-skills`,
+     `just plain::install-skills`, `…::uninstall-skills`,
      `…::status-skills`, `…::check-skills`, `…::smoke-skills`,
      `…::verify-skills` (both stages; single-fixture:
-     `just resources::verify-skills-one <name>`).
+     `just plain::verify-skills-one <name>`).
      Every verb follows the `<action>-<resource-kind>` pattern and
      takes an optional coding-agent selector (`claude|kiro|codex`;
      omit for all three). These are how a human or another tool
      consumes the
      tooling.
+- **`plain/`** — the plain installer (crate and bin `plain`): validates
+  the resources, stages them into a package, keeps its profile, places
+  them on each agent and records what it placed. It uses nothing of the
+  ghost. `just install|uninstall|status|rollback`.
 - **`ghost-in-shell/`** — the core, laid out as the concept: the crates
   `ghost` (what forms the ghost), `infusion` (the five entry points) and
-  `shell/claude` (the wiring into Claude Code, which builds the installed
-  `maid-core` and holds the ghost's own plugin assets), beside one tests
+  `shell/claude` (the wiring into Claude Code: it builds `ghost-claude`,
+  holds the ghost's own plugin, and installs it over plain's with `just
+  ghost install|uninstall|on|off|status|rollback`), beside one tests
   crate. See the initiative spec `harness-core`, "System design", and
   "My harness" below.
 - **`kaimux/`** — tmux-pane orchestrator for coding-agent
@@ -122,10 +127,10 @@ Both halves are members of one cargo workspace at the
 root, so `cargo build --workspace` covers everything.
 
 **Registry** lives inline at the top of
-`resources/build-tool/src/shared.rs`: `REGISTRY`, a slice of
+`plain/src/shared.rs`: `REGISTRY`, a slice of
 `(home_subpath, source_subpath, kind, agent)` tuples for the linked
 agents, and `PLUGIN_AGENTS` for the plugin ones (with where each
-one's pre-plugin links lived, which install reaps), and `BRING_INS` for
+one's pre-plugin links lived, which install reaps), and `plain::external::VENDORS` for
 the vendor marketplaces mAId registers with the plugin ones. The
 authoritative manifest for what gets installed where. The
 `agent` tag is what lets install/uninstall/status be scoped
@@ -136,10 +141,16 @@ expected `$HOME` paths as registry entries, not rewriting
 content. Content stays tool-agnostic; the registry translates
 it into each tool's expected layout.
 
-**Install = a profile, then links.** `just install` builds the
-checkout's flake `default` package into the mAId profile
-(`${XDG_STATE_HOME:-~/.local/state}/maid/profile`, set in
-`resources/Justfile`) as a new generation: the skills under
+**Install = a profile, then links.** `just install` (one verb, `plain
+setup`: the profile, then each agent placed and recorded, then the browser
+server; a step that fails is said and the rest still runs) builds the
+checkout into the mAId profile (`${XDG_STATE_HOME:-~/.local/state}/maid/profile`,
+set in `plain/env.just`) with `plain profile install`. With `nix` on PATH
+that is the flake's `default` package as a new generation, the package
+built by plain's own `plain install --prefix $out` (nix only hands it the
+resources and the pinned runtimes); without nix the same staging into a
+real profile dir, with the runtimes PATH has, and no rollback. Either
+way the package holds the skills under
 `share/maid/skills`, and the runtimes resources need as nix closures
 under `bin/`, and the plugin marketplace under `share/maid/marketplace`
 (the skills live in its plugin; `share/maid/skills` links there). Every
@@ -160,8 +171,9 @@ manifest names (the manifest, `hooks`, `mcpServers`) that resolves outside
 the marketplace dir as resolved, so a dir of links loses the hooks; it
 records the path as given, so the profile link still moves it to each
 generation, a rollback included.
-The plugin's version is a hash of its content, computed in the flake
-build; both CLIs cache by version and only compare for change, so an
+The plugin's version is a hash of its content, computed by plain's
+staging (`plain::stage`, a sha256 over the plugin's paths and bytes), so
+a nix build and a cargo one of the same tree agree; both CLIs cache by version and only compare for change, so an
 install updates exactly when content changed (claude reads the
 marketplace live; codex reads its cached copy, so install must run
 `codex plugin add`). A disabled plugin stays disabled: `codex plugin
@@ -179,22 +191,51 @@ than 30 days, and nix keeps the newest one older than that, so the
 install before the live one survives (an unchanged install adds none and
 skips the wipe, which would otherwise keep only the live one). **Rollback** is `nix profile rollback` plus the plugin install
 (codex serves its cached copy until `codex plugin add` runs). It refuses
-a generation without the skills, the plugin manifest, the browser
-launcher or the core the plugin's hooks call, before switching; it does not switch back on an install
+a generation without the skills, the plugin manifest or the browser
+launcher, before switching; it does not switch back on an install
 failure, since install also exits non-zero for a link it left alone.
 nix rolls back to the next lower generation number, so install drops
 the generations above the live one (the ones a rollback returned from),
 after its build succeeds; otherwise a rollback after rollback-then-install would land on
 them rather than on the install before.
 
+**The ghost's install.** `just ghost install` (`ghost-claude install`)
+validates every `my-harness` declaration in `resources/` and the ghost's
+plugin, builds the ghost's own profile
+(`${XDG_STATE_HOME:-~/.local/state}/maid/ghost/profile`, `GHOST_PROFILE`:
+the flake's `ghost` package, or a dir without nix) holding `bin/ghost-claude`
+and its plugin `ghost@ghost-in-shell` (the adapter's declaration, the
+hooks, the MCP config, the reflect skill, the reflector), each
+`@ghost-claude@` filled with that profile's binary. Then the reuse check:
+it reads what Claude Code has (through the adapter, never plain's record)
+and reuses plain when `maid@maid` is installed and at the version this
+checkout's plain install would build (with nix, the flake's `default`);
+one the person turned off is reused as it is and never re-enabled, and the
+ghost says "mAId's plugin is disabled; its skills are off" there, in
+`ghost status` and on the genome's environment lines. Otherwise it says
+which and runs plain's install through `plain` as a library. Then it adds the
+marketplace at the profile and installs or updates the plugin, reads it
+back, and writes its own record (`install-records/ghost.json`, with the
+version of mAId's plugin it was installed with). `just ghost on|off
+[user|project|local]` is `claude plugin enable|disable`; for one launch,
+`claude --settings '{"enabledPlugins":{"ghost@ghost-in-shell":false}}'`.
+`just ghost status` reports the profile, on or off here and at which
+scope, mAId's plugin, a warning when it is not the version the ghost was
+installed with, each bring-in as the ghost sees it, each Claude Code record
+not understood, and what waits; `just ghost rollback` moves the ghost's
+profile alone; `just ghost uninstall` removes what its record names, its
+profile and `<state>/shells/`, names the project and local settings that
+still switch it (Claude Code leaves them), and leaves plain whole. Nothing refuses on a
+revision mismatch, and the genome does not mention it.
+
 **Claude's config dir.** Every `~/.claude/…` and `~/.claude.json` path in
 this file is Claude Code's default. With `CLAUDE_CONFIG_DIR` set, Claude
 Code (checked on 2.1.314) keeps all of it in that dir, `.claude.json`
 included, and reads nothing from `~/.claude`; empty is unset. One resolver,
-`shell_claude::config_dir::ConfigDir`, places those paths for the core and
-build-tool alike. build-tool resolves it once, in `main`, and passes it as a
+`plain::claude_config::ConfigDir`, places those paths for plain and the
+core alike. plain resolves it once, in `main`, and passes it as a
 value: nothing deeper reads the variable, so a test with a temp HOME can
-never reach a config dir the shell sets. Every `claude` build-tool starts
+never reach a config dir the shell sets. Every `claude` plain starts
 gets the variable exactly as the value has it, removed when unset
 (`shared::claude_env`). Claude Code writes its MCP logs under
 `$XDG_CACHE_HOME`, not its config dir. The one path left at HOME is the
@@ -227,7 +268,7 @@ body. That memory is its temporary tier; its permanent home is its own
 checked-in text, reached by the move a reflection offers (Adaptation).
 Its older files in its dir under mAId's config dir,
 `${XDG_CONFIG_HOME:-~/.config}/maid/writing-style/` (`MAID_CONFIG` in
-`resources/Justfile`), `learned.md` (`## Learned rules`) and `promoted.md`
+`plain/Justfile`), `learned.md` (`## Learned rules`) and `promoted.md`
 (`## Promoted rules`), are the user's data: still read and applied, never
 written or deleted, and their rules go with that move. They are its
 optional config keys `learned` and `promoted`, which install binds to those
@@ -235,9 +276,9 @@ files (a skill's config key `<k>` binds to `<config dir>/<skill>/<k>.md`).
 The skill reads them only at the paths the genome names for those keys,
 and no skill text carries a default location (a content test holds it). No
 skill tells the runtime to find, read or edit a checkout; content
-validation fails a skill file that says `resources/content/`, "mAId
-checkout", `just install` or `just resources::`. Changing a shipped body is
-a maintainer action, an edit under `resources/content/` and `just install`,
+validation fails a skill file that says `resources/`, "mAId
+checkout", `just install` or `just plain::`. Changing a shipped body is
+a maintainer action, an edit under `resources/` and `just install`,
 never a runtime one. So install adds `Edit(/<config dir>/<skill>/**)` to
 `permissions.allow` in `~/.claude/settings.json` for each skill in
 `reads::STATEFUL_SKILLS` (today writing-style), and the same rule on the
@@ -259,7 +300,7 @@ write rules a later session loads, so at session start writing-style says
 how many saved rules apply and quotes the newest three.
 
 **Bring-ins (claude, codex).** A vendor's plugin marketplace mAId
-brings in is a `BRING_INS` row in the registry: the name both CLIs list
+brings in is a `VENDORS` row in `plain::external`: the name both CLIs list
 it under, its public git source, a commit, the plugins to install from
 it, and the commands its skills run. Install registers it and installs
 the plugins through each CLI, after mAId's own plugin, so a failure there
@@ -314,9 +355,9 @@ re-auth. Its shape differs from skills in two ways:
   chrome-devtools-mcp and its Node) is a closure in the mAId
   profile. This is why the registry
   above can't express it — registration is a runnable command,
-  not a symlink — so it lives in `resources::browser-mcp-*`
+  not a symlink — so it lives in `plain::browser-mcp-*`
   Just verbs (shell over each harness's MCP CLI), keeping the
-  Rust build-tool pure-symlink.
+  Rust plain installer pure-symlink.
 - **Kiro's registration is a direct edit.** `kiro-cli mcp add`
   needs a login and writes every other server back through its own
   struct, dropping keys it does not know, so `manage` sets mAId's
@@ -328,7 +369,7 @@ re-auth. Its shape differs from skills in two ways:
   target, with its mode, renamed over it), and uninstall needs no
   `kiro-cli`. Kiro agents get it by pulling the global config in; mAId
   writes into no kiro agent file.
-- **Its declaration** is `resources/content/servers/browser/server.json`
+- **Its declaration** is `resources/servers/browser/server.json`
   (see "My harness"): a turn bring-in, with no rules of its own, since
   the browser skill carries them.
 - **Browser-enforced allowlist.** The agent may act only on
@@ -402,8 +443,8 @@ The rules every part follows, so that parts add up and never fight:
 5. Setup is idempotent and assumes nothing about other parts.
 
 **The install record.** Each package's plain installer keeps one file,
-`${XDG_STATE_HOME:-$HOME/.local/state}/install-manifests/<package>.json`
-(`INSTALL_MANIFESTS` names the folder), that says what it placed on each
+`${XDG_STATE_HOME:-$HOME/.local/state}/install-records/<package>.json`
+(`INSTALL_RECORDS` names the folder), that says what it placed on each
 agent, so its uninstall removes exactly that and status can check it.
 Plain facts only. A package writes only its own file, and may keep a
 temporary dotfile beside it while it writes. A whole-status reads every
@@ -514,8 +555,8 @@ dir, as Claude Code 2.1.319 writes them:
 Each entry is read leniently, but a record that exists and is not of the
 shape above (`installed_plugins.json`'s `version` 2 and `plugins`, the
 marketplaces, `.claude.json`'s `mcpServers` and `projects`, a project's
-`.mcp.json`) is named on the genome's environment lines, in `maid-core
-environment` and in `just status --whole`: `<file>: shape not understood
+`.mcp.json`) is named on the genome's environment lines, in `ghost-claude
+environment` and in `just ghost status`: `<file>: shape not understood
 (Claude Code <its version, from .claude.json's lastReleaseNotesSeen>)`, so a
 Claude Code that changed its formats is said to have, not taken to have
 nothing installed.
@@ -614,23 +655,24 @@ writes it.
 
 **Session bring-ins.** mAId's part records two: its memory (Memory,
 below) and the core's adapter on each shell it is built for. On Claude Code
-that is `claude-adapter`, declared in the Claude manifest of mAId's plugin
-(`extensions["my-harness"]`, which the flake fills from
-`ghost-in-shell/shell/claude/plugin/my-harness.json`), whose hooks are the
-core's carriers, with `name` `claude-adapter`; own, in mAId's part while
-`maid@maid` is enabled. `claude plugin validate` warns on `extensions`, and
-`--strict` refuses it; that is known and accepted, since Claude Code ignores
-the field at load time. Status needs no bring-in of its own: it is the
+that is `claude-adapter`, declared in the Claude manifest of the ghost's
+own plugin (`extensions["my-harness"]` in
+`ghost-in-shell/shell/claude/plugin/.claude-plugin/plugin.json`), whose hooks
+are the core's carriers, with `name` `claude-adapter` and mAId's
+`repository`; own, in mAId's part (`[personal, own]`) while
+`ghost@ghost-in-shell` is enabled. `claude plugin validate` warns on
+`extensions` there, and `--strict` would refuse it; mAId's own plugin
+carries none and passes `--strict`. Status needs no bring-in of its own: it is the
 genome's environment section.
 
 **Borrowed units: an overlay.** A part never changes a unit it borrows,
 so it ships an *overlay*, a manifest in the unit's own standard holding
 only `name`, `description` and the `my-harness` slot, and ships it in its
 plugin. The lender's files are never read for the declaration. mAId's are
-`resources/content/overlays/<plugin>/plugin.json` (today
+`resources/overlays/<plugin>/plugin.json` (today
 `document-skills`, whose `requires` is the vendor row's `needs`), in its
 plugin's `overlays/`. Each MCP server mAId registers declares itself in
-`resources/content/servers/<registered name>/server.json`, in its plugin's
+`resources/servers/<registered name>/server.json`, in its plugin's
 `servers/`; content validation reads both kinds.
 
 **mAId's bring-ins.** Every skill is `turn`, as are the browser server
@@ -641,8 +683,8 @@ command and `index` to `memory/MEMORY.md`. writing-style binds its two
 older rules files under `${MAID_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/maid}`. None declares a file tier: writing-style keeps its rules in the
 persona's memory and says so in its `job` (see "Skill state").
 
-**The core.** `maid-core` (`ghost-in-shell/shell/claude`, in the profile
-as `bin/maid-core`) reads what Claude Code has installed, finds the parts
+**The core.** `ghost-claude` (`ghost-in-shell/shell/claude`, in the profile
+as `bin/ghost-claude`) reads what Claude Code has installed, finds the parts
 and fuses their personas and bring-ins into the ghost on every call
 (never stored), derives the
 environment (each bring-in ready, or not and why), and answers the entry
@@ -713,19 +755,18 @@ whose turn bring-ins' location or file signals match here, or whose bound
 state location holds the folder; otherwise not known. The genome makes
 the same guess from its input's `cwd`.
 
-**The Claude Code adapter** is data in mAId's plugin: `hooks/claude.json`
-and `claude-mcp.json` (from `ghost-in-shell/shell/claude/plugin/`), named by
-the Claude manifest's `hooks` and `mcpServers`, not codex's default
-`hooks/hooks.json` and `.mcp.json`, since codex reads the same plugin dir.
-Each command starts `@maid-core@`, which the flake replaces with this
-build's core, so the plugin and its core are one build. SessionStart
+**The Claude Code adapter** is data in the ghost's plugin: the default
+`hooks/hooks.json` and `.mcp.json` (in `ghost-in-shell/shell/claude/plugin/`;
+no codex reads this plugin). Each command starts `@ghost-claude@`, which the
+ghost's staging (`shell_claude::package`) fills with its profile's binary,
+so the plugin and its core are one package. SessionStart
 `startup`, `resume` and `fork` call `genome` on the append carrier (a resume
 keeps its history and its id; Claude Code does not place a SessionStart
 context identical to one already there); `clear` and `compact` call it with
 `--reset`; SubagentStart calls it with `--slice sub-session`;
 UserPromptSubmit calls `expression`; SessionEnd calls `sleep`, which marks
 the session and prints nothing (its input's own `reason` is recorded as
-`end`). `maid-core mcp --session-env
+`end`). `ghost-claude mcp --session-env
 CLAUDE_CODE_SESSION_ID` serves the on-demand carrier: resource
 `my-harness://genome`, prompt `genome`, tool `expression` (a folder under
 the server's own, else its own). Claude Code places
@@ -734,19 +775,19 @@ a hook's `additionalContext` whole up to 10,000 characters, past that a
 lines per part and bring-in, is not cut, so a ghost of many parts would
 reach it first. A shell needs no
 always-loaded rules file: SessionStart covers every point where context
-drops. A new hook of the core adds its own entry to `hooks/claude.json`;
+drops. A new hook of the core adds its own entry to `hooks/hooks.json`;
 a part never adds one (see "For any persona part").
 
 **Sleep.** A session is marked for sleep by its
 end event (on Claude Code, the plugin's SessionEnd hook) or by the
-person's close or reflect (the `reflect` skill): `maid-core sleep`, one
+person's close or reflect (the `reflect` skill): `ghost-claude sleep`, one
 mark per session under `<state>/sleep/`, keeping the first source and
 adding each later reason; a later mark opens a decided session again,
 except the end event, since closing is the usual last thing a session
 does after the person reflected. Nothing else runs at an end event; the genome
 says how many sessions wait to be reflected on.
 
-**Experience.** `maid-core experience`
+**Experience.** `ghost-claude experience`
 packs a session and its sub-sessions from a **session source** into an
 experience (said, told, did, touched, friction; each text cut to 400
 characters with its `<file>:<line>`), stored at
@@ -756,7 +797,7 @@ waiting. Only Claude Code's source is built: its transcripts under
 sub-agent's file under `<session>/subagents/`, read leniently since the
 format is Claude Code's own.
 
-**Adaptation.** `maid-core adaptation` takes three inputs:
+**Adaptation.** `ghost-claude adaptation` takes three inputs:
 none gives the **reflector's brief** (the experience, every bring-in it
 may change with its persona, tenure, route and tiers, and what the
 session already decided); the reflector's findings give the **decision
@@ -829,15 +870,18 @@ is `- <date> · <entry>` and a `source:` line under its first `## `
 heading, newest first; a new file gets `## <Key> rules`. The **ledger**
 (`<state>/ledger.jsonl`) keeps what each reflection saw (friction by
 tool, corrections by thing; a session's last reflection counts) and each
-decision and each dismissal; `maid-core ledger` counts them by thing
+decision and each dismissal; `ghost-claude ledger` counts them by thing
 (findings decided and accepted) and the sessions dismissed.
 
 **Whole-status.** `just status --whole [agent]` reads every install
-record, then every old part list (`whole.rs`) and reports each entry, per harness and part, in one of six
+record, then every old part list (`plain/src/status.rs`) and reports each entry, per harness and part, in one of seven
 states: present, present (disabled) (the listing says the user turned it
-off), missing, skipped (with the part's reason), not checkable, or
-unreadable. Then the bring-ins of each part that declares itself, ready or
-not (rule 15), as the ghost finds them in what Claude Code has installed, which status shares with every session. Presence is read
+off), not runnable (an MCP server whose registered command is gone),
+missing, skipped (with the part's reason), not checkable, or
+unreadable. It reports nothing of the ghost: the bring-ins of each part
+that declares itself, ready or not (rule 15), are `just ghost status`'s
+(`shell_claude::status`, with its own conformance set in
+`ghost-in-shell/tests/conformance/`). Presence is read
 from the harness's own listing or config:
 
 | Harness | skill | agent | mcp | plugin | marketplace | setting |
@@ -960,9 +1004,9 @@ are free.
     for code point (escapes decoded, no normalisation), else missing; a
     setting or element that is not a string never matches. With no `value`
     or a null one, a found key is present. `adopted` changes no state.
-15. **Bring-ins.** Every bring-in of each part that declares itself, as
-    the ghost finds them in what Claude Code has installed ("What the ghost
-    reads"), is reported, whatever harness is selected, as **ready**, **not
+15. **Bring-ins** (`just ghost status`, not whole-status). Every bring-in
+    of each part that declares itself, as the ghost finds them in what
+    Claude Code has installed ("What the ghost reads"), is reported as **ready**, **not
     ready** (a non-optional config key without a value, an `env:` value
     whose variable is unset or empty, an absolute state location of a
     non-optional key that does not exist (an optional key's is a tier not
@@ -974,11 +1018,11 @@ are free.
     none of whose units declares is not reported. None of these changes the
     exit code.
 
-**Conformance set.** `resources/build-tool/tests/conformance/<case>/`, plain
+**Conformance set.** `plain/tests/conformance/<case>/`, plain
 data any reader's tests can copy (`tests/conformance.rs` runs `whole.rs`
 against it):
 
-- `install-manifests/`: the install-record folder, and `parts/`: the old
+- `install-records/`: the install-record folder, and `parts/`: the old
   parts folder (absent: no folder; a file: not a dir).
 - `home/`: HOME, Claude Code's records in `home/.claude/` and
   `home/.claude.json` among it. Placeholder files keep dirs git would drop;
@@ -1028,9 +1072,9 @@ store that is not there is reported and skipped, never created, and mAId's
 earlier entry is removed. An unreadable `~/.claude.json` fails install.
 
 It is also a session bring-in. Its declaration is mAId's own
-`resources/content/servers/personal-memory/server.json` (every MCP
+`resources/servers/personal-memory/server.json` (every MCP
 server's declaration in this repo lives at
-`resources/content/servers/<name>/server.json`), in the profile under
+`resources/servers/<name>/server.json`), in the profile under
 `share/maid/servers/`: scope `session`, package `pensieve`, config `store`
 (the store), `index` (the memory index, relative to `store`) and `serve`
 (the command that serves the store over MCP stdio, a JSON array), and
@@ -1042,7 +1086,10 @@ registered: unit that manifest, values `store` (the store path),
 the package's own repo at the revision `flake.lock` pins
 (`https://github.com/<owner>/<repo>` for a GitHub pin, the node the root's
 `inputs` name; any other pin records no source, so no local path is
-written). The lock is read with or without git. Its route is then the
+written). The lock is read with or without git. That holds when nix put
+pensieve in the profile; a profile dir without nix links whatever PATH
+has, so the source is then that path and the version it reports for
+`--version` (else `version unknown`), never the pin (`plain::external`). Its route is then the
 project default: a finding about the server is a PR on pensieve, while a
 habit goes to the store. The core writes an accepted habit through the
 server itself: it runs `serve`, calls the memory tool one request at a
@@ -1099,19 +1146,25 @@ codex, kiro-cli and agy reach the same servers by registration, later.
   surface. The workspace members are `ghost-in-shell/ghost`,
   `ghost-in-shell/infusion` (it matches turn-fit globs with `globset`, the
   matcher ripgrep uses), `ghost-in-shell/shell/claude` (which builds the
-  installed `maid-core`), `ghost-in-shell/tests`, `resources/build-tool`
-  and `kaimux/`.
+  installed `ghost-claude` and stages the ghost's package),
+  `ghost-in-shell/tests`, `plain` (it hashes a package's content with
+  `sha2`) and `kaimux/`.
 - **Isolation:** one flake, two outputs. `devShells.default`
   (loaded by `.envrc` via direnv) is the dev closure: the rust
   toolchain (rust-overlay), `just`, and `jq` (the install tests read
   the agents' JSON, and the browser MCP install edits kiro's global
   config with it), plus `MAID_TEST_PENSIEVE`, the pinned pensieve the
-  core's adaptation test writes through. `packages.default` is
-  the installable: the skills plus `chrome-devtools-mcp`
-  (packaged from its npm tarball, which has no dependencies)
-  wrapped with `nodejs_22`, `pensieve`, the memory server, from its
-  own flake (a pinned input), and `maid-core`, built from the
-  workspace's `Cargo.lock`.
+  core's adaptation test writes through. The flake holds no build
+  logic: `plain-bin` and `ghost-bin` are one cargo build each from the
+  workspace's `Cargo.lock`, over a source of the crates alone (no
+  resources, plugin assets or tests, so a content edit rebuilds no
+  binary); `packages.default` is plain's package, built by `plain install
+  --prefix $out` over `resources/` with the pinned runtimes linked in
+  (`chrome-devtools-mcp`, packaged from its npm tarball and wrapped with
+  `nodejs_22`, and `pensieve`, the memory server, from its own flake);
+  `packages.ghost` is the ghost's, built by `ghost-claude install --prefix
+  $out` over its plugin. Without nix everything still works through cargo
+  and just; only the generations, and so rollback, are lost.
 - **Dependencies.** mAId does not care how a prerequisite got
   onto PATH (host package, home-manager, nix profile), and does
   not check for it; a missing one fails in the step that needs it.
@@ -1119,17 +1172,18 @@ codex, kiro-cli and agy reach the same servers by registration, later.
   | Kind | What | Provided by |
   |---|---|---|
   | Runtime prerequisites | coding-agent CLIs, `git`, a graphical Chrome (browser only) | the environment |
-  | Runtime-provided | skills, node, chrome-devtools-mcp, pensieve, maid-core | the mAId profile |
+  | Runtime-provided | skills, node, chrome-devtools-mcp, pensieve | the mAId profile |
+  | Runtime-provided, the ghost | ghost-claude and its plugin | the ghost's profile |
   | What the vendor document skills run | `python` with openpyxl, pandas, pypdf, pdfplumber, reportlab, pypdfium2, pdf2image, Pillow, lxml, defusedxml, python-pptx, markitdown; `node` with the `docx` and `pptxgenjs` packages; LibreOffice (`soffice`), `pandoc`, `markitdown`, `qpdf`, poppler (`pdftotext`, `pdftoppm`, `pdfimages`), ImageMagick (`magick`) | the environment; `just status` names each missing command |
   | Install and dev prerequisites | `nix` with flakes; `direnv` optional | the developer |
 - **Entrypoints:** Justfile organised as a root file with
   `mod` declarations per area, so verbs are namespaced by
   what they touch:
-  - **`resources::*`** (operate on `$HOME` or the AI tools).
+  - **`plain::*`** (operate on `$HOME` or the AI tools).
     Verbs follow the `<action>-<resource-kind>` pattern, each
     taking the coding-agent selector (`claude|kiro|codex`; omit
-    for all three): `just resources::install-profile` (validate +
-    build the profile, no selector), `just resources::install-skills
+    for all three): `just plain::install-profile` (validate +
+    build the profile, no selector), `just plain::install-skills
     [agent]` (install the claude/codex plugin, link the rest at
     the profile),
     `…::uninstall-skills [agent]`, `…::status-skills [agent]`,
@@ -1155,7 +1209,12 @@ codex, kiro-cli and agy reach the same servers by registration, later.
   - **Memory** at the root: `just memory-store <path>`, `just
     memory-harvest --to <dir> [--project <path-prefix>]`; `just status`
     reports the store, its server and Claude's own memory. Each wraps a
-    `resources::*-memory*` verb over `build-tool memory`.
+    `plain::*-memory*` verb over `plain memory`.
+  - **`ghost::*`** (the ghost's own install, `ghost-in-shell/shell/claude/Justfile`):
+    `just ghost install|uninstall|status|rollback`, `just ghost on|off
+    [user|project|local]`, `just ghost validate` (in `just ci`), and
+    `just ghost check-skills` (the reflect fixture, through plain's
+    runner with `--skills` and `--fixtures`).
   - **Install** at the root: `just install [agent]`
     (profile, then skills and browser MCP), `just uninstall`,
     `just status` (`--whole`: every part's list against each
@@ -1174,9 +1233,8 @@ codex, kiro-cli and agy reach the same servers by registration, later.
   Each recipe is a thin wrapper over native cargo (the
   kind-routing verb adds a shebang body) — `just --list` shows the root verbs,
   `just --list <module>` drills into a module. There is
-  no installed binary on `$PATH`; the build-tool is
-  invoked through `cargo run -p build-tool` from the
-  checkout (wrapped by Just).
+  no installed binary on `$PATH`; plain and the ghost's install are
+  invoked through `cargo run` from the checkout (wrapped by Just).
 
 ## Layout
 
@@ -1186,55 +1244,60 @@ codex, kiro-cli and agy reach the same servers by registration, later.
 ```
 mAId/
 ├── Cargo.toml              workspace root: members = ghost-in-shell/{ghost,infusion,shell/claude,tests},
-│                           resources/build-tool, kaimux
+│                           plain, kaimux
 ├── Cargo.lock              committed (binary-workspace policy)
-├── Justfile                root verb surface (workspace hygiene + `mod resources` / `mod kaimux`)
+├── Justfile                root verb surface (workspace hygiene + `mod plain` / `mod kaimux`)
 ├── install                 entry-point for setup walks: `just install`, via the dev shell if needed
 ├── rust-toolchain.toml     stable + clippy + rustfmt
 ├── flake.nix / .envrc      dev shell (rust toolchain, just, jq) and the installable package
-├── resources/
-│   ├── Justfile            `resources::*` verb surface (install/uninstall/status/verify)
-│   ├── build-tool/         Rust crate — the pipeline (check/install/uninstall/status/smoke)
-│   │   ├── Cargo.toml      deps: clap, anyhow, gray_matter, serde, serde_json, tempfile,
-│   │   │                    ghost (the contract, readiness), shell-claude (the config dir, Claude's installs)
-│   │   ├── src/main.rs     the shim: clap surface + dispatch, in pipeline order
-│   │   ├── src/lib.rs      module wiring + the pipeline doc comment
-│   │   ├── src/shared.rs   Agent, REGISTRY, roots — what every stage speaks
-│   │   ├── src/harness.rs  fixtures, the five kinds, prompts, invocation, verdicts
-│   │   ├── src/deploy.rs   the Deploy trait: Plugins (claude, codex), Symlinks (kiro, agy), BringIns
-│   │   ├── src/install_record.rs  mAId's install record: the format, its one writer, the old list's migration
-│   │   ├── src/whole.rs    whole-status: every install record checked on each agent; the ghost's bring-ins
-│   │   ├── src/memory.rs   the personal store, personal-memory on claude, Claude's memory off
-│   │   ├── src/harvest.rs  copying each harness's own memory into a store dir
-│   │   ├── src/settings.rs Claude's user settings file, kept key for key
-│   │   ├── src/reads.rs    Claude's grants: mAId's skill files (additionalDirectories), skill state (allow)
-│   │   ├── src/stages.rs   content → check → install → smoke
-│   │   ├── tests/integration.rs  cross-stage tests against the real repo
-│   │   ├── tests/plugins.rs  ignored: Plugins and BringIns against the real claude/codex CLIs in a temp HOME
-│   │   ├── tests/claude_installed.rs  ignored: Claude Code on the plugin as install places it, against a stub model API
-│   │   ├── tests/claude_config_dir.rs  install, status and uninstall with CLAUDE_CONFIG_DIR set, a stub claude, nothing under HOME
-│   │   ├── tests/no_cli.rs   install with no agent CLI on PATH keeps the old links
-│   │   ├── tests/stops_on_list.rs  an unreadable old part list stops install and uninstall, through the binary
-│   │   ├── tests/memory.rs   the memory verbs through the binary, temp HOME
-│   │   ├── tests/memory_install.rs  install's claude memory step, a stub claude, its install record entry, the memory's readiness
-│   │   ├── tests/conformance.rs  whole.rs against the conformance set
-│   │   ├── tests/conformance/  the whole-status conformance set, one dir per case
-│   │   └── tests/reads_install.rs   install's claude skill-reads step beside memory's
-│   ├── content/            the person's deployable resources (copied into the profile;
+├── resources/              the person's deployable resources (copied into the profile;
 │   │                        the ghost's own skill and agent are in ghost-in-shell/)
-│   │   ├── overlays/<plugin>/plugin.json  the declaration of a borrowed plugin
-│   │   ├── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
-│   │   ├── skills/kdevkit/  SKILL.md core + phases/, tiers/, setup.md, interviews.md
-│   │   ├── skills/kyodakit/ SKILL.md: developer judgement, any language
-│   │   └── servers/<name>/server.json  each MCP server's declaration (copied to share/maid/servers/)
-│   ├── browser/            browser-control MCP (not symlinked — runnable)
-│   │   ├── launch          allowlist-enforcing launcher; the flake wraps it as maid-browser-mcp
-│   │   └── manage          data-driven MCP registrar (MCP_AGENTS table; every agent global, kiro by editing its config)
-│   └── tests/              fixtures + the attended browser test (the runner itself is in build-tool)
+│   ├── overlays/<plugin>/plugin.json  the declaration of a borrowed plugin
+│   ├── skills/<name>/SKILL.md   (incl. browser/ — browser-control safety posture)
+│   ├── skills/kdevkit/     SKILL.md core + phases/, tiers/, setup.md, interviews.md
+│   ├── skills/kyodakit/    SKILL.md: developer judgement, any language
+│   ├── servers/<name>/server.json  each MCP server's declaration (copied to share/maid/servers/)
+│   └── browser/            browser-control MCP (not symlinked — runnable)
+│       ├── launch          allowlist-enforcing launcher, installed as maid-browser-mcp
+│       └── manage          data-driven MCP registrar (MCP_AGENTS table; every agent global, kiro by editing its config)
+├── plain/                  crate and bin `plain`: the plain installer. Uses nothing of the ghost
+│   ├── Justfile            `plain::*` verb surface (install/uninstall/status/verify)
+│   ├── env.just            where plain keeps and finds its things (imported by the ghost's Justfile too)
+│   ├── Cargo.toml          deps: clap, anyhow, gray_matter, serde, serde_json, sha2, tempfile
+│   ├── src/main.rs         the CLI: clap surface + dispatch
+│   ├── src/lib.rs          module wiring, in the order an install runs
+│   ├── src/validate.rs     each resource is what its standard requires
+│   ├── src/stage.rs        the package: resources/ staged into a prefix, its content-hash version
+│   ├── src/profile.rs      the profile: nix generations and rollback, or a dir without nix
+│   ├── src/install.rs      install: place on each agent, record the package; the whole install as a library
+│   ├── src/place.rs        the Deploy trait: Plugins (claude, codex), Symlinks (kiro, agy), Vendors
+│   ├── src/record.rs       the install record: the format, its one writer per package, the old list's migration
+│   ├── src/external.rs     the pinned pieces from other repos: the vendor plugins, pensieve (or where it was found)
+│   ├── src/uninstall.rs    remove what the record names
+│   ├── src/status.rs       status and whole-status: every install record checked on each agent
+│   ├── src/claude_config.rs  `ConfigDir`: where Claude Code keeps its user config
+│   ├── src/memory.rs       the personal store, personal-memory on claude, Claude's memory off
+│   ├── src/harvest.rs      copying each harness's own memory into a store dir
+│   ├── src/settings.rs     Claude's user settings file, kept key for key
+│   ├── src/reads.rs        Claude's grants: mAId's skill files (additionalDirectories), skill state (allow)
+│   ├── src/check.rs        the skill checks before and after install
+│   ├── src/drive.rs        fixtures, the five kinds, prompts, invocation, verdicts
+│   ├── src/shared.rs       Agent, REGISTRY, roots — what every module speaks
+│   ├── src/time.rs         the date a package was first installed
+│   └── tests/              Rust tests, the conformance set, skill fixtures and test scripts:
+│       ├── integration.rs  cross-stage tests against the real repo
+│       ├── plugins.rs      ignored: Plugins and Vendors against the real claude/codex CLIs in a temp HOME
+│       ├── strict.rs       ignored: the staged maid plugin passes `claude plugin validate --strict`
+│       ├── claude_config_dir.rs  install, status and uninstall with CLAUDE_CONFIG_DIR set, a stub claude, nothing under HOME
+│       ├── no_cli.rs       install with no agent CLI on PATH keeps the old links
+│       ├── stops_on_list.rs  an unreadable old part list stops install and uninstall, through the binary
+│       ├── memory.rs       the memory verbs through the binary, temp HOME
+│       ├── memory_install.rs  install's claude memory step, a stub claude, its install record entry
+│       ├── conformance.rs  whole.rs against the conformance set (conformance/, one dir per case)
+│       ├── reads_install.rs   install's claude skill-reads step beside memory's
 │       ├── browser-functional   ATTENDED test: drives real Chrome, asserts off-list blocked
-│       ├── browser-mcp          free: kiro's browser MCP registration, temp HOME, stub CLIs
-│       ├── rollback             free: `just rollback` and install's generation cleanup, temp HOME
-│       ├── verify-install       the installable Macro test, on the real install (`just verify-install`)
+│       ├── browser-mcp     free: kiro's browser MCP registration, temp HOME, stub CLIs
+│       ├── verify-install  the installable Macro test, on the real install (`just verify-install`)
 │       ├── conversational-stream.txt  the --stressed prefix
 │       └── skills/<name>.smoke   fixtures: skill + playback/enact sections (runner owns the five kinds)
 ├── ghost-in-shell/         the ghost, laid out as the concept (the initiative spec
@@ -1266,15 +1329,25 @@ mAId/
 │   │   │   └── ledger.rs   what reflections saw and the person decided
 │   │   ├── src/files.rs    whole-file writes
 │   │   └── fixtures/session.json  the fixture session packed, for the tests that read one
-│   ├── shell/claude/       crate `shell-claude`: the ghost in Claude Code; builds bin `maid-core`
-│   │   ├── src/main.rs     the CLI, and the hook answer in Claude's JSON (always exit 0)
+│   ├── shell/claude/       crate `shell-claude`: the ghost in Claude Code; builds bin `ghost-claude`
+│   │   ├── Justfile        `ghost::*` verb surface (install/uninstall/on/off/status/rollback/validate)
+│   │   ├── src/main.rs     the CLI, the hook answer in Claude's JSON (always exit 0), the install verbs
 │   │   ├── src/hook.rs     Claude's own input, turned into the call infusion takes
-│   │   ├── src/config_dir.rs   `ConfigDir`: where Claude keeps its user config
 │   │   ├── src/installed.rs  what Claude Code has installed, from its own records, cached under the state dir
 │   │   ├── src/transcript.rs   Claude's transcripts, located and packed: its session source
 │   │   ├── src/mcp.rs      the on-demand carrier as an MCP server on stdio
-│   │   └── plugin/         the ghost's own Claude plugin assets, which the build copies in:
-│   │                       my-harness.json (the adapter's declaration), hooks.json, mcp.json,
+│   │   ├── src/validate.rs every `my-harness` declaration in resources/ and the plugin
+│   │   ├── src/package.rs  the ghost's package: its plugin and binary staged into a prefix
+│   │   ├── src/reuse.rs    the reuse check: mAId's plugin in Claude Code, this checkout's or not
+│   │   ├── src/install.rs  the ghost's install: profile, reuse or install plain, plugin, record
+│   │   ├── src/plugins.rs  Claude Code's plugin commands, as the install runs them
+│   │   ├── src/switch.rs   on and off, at a scope
+│   │   ├── src/status.rs   ghost status: each bring-in as the ghost sees it, what waits
+│   │   ├── src/uninstall.rs  what its record names, its profile, the adapter's cache
+│   │   ├── src/rollback.rs its profile one generation back
+│   │   ├── fixtures/reflect.smoke  the reflect skill's fixture
+│   │   └── plugin/         the ghost's plugin as authored: .claude-plugin/plugin.json (the
+│   │                       adapter's declaration), hooks/hooks.json, .mcp.json,
 │   │                       agents/reflector.md, skills/reflect/
 │   └── tests/              crate `ghost-in-shell-tests`: every test that spans crates or runs
 │       │                   Claude Code or the binary (unit tests stay in the file they test)
@@ -1287,7 +1360,11 @@ mAId/
 │       ├── tests/claude_live.rs  ignored: Claude Code against a stub model API on loopback
 │       ├── tests/claude_paid.rs  ignored, paid: Claude Code with a real model, on the shell's HOME and model access
 │       ├── tests/adaptation.rs  close, reflect and decide through the binary, the real memory server, a store's travel
-│       └── tests/fixtures/claude/  a real-shaped Claude Code session and sub-agent
+│       ├── tests/claude_installed.rs  ignored: Claude Code on both plugins as their installs place them, against a stub model API
+│       ├── tests/shipped.rs  the declarations this repo ships, as the ghost reads them
+│       ├── tests/status_conformance.rs  ghost status against its conformance set (conformance/, one dir per case)
+│       ├── tests/fixtures/claude/  a real-shaped Claude Code session and sub-agent
+│       └── rollback        free: both installs, their rollbacks, on and off, temp HOME and profiles
 ├── kaimux/                 tmux-pane orchestrator for coding-agent sessions
 │   ├── Justfile            `kaimux::*` verb surface (build/test/integration)
 │   ├── Cargo.toml          deps: clap, anyhow, fd-lock, nix, notify, serde, serde_json
@@ -1341,8 +1418,8 @@ conformance set (see "My harness").
 
 `cargo test -p ghost-in-shell-tests --test claude_live -- --ignored` drives the real
 Claude Code (`CLAUDE_BIN`, else `claude` on PATH) in a temp HOME with
-`--plugin-dir` on a plugin built from the adapter files and the cargo-built
-core, against a stub of the model API on `127.0.0.1` at a port the OS
+`--plugin-dir` on the ghost's plugin staged by its own step around the
+cargo-built binary, against a stub of the model API on `127.0.0.1` at a port the OS
 picks, which records every request: the genome placed once at start, a
 fitting prompt's rules and memory pointer, nothing new on a second prompt,
 a sub-agent's slice, the genome again once after `/compact`, the MCP tool
@@ -1351,14 +1428,20 @@ session that ends marked for sleep. Free
 (no model, no network). Run it after any change to the adapter or the
 plugin manifest, and after a Claude Code update.
 
-`cargo test -p build-tool --test claude_installed -- --ignored` starts the
-real Claude Code (`CLAUDE_BIN`, else `claude` on PATH) on the plugin as
-install places it, with no `--plugin-dir`: profile generations outside the
-state dir as nix keeps them, `Plugins::install` with the real claude CLI,
-moving an older install off the links dir, then a session against the same
-kind of stub (the MCP server connects, the genome placed once), a new
-generation and a rollback, each followed with nothing registered again. It
-builds `maid-core` (dev profile) and is free.
+`cargo test -p ghost-in-shell-tests --test claude_installed -- --ignored`
+starts the real Claude Code (`CLAUDE_BIN`, else `claude` on PATH) on both
+plugins as their installs place them, with no `--plugin-dir`: plain's
+package staged by `plain::stage` and placed by `Plugins::install`, then a
+session with no genome and no ghost hook or server; the ghost's staged by
+`shell_claude::package` into generations outside the state dir, as nix
+keeps them, and placed by the ghost's own step, then a session against the
+same kind of stub (the MCP server connects, the genome placed once); off
+and on, and off for one launch with `--settings`; a new generation and a
+move back by the link alone, with nothing registered again. It builds
+`ghost-claude` (dev profile) and is free.
+
+`cargo test -p plain --test strict -- --ignored` runs `claude plugin
+validate --strict` on the `maid` plugin as plain stages it. Free.
 
 `cargo test -p ghost-in-shell-tests --test claude_paid -- --ignored --test-threads 1`
 with `MAID_PAID=1` (and `CLAUDE_BIN`) runs Claude Code with a real model:
@@ -1373,20 +1456,20 @@ the new version, since where Claude takes its marketplace from (the path as
 given, its files checked against the dir as resolved) is undocumented:
 
 ```
-cargo test -p build-tool --test claude_installed -- --ignored
+cargo test -p ghost-in-shell-tests --test claude_installed -- --ignored
 cargo test -p ghost-in-shell-tests --test claude_live -- --ignored
 ```
 
-`cargo test -p build-tool --test plugins -- --ignored` drives the real
+`cargo test -p plain --test plugins -- --ignored` drives the real
 claude and codex CLIs in a temp HOME (install, update, a disabled
 plugin, a codex marketplace whose dir is gone, uninstall), and the
 bring-ins: install and a no-op reinstall, uninstall keeping a marketplace
 another plugin uses, the user's own marketplace kept and not claimed, and
 an unreachable source failing the run. Free (no model calls) but needs
 both CLIs and network (it clones the vendor repo), so it is out of `just
-test`; run it after any change to `Plugins` or `BringIns`.
+test`; run it after any change to `Plugins` or `Vendors`.
 
-`nix develop -c resources/tests/browser-mcp` drives
+`nix develop -c plain/tests/browser-mcp` drives
 `resources/browser/manage` for kiro in a temp HOME with stub `kiro-cli`
 and Chrome (free, seconds): other servers and keys in kiro's global
 config kept, reruns byte-identical, a same-named entry that is not
@@ -1397,9 +1480,9 @@ entries and whole-status reading them, the server's files named and
 dropped with its entry, and kiro-cli never run. Run it after
 any change to `manage`.
 
-`nix develop -c resources/tests/rollback` drives `just rollback` and
-install's generation cleanup against the real claude and codex CLIs in a
-temp HOME and a temp profile (free, under a minute): rollback, an
+`nix develop -c ghost-in-shell/tests/rollback` drives both installs
+against the real claude and codex CLIs in a temp HOME and temp profiles
+(free, a few minutes). Plain: rollback, an
 install whose build fails keeping the generations it would drop,
 rollback after rollback-then-install, an earlier generation the agents
 cannot take, no earlier generation, the 30-day cleanup keeping the
@@ -1407,28 +1490,35 @@ previous install (also after an unchanged install), rollback past a
 link mAId did not write, the install record install leaves (placed,
 skipped, the vendor marketplace, gone after uninstall, with no old list
 left), an install over an old `maid-harness.json` taking its entries as
-mAId's own with nothing adopted anew, a skill put into Claude Code by hand
-joining the genome by its own declaration, install and
+mAId's own with nothing adopted anew, install and
 uninstall with no claude or codex on PATH keeping the bring-ins mAId's
 (a later uninstall still removes them), Claude's
 plugin-dir and config-dir grants (there after install, gone after uninstall), and `just
 status --whole` finding what mAId placed, then a second package's record beside
-it; the profile's `maid-core genome` under `env -i HOME=…` showing mAId's
-persona and bring-ins, with the memory (its store as its state) and the
-core's adapter under session bring-ins, the Claude plugin's hooks and MCP
-server naming the profile's own core and a start hook answering, every mAId bring-in declared and
-writing-style ready with no older rules file, the record holding this
+it; the record holding this
 checkout's revision (dirty or not) and no ghost fact, the memory's source
 as pensieve at the flake's pin and its `serve` the profile's pensieve on
-the store, the reflector agent in the plugin, the reflect skill naming a
-core of this build that runs bare, `claude plugin validate` passing the
-built plugin, and a spec-only commit building the same profile. It sets a temp personal store, so the memory server is
+the store, the package holding nothing of the ghost and passing `claude
+plugin validate --strict`, a spec-only commit building the same profile,
+and, with no nix on PATH, an install into a profile dir and a rollback
+that refuses, naming nix. The ghost, over it: from another revision it
+says why and installs plain from this checkout; again it reuses plain,
+whose generation and record stay; its record; its hooks and MCP server
+naming its profile's binary and a start hook answering; the binary's
+genome under `env -i HOME=…` with mAId's persona, the memory and the
+adapter as `[personal, own]`; a skill put into Claude Code by hand joining
+by its own declaration; the reflector and reflect in its plugin; off and
+on; `ghost status`; a second generation from a clone with only the ghost
+changed, and `ghost rollback` back to the first with plain untouched; a
+generation without its binary refused; the warning once plain is rolled
+back; `ghost uninstall` leaving plain's record byte-identical; plain
+uninstalled under it, then the ghost alone installing plain again. It sets a temp personal store, so the memory server is
 registered on the temp HOME's claude.
 It needs network for the vendor marketplace.
 Run it after any change to the profile recipes or the install record.
 
 **`just verify-install` is the installable Macro test**
-(`resources/tests/verify-install`), run on the real install: install
+(`plain/tests/verify-install`), run on the real install: install
 from a clone that is then deleted, what each agent's own CLI lists, the
 browser server under `env -i HOME=…`, a search for checkout paths, a
 second clone's takeover and rollback, uninstall keeping user data, and a
@@ -1440,7 +1530,7 @@ back to, since uninstall removes the profile.
 
 One test deliberately breaks the fake-`$HOME` pattern:
 `shipped_content_validates` points the validator at the **real**
-`resources/content/`. Everything else here builds a synthetic tree, so
+`resources/`. Everything else here builds a synthetic tree, so
 without it the suite can be green while the content on disk is
 uninstallable — which is exactly what happened when two descriptions
 carried an unquoted `: ` (see "Writing a skill"). It also fails a skill
@@ -1454,10 +1544,10 @@ such as `~/.config` in any file a skill ships, the overlay's `requires`
 equal to the vendor's `needs`). They read only, so they keep the no-side-effects
 property.
 
-**`just resources::check-skills` / `…::smoke-skills` — AI-tool
+**`just plain::check-skills` / `…::smoke-skills` — AI-tool
 functional tests, on opposite sides of install.** Drives
 the real coding agents (claude, kiro, codex) against the `.smoke`
-fixtures under `resources/tests/skills/`. How a test is scored is a
+fixtures under `plain/tests/skills/`. How a test is scored is a
 property of the fixture (`harness::Assertion`), not of the kind:
 **Reply** (a literal substring, a judged narrative, or both — checked
 together) for a skill with no inspectable side effect, or **Behavioral**
@@ -1596,7 +1686,7 @@ skill, not just the broken one. Descriptions naturally attract it
 (`specs/: plan or start`, `briefing tool: read-only`). **Single-quote
 the value** whenever it contains a colon; the values already use `"`
 freely, so `'…'` avoids escaping. `shipped_content_validates` in
-build-tool is the test that catches this — every other validator test
+plain is the test that catches this — every other validator test
 builds a synthetic `TempDir` tree, so before it existed the suite could
 be green while the real content was uninstallable.
 
@@ -1648,7 +1738,7 @@ structurally **without calling an agent** — explicit prompts must carry
 the skill's own text, implicit prompts must leak no skill name, path, or
 marker, and a malformed fixture fails without stopping the run before any
 credits are spent. Run it before any paid run. `--kind <list>` scopes a run to one
-kind (`just resources::verify-skills-kind <kind>`).
+kind (`just plain::verify-skills-kind <kind>`).
 
 **Prefer behavioral where an artefact exists.** When a skill's
 correct behavior produces an inspectable change (a file written, a
@@ -1700,7 +1790,7 @@ compliant agent then does both, which reads as drift. The description is
 the tempting place to look and the wrong one.
 
 kdevkit's Test Gate uses `just test` by default. SKILL.md
-prose revisions add `just resources::check-skills` (judge mode)
+prose revisions add `just plain::check-skills` (judge mode)
 as their A/B evidence — the pre-install stage is the one that
 isolates content, so it is the honest A/B. kdevkit's close-out can run
 `just status` after an install to confirm the profile generation and
@@ -1720,17 +1810,17 @@ calling an agent, so an agentic run may use it.
 
 Commands the user runs by hand:
 
-- Pre-install only (no deploy needed): `just resources::check-skills`
-- Post-install only: `just resources::smoke-skills`
-- Both stages: `just resources::verify-skills`
-- A single fixture, both stages: `just resources::verify-skills-one <name>`
-  (e.g. `just resources::verify-skills-one notes-git-commit`).
+- Pre-install only (no deploy needed): `just plain::check-skills`
+- Post-install only: `just plain::smoke-skills`
+- Both stages: `just plain::verify-skills`
+- A single fixture, both stages: `just plain::verify-skills-one <name>`
+  (e.g. `just plain::verify-skills-one notes-git-commit`).
 
 The fixture file's basename (without `.smoke`) is the
 `<name>`.
 
 **Prefer the isolated verb for any paid run.** `just
-resources::verify-skills-isolated <check|smoke|verify> [name] [flags]`
+plain::verify-skills-isolated <check|smoke|verify> [name] [flags]`
 runs the same tests from a throwaway clone of the committed branch: it
 builds the clone into a throwaway profile, points every agent's skill
 links at it, runs, puts the links back on whichever profile owned them,
@@ -1763,7 +1853,7 @@ each at three levels:
 
 | | A. kdevkit still works | B. the slot works, for any judge | C. kyodakit is a good judge |
 |---|---|---|---|
-| Unit — `just test` | existing build-tool tests | `shipped_judgement_role_contract`: kdevkit names `kyodakit` as the default and `judgement:` as the override; the default ships; `judgement:` is documented | — |
+| Unit — `just test` | existing plain tests | `shipped_judgement_role_contract`: kdevkit names `kyodakit` as the default and `judgement:` as the override; the default ships; `judgement:` is documented | — |
 | Integration — `check` | every `kdevkit-*` fixture | `kdevkit-judgement-slot` (a stub judge via `judgement: path:`, leaving `JUDGED.md`), `kdevkit-judgement-load`, `kdevkit-judgement-live` (the default judge), `kdevkit-judgement-named` (judge set in `project.md`) | `kyodakit*` fixtures, with `--control` for the gap |
 | Production smoke — `smoke` | the same, skills found unaided | the same | the same |
 
@@ -1771,17 +1861,17 @@ The full replay, cheapest first:
 
 ```
 just test                                   # unit, free
-just resources::verify-skills-dry           # every prompt, free
-just resources::verify-skills-isolated verify 'kdevkit-*'           # A
-just resources::verify-skills-isolated verify 'kdevkit-judgement-*' --repeat 3   # B
-just resources::verify-skills-isolated check 'kyodakit*' --repeat 3 --control   # C
-just resources::verify-skills-isolated check 'kdevkit-judgement-*' --drift      # B under drift
-just resources::verify-skills-isolated check 'kyodakit*' --drift                # C under drift
+just plain::verify-skills-dry           # every prompt, free
+just plain::verify-skills-isolated verify 'kdevkit-*'           # A
+just plain::verify-skills-isolated verify 'kdevkit-judgement-*' --repeat 3   # B
+just plain::verify-skills-isolated check 'kyodakit*' --repeat 3 --control   # C
+just plain::verify-skills-isolated check 'kdevkit-judgement-*' --drift      # B under drift
+just plain::verify-skills-isolated check 'kyodakit*' --drift                # C under drift
 ```
 
 **Trimming kyodakit.** Keep the judge minimal so it holds in long
 sessions. Trim with kdevkit's "Tuning what an agent uses" loop, scored by
-`resources/tests/kyodakit-trim-score` (~20 paid runs): the feedback test on
+`plain/tests/kyodakit-trim-score` (~20 paid runs): the feedback test on
 claude and codex (the one test kyodakit clearly changes) and the all-rules
 recital on every agent, 3 repeats each and once under `--drift`. Cuts
 change wording only and never remove a rule, since a rule no test can
@@ -1815,7 +1905,11 @@ dir (Architecture, "Skill reads", "Skill state"), and writes mAId's install reco
 `just status` reports the generation, each plugin and
 each link, and `just status --whole` checks every install record against
 each agent; `just rollback` returns every agent to the previous install
-(no selector: the profile is shared). `just resources::verify-skills` drives the
+(no selector: the profile is shared; it needs nix). On Claude Code, `just
+ghost install` adds the ghost over that, with its own profile, plugin and
+record (Architecture, "The ghost's install"): `just ghost
+on|off|status|rollback|uninstall` beside it, and plain left whole by every
+one of them. `just plain::verify-skills` drives the
 real AI tools against the installed content. Each takes an
 optional coding-agent selector (`claude|kiro|codex`; omit for all
 three). App workspace members (`kaimux/`) build via
@@ -1823,7 +1917,7 @@ three). App workspace members (`kaimux/`) build via
 --release` + copy into `dist/`).
 
 The browser-control MCP is registered by `just install` too
-(env-gated): `just resources::install-browser-mcp [agent]`, which
+(env-gated): `just plain::install-browser-mcp [agent]`, which
 it calls, registers the server globally with each harness (kiro in
 its global MCP config) and prints the
 one-time manual step (enable Chrome remote debugging via
@@ -1842,8 +1936,8 @@ the experience is symmetric across resource kinds.
   destination, or the plugin's copies under claude's and codex's
   plugin dirs directly.** They are symlinks into the mAId profile (a
   read-only nix store path) or the agent's own cache. Edit the source
-  under `resources/content/` (or, for the ghost's own skill and agent,
-  `ghost-in-shell/shell/claude/plugin/`) and `just install`. (This
+  under `resources/` and `just install` (or, for the ghost's own skill and
+  agent, `ghost-in-shell/shell/claude/plugin/` and `just ghost install`). (This
   guardrail is mAId-project context — it protects mAId's own deploy
   invariant — which is why it lives here, not in a globally-installed
   preamble.)
@@ -1856,10 +1950,12 @@ the experience is symmetric across resource kinds.
   bring-in marketplaces and plugins it added, the MCP registrations, its
   elements of Claude's settings (`env.CLAUDE_CODE_DISABLE_AUTO_MEMORY`, its
   `additionalDirectories` element, its `Edit` rules on skill state dirs in
-  `permissions.allow`), and its own install record. Never the user's default
+  `permissions.allow`), and its own install record; the ghost's install
+  adds only its own profile, the `ghost@ghost-in-shell` plugin and
+  `ghost-in-shell` marketplace, and its record. Never the user's default
   nix profile (a home-manager may own it). The rust toolchain and `just` come
-  from the dev shell; `build-tool` is invoked through `cargo run
-  -p build-tool` (wrapped by Just) from the checkout — no shim
+  from the dev shell; `plain` and `ghost-claude` are invoked through `cargo
+  run` (wrapped by Just) from the checkout — no shim
   under `~/.local/bin`, no `cargo install` anywhere in the
   install path.
 - **Installed means checkout-free.** Nothing installed may name a
@@ -1972,6 +2068,6 @@ named here is defined under Architecture, "My harness".
   - `generator:` omitted — resolve the single installed tool
     advertising the review-briefing role. kdevkit dispatches the
     *role*, never a named product; this repo happens to ship one
-    (`resources/content/skills/kreviewkit/`), and dogfoods it.
+    (`resources/skills/kreviewkit/`), and dogfoods it.
     What the briefing contains and how the generator runs are
     that generator's contract, not kdevkit's.

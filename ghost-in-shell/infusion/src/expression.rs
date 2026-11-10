@@ -10,7 +10,7 @@ pub mod here;
 pub mod record;
 pub mod select;
 
-use crate::call::{Call, Carrier, Ctx, Item};
+use crate::call::{Call, Carrier, Infusion, Item};
 use crate::expression::delivery::{deliver_within, Record};
 use crate::expression::here::Here;
 use crate::expression::select::Selector;
@@ -33,7 +33,7 @@ const FIELD_BYTES: usize = 300;
 /// sent: the reinforcement (acting persona, its memory, the work's record),
 /// the first rules of each bring-in that fits, and the memories that bear
 /// on it. Never the catalog. Reads the call's prompt and folder.
-pub fn expression(ctx: &Ctx, call: &Call) -> Result<Vec<Item>> {
+pub fn expression(ctx: &Infusion, call: &Call) -> Result<Vec<Item>> {
     let here = Here::at(call.at.cwd.as_deref());
     let ghost = ctx.shell.ghost(here.cwd.as_deref())?;
     let prompt = call.prompt.as_deref().unwrap_or_default();
@@ -296,7 +296,7 @@ mod tests {
         part(dir, part_name, persona, Value::Array(bring_ins));
     }
 
-    fn said(c: &Ctx, carrier: Carrier, prompt: &str) -> Vec<String> {
+    fn said(c: &Infusion, carrier: Carrier, prompt: &str) -> Vec<String> {
         let call = Call {
             prompt: Some(prompt.into()),
             at: Where {

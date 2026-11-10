@@ -1,4 +1,4 @@
-//! `maid-core mcp` as a shell runs it: JSON-RPC lines on stdio, a bare
+//! `ghost-claude mcp` as a shell runs it: JSON-RPC lines on stdio, a bare
 //! environment, a temp HOME, the session id in a variable it is told of.
 
 use serde_json::{json, Value};

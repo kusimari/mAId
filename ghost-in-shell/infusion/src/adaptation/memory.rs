@@ -80,7 +80,7 @@ pub fn call(argv: &[String], calls: &[(&str, Value)]) -> Result<Vec<Result<Strin
     };
     let init = json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {
         "protocolVersion": "2025-06-18", "capabilities": {},
-        "clientInfo": {"name": "maid-core", "version": env!("CARGO_PKG_VERSION")}}});
+        "clientInfo": {"name": "ghost-claude", "version": env!("CARGO_PKG_VERSION")}}});
     let mut answers = vec![];
     let ready = ask(&mut stdin, 0, init).is_some_and(|v| v["error"].is_null());
     if ready {

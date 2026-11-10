@@ -7,8 +7,8 @@
 //! times, since `.claude.json` can be large and the hooks run on every
 //! prompt. See the initiative spec `harness-core`, "What the ghost reads".
 
-use crate::config_dir::ConfigDir;
 use ghost::installed::{Installed, Kind, Origin, Registration, Unit};
+use plain::claude_config::ConfigDir;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::hash_map::DefaultHasher;

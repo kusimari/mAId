@@ -1,0 +1,17 @@
+{
+  "name": "ghost",
+  "version": "@version@",
+  "description": "The ghost in Claude Code: the genome at each start, each turn's expression, and reflection, over what Claude Code has installed",
+  "author": {
+    "name": "mAId"
+  },
+  "repository": "https://github.com/kusimari/mAId",
+  "extensions": {
+    "my-harness": {
+      "contract": 1,
+      "name": "claude-adapter",
+      "scope": "session",
+      "job": "the core's adapter on Claude Code: the ghost plugin's hooks place the genome and each turn's expression, and mark the session for sleep at its end"
+    }
+  }
+}

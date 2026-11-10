@@ -2,7 +2,7 @@
 //! resource and a prompt, expression as a tool, each answered on the
 //! on-demand carrier. Messages are JSON-RPC 2.0, one per line.
 
-use infusion::call::{Call, Carrier, Ctx, Item, Slice, Where};
+use infusion::call::{Call, Carrier, Infusion, Item, Slice, Where};
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
@@ -23,7 +23,7 @@ pub struct Session {
 
 /// Answer every request on `input` until it ends.
 pub fn serve(
-    ctx: &Ctx,
+    ctx: &Infusion,
     session: &Session,
     input: impl BufRead,
     mut out: impl Write,
@@ -46,7 +46,7 @@ pub fn serve(
 }
 
 /// The reply to one message; none for a notification.
-pub fn answer(ctx: &Ctx, session: &Session, msg: &Value) -> Option<Value> {
+pub fn answer(ctx: &Infusion, session: &Session, msg: &Value) -> Option<Value> {
     let id = msg.get("id")?.clone();
     let params = &msg["params"];
     let result = match msg["method"].as_str().unwrap_or_default() {
@@ -118,15 +118,15 @@ pub fn answer(ctx: &Ctx, session: &Session, msg: &Value) -> Option<Value> {
     })
 }
 
-fn genome(ctx: &Ctx, session: &Session) -> Result<String, (i64, String)> {
+fn genome(ctx: &Infusion, session: &Session) -> Result<String, (i64, String)> {
     let cwd = session.cwd.clone();
     run(ctx, session, infusion::genome, None, cwd, Slice::Whole)
 }
 
-type Entry = fn(&Ctx, &Call) -> anyhow::Result<Vec<Item>>;
+type Entry = fn(&Infusion, &Call) -> anyhow::Result<Vec<Item>>;
 
 fn run(
-    ctx: &Ctx,
+    ctx: &Infusion,
     session: &Session,
     f: Entry,
     prompt: Option<String>,

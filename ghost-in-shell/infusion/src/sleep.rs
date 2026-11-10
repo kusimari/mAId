@@ -3,7 +3,7 @@
 //! file per session under `<state>/sleep/`, so nothing depends on an end
 //! event firing: a close marks the session the same way.
 
-use crate::call::{Call, Close, Ctx, Item};
+use crate::call::{Call, Close, Infusion, Item};
 use crate::experience::locate;
 use crate::experience::source::Located;
 use crate::expression::delivery::{check_id, deliver};
@@ -124,7 +124,7 @@ pub fn waiting(config: &Config) -> Result<Vec<Mark>> {
 
 /// sleep: marks a session done, from its end event or the person's close
 /// or reflect. Nothing else happens until the person reflects.
-pub fn sleep(ctx: &Ctx, call: &Call) -> Result<Vec<Item>> {
+pub fn sleep(ctx: &Infusion, call: &Call) -> Result<Vec<Item>> {
     let (_, at) = locate(ctx, call)?;
     // A shell's end event carries its own reason (`other`, `clear`, ...);
     // to the mark it is the end, whatever ended it.

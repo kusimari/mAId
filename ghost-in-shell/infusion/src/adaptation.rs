@@ -13,7 +13,7 @@ pub mod ledger;
 pub mod memory;
 mod moves;
 
-use crate::call::{Call, Ctx, Item};
+use crate::call::{Call, Infusion, Item};
 use crate::experience::{locate, pack, squash, Bundle, Who};
 use crate::expression::delivery::{check_id, deliver};
 use crate::files::write_atomic;
@@ -1433,7 +1433,7 @@ pub fn brief(
 }
 
 /// The session in full as its brief showed it to the reflector.
-fn briefed(ctx: &Ctx, call: &Call) -> Result<Bundle> {
+fn briefed(ctx: &Infusion, call: &Call) -> Result<Bundle> {
     let (_, at) = locate(ctx, call)?;
     let path = ctx.config.briefed(&at.session);
     let text = match fs::read_to_string(&path) {
@@ -1451,7 +1451,7 @@ fn briefed(ctx: &Ctx, call: &Call) -> Result<Bundle> {
 /// findings or decisions in its input: the reflector's brief. With the
 /// reflector's findings: the decision batch. With the person's
 /// decisions: what was applied.
-pub fn adaptation(ctx: &Ctx, call: &Call) -> Result<Vec<Item>> {
+pub fn adaptation(ctx: &Infusion, call: &Call) -> Result<Vec<Item>> {
     let input = &call.input;
     let ghost = ctx.shell.ghost(None)?;
     let item = if !input["dismiss"].is_null() {

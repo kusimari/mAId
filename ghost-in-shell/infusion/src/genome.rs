@@ -3,7 +3,7 @@
 //! is, the environment as resolved here, and what waits for the person.
 //! See the initiative spec `harness-core`, "The five entry points".
 
-use crate::call::{Call, Ctx, Item, Slice};
+use crate::call::{Call, Infusion, Item, Slice};
 use crate::expression::delivery::deliver;
 use crate::expression::fit;
 use crate::expression::here::Here;
@@ -34,6 +34,9 @@ pub struct Picture {
     /// The shell's records whose shape was not understood, each with why.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub not_understood: Vec<String>,
+    /// Each part's plugin that is turned off.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub disabled: Vec<String>,
     pub pending: Pending,
     /// Sessions marked for sleep and not yet reflected on.
     pub waiting: usize,
@@ -62,7 +65,7 @@ pub struct Pending {
     pub at: String,
 }
 
-pub fn genome(ctx: &Ctx, call: &Call) -> Result<Vec<Item>> {
+pub fn genome(ctx: &Infusion, call: &Call) -> Result<Vec<Item>> {
     let p = picture_at(ctx, &Here::at(call.at.cwd.as_deref()))?;
     let item = Item {
         // One item: any change re-sends the whole picture. A carrier that
@@ -74,12 +77,12 @@ pub fn genome(ctx: &Ctx, call: &Call) -> Result<Vec<Item>> {
     deliver(ctx, call, vec![item])
 }
 
-pub fn picture(ctx: &Ctx) -> Result<Picture> {
+pub fn picture(ctx: &Infusion) -> Result<Picture> {
     picture_at(ctx, &Here::default())
 }
 
 /// The picture as seen from `here`, which the persona guess reads.
-pub fn picture_at(ctx: &Ctx, here: &Here) -> Result<Picture> {
+pub fn picture_at(ctx: &Infusion, here: &Here) -> Result<Picture> {
     let ghost = ctx.shell.ghost(here.cwd.as_deref())?;
     let acting = fit::persona(&ghost, here);
     let (mut session, mut turn) = (vec![], vec![]);
@@ -99,6 +102,7 @@ pub fn picture_at(ctx: &Ctx, here: &Here) -> Result<Picture> {
         environment: environment::derive(&ghost, &ctx.host),
         clashes: ghost.clashes.clone(),
         not_understood: ghost.not_understood.clone(),
+        disabled: ghost.disabled.clone(),
         pending: pending(ctx)?,
         waiting: sleep::waiting(&ctx.config)?.len(),
     })
@@ -142,9 +146,13 @@ pub(crate) fn line(b: &BringIn) -> Line {
     }
 }
 
+fn pending(ctx: &Infusion) -> Result<Pending> {
+    pending_in(&ctx.config)
+}
+
 /// Decisions waiting for the person: one file each in the pending dir.
-fn pending(ctx: &Ctx) -> Result<Pending> {
-    let dir = ctx.config.pending();
+pub fn pending_in(config: &ghost::config::Config) -> Result<Pending> {
+    let dir = config.pending();
     let count = match fs::read_dir(&dir) {
         Ok(rd) => rd
             .flatten()
@@ -260,6 +268,9 @@ pub fn render_slice(p: &Picture, slice: Slice) -> String {
     }
     for n in &p.not_understood {
         let _ = writeln!(s, "  not understood: {n}");
+    }
+    for d in &p.disabled {
+        let _ = writeln!(s, "  {d}");
     }
     if !p.clashes.is_empty() {
         let _ = writeln!(

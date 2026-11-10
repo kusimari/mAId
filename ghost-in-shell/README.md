@@ -7,5 +7,5 @@ The code is laid out as the design, one crate per idea: `ghost`,
 The design, and what each crate and file holds, is in
 [`specs/initiative/harness-core.md`](../specs/initiative/harness-core.md),
 "System design". The person's own resources and the plain installer that
-puts them into each shell are in [`resources/`](../resources).
-x
+puts them into each shell are in [`resources/`](../resources) and
+[`plain/`](../plain).

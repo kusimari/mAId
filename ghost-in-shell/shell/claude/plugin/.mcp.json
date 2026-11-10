@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "my-harness": {
+      "command": "@ghost-claude@",
+      "args": ["mcp", "--session-env", "CLAUDE_CODE_SESSION_ID"]
+    }
+  }
+}

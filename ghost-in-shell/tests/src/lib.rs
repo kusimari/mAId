@@ -21,7 +21,7 @@ pub fn plugin() -> PathBuf {
 
 /// The person's resources, as the checkout holds them.
 pub fn content() -> PathBuf {
-    repo().join("resources/content")
+    repo().join("resources")
 }
 
 /// The binary the carriers call, built from this checkout. Cargo hands a
@@ -42,7 +42,7 @@ pub fn core() -> &'static str {
                 "-p",
                 "shell-claude",
                 "--bin",
-                "maid-core",
+                "ghost-claude",
             ])
             .current_dir(repo())
             .output()
@@ -56,8 +56,8 @@ pub fn core() -> &'static str {
             .lines()
             .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
             .filter_map(|v| v["executable"].as_str().map(PathBuf::from))
-            .find(|p| p.file_name().is_some_and(|n| n == "maid-core"))
-            .expect("cargo says where it put maid-core")
+            .find(|p| p.file_name().is_some_and(|n| n == "ghost-claude"))
+            .expect("cargo says where it put ghost-claude")
             .display()
             .to_string()
     })
@@ -171,26 +171,47 @@ impl ClaudeHome {
     }
 }
 
-/// mAId's plugin laid out as the flake builds it, at `at`: the Claude
-/// manifest with its repository and the adapter's declaration, the skills
-/// (the ghost's reflect among them), and the server declarations and
-/// overlays it ships.
+/// The adapter's declaration, as the ghost's plugin manifest carries it.
+pub fn adapter_declaration() -> serde_json::Value {
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(plugin().join(".claude-plugin/plugin.json")).unwrap(),
+    )
+    .unwrap();
+    manifest["extensions"]["my-harness"].clone()
+}
+
+/// mAId's plugin laid out as plain stages it, at `at`: the Claude manifest
+/// with its repository, the person's skills, and the server declarations
+/// and overlays it ships.
 pub fn maid_plugin(at: &Path) -> PathBuf {
-    let decl: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(plugin().join("my-harness.json")).unwrap())
-            .unwrap();
     std::fs::create_dir_all(at.join(".claude-plugin")).unwrap();
     std::fs::write(
         at.join(".claude-plugin/plugin.json"),
         serde_json::json!({"name": "maid", "version": "1.0.0",
-            "repository": "https://github.com/kusimari/mAId",
-            "extensions": {"my-harness": decl}})
+            "repository": "https://github.com/kusimari/mAId"})
         .to_string(),
     )
     .unwrap();
     copy(&content().join("skills"), &at.join("skills"));
-    copy(&plugin().join("skills/reflect"), &at.join("skills/reflect"));
     copy(&content().join("servers"), &at.join("servers"));
     copy(&content().join("overlays"), &at.join("overlays"));
     at.to_path_buf()
+}
+
+/// The ghost's plugin as the checkout holds it, copied to `at`: its
+/// manifest with the adapter's declaration, hooks, MCP config, reflect and
+/// the reflector.
+pub fn ghost_plugin(at: &Path) -> PathBuf {
+    copy(&plugin(), at);
+    at.to_path_buf()
+}
+
+/// The ghost's package staged by its own step into `<d>/ghost`, the
+/// executable this checkout builds in it: the plugin dir, for a
+/// `--plugin-dir` session.
+pub fn staged_ghost(d: &Path) -> PathBuf {
+    let prefix = d.join("ghost");
+    shell_claude::package::stage(&plugin(), Path::new(core()), &prefix, &prefix)
+        .expect("the ghost's package stages");
+    prefix.join(shell_claude::package::PLUGIN_DIR)
 }

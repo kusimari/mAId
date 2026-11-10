@@ -2,14 +2,14 @@
 # mAId/resources/browser/manage — register / unregister / report
 # the browser-control MCP server with each installed coding agent
 # (claude, kiro, codex). Invoked by the *-browser-mcp verbs in
-# resources/Justfile; not meant to be called directly.
+# plain/Justfile; not meant to be called directly.
 #
 # The server is registered to launch via the profile's
-# maid-browser-mcp (passed as $LAUNCHER), the flake's wrap of
+# maid-browser-mcp (passed as $LAUNCHER), plain's installed copy of
 # resources/browser/launch, which enforces the user's allowlist. We
 # register a runnable command, not a symlink, so this lives in
 # shell over each harness's own MCP CLI rather than in the
-# pure-symlink build-tool.
+# pure-symlink plain.
 #
 # Design notes:
 #   - Data-driven, mirroring the Rust REGISTRY's shape: one row per
@@ -128,7 +128,7 @@ record() {
     local agent="$1"
     shift
     local args=(record --agent "$agent" --kind mcp --only "$SERVER_NAME")
-    cargo run -p build-tool --release --quiet -- "${args[@]}" "$@" || {
+    cargo run -p plain --release --quiet -- "${args[@]}" "$@" || {
         skip "$(label "$agent") (part list not fully updated; see above)"
         RECORD_FAILED=1
     }
@@ -349,7 +349,7 @@ cmd_install() {
     info "agent attaches."
     printf '\nAllowlist (deny-by-default — add at least one site before use):\n'
     info "$ALLOWLIST"
-    info "edit directly, or: just resources::browser-mcp-allow '<pattern>'"
+    info "edit directly, or: just plain::browser-mcp-allow '<pattern>'"
     [[ -z "${RECORD_FAILED:-}" ]]
 }
 

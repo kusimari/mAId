@@ -410,6 +410,28 @@ fn names_the_contract(m: Option<&Manifest>) -> bool {
         })
 }
 
+/// Each plugin the shell has that is turned off, by the part its
+/// repository names: "<part>'s plugin is disabled; its skills are off".
+/// A plugin with no repository is no part's, and is not named.
+pub fn disabled(installed: &dyn Installed, here: Option<&Path>) -> anyhow::Result<Vec<String>> {
+    Ok(installed
+        .units(here)?
+        .iter()
+        .filter(|u| u.kind == Kind::Plugin && !u.enabled)
+        .filter_map(|u| {
+            let text = contract::read_small(u.manifest.as_ref()?).ok()?;
+            let v: Value = serde_json::from_str(&text).ok()?;
+            let repo = v["repository"]
+                .as_str()
+                .or_else(|| v["extensions"][contract::NAMESPACE]["repository"].as_str())?;
+            Some(format!(
+                "{}'s plugin is disabled; its skills are off",
+                part_name(repo)
+            ))
+        })
+        .collect())
+}
+
 /// A part's name: its repository's last path segment, `.git` dropped.
 pub fn part_name(repository: &str) -> String {
     let path = repository.trim_end_matches('/');
@@ -823,5 +845,20 @@ mod tests {
             ..declared
         };
         assert_eq!(borrowed.route(), Route::Report);
+    }
+
+    #[test]
+    fn a_parts_plugin_turned_off_is_said_and_its_skills_join_nothing() {
+        let dir = TempDir::new().unwrap();
+        let mut p = plugin(dir.path(), "https://example.org/me/mAId");
+        p.enabled = false;
+        let units = vec![p.clone()];
+        assert_eq!(
+            disabled(&units, None).unwrap(),
+            ["mAId's plugin is disabled; its skills are off"]
+        );
+        assert!(of(&units, None).unwrap().is_empty());
+        p.enabled = true;
+        assert!(disabled(&vec![p], None).unwrap().is_empty());
     }
 }

@@ -11,6 +11,7 @@ use infusion::call::Where;
 use infusion::experience::source::{Located, SessionSource, Sources};
 use infusion::experience::{Bundle, Did, Entry, Friction, Struggle, Who};
 use infusion::expression::delivery::check_id;
+use plain::claude_config::project_dir_name;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
@@ -42,14 +43,6 @@ impl Sources for Transcripts {
 pub struct Claude {
     /// The projects dir.
     pub root: PathBuf,
-}
-
-/// Claude Code names a project's dir after its working directory with
-/// every character that is not a letter or digit turned into `-`.
-pub fn project_dir_name(path: &str) -> String {
-    path.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect()
 }
 
 impl SessionSource for Claude {
@@ -673,11 +666,6 @@ mod tests {
         assert!(c.locate(Some("../x"), &Where::default()).is_err());
         assert!(c.locate(Some("nope"), &Where::default()).is_err());
         assert!(c.locate(None, &at_cwd("/elsewhere")).is_err());
-    }
-
-    #[test]
-    fn project_dirs_are_named_as_claude_code_names_them() {
-        assert_eq!(project_dir_name("/a/b.c_d e"), "-a-b-c-d-e");
     }
 
     /// infusion's own tests read the fixture session as a packed bundle,

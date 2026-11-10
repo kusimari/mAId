@@ -115,9 +115,11 @@ pub struct Item {
     pub data: Value,
 }
 
-/// What every entry point needs to answer: where the ghost's own things
-/// are, what this host offers, and the sessions this shell can read.
-pub struct Ctx {
+/// The infusion: what every entry point infuses the ghost through. The
+/// shell the ghost is in, where the ghost's own things are, what this host
+/// offers, and the sessions this shell can read. See the initiative spec
+/// `harness-core`, "The five entry points".
+pub struct Infusion {
     pub config: Config,
     pub host: Host,
     pub sources: Box<dyn crate::experience::source::Sources>,

@@ -8,11 +8,15 @@ publish = false
 # The crate itself is only the helpers those tests share.
 
 [dependencies]
+# The lib stages the ghost's package for the tests that run Claude Code.
+shell-claude = { path = "../shell/claude" }
 anyhow = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
 
 [dev-dependencies]
 ghost = { path = "../ghost" }
 infusion = { path = "../infusion" }
-shell-claude = { path = "../shell/claude" }
+plain = { path = "../../plain" }
 tempfile = "3"
+gray_matter = "0.3"
+serde = { version = "1", features = ["derive"] }

@@ -151,7 +151,7 @@ fn the_unfilled_entry_points_succeed_with_nothing() {
 #[test]
 fn map_and_environment_print_their_views() {
     let home = setup();
-    let map: Value = serde_json::from_str(&text(home.path(), &["map"])).unwrap();
+    let map: Value = serde_json::from_str(&text(home.path(), &["ghost"])).unwrap();
     assert_eq!(map["bring_ins"][0]["route"], "worktree");
     assert_eq!(map["bring_ins"][0]["declared"]["is"], "declared");
     let env = text(home.path(), &["environment"]);
@@ -182,4 +182,28 @@ fn input_that_is_not_json_fails() {
         .unwrap();
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("not JSON"));
+}
+
+/// A hook still answers when the session's working dir is gone: only the
+/// install verbs that read a project ask for it.
+#[test]
+fn the_genome_answers_from_a_working_dir_that_is_gone() {
+    let home = TempDir::new().unwrap();
+    let gone = home.path().join("gone");
+    fs::create_dir_all(&gone).unwrap();
+    let out = Command::new("/bin/sh")
+        .arg("-c")
+        .arg("cd \"$1\" && rmdir \"$1\" && exec \"$2\" genome")
+        .arg("sh")
+        .arg(&gone)
+        .arg(ghost_in_shell_tests::core())
+        .env_clear()
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success() && String::from_utf8_lossy(&out.stdout).contains("personas:"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }

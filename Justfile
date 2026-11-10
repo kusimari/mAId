@@ -3,8 +3,9 @@ _default:
 
 # ── modules ──────────────────────────────────────────────────────
 # Per-area verbs live next to the area they operate on. Invoke as
-# `just resources::install-skills`, `just kaimux::build`, etc.
-mod resources
+# `just plain::install-skills`, `just ghost::status`, `just kaimux::build`.
+mod plain
+mod ghost 'ghost-in-shell/shell/claude/Justfile'
 mod kaimux
 
 # ── install ──────────────────────────────────────────────────────
@@ -19,17 +20,11 @@ mod kaimux
 # non-zero.
 # Build this checkout into the mAId profile and point the agents at it.
 install agent="":
-    #!/usr/bin/env bash
-    set -u
-    just resources::install-profile || exit 1
-    rc=0
-    just resources::install-skills "{{ agent }}" || rc=1
-    just resources::install-browser-mcp "{{ agent }}" || rc=1
-    exit $rc
+    just plain::setup {{ quote(agent) }}
 
 # Return every agent to the install before this one; run again to go further back.
 rollback:
-    just resources::rollback-profile
+    just plain::rollback-profile
 
 # A step that fails, such as one leaving a location alone as install
 # does, is reported, the rest still runs, and the run exits non-zero.
@@ -38,9 +33,9 @@ uninstall agent="":
     #!/usr/bin/env bash
     set -u
     rc=0
-    just resources::uninstall-skills "{{ agent }}" || rc=1
-    just resources::uninstall-browser-mcp "{{ agent }}" || rc=1
-    {{ if agent == "" { "just resources::uninstall-profile || rc=1" } else { "" } }}
+    just plain::uninstall-skills "{{ agent }}" || rc=1
+    just plain::uninstall-browser-mcp "{{ agent }}" || rc=1
+    {{ if agent == "" { "just plain::uninstall-profile || rc=1" } else { "" } }}
     exit $rc
 
 # A step that fails stops the report and fails the run.
@@ -49,35 +44,35 @@ uninstall agent="":
 status agent="" whole="":
     #!/usr/bin/env bash
     set -eu
-    if [ "{{ agent }}" = --whole ]; then exec just resources::status-whole "{{ whole }}"; fi
-    if [ "{{ whole }}" = --whole ]; then exec just resources::status-whole "{{ agent }}"; fi
+    if [ "{{ agent }}" = --whole ]; then exec just plain::status-whole "{{ whole }}"; fi
+    if [ "{{ whole }}" = --whole ]; then exec just plain::status-whole "{{ agent }}"; fi
     [ -z "{{ whole }}" ] || { echo "status: unknown argument {{ whole }} (want: --whole)" >&2; exit 2; }
-    just resources::status-profile
-    just resources::status-skills "{{ agent }}"
-    just resources::status-browser-mcp "{{ agent }}"
-    just resources::status-memory
+    just plain::status-profile
+    just plain::status-skills "{{ agent }}"
+    just plain::status-browser-mcp "{{ agent }}"
+    just plain::status-memory
 
 # ── memory ───────────────────────────────────────────────────────
-# Your personal store is a checkout you own; see `just resources::status-memory`.
+# Your personal store is a checkout you own; see `just plain::status-memory`.
 
 # Set your personal memory store (an existing checkout); `just install` registers its server.
 # A relative path is taken from where you ran just, not the checkout.
 memory-store path:
-    just resources::set-memory-store {{ quote(if path =~ '^/' { path } else { invocation_directory() / path }) }}
+    just plain::set-memory-store {{ quote(if path =~ '^/' { path } else { invocation_directory() / path }) }}
 
 # Copy each agent's own memory into a store dir, leaving the originals: --to <dir> [--project <path-prefix>].
 memory-harvest *FLAGS:
-    just resources::harvest-memory {{ FLAGS }}
+    just plain::harvest-memory {{ FLAGS }}
 
 # The installable Macro test against this machine's real install, free.
 [confirm("This reinstalls mAId several times and leaves no earlier install to roll back to. Continue? (y/N)")]
 verify-install:
-    resources/tests/verify-install
+    plain/tests/verify-install
 
 # The same, also asking claude, kiro and codex what they see (9 model calls).
 [confirm("This reinstalls mAId several times, leaves no earlier install to roll back to, and costs API credits (9 model calls). Continue? (y/N)")]
 verify-install-paid:
-    resources/tests/verify-install --ask-agents
+    plain/tests/verify-install --ask-agents
 
 # ── workspace hygiene ────────────────────────────────────────────
 # These verbs operate on the Rust workspace itself. They never touch
@@ -99,5 +94,9 @@ lint:
 check:
     cargo check --workspace
 
+# Every my-harness declaration the ghost will read.
+validate:
+    just ghost::validate
+
 # Full workspace quality + test gate.
-ci: fmt-check lint check test
+ci: fmt-check lint check validate test

@@ -47,13 +47,13 @@ These outrank every step below.
 
 ## Steps
 
-The core is `@maid-core@`. Run each step as one shell command, then go
+The core is `@ghost-claude@`. Run each step as one shell command, then go
 on.
 
 1. **Mark the session for sleep.** Reason `close` when the person closes
    the session, `reflect` when they ask mid-way:
-   `@maid-core@ sleep --session <session> --input '{"reason": "close", "cwd": "<working dir>"}'`
-2. **Get the reflector's brief:** `@maid-core@ adaptation --session <session>`.
+   `@ghost-claude@ sleep --session <session> --input '{"reason": "close", "cwd": "<working dir>"}'`
+2. **Get the reflector's brief:** `@ghost-claude@ adaptation --session <session>`.
 3. **Dispatch the reflector** with the brief as its whole prompt, and
    nothing from this conversation. It answers one JSON object.
 4. **Check its findings:** send that JSON unchanged on stdin, in a
@@ -61,7 +61,7 @@ on.
    random letters) and check is not a line of the JSON:
 
    ```
-   @maid-core@ adaptation --session <session> --input - <<'END_<random>'
+   @ghost-claude@ adaptation --session <session> --input - <<'END_<random>'
    <the reflector's JSON, exactly as it answered>
    END_<random>
    ```
@@ -69,7 +69,7 @@ on.
    The core prints the decision batch.
 5. **Show the batch** and wait for the person.
 6. **Apply their answer.** Turn it into one of these and run
-   `@maid-core@ adaptation --session <session> --input '<json>'`:
+   `@ghost-claude@ adaptation --session <session> --input '<json>'`:
    - "ok": `{"decide": "ok"}`
    - "none", "no": `{"decide": "none"}`
    - "skip", "leave it out": `{"decide": "skip"}` (nothing is applied, and
@@ -81,16 +81,16 @@ on.
    if any.
 
 **Waiting sessions.** For "reflect on the waiting sessions", run
-`@maid-core@ experience` to list sessions marked for sleep. Take them one
+`@ghost-claude@ experience` to list sessions marked for sleep. Take them one
 at a time, the person's choice first, with steps 2 to 6 and that
 session's id. To leave waiting sessions out without reflecting on them,
-`@maid-core@ adaptation --input '{"dismiss": "all"}'`, or a list of
+`@ghost-claude@ adaptation --input '{"dismiss": "all"}'`, or a list of
 session ids in place of `"all"`.
 
 ### How, per agent
 
 - **Claude Code:** the session is `${CLAUDE_SESSION_ID}`. The reflector is
-  the `maid:reflector` agent: dispatch it with the Agent tool, the brief
+  the `ghost:reflector` agent: dispatch it with the Agent tool, the brief
   as its prompt.
 - **Any other agent:** the core has no session source for it yet. Say
   that reflection is not available on this agent yet, and stop.

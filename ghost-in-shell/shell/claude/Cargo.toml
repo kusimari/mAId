@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [[bin]]
-name = "maid-core"
+name = "ghost-claude"
 path = "src/main.rs"
 
 [dependencies]
@@ -13,8 +13,11 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 ghost = { path = "../../ghost" }
 infusion = { path = "../../infusion" }
+# The plain installer, as a library: Claude Code's config dir, and the
+# install the ghost runs when mAId's resources are not there.
+plain = { path = "../../../plain" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
-
-[dev-dependencies]
+# The reuse check stages plain into a scratch dir.
 tempfile = "3"
+

@@ -4,7 +4,7 @@
 
 use ghost::config::Config;
 use ghost::environment::Host;
-use infusion::call::{Call, Carrier, Close, Ctx, Where};
+use infusion::call::{Call, Carrier, Close, Infusion, Where};
 use infusion::genome::{picture, render};
 use infusion::{experience, sleep};
 use shell_claude::transcript::Transcripts;
@@ -15,8 +15,8 @@ use ghost_in_shell_tests::{claude_projects, SESSION as S};
 
 /// A context over `<dir>`, reading sessions from the fixture projects dir
 /// copied to `<dir>/claude`.
-fn ctx(dir: &Path, projects: Option<PathBuf>) -> Ctx {
-    Ctx {
+fn ctx(dir: &Path, projects: Option<PathBuf>) -> Infusion {
+    Infusion {
         config: Config {
             state: dir.join("state"),
         },

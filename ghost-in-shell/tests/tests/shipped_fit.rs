@@ -6,10 +6,10 @@
 use ghost::config::Config;
 use ghost::environment::Host;
 use ghost_in_shell_tests::{maid_plugin, ClaudeHome};
-use infusion::call::{Call, Carrier, Ctx, Where};
+use infusion::call::{Call, Carrier, Infusion, Where};
 use infusion::expression;
+use plain::claude_config::ConfigDir;
 use serde_json::Value;
-use shell_claude::config_dir::ConfigDir;
 use shell_claude::installed::Claude;
 use shell_claude::transcript::Transcripts;
 use std::fs;
@@ -22,10 +22,14 @@ fn content() -> PathBuf {
 
 /// This repo's install as Claude Code holds it: mAId's plugin, the vendor's
 /// document skills and the browser server, read back by the adapter.
-fn setup() -> (TempDir, Ctx) {
+fn setup() -> (TempDir, Infusion) {
     let dir = TempDir::new().unwrap();
     let claude = ClaudeHome::at(&dir.path().join("home"));
     claude.plugin("maid@maid", &maid_plugin(&dir.path().join("plugin")));
+    claude.plugin(
+        "ghost@ghost-in-shell",
+        &ghost_in_shell_tests::ghost_plugin(&dir.path().join("ghost")),
+    );
     let vendor = dir.path().join("vendor");
     fs::create_dir_all(vendor.join(".claude-plugin")).unwrap();
     fs::write(
@@ -36,7 +40,7 @@ fn setup() -> (TempDir, Ctx) {
     claude.plugin("document-skills@anthropic-agent-skills", &vendor);
     claude.mcp("chrome-devtools", "/bin/true", &[]);
     let conf = dir.path().join("config/maid");
-    let ctx = Ctx {
+    let ctx = Infusion {
         config: Config {
             state: dir.path().join("state"),
         },
@@ -51,7 +55,7 @@ fn setup() -> (TempDir, Ctx) {
     (dir, ctx)
 }
 
-fn fits(ctx: &Ctx, prompt: &str, cwd: &Path) -> Vec<(String, String)> {
+fn fits(ctx: &Infusion, prompt: &str, cwd: &Path) -> Vec<(String, String)> {
     let call = Call {
         carrier: Carrier::Transient,
         prompt: Some(prompt.into()),

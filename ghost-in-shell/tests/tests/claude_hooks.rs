@@ -1,5 +1,5 @@
 //! The shipped Claude Code hooks file, run as Claude Code runs it: each
-//! command through `sh -c`, `@maid-core@` replaced with the built core, the
+//! command through `sh -c`, `@ghost-claude@` replaced with the built core, the
 //! hook's JSON payload on stdin, in a bare environment with a temp HOME.
 
 use serde_json::{json, Value};
@@ -10,10 +10,10 @@ use std::process::{Command, Output, Stdio};
 use tempfile::TempDir;
 
 use ghost_in_shell_tests::core;
-use ghost_in_shell_tests::{maid_plugin, ClaudeHome};
+use ghost_in_shell_tests::{ghost_plugin, maid_plugin, ClaudeHome};
 
 fn hooks() -> Value {
-    let path = ghost_in_shell_tests::plugin().join("hooks.json");
+    let path = ghost_in_shell_tests::plugin().join("hooks/hooks.json");
     serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
 }
 
@@ -35,20 +35,25 @@ fn command(event: &str, source: Option<&str>) -> String {
     hook["command"].as_str().unwrap().to_string()
 }
 
-/// A HOME whose Claude Code has mAId's plugin and its memory installed.
+/// A HOME whose Claude Code has mAId's plugin, its memory and the ghost's
+/// plugin installed.
 fn home() -> TempDir {
     let home = TempDir::new().unwrap();
     let claude = ClaudeHome::at(home.path());
     claude.plugin("maid@maid", &maid_plugin(&home.path().join("plugin")));
+    claude.plugin(
+        "ghost@ghost-in-shell",
+        &ghost_plugin(&home.path().join("ghost")),
+    );
     let store = home.path().join("store").display().to_string();
     claude.mcp("personal-memory", "/bin/pensieve", &["--store", &store]);
     home
 }
 
 fn run(home: &Path, command: &str, payload: &Value) -> Output {
-    assert!(command.starts_with("@maid-core@ "), "{command}");
+    assert!(command.starts_with("@ghost-claude@ "), "{command}");
     let mut child = Command::new("/bin/sh")
-        .args(["-c", &command.replacen("@maid-core@", core(), 1)])
+        .args(["-c", &command.replacen("@ghost-claude@", core(), 1)])
         .env_clear()
         .env("HOME", home)
         .stdin(Stdio::piped())
@@ -214,7 +219,7 @@ fn a_failing_hook_exits_0_with_nothing_on_stdout() {
     assert!(out.stdout.is_empty());
     let out = run(
         home.path(),
-        "@maid-core@ genome --carrier append --input -",
+        "@ghost-claude@ genome --carrier append --input -",
         &json!({"session_id": "../x"}),
     );
     assert!(
@@ -225,10 +230,10 @@ fn a_failing_hook_exits_0_with_nothing_on_stdout() {
 
 #[test]
 fn the_shipped_mcp_config_starts_the_core_as_a_server_with_the_session() {
-    let path = ghost_in_shell_tests::plugin().join("mcp.json");
+    let path = ghost_in_shell_tests::plugin().join(".mcp.json");
     let v: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
     let server = &v["mcpServers"]["my-harness"];
-    assert_eq!(server["command"], "@maid-core@");
+    assert_eq!(server["command"], "@ghost-claude@");
     let args: Vec<&str> = server["args"]
         .as_array()
         .unwrap()

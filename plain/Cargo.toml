@@ -1,0 +1,21 @@
+[package]
+name = "plain"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "plain"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+# Scratch workdirs for behavioral tests + reply capture files.
+tempfile = "3"
+clap = { version = "4", features = ["derive"] }
+gray_matter = "0.3"
+serde = { version = "1", features = ["derive"] }
+
+# The plugin CLIs list their state as JSON.
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.11"

@@ -7,7 +7,7 @@
 
 pub mod source;
 
-use crate::call::{Call, Ctx, Item};
+use crate::call::{Call, Infusion, Item};
 use crate::experience::source::{Located, SessionSource};
 use crate::expression::delivery::deliver;
 use crate::files::write_atomic;
@@ -184,7 +184,7 @@ pub fn squash(s: &str) -> String {
 /// What happened in a session: packs it, stores the experience, and says
 /// where it is and what it holds. Naming no session, the sessions waiting
 /// to be reflected on.
-pub fn experience(ctx: &Ctx, call: &Call) -> Result<Vec<Item>> {
+pub fn experience(ctx: &Infusion, call: &Call) -> Result<Vec<Item>> {
     let named = call.session.is_some() || call.at.transcript.is_some() || call.at.cwd.is_some();
     let item = match named {
         false => {
@@ -216,7 +216,7 @@ pub fn experience(ctx: &Ctx, call: &Call) -> Result<Vec<Item>> {
 
 /// Where a call's session is: its mark's transcript when it has one, else
 /// what the call names, in the source the call names.
-pub fn locate(ctx: &Ctx, call: &Call) -> Result<(Box<dyn SessionSource>, Located)> {
+pub fn locate(ctx: &Infusion, call: &Call) -> Result<(Box<dyn SessionSource>, Located)> {
     let mut at = call.at.clone();
     if let Some(m) = match call.session.as_deref() {
         Some(s) => sleep::read(&ctx.config, s)?,
@@ -236,7 +236,7 @@ pub fn locate(ctx: &Ctx, call: &Call) -> Result<(Box<dyn SessionSource>, Located
 
 /// Pack the call's session and store its capped experience: the session,
 /// every text in full, and where the stored copy is.
-pub fn pack(ctx: &Ctx, call: &Call) -> Result<(Located, Bundle, PathBuf)> {
+pub fn pack(ctx: &Infusion, call: &Call) -> Result<(Located, Bundle, PathBuf)> {
     let (src, at) = locate(ctx, call)?;
     let bundle = src.pack(&at)?;
     let path = ctx.config.experience().join(format!("{}.json", at.session));

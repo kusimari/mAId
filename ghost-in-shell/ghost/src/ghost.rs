@@ -83,6 +83,9 @@ pub struct Ghost {
     /// The shell's records it could not read the shape of, each with why.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub not_understood: Vec<String>,
+    /// Each part's plugin that is turned off, said in a line.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub disabled: Vec<String>,
 }
 
 impl Ghost {
@@ -90,6 +93,7 @@ impl Ghost {
     pub fn from(installed: &dyn Installed, here: Option<&Path>) -> anyhow::Result<Ghost> {
         Ok(Ghost {
             not_understood: installed.not_understood(here),
+            disabled: parts::disabled(installed, here)?,
             ..Ghost::of(&parts::of(installed, here)?)
         })
     }
@@ -144,6 +148,7 @@ impl Ghost {
             bring_ins,
             clashes,
             not_understood: vec![],
+            disabled: vec![],
         }
     }
 }

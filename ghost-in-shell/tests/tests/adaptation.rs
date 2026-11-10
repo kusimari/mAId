@@ -161,32 +161,37 @@ impl Home {
             "## Learned rules\n\n- 2026-05-22 · prefer \"to\" over \"in order to\"\n  · source: explicit teach\n",
         )
         .unwrap();
-        // mAId's install as Claude Code holds it: its plugin (the adapter's
-        // declaration, writing-style, reflect, the memory's declaration and
-        // the document skills' overlay), the vendor's plugin, the memory.
+        // mAId's install as Claude Code holds it: its plugin (writing-style,
+        // the memory's declaration and the document skills' overlay), the
+        // ghost's plugin (the adapter's declaration and reflect), the
+        // vendor's plugin, the memory.
         let plugin = h.join("units/maid-plugin");
-        let decl: Value = serde_json::from_str(
-            &fs::read_to_string(ghost_in_shell_tests::plugin().join("my-harness.json")).unwrap(),
-        )
-        .unwrap();
+        let ghost = h.join("units/ghost-plugin");
+        let decl = ghost_in_shell_tests::adapter_declaration();
         let put = |at: PathBuf, text: String| {
             fs::create_dir_all(at.parent().unwrap()).unwrap();
             fs::write(at, text).unwrap();
         };
         put(
             plugin.join(".claude-plugin/plugin.json"),
-            json!({"name": "maid", "version": "abc123", "repository": "https://example.org/me/maid",
+            json!({"name": "maid", "version": "abc123", "repository": "https://example.org/me/maid"})
+                .to_string(),
+        );
+        put(
+            ghost.join(".claude-plugin/plugin.json"),
+            json!({"name": "ghost", "version": "def456", "repository": "https://example.org/me/maid",
                 "extensions": {"my-harness": decl}})
             .to_string(),
+        );
+        put(
+            ghost.join("skills/reflect/SKILL.md"),
+            fs::read_to_string(ghost_in_shell_tests::plugin().join("skills/reflect/SKILL.md"))
+                .unwrap(),
         );
         for (from, to) in [
             (
                 content().join("skills/writing-style/SKILL.md"),
                 "skills/writing-style/SKILL.md",
-            ),
-            (
-                ghost_in_shell_tests::plugin().join("skills/reflect/SKILL.md"),
-                "skills/reflect/SKILL.md",
             ),
             (
                 content().join("servers/personal-memory/server.json"),
@@ -206,6 +211,7 @@ impl Home {
         );
         let claude = ClaudeHome::at(h);
         claude.plugin("maid@maid", &plugin);
+        claude.plugin("ghost@ghost-in-shell", &ghost);
         claude.marketplace(
             "anthropic-agent-skills",
             "https://example.org/vendor/skills",

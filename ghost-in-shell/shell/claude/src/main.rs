@@ -1,7 +1,9 @@
-//! maid-core — the ghost in Claude Code, at a command line: the five
-//! entry points for a hook, the plugin or a person at a shell. The CLI is
-//! this shell's own surface, so the enums clap reads live here and map to
-//! infusion's own; what each entry point answers is `infusion`.
+//! ghost-claude — the ghost in Claude Code, at a command line: the five
+//! entry points for a hook, the plugin or a person at a shell, and the
+//! ghost's own install (validate, install, uninstall, on, off, status,
+//! rollback). The CLI is this shell's own surface, so the enums clap reads
+//! live here and map to infusion's own; what each entry point answers is
+//! `infusion`, and each install verb is its own module.
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -9,9 +11,10 @@ use ghost::config::Config;
 use ghost::environment::{self, Host};
 use ghost::Ghost;
 use infusion::adaptation::ledger;
-use infusion::call::{Call, Carrier, Ctx, Item, Slice};
+use infusion::call::{Call, Carrier, Infusion, Item, Slice};
+use plain::claude_config::ConfigDir;
 use serde_json::{json, Value};
-use shell_claude::config_dir::ConfigDir;
+use shell_claude::install::Setup;
 use shell_claude::installed::Claude;
 use shell_claude::transcript::Transcripts;
 use shell_claude::{hook, mcp};
@@ -62,7 +65,7 @@ impl From<SliceArg> for Slice {
 
 #[derive(Parser)]
 #[command(
-    name = "maid-core",
+    name = "ghost-claude",
     about = "The core of my harness: the five entry points, the ghost and the environment."
 )]
 struct Cli {
@@ -120,7 +123,7 @@ enum Cmd {
         json: bool,
     },
     /// The ghost, every part fused, as JSON.
-    Map,
+    Ghost,
     /// Each bring-in's readiness where this runs.
     Environment {
         #[arg(long)]
@@ -133,6 +136,52 @@ enum Cmd {
         #[arg(long, value_name = "NAME")]
         session_env: Option<String>,
     },
+    /// Check every `my-harness` declaration in the checkout's resources
+    /// and the ghost's plugin.
+    Validate(Checkout),
+    /// Install the ghost: its profile, plain's install when Claude Code
+    /// does not have this checkout's, its plugin, its record. With
+    /// `--prefix`: only the package, into that dir (a new or empty dir, or
+    /// an earlier install of it, which is replaced whole).
+    Install {
+        #[command(flatten)]
+        checkout: Checkout,
+        #[arg(long)]
+        prefix: Option<std::path::PathBuf>,
+        /// With `--prefix`: the executable to put in it (default this one).
+        #[arg(long, requires = "prefix")]
+        exe: Option<std::path::PathBuf>,
+    },
+    /// Remove the ghost's plugin, profile and record; plain stays.
+    Uninstall(Checkout),
+    /// Switch the ghost on at a scope (user, project or local).
+    On {
+        #[arg(default_value = "user")]
+        scope: String,
+    },
+    /// Switch the ghost off at a scope (user, project or local).
+    Off {
+        #[arg(default_value = "user")]
+        scope: String,
+    },
+    /// The ghost's install and what it sees, from here.
+    Status(Checkout),
+    /// The ghost's profile one generation back; plain stays.
+    Rollback(Checkout),
+}
+
+/// The checkout an install verb works from.
+#[derive(clap::Args)]
+struct Checkout {
+    /// The mAId checkout (default: the working dir).
+    #[arg(long, default_value = ".")]
+    root: std::path::PathBuf,
+}
+
+impl Checkout {
+    fn setup(&self) -> Result<Setup> {
+        Setup::from_env(&std::path::absolute(&self.root)?)
+    }
 }
 
 fn main() -> ExitCode {
@@ -140,7 +189,7 @@ fn main() -> ExitCode {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(e) if hook => {
-            eprintln!("maid-core: {e}");
+            eprintln!("ghost-claude: {e}");
             return ExitCode::SUCCESS;
         }
         Err(e) => e.exit(),
@@ -148,7 +197,7 @@ fn main() -> ExitCode {
     match std::panic::catch_unwind(|| run(cli)) {
         Ok(Ok(())) => ExitCode::SUCCESS,
         Ok(Err(e)) => {
-            eprintln!("maid-core: {e:#}");
+            eprintln!("ghost-claude: {e:#}");
             fail(hook)
         }
         // The panic message is already on stderr.
@@ -164,6 +213,14 @@ fn fail(hook: bool) -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<()> {
+    if let Some(rc) = install_verb(&cli.cmd)? {
+        return match rc {
+            0 => Ok(()),
+            n => Err(anyhow::anyhow!(
+                "finished, with {n} step(s) left alone; see above"
+            )),
+        };
+    }
     let config = Config::from_env()?;
     // Where this shell keeps its own things, read the same way for every
     // command, so a config dir it cannot take fails them all alike.
@@ -173,7 +230,7 @@ fn run(cli: Cli) -> Result<()> {
         cache: Some(config.shells().join("claude")),
         vars: None,
     };
-    let ctx = Ctx {
+    let ctx = Infusion {
         config,
         host: Host::from_env(),
         sources: Box::new(Transcripts {
@@ -181,7 +238,7 @@ fn run(cli: Cli) -> Result<()> {
         }),
         shell: Box::new(installed),
     };
-    type Entry = fn(&Ctx, &Call) -> Result<Vec<Item>>;
+    type Entry = fn(&Infusion, &Call) -> Result<Vec<Item>>;
     let (entry, a): (Entry, &CallArgs) = match &cli.cmd {
         Cmd::Genome(a) => (infusion::genome, a),
         Cmd::Expression(a) => (infusion::expression, a),
@@ -214,11 +271,18 @@ fn run(cli: Cli) -> Result<()> {
             }
             return Ok(());
         }
-        Cmd::Map => {
+        Cmd::Ghost => {
             let g = fuse(&ctx)?;
             println!("{}", serde_json::to_string_pretty(&g)?);
             return Ok(());
         }
+        Cmd::Validate(_)
+        | Cmd::Install { .. }
+        | Cmd::Uninstall(_)
+        | Cmd::On { .. }
+        | Cmd::Off { .. }
+        | Cmd::Status(_)
+        | Cmd::Rollback(_) => unreachable!("an install verb is run before the entry points"),
         Cmd::Environment { json } => {
             let ghost = fuse(&ctx)?;
             let rows = environment::derive(&ghost, &ctx.host);
@@ -256,7 +320,42 @@ fn run(cli: Cli) -> Result<()> {
     Ok(())
 }
 
-fn fuse(ctx: &Ctx) -> Result<Ghost> {
+/// The ghost's own install verbs, which need no infusion.
+fn install_verb(cmd: &Cmd) -> Result<Option<u8>> {
+    use shell_claude::{install, rollback, status, switch, uninstall};
+    // Only the verbs that read a project ask where they run: a hook must
+    // still answer when its working dir is gone.
+    let here = || std::env::current_dir().context("cannot read the working dir");
+    Ok(Some(match cmd {
+        Cmd::Validate(c) => install::validate(&c.setup()?).map(|()| 0)?,
+        Cmd::Install {
+            checkout,
+            prefix: Some(prefix),
+            exe,
+        } => {
+            let s = checkout.setup()?;
+            // Its own plugin only: nix runs this on the plugin alone.
+            install::validate_plugin(&s)?;
+            let exe = exe.clone().unwrap_or(s.exe.clone());
+            let v = shell_claude::package::install(&s.plugin(), &exe, prefix)?;
+            println!("installed ghost {v} into {}", prefix.display());
+            0
+        }
+        Cmd::Install { checkout, .. } => install::install(&checkout.setup()?)?,
+        Cmd::Uninstall(c) => uninstall::uninstall(&c.setup()?)?,
+        Cmd::On { scope } | Cmd::Off { scope } => {
+            let config = ConfigDir::from_env()?.context("HOME is not set")?;
+            let cli = shell_claude::plugins::Cli::from_env(config);
+            switch::switch(&cli, matches!(cmd, Cmd::On { .. }), scope, &here()?)?;
+            0
+        }
+        Cmd::Status(c) => status::status(&c.setup()?, &here()?)?,
+        Cmd::Rollback(c) => rollback::rollback(&c.setup()?)?,
+        _ => return Ok(None),
+    }))
+}
+
+fn fuse(ctx: &Infusion) -> Result<Ghost> {
     ctx.shell.ghost(std::env::current_dir().ok().as_deref())
 }
 

@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
-use ghost_in_shell_tests::{core, ClaudeHome};
+use ghost_in_shell_tests::ClaudeHome;
 
 type Log = Arc<Mutex<Vec<Value>>>;
 
@@ -106,11 +106,11 @@ fn answer(path: &str, body: &Value) -> (&'static str, Vec<u8>) {
     } else if last.contains("READRES") && !last.contains("tool_result") {
         vec![
             json!({"type": "tool_use", "id": "toolu_3", "name": "ReadMcpResourceTool",
-            "input": {"server": "plugin:maid:my-harness", "uri": "my-harness://genome"}}),
+            "input": {"server": "plugin:ghost:my-harness", "uri": "my-harness://genome"}}),
         ]
     } else if last.contains("CALLTOOL") && !last.contains("tool_result") {
         vec![
-            json!({"type": "tool_use", "id": "toolu_2", "name": "mcp__plugin_maid_my-harness__expression",
+            json!({"type": "tool_use", "id": "toolu_2", "name": "mcp__plugin_ghost_my-harness__expression",
             "input": {"prompt": "deploy the release"}}),
         ]
     } else {
@@ -272,30 +272,7 @@ impl World {
             "- [Deploy steps](deploy.md) - how a release is deployed\n",
         )
         .unwrap();
-        let adapter = ghost_in_shell_tests::plugin();
-        let plugin = d.join("plugin");
-        fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
-        fs::create_dir_all(plugin.join("hooks")).unwrap();
-        let decl: Value =
-            serde_json::from_str(&fs::read_to_string(adapter.join("my-harness.json")).unwrap())
-                .unwrap();
-        let manifest = json!({"name": "maid", "version": "1.0.0", "description": "mAId's skills",
-            "author": {"name": "mAId"}, "extensions": {"my-harness": decl},
-            "hooks": "./hooks/claude.json", "mcpServers": "./claude-mcp.json"});
-        fs::write(
-            plugin.join(".claude-plugin/plugin.json"),
-            manifest.to_string(),
-        )
-        .unwrap();
-        for (from, to) in [
-            ("hooks.json", "hooks/claude.json"),
-            ("mcp.json", "claude-mcp.json"),
-        ] {
-            let text = fs::read_to_string(adapter.join(from))
-                .unwrap()
-                .replace("@maid-core@", core());
-            fs::write(plugin.join(to), text).unwrap();
-        }
+        ghost_in_shell_tests::staged_ghost(d);
         World { dir }
     }
 
@@ -312,9 +289,9 @@ impl World {
                 "stream-json",
                 "--verbose",
             ])
-            .args(["--allowedTools", "mcp__plugin_maid_my-harness__expression"])
+            .args(["--allowedTools", "mcp__plugin_ghost_my-harness__expression"])
             .arg("--plugin-dir")
-            .arg(d.join("plugin"))
+            .arg(d.join("ghost").join(shell_claude::package::PLUGIN_DIR))
             .current_dir(d.join("work"))
             .env_clear()
             .env("HOME", d.join("home"))
@@ -380,7 +357,7 @@ fn a_session_starts_with_the_genome_and_each_turn_gets_only_what_changed() {
         ],
     );
     assert!(
-        out.contains(r#"{"name":"plugin:maid:my-harness","status":"connected""#),
+        out.contains(r#"{"name":"plugin:ghost:my-harness","status":"connected""#),
         "the plugin, `extensions` and all, loads and its MCP server connects:\n{out}"
     );
 

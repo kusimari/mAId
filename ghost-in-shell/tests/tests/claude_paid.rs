@@ -21,13 +21,13 @@
 //! only in the real Claude config dir is not seen there; model access from
 //! the environment is.
 
-use serde_json::{json, Value};
+use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 
-use ghost_in_shell_tests::{core, ClaudeHome};
+use ghost_in_shell_tests::ClaudeHome;
 const RUNS: usize = 2;
 const MARKER: &str = "DEPLOY-MARKER-7";
 
@@ -68,30 +68,7 @@ fn world() -> TempDir {
         "/bin/true",
         &["--store", &store.display().to_string()],
     );
-    let adapter = ghost_in_shell_tests::plugin();
-    let plugin = d.join("plugin");
-    fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
-    fs::create_dir_all(plugin.join("hooks")).unwrap();
-    let decl: Value =
-        serde_json::from_str(&fs::read_to_string(adapter.join("my-harness.json")).unwrap())
-            .unwrap();
-    let manifest = json!({"name": "maid", "version": "1.0.0", "description": "mAId's skills",
-        "author": {"name": "mAId"}, "extensions": {"my-harness": decl},
-        "hooks": "./hooks/claude.json", "mcpServers": "./claude-mcp.json"});
-    fs::write(
-        plugin.join(".claude-plugin/plugin.json"),
-        manifest.to_string(),
-    )
-    .unwrap();
-    for (from, to) in [
-        ("hooks.json", "hooks/claude.json"),
-        ("mcp.json", "claude-mcp.json"),
-    ] {
-        let text = fs::read_to_string(adapter.join(from))
-            .unwrap()
-            .replace("@maid-core@", core());
-        fs::write(plugin.join(to), text).unwrap();
-    }
+    ghost_in_shell_tests::staged_ghost(d);
     dir
 }
 
@@ -134,7 +111,7 @@ fn ask(world: &Path, prompt: &str) -> String {
     let mut cmd = Command::new(claude);
     cmd.args(["-p", prompt, "--output-format", "text"])
         .arg("--plugin-dir")
-        .arg(world.join("plugin"))
+        .arg(world.join("ghost").join(shell_claude::package::PLUGIN_DIR))
         .current_dir(world.join("work"))
         .env("CLAUDE_CONFIG_DIR", &config)
         .env("MY_HARNESS_STATE", &state)

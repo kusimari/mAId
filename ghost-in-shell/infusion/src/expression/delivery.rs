@@ -8,7 +8,7 @@
 //! places it: delivery is at most once, and a carrier that fails to place
 //! what it was given calls again with reset.
 
-use crate::call::{Call, Carrier, Ctx, Item};
+use crate::call::{Call, Carrier, Infusion, Item};
 use anyhow::{bail, Result};
 use std::fs;
 use std::io;
@@ -115,7 +115,7 @@ pub fn fnv1a(text: &str) -> u64 {
 // Delivering a call's items: what the session is not already holding.
 // ─────────────────────────────────────────────────────────────────
 
-pub fn deliver(ctx: &Ctx, call: &Call, items: Vec<Item>) -> Result<Vec<Item>> {
+pub fn deliver(ctx: &Infusion, call: &Call, items: Vec<Item>) -> Result<Vec<Item>> {
     deliver_within(ctx, call, items, usize::MAX)
 }
 
@@ -124,7 +124,7 @@ pub fn deliver(ctx: &Ctx, call: &Call, items: Vec<Item>) -> Result<Vec<Item>> {
 /// then the last items over the budget, and only what is placed is
 /// recorded.
 pub fn deliver_within(
-    ctx: &Ctx,
+    ctx: &Infusion,
     call: &Call,
     items: Vec<Item>,
     budget: usize,

@@ -23,7 +23,7 @@ pub mod genome;
 pub mod sleep;
 
 pub use adaptation::adaptation;
-pub use call::{Call, Carrier, Close, Ctx, Item, Shell, Slice, Where};
+pub use call::{Call, Carrier, Close, Infusion, Item, Shell, Slice, Where};
 pub use experience::experience;
 pub use expression::expression;
 pub use genome::genome;
@@ -32,7 +32,7 @@ pub use sleep::sleep;
 /// What the modules' own tests share.
 #[cfg(test)]
 pub(crate) mod testing {
-    use crate::call::{Call, Carrier, Ctx, Shell};
+    use crate::call::{Call, Carrier, Infusion, Shell};
     use crate::experience::source::{SessionSource, Sources};
     use anyhow::{bail, Result};
     use ghost::config::Config;
@@ -85,8 +85,8 @@ pub(crate) mod testing {
 
     /// A context whose ghost is the parts in `<dir>/parts`, its state in
     /// `<dir>/state`, reading no session.
-    pub fn ctx(dir: &Path) -> Ctx {
-        Ctx {
+    pub fn ctx(dir: &Path) -> Infusion {
+        Infusion {
             config: Config {
                 state: dir.join("state"),
             },

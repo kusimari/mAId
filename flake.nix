@@ -1,5 +1,5 @@
 {
-  description = "mAId - the installable (skills + the runtimes they need) and the dev shell (rust toolchain, just)";
+  description = "mAId - the dev shell (rust toolchain, just), the pinned runtimes, and the plain and ghost packages each built by its own Rust install";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -47,130 +47,62 @@
 
         pensieveServer = pensieve.packages.${system}.default;
 
-        # The ghost's own plugin assets, which the build copies in: they
-        # are no input to the binary, so editing one does not rebuild it.
-        ghostPlugin = ./ghost-in-shell/shell/claude/plugin;
-
-        # The core every carrier calls, from the workspace's own lock. Only
-        # the workspace's crates go in, so a content edit does not rebuild it.
-        maid-core = (pkgs.makeRustPlatform { cargo = rustToolchain; rustc = rustToolchain; }).buildRustPackage {
-          pname = "maid-core";
+        rustPlatform = pkgs.makeRustPlatform { cargo = rustToolchain; rustc = rustToolchain; };
+        fs = pkgs.lib.fileset;
+        # The workspace's crates and its lock, and nothing they do not
+        # compile: no resources, plugin assets or test data, so editing one
+        # does not rebuild a binary.
+        crates = fs.toSource {
+          root = ./.;
+          fileset = fs.unions [
+            ./Cargo.toml
+            ./Cargo.lock
+            ./ghost-in-shell/ghost/Cargo.toml
+            ./ghost-in-shell/ghost/src
+            ./ghost-in-shell/infusion/Cargo.toml
+            ./ghost-in-shell/infusion/src
+            ./ghost-in-shell/infusion/fixtures
+            ./ghost-in-shell/shell/claude/Cargo.toml
+            ./ghost-in-shell/shell/claude/src
+            ./ghost-in-shell/tests/Cargo.toml
+            ./ghost-in-shell/tests/src
+            ./plain/Cargo.toml
+            ./plain/src
+            ./kaimux/Cargo.toml
+            ./kaimux/src
+          ];
+        };
+        # One cargo build per binary; `just test` runs the tests.
+        bin = pname: flags: rustPlatform.buildRustPackage {
+          inherit pname;
           version = "0.1.0";
-          src = pkgs.lib.fileset.toSource {
-            root = ./.;
-            fileset = pkgs.lib.fileset.unions [
-              ./Cargo.toml
-              ./Cargo.lock
-              # Not the plugin assets or the README: the binary is no
-              # input to them, so editing one must not rebuild it.
-              (pkgs.lib.fileset.difference ./ghost-in-shell
-                (pkgs.lib.fileset.unions [ ghostPlugin ./ghost-in-shell/README.md ]))
-              ./resources/build-tool
-              ./kaimux
-            ];
-          };
+          src = crates;
           cargoLock.lockFile = ./Cargo.lock;
-          cargoBuildFlags = [ "-p" "shell-claude" "--bin" "maid-core" ];
-          # `just test` runs the tests; this builds the binary.
+          cargoBuildFlags = flags;
           doCheck = false;
         };
-
-        maid-browser-mcp = pkgs.writeShellApplication {
-          name = "maid-browser-mcp";
-          runtimeInputs = [ chrome-devtools-mcp ];
-          text = builtins.readFile ./resources/browser/launch;
-        };
-
-        # The plugin's manifests. `@version@` is filled in by the build.
-        description = "mAId's skills";
-        manifest = name: value: pkgs.writeText name (builtins.toJSON value);
-        claudeMarketplace = manifest "claude-marketplace.json" {
-          name = "maid";
-          owner.name = "mAId";
-          inherit description;
-          plugins = [ { name = "maid"; source = "./plugins/maid"; inherit description; } ];
-        };
-        codexMarketplace = manifest "codex-marketplace.json" {
-          name = "maid";
-          plugins = [ {
-            name = "maid";
-            source = { source = "local"; path = "./plugins/maid"; };
-            policy.installation = "AVAILABLE";
-          } ];
-        };
-        # `extensions` declares the core's adapter on Claude Code (project.md
-        # "My harness"). Claude Code ignores the field at load time; only
-        # `claude plugin validate --strict` refuses it.
-        claudePlugin = manifest "claude-plugin.json" {
-          name = "maid";
-          version = "@version@";
-          inherit description;
-          author.name = "mAId";
-          # Where a change to mAId's units is proposed; its skills, server
-          # declarations and overlays inside the plugin inherit it.
-          repository = "https://github.com/kusimari/mAId";
-          extensions."my-harness" = builtins.fromJSON (builtins.readFile "${ghostPlugin}/my-harness.json");
-          # Not the default `hooks/hooks.json` and `.mcp.json`: codex reads
-          # those from the same plugin dir.
-          hooks = "./hooks/claude.json";
-          mcpServers = "./claude-mcp.json";
-        };
-        # Every hook and server command names the core as `@maid-core@`:
-        # this build's, so the plugin and its core are one build and the
-        # plugin's version hash moves with the core.
-        withCore = name: file: pkgs.writeText name (builtins.replaceStrings
-          [ "@maid-core@" ] [ "${maid-core}/bin/maid-core" ] (builtins.readFile file));
-        claudeHooks = withCore "claude-hooks.json" "${ghostPlugin}/hooks.json";
-        claudeMcp = withCore "claude-mcp.json" "${ghostPlugin}/mcp.json";
-        codexPlugin = manifest "codex-plugin.json" {
-          name = "maid";
-          version = "@version@";
-          inherit description;
-          skills = "./skills/";
-        };
+        plain-bin = bin "plain" [ "-p" "plain" "--bin" "plain" ];
+        ghost-bin = bin "ghost-claude" [ "-p" "shell-claude" "--bin" "ghost-claude" ];
       in
       {
         packages = {
-          inherit chrome-devtools-mcp maid-browser-mcp maid-core;
+          inherit chrome-devtools-mcp plain-bin ghost-bin;
 
-          # What `just install` puts in the mAId profile: the plugin
-          # marketplace claude and codex install from, and the skills
-          # path build-tool's REGISTRY links kiro and agy at (the
-          # plugin's own skills, so there is one copy).
+          # Plain's package, as `just install` puts it in the mAId profile:
+          # the plugin marketplace claude and codex install from, the skills
+          # kiro and agy link at, the browser launcher and the runtimes.
+          # Built by plain's own install; nix only gives it the inputs.
           default = pkgs.runCommand "maid" { } ''
-            m=$out/share/maid/marketplace
-            p=$m/plugins/maid
-            mkdir -p $m/.claude-plugin $m/.agents/plugins $p/.claude-plugin $p/.codex-plugin $p/hooks $out/bin
-            cp -r ${./resources/content/skills} $p/skills
-            # The ghost's own skill and agent are authored with the ghost.
-            chmod u+w $p/skills
-            cp -r ${ghostPlugin}/skills/reflect $p/skills/reflect
-            cp -r ${ghostPlugin}/agents $p/agents
-            # The reflect skill names the core as `@maid-core@`: this build's.
-            chmod u+w $p/skills/reflect $p/skills/reflect/SKILL.md
-            sed -i "s|@maid-core@|${maid-core}/bin/maid-core|g" $p/skills/reflect/SKILL.md
-            # Declarations the plugin ships for units outside it: each MCP
-            # server it registers, by name, and an overlay for each unit it
-            # borrows. The shell copies them with the plugin.
-            cp -r ${./resources/content/servers} $p/servers
-            cp -r ${./resources/content/overlays} $p/overlays
-            cp ${claudeMarketplace} $m/.claude-plugin/marketplace.json
-            cp ${codexMarketplace} $m/.agents/plugins/marketplace.json
-            cp ${claudePlugin} $p/.claude-plugin/plugin.json
-            cp ${claudeHooks} $p/hooks/claude.json
-            cp ${claudeMcp} $p/claude-mcp.json
-            cp ${codexPlugin} $p/.codex-plugin/plugin.json
-            # Both agents cache a plugin by version, so it must change
-            # exactly when the plugin's content does.
-            hash=$(cd $p && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12)
-            chmod u+w $p/.claude-plugin/plugin.json $p/.codex-plugin/plugin.json
-            sed -i "s/@version@/1.0.0-$hash/" $p/.claude-plugin/plugin.json $p/.codex-plugin/plugin.json
-            ln -s marketplace/plugins/maid/skills $out/share/maid/skills
-            ln -s marketplace/plugins/maid/servers $out/share/maid/servers
-            ln -s marketplace/plugins/maid/overlays $out/share/maid/overlays
-            ln -s ${maid-browser-mcp}/bin/maid-browser-mcp $out/bin/maid-browser-mcp
-            ln -s ${pensieveServer}/bin/pensieve $out/bin/pensieve
-            ln -s ${maid-core}/bin/maid-core $out/bin/maid-core
+            ${plain-bin}/bin/plain install --prefix $out --resources ${./resources} \
+              --runtime pensieve=${pensieveServer}/bin/pensieve \
+              --runtime chrome-devtools-mcp=${chrome-devtools-mcp}/bin/chrome-devtools-mcp
+          '';
+
+          # The ghost's package, as `just ghost install` puts it in the
+          # ghost's profile: its plugin and the binary its hooks call.
+          ghost = pkgs.runCommand "ghost" { } ''
+            ${ghost-bin}/bin/ghost-claude install --prefix $out --exe ${ghost-bin}/bin/ghost-claude \
+              --root ${fs.toSource { root = ./.; fileset = ./ghost-in-shell/shell/claude/plugin; }}
           '';
         };
 

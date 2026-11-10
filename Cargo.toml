@@ -5,6 +5,6 @@ members = [
     "ghost-in-shell/infusion",
     "ghost-in-shell/shell/claude",
     "ghost-in-shell/tests",
-    "resources/build-tool",
+    "plain",
     "kaimux",
 ]

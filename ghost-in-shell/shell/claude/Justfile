@@ -1,0 +1,56 @@
+# The ghost on Claude Code: its own install over plain's, switched on and
+# off with no reinstall. Recipes run from the workspace root (`[no-cd]`),
+# so `cargo run` resolves against the workspace. The ghost's profile is
+# its own; plain's is plain's, and the ghost's install runs plain's when
+# Claude Code does not have this checkout's resources.
+
+import '../../../plain/env.just'
+
+# The ghost's own profile, beside plain's.
+export GHOST_PROFILE := env("GHOST_PROFILE", env("XDG_STATE_HOME", env("HOME") / ".local/state") / "maid/ghost/profile")
+
+# The ghost's binary from the checkout this Justfile is in, so a clone's
+# recipes install the clone.
+ghost := "cargo run --manifest-path " + quote(justfile_directory() / "Cargo.toml") + " -p shell-claude --release --quiet --bin ghost-claude --"
+root := quote(justfile_directory())
+
+# Install the ghost: its profile, plain's install if Claude Code lacks this checkout's, its plugin.
+[no-cd]
+install:
+    {{ ghost }} install --root {{ root }}
+
+# Remove the ghost's plugin, profile and record; plain stays.
+[no-cd]
+uninstall:
+    {{ ghost }} uninstall --root {{ root }}
+
+# Switch the ghost on: user (every session), project, or local.
+[no-cd]
+on scope="user":
+    {{ ghost }} on {{ scope }}
+
+# Switch the ghost off; for one launch: claude --settings '{"enabledPlugins":{"ghost@ghost-in-shell":false}}'.
+[no-cd]
+off scope="user":
+    {{ ghost }} off {{ scope }}
+
+# The ghost's install and what it sees from here.
+[no-cd]
+status:
+    {{ ghost }} status --root {{ root }}
+
+# The ghost's profile one generation back (needs nix); plain stays.
+[no-cd]
+rollback:
+    {{ ghost }} rollback --root {{ root }}
+
+# Check every my-harness declaration in resources/ and the ghost's plugin.
+[no-cd]
+validate:
+    {{ ghost }} validate --root {{ root }}
+
+# Verify the ghost's own skill from the checkout, through plain's runner.
+[confirm("This costs API credits and takes minutes. Continue? (y/N)")]
+[no-cd]
+check-skills agent="" *FLAGS:
+    cargo run --manifest-path {{ quote(justfile_directory() / 'Cargo.toml') }} -p plain --release --quiet -- check reflect --skills {{ quote(source_directory() / 'plugin') }} --fixtures {{ quote(source_directory() / 'fixtures') }} {{ if agent =~ '^-' { agent } else if agent != "" { "--agent " + agent } else { "" } }} {{ FLAGS }}
