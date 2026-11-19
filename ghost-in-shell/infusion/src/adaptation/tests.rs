@@ -30,6 +30,7 @@ impl World {
         let root = dir.path().to_path_buf();
         let config = Config {
             state: root.join("state"),
+            candidates: true,
         };
         let parts = root.join("parts");
         let (stub, log) = memory::tests::stub(&root);

@@ -121,6 +121,7 @@ pub fn status(s: &crate::install::Setup, here: &std::path::Path) -> Result<u8> {
     print!("{}", bring_ins(&s.claude, &Host::from_env())?);
     let config = ghost::config::Config {
         state: s.state.clone(),
+        candidates: true,
     };
     let pending = infusion::genome::pending_in(&config)?;
     let waiting = infusion::sleep::waiting(&config)?.len();

@@ -1,16 +1,16 @@
-//! Recall: the few memories that bear on a turn, under a cap. Memories come
-//! from every bring-in with a memory index (project.md, Memory); which of
-//! them bear on the turn is a `Selector`'s call, so the cheap lookup here
-//! can give way to a local model with no change to its callers.
+//! Recall: the few memories that may bear on a turn, under a cap, offered
+//! as candidates (`Candidate`). Memories come from every bring-in with a
+//! memory index (project.md, Memory); which of them may bear on the turn
+//! is a `Selector`'s call, so the cheap lookup here can give way to a
+//! local model with no change to its callers. See the initiative spec
+//! `harness-core`, "Who does what" (D1).
 
 use crate::expression::fit::words;
 use ghost::environment::{contained, index_of};
 use ghost::Ghost;
 use serde::Serialize;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
-
-/// At most this many memories reach one turn.
-pub const CAP: usize = 3;
 
 #[derive(Serialize, Debug, Clone, PartialEq)]
 pub struct Memory {
@@ -21,9 +21,13 @@ pub struct Memory {
     pub file: PathBuf,
 }
 
-/// What a turn is about, as a selector reads it.
+/// What a turn is about, as a selector reads it: the prompt, and the
+/// words of the work around it (what the fitting bring-ins are for, what
+/// the named files are), which widen the net.
+#[derive(Default)]
 pub struct Query<'a> {
     pub prompt: &'a str,
+    pub about: BTreeSet<String>,
 }
 
 pub trait Selector {
@@ -31,7 +35,9 @@ pub trait Selector {
     fn select(&self, query: &Query, memories: &[Memory], cap: usize) -> Vec<Memory>;
 }
 
-/// v1: the prompt's content words against each memory's title and hook.
+/// Each memory's title and hook against the query's words: a word of the
+/// prompt counts 2, a word of what the work is about 1. With nothing
+/// about, this is the prompt's words alone.
 pub struct Lookup;
 
 impl Selector for Lookup {
@@ -40,8 +46,10 @@ impl Selector for Lookup {
         let mut scored: Vec<(usize, &Memory)> = memories
             .iter()
             .map(|m| {
-                let about = words(&format!("{} {}", m.title, m.hook));
-                (about.intersection(&said).count(), m)
+                let its = words(&format!("{} {}", m.title, m.hook));
+                let score =
+                    2 * its.intersection(&said).count() + its.intersection(&query.about).count();
+                (score, m)
             })
             .filter(|(n, _)| *n > 0)
             .collect();
@@ -175,13 +183,15 @@ mod tests {
         assert_eq!(all[0].persona.as_deref(), Some("personal"));
         let q = Query {
             prompt: "write the release notes",
+            ..Query::default()
         };
         assert_eq!(
-            titles(&Lookup.select(&q, &all, CAP)),
+            titles(&Lookup.select(&q, &all, 3)),
             ["Release notes style", "Deploy steps"]
         );
         let tie = Query {
             prompt: "release notes for this deploy",
+            ..Query::default()
         };
         assert_eq!(
             titles(&Lookup.select(&tie, &all, 1)),
@@ -189,8 +199,31 @@ mod tests {
             "ties keep index order"
         );
         assert!(Lookup
-            .select(&Query { prompt: "hello" }, &all, CAP)
+            .select(
+                &Query {
+                    prompt: "hello",
+                    ..Query::default()
+                },
+                &all,
+                3
+            )
             .is_empty());
+    }
+
+    #[test]
+    fn what_the_work_is_about_widens_the_net_below_the_prompts_own_words() {
+        let f = Fixture::new();
+        f.part("home", "personal", "memory/MEMORY.md", INDEX);
+        let (all, _) = memories(&f.ghost(), None);
+        let q = Query {
+            prompt: "how is the release deployed",
+            about: ["coffee".to_string()].into(),
+        };
+        assert_eq!(
+            titles(&Lookup.select(&q, &all, 3)),
+            ["Deploy steps", "Release notes style", "Coffee"],
+            "a prompt word outweighs a word of the work"
+        );
     }
 
     #[test]
@@ -273,7 +306,7 @@ mod tests {
         let (all, _) = memories(&f.ghost(), None);
         let picked: &dyn Selector = &Last;
         assert_eq!(
-            titles(&picked.select(&Query { prompt: "" }, &all, 1)),
+            titles(&picked.select(&Query::default(), &all, 1)),
             ["Release notes style"]
         );
     }

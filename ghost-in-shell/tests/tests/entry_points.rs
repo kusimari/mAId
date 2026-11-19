@@ -19,6 +19,7 @@ fn ctx(dir: &Path, projects: Option<PathBuf>) -> Infusion {
     Infusion {
         config: Config {
             state: dir.join("state"),
+            candidates: true,
         },
         host: Host::default(),
         sources: Box::new(Transcripts { projects }),

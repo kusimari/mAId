@@ -720,22 +720,22 @@ any. It is one item, so any change re-sends
 all of it. `--slice sub-session` gives a sub-agent the same without the
 environment's detail and pending, which are the person's.
 
-**Expression** answers a turn from its input's `prompt` and `cwd`, each part
-its own item so an append carrier is sent only what changed, under 9,000
-bytes in all once what the session already holds is left out (a rules
-section is cut to 30 lines and 2,000 bytes, a record line or a memory's
-title and hook to 300, control characters dropped):
+**Expression** answers a turn from its input's `prompt` and `cwd` with
+the prefix: the essentials, their short form when it is due, then the
+candidates. Code gathers and the model judges: each part is its own
+item so an append carrier is sent only what changed, under 9,000 bytes in
+all once what the session already holds is left out (a rules section is
+cut to 30 lines and 2,000 bytes, a record line or a memory's title and
+hook to 300, control characters dropped):
 
-- the reinforcement: the acting persona and its session bring-ins with
-  state, when there are several personas, and the work's record (goal, state, next) when a turn bring-in's
-  `record` names one here, whether or not it fits, since `signals.states`
-  match against it. The persona and the record are two items, each
-  tracked on its own: a session told one that moves to where none is
-  known is told so once (`persona: none known here`, `record: none
-  here`), and a session never told one is told nothing about it.
-  With the fitting bring-ins' first rules below, and the genome placed
-  again at clear and compact, these are the few rules that must never
-  drift; there is no other carrier for them;
+- the essentials. The acting persona and its session bring-ins with
+  state, in full when there are several personas, and the work's record
+  (goal, state, next) when a turn bring-in's `record` names one here,
+  whether or not it fits, since `signals.states` match against it. The
+  persona and the record are two items, each tracked on its own: a session
+  told one that moves to where none is known is told so once (`persona:
+  none known here`, `record: none here`), and a session never told one is
+  told nothing about it;
 - per turn bring-in that fits (at most 3, counted after the same rules
   text from two parts is sent once), its job and its first rules. Turn fit is derived, never
   declared: `signals.locations` globs against the folder's path, its name
@@ -745,10 +745,30 @@ title and hook to 300, control characters dropped):
   the prompt, `states` against the record's state; with no signals, two
   words of its `job`. Location and file matches count 2, words 1. When
   nothing fits, nothing is sent and the shell's own way stands;
-- per recalled memory (at most 3), a pointer: title, hook, file. A
-  `Selector` picks them; v1 is a lookup of the prompt's words against each
-  index line's title and hook, from the acting persona's memories (every
-  persona's, labelled, when none is known).
+- the short form, with no mark of its own in the record: the acting
+  persona and its memory, the record's goal and next, and each fit's name
+  with its first two rule lines (a list item or paragraph, unwrapped, 240
+  bytes each), at most 1,500 bytes. It goes when the essentials were last
+  placed whole 10 prompts back, or 200 KB back (the transcript's growth
+  where the carrier names one, else the prompts' bytes), and then carries
+  every essential not sent in full this turn; and when a fit returns after
+  a turn without it with its rules held, carrying that fit alone. The
+  delivery record keeps each session's count, position, last fits and
+  mark (`drift.json`); only append prompts count, and a reset clears it.
+  With the genome placed again at clear and compact, these are the rules
+  that must never drift;
+- the candidates, under one line saying they are candidates to open if
+  relevant, not instructions: at most 3 memories (`- memory (<persona>):
+  <title> - <hook> (<file>)`) and 2 near fits (`- may apply: <name>
+  (<job>)`). A `Selector` picks the memories from the acting persona's
+  indexes (every persona's, labelled, when none is known); the lookup
+  scores a word of the prompt 2 and a word of what the work is about 1:
+  the fitting bring-ins' job and signal phrases, and the language of a
+  file the prompt names (`.sh` is shell). A near fit is a bring-in past
+  the fit cap, or one with some word of a signal phrase or its job in the
+  prompt, whose fit the session does not hold. Each goes once a session.
+  `MY_HARNESS_CANDIDATES=off` leaves memories matched on the prompt's own
+  words and offers no near fit.
 
 The acting persona is the only one when there is one; otherwise the one
 whose turn bring-ins' location or file signals match here, or whose bound
@@ -1315,8 +1335,13 @@ mAId/
 │   │   ├── src/call.rs     the call every carrier makes, and the items it answers with
 │   │   ├── src/genome.rs   who the session is, at its start
 │   │   ├── src/expression.rs   what this turn needs; with its own supporting code:
+│   │   │   ├── prefix.rs   the prefix: order, framing line, budget, placement
+│   │   │   ├── essentials.rs  persona, record and fits, each with its full item and short entry
+│   │   │   ├── reinforcement.rs  the short form's text: heading, first rule lines, byte cap
+│   │   │   ├── drift.rs    when the short form is due again
+│   │   │   ├── candidate.rs  memories and near fits that may bear on the turn
 │   │   │   ├── delivery.rs the delivery record per session
-│   │   │   ├── fit.rs      turn fit and the persona guess
+│   │   │   ├── fit.rs      turn fit, near fits and the persona guess
 │   │   │   ├── select.rs   recall: the memory indexes and the Selector
 │   │   │   ├── record.rs   the work's own record a turn bring-in points at
 │   │   │   └── here.rs     where a session is: folder, repo root, branch, globs
@@ -1421,7 +1446,9 @@ Claude Code (`CLAUDE_BIN`, else `claude` on PATH) in a temp HOME with
 `--plugin-dir` on the ghost's plugin staged by its own step around the
 cargo-built binary, against a stub of the model API on `127.0.0.1` at a port the OS
 picks, which records every request: the genome placed once at start, a
-fitting prompt's rules and memory pointer, nothing new on a second prompt,
+fitting prompt's rules and memory candidate, the candidates under their
+framing line once, nothing new on a second prompt, the short form once
+ten prompts on in a long session,
 a sub-agent's slice, the genome again once after `/compact`, the MCP tool
 answering, the plugin loading with `extensions` in its manifest, and a
 session that ends marked for sleep. Free
@@ -1443,13 +1470,17 @@ move back by the link alone, with nothing registered again. It builds
 `cargo test -p plain --test strict -- --ignored` runs `claude plugin
 validate --strict` on the `maid` plugin as plain stages it. Free.
 
-`cargo test -p ghost-in-shell-tests --test claude_paid -- --ignored --test-threads 1`
-with `MAID_PAID=1` (and `CLAUDE_BIN`) runs Claude Code with a real model:
-four model calls, only as granted. It keeps the shell's HOME and
-environment, so the model access is the shell's own and no credential is
-handed to it; Claude's config dir, the ghost's state and parts, and
-`XDG_CACHE_HOME` go to a temp world, and it refuses to start if any of them
-would land under HOME. Its free guard test runs in `just test`.
+`MAID_PAID=1 CLAUDE_BIN=$(command -v claude) cargo test -p ghost-in-shell-tests --test claude_paid <test> -- --ignored --test-threads 1`,
+in the dev shell, runs Claude Code with a real model: one test at a time,
+its model calls only as granted. `CLAUDE_BIN` is the user's `claude`
+launcher, not the raw Claude Code binary: the launcher supplies the model
+access, and the raw binary run alone fails to authenticate. It keeps the
+shell's HOME and environment, so the model access is the shell's own and
+no credential is handed to it; Claude's config dir, the ghost's state and
+parts, and `XDG_CACHE_HOME` go to a temp world, and it refuses to start if
+any of them would land under HOME. Its free tests (the HOME guard, the
+reply checks, and that the comparison's habit reaches the prefix only as a
+candidate) run in `just test`.
 
 **After any Claude Code upgrade**, run both before trusting the ghost on
 the new version, since where Claude takes its marketplace from (the path as

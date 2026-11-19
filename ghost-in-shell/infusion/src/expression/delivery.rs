@@ -7,6 +7,12 @@
 //! An item is recorded when it is handed to the carrier, before the carrier
 //! places it: delivery is at most once, and a carrier that fails to place
 //! what it was given calls again with reset.
+//!
+//! Beside the marks, a session may keep a small state file of an entry
+//! point's own (`Drift` keeps when the essentials were last placed). Its
+//! name holds no `@`, so it is never read as a mark, and a reset clears it.
+//! See the initiative spec `harness-core`, "What forms the ghost"
+//! (delivery record).
 
 use crate::call::{Call, Carrier, Infusion, Item};
 use anyhow::{bail, Result};
@@ -66,6 +72,32 @@ impl Record {
             rd.flatten()
                 .any(|e| e.file_name().to_string_lossy().starts_with(&prefix))
         }))
+    }
+
+    /// The state file `name` of `session`, if one was written.
+    pub fn state(&self, session: &str, name: &str) -> Result<Option<String>> {
+        let at = self.state_path(session, name)?;
+        match fs::read_to_string(&at) {
+            Ok(text) => Ok(Some(text)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Write the state file `name` of `session` whole.
+    pub fn set_state(&self, session: &str, name: &str, text: &str) -> Result<()> {
+        Ok(crate::files::write_atomic(
+            &self.state_path(session, name)?,
+            text.as_bytes(),
+        )?)
+    }
+
+    fn state_path(&self, session: &str, name: &str) -> Result<PathBuf> {
+        check_id("state", name)?;
+        if name.contains('@') {
+            bail!("state {name:?} would read as a mark");
+        }
+        Ok(self.session(session)?.join(name))
     }
 
     /// Forget what `session` was sent: its next append sends everything.
@@ -129,6 +161,13 @@ pub fn deliver_within(
     items: Vec<Item>,
     budget: usize,
 ) -> Result<Vec<Item>> {
+    let fresh = unheld(ctx, call, items)?;
+    claim(ctx, call, within(fresh, budget))
+}
+
+/// `items` less what this call's session already holds, after the reset
+/// the call asks for. Only an append carrier's session holds anything.
+pub fn unheld(ctx: &Infusion, call: &Call, items: Vec<Item>) -> Result<Vec<Item>> {
     let session = call.session.as_deref();
     let record = Record::new(ctx.config.delivery());
     if let Some(s) = session {
@@ -147,25 +186,36 @@ pub fn deliver_within(
             fresh.push(item);
         }
     }
-    // Stop at the first item over the budget: what comes after (the last
-    // fits, then recall) matters less than what came before.
+    Ok(fresh)
+}
+
+/// The first of `items` that fit in `budget` bytes of text: it stops at the
+/// first one over, since what comes after (the last fits, the short form,
+/// then candidates) matters less than what came before.
+pub fn within(items: Vec<Item>, budget: usize) -> Vec<Item> {
     let mut used = 0;
-    let fits: Vec<Item> = fresh
+    items
         .into_iter()
         .take_while(|i| {
             used += i.text.len();
             used <= budget
         })
-        .collect();
-    let Some(session) = session else {
+        .collect()
+}
+
+/// Record `items` as sent to the call's session, and return those this
+/// call places: on an append carrier another carrier may have placed one
+/// since, and exactly one of them does.
+pub fn claim(ctx: &Infusion, call: &Call, items: Vec<Item>) -> Result<Vec<Item>> {
+    let Some(session) = call.session.as_deref() else {
         // Without a session nothing can be remembered, so all of it goes.
-        return Ok(fits);
+        return Ok(items);
     };
+    let record = Record::new(ctx.config.delivery());
     let mut out = vec![];
-    for item in fits {
+    for item in items {
         let placed = match call.carrier {
             Carrier::Transient => true,
-            // Another carrier may have placed it since: exactly one does.
             Carrier::Append => record.claim(session, &item.id, &sent(&item))?,
             Carrier::OnDemand => {
                 record.claim(session, &item.id, &sent(&item))?;
@@ -270,6 +320,21 @@ mod tests {
         }
         assert!(!dir.path().join("x").exists());
         assert!(r.claim("0f3c-uuid_like.1", "genome", "a").unwrap());
+    }
+
+    #[test]
+    fn a_state_file_is_the_sessions_own_and_a_reset_clears_it() {
+        let dir = TempDir::new().unwrap();
+        let r = Record::new(dir.path());
+        assert_eq!(r.state("s", "drift.json").unwrap(), None);
+        r.set_state("s", "drift.json", "{}").unwrap();
+        assert_eq!(r.state("s", "drift.json").unwrap().as_deref(), Some("{}"));
+        assert_eq!(r.state("t", "drift.json").unwrap(), None);
+        assert!(!r.sent_any("s", "drift.json").unwrap(), "not a mark");
+        assert!(r.set_state("s", "x@y", "{}").is_err());
+        assert!(r.set_state("s", "../x", "{}").is_err());
+        r.reset("s").unwrap();
+        assert_eq!(r.state("s", "drift.json").unwrap(), None);
     }
 
     #[test]

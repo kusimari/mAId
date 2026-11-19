@@ -1,222 +1,81 @@
-//! expression: what this turn needs, each as its own item so only what
-//! changed is sent: the reinforcement (acting persona, its memory, the
-//! work's record), the first rules of each bring-in that fits, and the
-//! memories that may bear on it. Never the catalog. See the initiative
-//! spec `harness-core`, "The five entry points".
+//! expression: what this turn needs, as the prefix in front of the prompt.
+//! Code gathers and the agent judges (D1): the essentials (acting persona,
+//! its memory, the work's record, the first rules of each bring-in that
+//! fits), and candidates that may bear on the turn for the model to open.
+//! Each is its own item so only what changed is sent, and the essentials go
+//! again in short once drifted (D2). Never the catalog. See the initiative
+//! spec `harness-core`, "The five entry points" and "Who does what".
+//!
+//!   prefix          the order, the framing line, the budget, placement
+//!   essentials      persona, record and fits, each with its full item and short entry
+//!   reinforcement   the short form's text: heading, first rule lines, byte cap
+//!   drift           when the short form is due again
+//!   candidate       memories and near fits that may bear on the turn
+//!   select          the memory indexes and the `Selector`
+//!   fit             turn fit, near fits and the persona guess
+//!   record, here    the work's own record; where the session is
+//!   delivery        what each session was sent
 
+pub mod candidate;
 pub mod delivery;
+pub mod drift;
+pub mod essentials;
 pub mod fit;
 pub mod here;
+pub mod prefix;
 pub mod record;
+pub mod reinforcement;
 pub mod select;
 
 use crate::call::{Call, Carrier, Infusion, Item};
-use crate::expression::delivery::{deliver_within, Record};
+use crate::expression::candidate::Net;
+use crate::expression::delivery::Record;
+use crate::expression::essentials::Essentials;
 use crate::expression::here::Here;
-use crate::expression::select::Selector;
 use anyhow::Result;
-use ghost::contract::{self, Scope};
-use ghost::{BringIn, Ghost};
-use std::fmt::Write as _;
 
-/// Claude Code places a hook's `additionalContext` whole only up to 10,000
-/// characters; a turn's items stay under this many bytes, which leaves room
-/// for the framing, and a byte count is never below the character count.
-const TURN_BYTES: usize = 9_000;
-/// No one item may take most of a turn: every piece of text an item takes
-/// from a file is cut to these.
-const RULES_LINES: usize = 30;
-const RULES_BYTES: usize = 2_000;
-const FIELD_BYTES: usize = 300;
+/// What each item of the prefix begins with, so a reader (and the model)
+/// can tell the ghost's text from the person's. The lines under an item
+/// (a record's state, a candidate, a short-form entry) are its own.
+pub const TAG: &str = "[my-harness]";
+/// A record line or a memory's title and hook is cut to this.
+pub const FIELD_BYTES: usize = 300;
 
-/// What this turn needs, each as its own item so only what changed is
-/// sent: the reinforcement (acting persona, its memory, the work's record),
-/// the first rules of each bring-in that fits, and the memories that bear
-/// on it. Never the catalog. Reads the call's prompt and folder.
+/// The prefix for this turn: what changed of the essentials, their short
+/// form once drifted, and the candidates. Reads the call's prompt and
+/// folder.
 pub fn expression(ctx: &Infusion, call: &Call) -> Result<Vec<Item>> {
     let here = Here::at(call.at.cwd.as_deref());
     let ghost = ctx.shell.ghost(here.cwd.as_deref())?;
     let prompt = call.prompt.as_deref().unwrap_or_default();
-    let acting = fit::persona(&ghost, &here);
-    let record = work_record(&ghost, &here);
-    // Whether this session was told the item before, so that leaving what
-    // it says is said once, and only to a session that was told it.
+    // Whether this session was told the item before.
     let told = |id: &str| match (call.session.as_deref(), call.carrier, call.reset) {
         (Some(s), Carrier::Append, false) => Record::new(ctx.config.delivery())
             .sent_any(s, id)
             .unwrap_or(false),
         _ => false,
     };
-    let mut items: Vec<Item> = [
-        reinforce_persona(&ghost, acting.as_deref(), told(PERSONA)),
-        reinforce_record(record.as_ref(), told(RECORD)),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    let state = record.as_ref().and_then(|r| r.state.as_deref());
-    let mut seen_rules = std::collections::BTreeSet::new();
-    let mut fitted = 0;
-    for f in fit::ranked(&ghost, prompt, state, &here) {
-        if fitted == fit::CAP {
-            break;
-        }
-        let b = f.bring_in;
-        let rules = rules_of(b);
-        if let Ok(Some(text)) = &rules {
-            if !seen_rules.insert(text.clone()) {
-                continue;
-            }
-        }
-        // The cap counts fits sent, so rules two parts share do not use it.
-        fitted += 1;
-        let mut text = format!(
-            "[my-harness] fits this turn: {} ({}): {}\n",
-            clip(&b.name, FIELD_BYTES),
-            clip(b.persona.as_deref().unwrap_or(&b.part), FIELD_BYTES),
-            clip(b.job().unwrap_or("no job given"), FIELD_BYTES)
-        );
-        if let Ok(Some(r)) = &rules {
-            text.push_str(r);
-            text.push('\n');
-        }
-        items.push(Item {
-            id: fit_id(&b.part, &b.name),
-            text,
-            // Only what the bring-in is, not why this prompt fit it: the
-            // record hashes the data too, and the same rules must not be sent
-            // again because another word matched.
-            data: serde_json::json!({"part": b.part, "name": b.name,
-                "rules": rules.as_ref().err()}),
-        });
-    }
-    let (memories, _) = select::memories(&ghost, acting.as_deref());
-    let query = select::Query { prompt };
-    for m in select::Lookup.select(&query, &memories, select::CAP) {
-        items.push(Item {
-            id: format!(
-                "recall.{:016x}",
-                delivery::fnv1a(&m.file.display().to_string())
-            ),
-            text: format!(
-                "[my-harness] memory ({}): [{}]({}) - {}\n",
-                m.persona.as_deref().unwrap_or(&m.bring_in),
-                clip(&m.title, FIELD_BYTES),
-                m.file.display(),
-                clip(&m.hook, FIELD_BYTES)
-            ),
-            data: serde_json::to_value(&m)?,
-        });
-    }
-    deliver_within(ctx, call, items, TURN_BYTES)
-}
-
-/// The work's own record: the first turn bring-in whose `record` names one
-/// here, whether or not it fits this turn, since its state is part of what
-/// decides the fit.
-fn work_record(ghost: &Ghost, here: &Here) -> Option<record::Record> {
-    ghost
-        .bring_ins
+    let essentials = Essentials::of(&ghost, &here, prompt, &told);
+    let near: Vec<_> = essentials
+        .past_cap
         .iter()
-        .filter_map(|b| b.declaration())
-        .filter(|d| d.scope == Scope::Turn && !d.record.is_empty())
-        .find_map(|d| record::find(&d.record, here).ok().flatten())
-}
-
-const PERSONA: &str = "reinforce.persona";
-const RECORD: &str = "reinforce.record";
-
-/// The acting persona and its memory, restated only where it can change:
-/// with one persona the genome has said all there is. Where none is known,
-/// one line, and only to a session that was told one.
-fn reinforce_persona(ghost: &Ghost, acting: Option<&str>, told: bool) -> Option<Item> {
-    let personas: std::collections::BTreeSet<&str> = ghost
-        .personas
-        .iter()
-        .filter_map(|p| p.persona.as_deref())
+        .copied()
+        .chain(fit::near(&ghost, prompt, &essentials.matched))
         .collect();
-    if personas.len() < 2 {
-        return None;
-    }
-    let text = match acting {
-        Some(persona) => {
-            let memory: Vec<String> = ghost
-                .bring_ins
-                .iter()
-                .filter(|b| b.persona.as_deref() == Some(persona))
-                .filter(|b| b.declaration().is_some_and(|d| d.scope == Scope::Session))
-                .filter_map(|b| {
-                    let l = crate::genome::line(b);
-                    (!l.state.is_empty())
-                        .then(|| clip(&format!("{} ({})", l.name, l.state.join(", ")), FIELD_BYTES))
-                })
-                .take(10)
-                .collect();
-            match memory.is_empty() {
-                true => format!("[my-harness] acting through {persona}; no memory of its own\n"),
-                false => format!(
-                    "[my-harness] acting through {persona}; its memory: {}\n",
-                    memory.join(", ")
-                ),
-            }
-        }
-        None if told => "[my-harness] persona: none known here\n".into(),
-        None => return None,
+    let net = Net {
+        acting: essentials.acting.as_deref(),
+        fits: &essentials.fits,
+        near: &near,
+        widen: ctx.config.candidates,
     };
-    Some(Item {
-        id: PERSONA.into(),
-        text,
-        data: serde_json::json!({ "acting": acting }),
-    })
-}
-
-/// The work's record: goal, state and next. Where there is none, one line,
-/// and only to a session that was told one.
-fn reinforce_record(record: Option<&record::Record>, told: bool) -> Option<Item> {
-    let text = match record {
-        Some(r) => {
-            let mut text = format!(
-                "[my-harness] the work's record: {}\n",
-                clip(&r.file.display().to_string(), FIELD_BYTES)
-            );
-            for (label, v) in [("goal", &r.goal), ("state", &r.state), ("next", &r.next)] {
-                if let Some(v) = v {
-                    let _ = writeln!(text, "  {label}: {}", clip(v, FIELD_BYTES));
-                }
-            }
-            text
-        }
-        None if told => "[my-harness] record: none here\n".into(),
-        None => return None,
-    };
-    Some(Item {
-        id: RECORD.into(),
-        text,
-        data: serde_json::json!({ "record": record }),
-    })
-}
-
-/// A bring-in's first rules, read from its unit through its `rules` pointer.
-fn rules_of(b: &BringIn) -> std::result::Result<Option<String>, String> {
-    let (Some(d), Some(unit)) = (
-        b.declaration(),
-        b.record.as_ref().and_then(|r| r.unit.as_ref()),
-    ) else {
-        return Ok(None);
-    };
-    match &d.rules {
-        None => Ok(None),
-        Some(pointer) => contract::rules(&unit.path, pointer).map(|r| {
-            let lines: Vec<&str> = r.lines().take(RULES_LINES).collect();
-            Some(clip(&lines.join("\n"), RULES_BYTES))
-        }),
-    }
+    let candidates = candidate::gather(&ghost, prompt, &net, &select::Lookup, &told);
+    prefix::place(ctx, call, &essentials, &candidates)
 }
 
 /// `text` cut to at most `max` bytes at a character boundary, with control
 /// characters other than newlines and tabs dropped, since it comes from
 /// files the work owns and goes into a model's context.
-fn clip(text: &str, max: usize) -> String {
+pub(crate) fn clip(text: &str, max: usize) -> String {
     let clean: String = text
         .chars()
         .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
@@ -231,32 +90,26 @@ fn clip(text: &str, max: usize) -> String {
     format!("{}...", &clean[..end])
 }
 
-/// A fit's item id: its part and name, or a hash of them when either is
-/// not plain enough or long enough to be an id as it is, so two names
-/// never share one.
-fn fit_id(part: &str, name: &str) -> String {
-    let id = format!("fit.{part}.{name}");
-    let plain = |x: &str| {
-        x.chars()
-            .all(|c| c.is_ascii_alphanumeric() || "-_".contains(c))
-    };
-    match plain(part) && plain(name) && delivery::check_id("item", &id).is_ok() {
-        true => id,
-        false => format!("fit.{:016x}", delivery::fnv1a(&format!("{part}\0{name}"))),
-    }
+/// `clip`, on one line: a field that must not start a line of its own,
+/// such as a candidate's, under a framing line saying what it is.
+pub(crate) fn one_line(text: &str, max: usize) -> String {
+    clip(text, max).replace(['\n', '\r', '\t', '\u{2028}', '\u{2029}'], " ")
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::call::Where;
+    use crate::expression::delivery::deliver_within;
+    use crate::expression::essentials::{RULES_BYTES, RULES_LINES};
+    use crate::expression::prefix::TURN_BYTES;
     use crate::testing::{call, ctx};
     use serde_json::{json, Value};
     use std::fs;
     use std::path::Path;
     use tempfile::TempDir;
 
-    fn part(dir: &Path, name: &str, persona: &str, bring_ins: Value) {
+    pub(crate) fn part(dir: &Path, name: &str, persona: &str, bring_ins: Value) {
         let parts = dir.join("parts");
         fs::create_dir_all(&parts).unwrap();
         let v = json!({"format": 1, "part": name, "harnesses": {}, "persona": persona, "bring_ins": bring_ins});
@@ -265,7 +118,7 @@ mod tests {
 
     /// A part with a turn skill `name` fitting the job `job`, whose rules
     /// section says `rule`, and a memory whose index holds `memories`.
-    fn turn_part(
+    pub(crate) fn turn_part(
         dir: &Path,
         part_name: &str,
         persona: &str,
@@ -337,8 +190,9 @@ mod tests {
             first[0], "fit.home.deployer",
             "one persona: nothing to restate"
         );
-        assert!(first[1].starts_with("recall."), "{first:?}");
-        assert_eq!(first.len(), 2);
+        assert_eq!(first[1], candidate::FRAMING, "{first:?}");
+        assert!(first[2].starts_with("recall."), "{first:?}");
+        assert_eq!(first.len(), 3);
         assert!(
             said(&c, Carrier::Append, "deploy the release").is_empty(),
             "nothing changed"
@@ -356,8 +210,8 @@ mod tests {
             said(&c, Carrier::Append, "hello").is_empty(),
             "nothing fits: nothing"
         );
-        assert_eq!(said(&c, Carrier::Transient, "deploy the release").len(), 2);
-        assert_eq!(said(&c, Carrier::OnDemand, "deploy the release").len(), 2);
+        assert_eq!(said(&c, Carrier::Transient, "deploy the release").len(), 3);
+        assert_eq!(said(&c, Carrier::OnDemand, "deploy the release").len(), 3);
     }
     #[test]
     fn a_fit_carries_its_rules_section_and_the_same_rules_from_two_parts_are_sent_once() {
@@ -607,12 +461,34 @@ mod tests {
         assert!(said(&c, Carrier::Append, "release it").is_empty());
     }
     #[test]
-    fn a_name_that_is_not_a_plain_id_is_hashed_and_never_shared() {
-        assert_eq!(fit_id("home", "notes"), "fit.home.notes");
-        let (a, b) = (fit_id("home", "a.b"), fit_id("home", "a-b"));
-        assert!(a.starts_with("fit.") && a != b, "{a} {b}");
-        assert!(delivery::check_id("item", &fit_id("p", &"x".repeat(200))).is_ok());
+    fn a_bring_in_that_fits_past_the_cap_may_apply() {
+        let dir = TempDir::new().unwrap();
+        let c = ctx(dir.path());
+        turn_part(
+            dir.path(),
+            "a",
+            "personal",
+            &[
+                ("one", "deploy", "ONE"),
+                ("two", "deploy", "TWO"),
+                ("three", "deploy", "THREE"),
+                ("four", "deploy", "FOUR"),
+            ],
+            "",
+        );
+        let call = Call {
+            prompt: Some("deploy".into()),
+            ..call(None, Carrier::Transient, false)
+        };
+        let items = expression(&c, &call).unwrap();
+        let near: Vec<&str> = items
+            .iter()
+            .filter(|i| i.id.starts_with("near."))
+            .map(|i| i.text.as_str())
+            .collect();
+        assert_eq!(near, ["- may apply: four (four work)\n"]);
     }
+
     #[test]
     fn rules_two_parts_share_do_not_use_up_the_cap() {
         let dir = TempDir::new().unwrap();

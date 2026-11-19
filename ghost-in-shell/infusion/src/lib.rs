@@ -89,6 +89,7 @@ pub(crate) mod testing {
         Infusion {
             config: Config {
                 state: dir.join("state"),
+                candidates: true,
             },
             host: Host::default(),
             sources: Box::new(NoSources),

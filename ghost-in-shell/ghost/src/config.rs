@@ -11,7 +11,14 @@ pub struct Config {
     /// adapter cached of the shell): `MY_HARNESS_STATE`, default
     /// `${XDG_STATE_HOME:-$HOME/.local/state}/my-harness`.
     pub state: PathBuf,
+    /// Whether the prefix casts a wide net for candidates (D1): on, unless
+    /// `CANDIDATES` is `off`, which leaves memories matched on the prompt's
+    /// own words and no near fits.
+    pub candidates: bool,
 }
+
+/// The switch for the prefix's candidates.
+pub const CANDIDATES: &str = "MY_HARNESS_CANDIDATES";
 
 /// A path from the environment. An empty value is unset; a relative one is
 /// a mistake, not the cwd. Public so a shell reads its own locations by
@@ -49,7 +56,8 @@ impl Config {
                 base.join("my-harness")
             }
         };
-        Ok(Config { state })
+        let candidates = var(CANDIDATES).as_deref() != Some("off");
+        Ok(Config { state, candidates })
     }
 
     /// Where a shell's adapter keeps what it derived of the shell.
@@ -126,5 +134,20 @@ mod tests {
         let c = from(&[("HOME", "/h"), ("XDG_STATE_HOME", "x")]).unwrap();
         assert_eq!(c.state, PathBuf::from("/h/.local/state/my-harness"));
         assert!(from(&[]).is_err());
+    }
+
+    #[test]
+    fn candidates_are_on_unless_switched_off() {
+        assert!(from(&[("HOME", "/h")]).unwrap().candidates);
+        assert!(
+            from(&[("HOME", "/h"), (CANDIDATES, "on")])
+                .unwrap()
+                .candidates
+        );
+        assert!(
+            !from(&[("HOME", "/h"), (CANDIDATES, "off")])
+                .unwrap()
+                .candidates
+        );
     }
 }

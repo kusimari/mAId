@@ -1,6 +1,8 @@
 //! Turn fit: which turn bring-ins apply now, derived from the prompt (the
-//! outcome and job), the work's state and the location, never declared.
-//! Also the persona guess, which reads the same location signals.
+//! outcome and job), the work's state and the location, never declared;
+//! and which nearly fit, offered as candidates. Also the persona guess,
+//! which reads the same location signals. See the initiative spec
+//! `harness-core`, "The five entry points" (turn fit).
 
 use crate::expression::here::{self, Here};
 use ghost::contract::{Declaration, Scope};
@@ -84,6 +86,27 @@ pub fn ranked<'a>(
         .collect();
     fits.sort_by_key(|f| std::cmp::Reverse(f.score));
     fits
+}
+
+/// The turn bring-ins that nearly fit: not among `fitting` (what `ranked`
+/// found, passed in so the file walk runs once a prompt), but some word of
+/// a signal phrase or of their job is in the prompt. Most words first;
+/// equal counts keep the ghost's order.
+pub fn near<'a>(ghost: &'a Ghost, prompt: &str, fitting: &[&BringIn]) -> Vec<&'a BringIn> {
+    let said = words(prompt);
+    let mut near: Vec<(usize, &BringIn)> = turn(ghost)
+        .filter(|(b, _)| !fitting.iter().any(|f| std::ptr::eq(*f, *b)))
+        .filter_map(|(b, d)| {
+            let mut its = words(&d.job);
+            for phrase in d.signals.jobs.iter().chain(&d.signals.outcomes) {
+                its.extend(words(phrase));
+            }
+            let n = its.intersection(&said).count();
+            (n > 0).then_some((n, b))
+        })
+        .collect();
+    near.sort_by_key(|(n, _)| std::cmp::Reverse(*n));
+    near.into_iter().map(|(_, b)| b).collect()
 }
 
 /// The persona this location points at: the only one there is, or the one
@@ -194,7 +217,7 @@ pub fn words(text: &str) -> BTreeSet<String> {
 }
 
 /// Words of the prompt that look like a file: they hold a `.` or a `/`.
-fn path_words(prompt: &str) -> Vec<String> {
+pub fn path_words(prompt: &str) -> Vec<String> {
     prompt
         .split_whitespace()
         .map(|w| {
@@ -463,5 +486,54 @@ mod tests {
         part(dir.path(), "b", "personal", &[]);
         let m = crate::testing::ghost_of(&dir.path().join("parts"));
         assert_eq!(persona(&m, &Here::default()).as_deref(), Some("personal"));
+    }
+
+    #[test]
+    fn a_bring_in_nearly_fits_on_some_words_of_a_phrase_or_of_its_job() {
+        let dir = TempDir::new().unwrap();
+        part(
+            dir.path(),
+            "a",
+            "personal",
+            &[
+                (
+                    "mailer",
+                    &turn(
+                        "send mail",
+                        "  my-harness.signals.jobs: draft an email
+",
+                    ),
+                ),
+                ("planner", &turn("plan the garden beds", "")),
+                (
+                    "deployer",
+                    &turn(
+                        "ship it",
+                        "  my-harness.signals.jobs: deploy
+",
+                    ),
+                ),
+            ],
+        );
+        let m = crate::testing::ghost_of(&dir.path().join("parts"));
+        let here = Here::at(None);
+        let near = |p: &str| -> Vec<String> {
+            let fitting: Vec<&BringIn> = ranked(&m, p, None, &here)
+                .iter()
+                .map(|f| f.bring_in)
+                .collect();
+            near(&m, p, &fitting)
+                .iter()
+                .map(|b| b.name.clone())
+                .collect()
+        };
+        assert_eq!(near("an email to the garden club"), ["mailer", "planner"]);
+        assert_eq!(names(&fit(&m, "draft an email", None, &here)), ["mailer"]);
+        assert!(
+            near("draft an email").is_empty(),
+            "a fit is not a near fit, and no other word is shared"
+        );
+        assert!(near("deploy").is_empty(), "deployer fits");
+        assert!(near("hello").is_empty());
     }
 }

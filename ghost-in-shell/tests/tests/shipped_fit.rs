@@ -43,6 +43,7 @@ fn setup() -> (TempDir, Infusion) {
     let ctx = Infusion {
         config: Config {
             state: dir.path().join("state"),
+            candidates: true,
         },
         host: Host::default(),
         sources: Box::new(Transcripts { projects: None }),

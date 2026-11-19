@@ -106,8 +106,9 @@ struct CallArgs {
 enum Cmd {
     /// Who the session is: personas, bring-ins, environment, pending.
     Genome(CallArgs),
-    /// What this turn needs: the acting persona, the work's record, the
-    /// rules of the bring-ins that fit, and the memories that may bear on it.
+    /// What this turn needs: the essentials that changed (acting persona,
+    /// the work's record, the rules of the bring-ins that fit), their short
+    /// form once drifted, and candidates (memories, near fits).
     Expression(CallArgs),
     /// What happened in a session, packed; with none named, the sessions
     /// waiting to be reflected on.

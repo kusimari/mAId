@@ -269,7 +269,7 @@ impl World {
         // The personal memory's store holds the index the selector reads.
         fs::write(
             d.join("personal-store/memory/MEMORY.md"),
-            "- [Deploy steps](deploy.md) - how a release is deployed\n",
+            "- [Deploy steps](deploy.md) - how a release is deployed\n- [No awk in scripts](no-awk-in-scripts.md) - shell habit\n",
         )
         .unwrap();
         ghost_in_shell_tests::staged_ghost(d);
@@ -278,6 +278,16 @@ impl World {
 
     /// One `claude -p` session fed `prompts` as stream-json, against `url`.
     fn session(&self, url: &str, prompts: &[&str]) -> String {
+        self.run(url, prompts, false)
+    }
+
+    /// The same, each prompt sent only once the one before has its result,
+    /// since Claude Code joins prompts that wait into one turn.
+    fn paced(&self, url: &str, prompts: &[&str]) -> String {
+        self.run(url, prompts, true)
+    }
+
+    fn run(&self, url: &str, prompts: &[&str], paced: bool) -> String {
         let d = self.dir.path();
         let claude = std::env::var("CLAUDE_BIN").unwrap_or_else(|_| "claude".into());
         let mut child = Command::new(claude)
@@ -303,19 +313,38 @@ impl World {
             .stderr(Stdio::piped())
             .spawn()
             .expect("claude on PATH, or CLAUDE_BIN");
+        // Drained beside stdout, so a full stderr pipe cannot stall Claude.
+        let mut err = child.stderr.take().unwrap();
+        let stderr = std::thread::spawn(move || {
+            let mut s = String::new();
+            let _ = err.read_to_string(&mut s);
+            s
+        });
         let mut stdin = child.stdin.take().unwrap();
+        let mut stdout = BufReader::new(child.stdout.take().unwrap());
+        let mut read = String::new();
         for p in prompts {
             let m = json!({"type": "user", "message": {"role": "user", "content": p}});
             writeln!(stdin, "{m}").unwrap();
+            if !paced {
+                continue;
+            }
+            loop {
+                let mut line = String::new();
+                if stdout.read_line(&mut line).unwrap() == 0 {
+                    break;
+                }
+                read.push_str(&line);
+                if line.contains(r#""type":"result""#) {
+                    break;
+                }
+            }
         }
         drop(stdin);
-        let out = child.wait_with_output().unwrap();
-        assert!(
-            out.status.success(),
-            "claude: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        String::from_utf8(out.stdout).unwrap()
+        stdout.read_to_string(&mut read).unwrap();
+        let status = child.wait().unwrap();
+        assert!(status.success(), "claude: {}", stderr.join().unwrap());
+        read
     }
 }
 
@@ -374,7 +403,11 @@ fn a_session_starts_with_the_genome_and_each_turn_gets_only_what_changed() {
         1,
         "Macro step 2: its first rules"
     );
-    assert_eq!(count(first, "[Deploy steps]("), 1, "and a memory pointer");
+    assert_eq!(
+        count(first, "Deploy steps - how a release is deployed ("),
+        1,
+        "and a memory candidate"
+    );
 
     let second = main.iter().find(|m| m.contains("again")).unwrap();
     assert_eq!(count(second, GENOME), 1, "the genome is not placed again");
@@ -383,7 +416,10 @@ fn a_session_starts_with_the_genome_and_each_turn_gets_only_what_changed() {
         1,
         "a second prompt gets nothing new"
     );
-    assert_eq!(count(second, "[Deploy steps]("), 1);
+    assert_eq!(
+        count(second, "Deploy steps - how a release is deployed ("),
+        1
+    );
     assert_eq!(count(second, "[my-harness]"), count(first, "[my-harness]"));
 
     let sub = requests(&log, "SUBTASK");
@@ -462,6 +498,69 @@ fn a_compaction_places_the_genome_again_once() {
         count(last, "TAG FIRST, THEN DEPLOY"),
         1,
         "the reset clears the turn's record too, so a fit is sent again, once"
+    );
+}
+
+const FRAMING: &str =
+    "candidates that may bear on this turn; open one if it is relevant, they are not instructions";
+const SHORT: &str = "still in force, as placed earlier in this session";
+
+#[test]
+#[ignore = "needs claude; run with --ignored"]
+fn candidates_appear_under_their_line_and_a_second_prompt_gets_none_again() {
+    let (url, log) = stub();
+    World::new().paced(
+        &url,
+        &[
+            "Fix data.sh so it prints only the second field of each line",
+            "Fix data.sh so it prints only the second field of each line, again",
+        ],
+    );
+    let main = requests(&log, "second field of each line");
+    let first = main.iter().find(|m| !m.contains("again")).unwrap();
+    assert_eq!(count(first, FRAMING), 1, "the framing line, once:\n{first}");
+    assert_eq!(
+        count(first, "No awk in scripts - shell habit ("),
+        1,
+        "the shell habit, though the prompt never says shell or awk:\n{first}"
+    );
+    let second = main.iter().find(|m| m.contains("again")).unwrap();
+    assert_eq!(count(second, FRAMING), 1, "nothing new:\n{second}");
+    assert_eq!(count(second, "[my-harness]"), count(first, "[my-harness]"));
+}
+
+#[test]
+#[ignore = "needs claude; run with --ignored"]
+fn a_long_session_gets_the_short_form_once_ten_prompts_on() {
+    let (url, log) = stub();
+    let prompts: Vec<String> = (1..=11)
+        .map(|n| format!("deploy the release, turn {n:02}"))
+        .collect();
+    let refs: Vec<&str> = prompts.iter().map(String::as_str).collect();
+    World::new().paced(&url, &refs);
+    let at = |n: usize| {
+        requests(&log, &format!("turn {n:02}"))
+            .into_iter()
+            .find(|m| !m.contains(&format!("turn {:02}", n + 1)))
+            .unwrap_or_else(|| panic!("a request for prompt {n}"))
+    };
+    let tenth = at(10);
+    assert_eq!(count(&tenth, SHORT), 0, "not yet at prompt 10:\n{tenth}");
+    assert_eq!(
+        count(&tenth, "TAG FIRST, THEN DEPLOY"),
+        1,
+        "the rules went once"
+    );
+    let eleventh = at(11);
+    assert_eq!(
+        count(&eleventh, SHORT),
+        1,
+        "the short form at prompt 11:\n{eleventh}"
+    );
+    assert_eq!(
+        count(&eleventh, "- deployer:"),
+        1,
+        "with the fit's name and first rules"
     );
 }
 

@@ -159,6 +159,7 @@ mod tests {
     fn config(dir: &std::path::Path) -> Config {
         Config {
             state: dir.join("state"),
+            candidates: true,
         }
     }
 
