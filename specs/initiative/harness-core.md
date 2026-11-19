@@ -314,7 +314,7 @@ expected.
    environment bound and ready, pending count); the on-demand resource
    returns the same.
 2. **Turn:** in a location where a turn bring-in fits, a prompt gets its
-   first rules and a few memory pointers; a second prompt with nothing
+   first rules and a few memory candidates; a second prompt with nothing
    changed gets nothing new.
 3. **Done and adaptation:** the person corrects the agent once and
    teaches writing-style a rule, then says close. The experience holds
@@ -618,13 +618,18 @@ time.
 **Each prompt (expression): the prefix,** a prompt context in front of the
 prompt carrying the essentials, the fitting rules and the memories that
 may bear on the work, whatever the agent loaded earlier.
-- *D1 and D2 (Concept, "Who does what").* *Built today:* code alone (the
-  v1 selector looks the prompt's words up in each memory index line), and
-  sent once, then on change. Stream 11 builds the candidates in the prefix
-  and the resend once drifted.
-- *Limits:* at most 3 turn bring-ins and 3 memories per turn; the genome
-  tested under 8,000 bytes and expression under 9,000; a hook always exits
-  0, so it never blocks a prompt.
+- *D1 and D2 (Concept, "Who does what").* *Built:* code gathers and the
+  model judges: the prefix offers up to 5 one-line candidates (memories
+  matched on the prompt's words and, widened, the fitting bring-ins'
+  words and the named files' languages; turn bring-ins that nearly fit)
+  under a line saying they are candidates, not instructions. The
+  essentials go once, then on change, and again in a short form once
+  drifted (10 prompts or 200 KB of transcript) or when a fit returns.
+  `MY_HARNESS_CANDIDATES=off` narrows the net to the prompt's words.
+- *Limits:* at most 3 turn bring-ins, and 5 candidates per turn (3
+  memories, 2 near fits); the short form at most 1,500 bytes; the genome
+  tested under 8,000 bytes and expression under 9,000; a hook always
+  exits 0, so it never blocks a prompt.
 
 **Close (sleep, experience, adaptation).**
 
@@ -700,7 +705,7 @@ may bear on the work, whatever the agent loaded earlier.
 | 8 | claude-config-dir | from Macro test run 3: install, uninstall and status read and write Claude's user config at `$HOME/.claude` even when `CLAUDE_CONFIG_DIR` is set; the paid tests isolate through `CLAUDE_CONFIG_DIR`, not a scratch HOME | 7 | merged |
 | 9 | writing-style-memory | from Macro test run 3: writing-style's taught rules live in persona memory, not a file tier; the close batch says what was saved and offers to move them into the skill on its source; the reflector quotes only the person's words for a habit; the guard's label says what it checks | 8 | merged |
 | 10 | saved-in-session | from Macro test run 4: the genome names where a bring-in's bound files are, so a skill never falls back to a default path (R4-1); a persona memory saved during the session is shown in the close batch as saved in memory (R4-2) | 9 | merged |
-| 11 | prompt-prefix | Concept D1 and D2: Rust gathers and the agent judges (candidates in the prefix); the essentials go again on change and once drifted; paid runs compare with and without candidates | 12 | running |
+| 11 | prompt-prefix | Concept D1 and D2: Rust gathers and the agent judges (candidates in the prefix); the essentials go again on change and once drifted; paid runs compare with and without candidates | 12 | merged |
 | 15 | ghost-in-shell-name | the name `my-harness` becomes `ghost-in-shell` everywhere: the declaration namespace in every slot, the prefix lines, the MCP server and its resource, the env vars, the ghost's state dir (the old ones read for one release) | 11 | planned |
 | 12 | ghost-package | the plain install and the ghost install split: the ghost as its own Claude plugin and install, on/off, `ghost status`; with D3: a Rust staging step builds each package, install is a PREFIX copy, the flake only runs build and install | 14 | merged |
 | 13 | ghost-in-shell-layout | the crates `ghost`, `infusion`, `shell/claude` and `tests` under `ghost-in-shell/`, laid out as the concept; no behaviour change | 10 | merged |
@@ -1078,3 +1083,9 @@ this initiative.
 - Ruling (user, 2026-11-11): the concept's name is ghost-in-shell; "my
   harness" is only what it means to the person. `my-harness` is renamed
   `ghost-in-shell` everywhere · stream 15
+- Paid tests: stream 11's candidates comparison, 6 runs (26 of 30 spent):
+  every run followed the saved habit with candidates on and off, so the
+  candidates' effect on the model is unproven; the model most likely found
+  the habit through the memory tools itself. The mechanism is proven by
+  free tests (the habit reaches the prefix only as a candidate). Backlog
+  `candidates-paid-control` holds the control that would settle it
