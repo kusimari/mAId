@@ -269,12 +269,17 @@ rm -f "$th/.gemini/config/skills"
 # Every path an install can write, with its type, size, mtime and link
 # target: what a dry run must leave as it is. Only the agents' config and
 # mAId's state and config, since an agent launcher from an earlier step may
-# still write elsewhere in HOME, and in codex's own dot-dirs, in the
-# background.
+# still write elsewhere in HOME, in codex's own dot-dirs and under
+# ~/.local/state, in the background. Under ~/.local/state an install writes
+# only the profiles' default home (maid), the install records, and the
+# ghost's state under its name and its old one (my-harness, which also
+# holds the old part lists).
 snapshot() {
+  local st=$th/.local/state
   # An agent's dir that is not there is no error.
   { find "$th/.claude" "$th/.claude.json" "$th/.codex" "$th/.kiro" "$th/.gemini" "$th/.agents" \
-    "$th/.local" "$work/state" "$work/config" -path "$th/.codex/.*" -prune -o -printf '%p %y %s %T@ %l\n' 2>/dev/null || true; } | sort
+    "$st/maid" "$st/install-records" "$st/ghost-in-shell" "$st/my-harness" \
+    "$work/state" "$work/config" -path "$th/.codex/.*" -prune -o -printf '%p %y %s %T@ %l\n' 2>/dev/null || true; } | sort
 }
 unchanged() { snapshot | diff "$work/before" - >"$work/diff" || { head -20 "$work/diff"; return 1; }; }
 snapshot >"$work/before"
