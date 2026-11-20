@@ -1,0 +1,23 @@
+{
+  "about": "only non-dot <stem>.json files are read; unknown keys are ignored",
+  "expect": {
+    "exit": 0,
+    "entries": [
+      {
+        "harness": "agy",
+        "part": "a",
+        "kind": "skill",
+        "name": "s",
+        "state": "skipped"
+      },
+      {
+        "harness": "agy",
+        "part": "b",
+        "kind": "skill",
+        "name": "s",
+        "state": "skipped"
+      }
+    ],
+    "refused": []
+  }
+}

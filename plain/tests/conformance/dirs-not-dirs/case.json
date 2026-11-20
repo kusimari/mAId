@@ -1,0 +1,38 @@
+{
+  "about": "a dir that cannot be listed makes every entry read from it unreadable",
+  "expect": {
+    "exit": 1,
+    "entries": [
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "skill",
+        "name": "s",
+        "state": "unreadable"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "agent",
+        "name": "a",
+        "state": "unreadable"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "mcp",
+        "name": "m",
+        "scope": "a",
+        "state": "unreadable"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "agent",
+        "name": "a",
+        "state": "unreadable"
+      }
+    ],
+    "refused": []
+  }
+}

@@ -1,0 +1,602 @@
+//! The skill checks, before and after install. Before (check): the three
+//! explicit kinds, reading each skill from the CHECKOUT, no install and
+//! no $HOME. After (smoke): the two implicit kinds, where the agent must
+//! find the skill among everything deployed. Both drive an agent through
+//! `drive`. See project.md "Testing".
+
+use crate::drive::{
+    agent_available, check_prompt, control_plan, detect_leak, dump_path, invocation, judge_agent,
+    judge_prompt, plan_one, plan_tests, read_verdict, score_reply, snapshot_checkout, test_name,
+    Assertion, Authority, Fixture, Kind as TestKind, Outcome, Plan, Reach, Selection, Skipped,
+    Stage, Stress, Verdict, KIRO_READONLY_AGENT, KIRO_READONLY_NAME,
+};
+use crate::place::Deploy;
+use crate::shared::{checkout_skill, usage, Agent};
+use anyhow::{anyhow, Context, Result};
+use std::fs;
+use std::path::{Path, PathBuf};
+
+// ─────────────────────────────────────────────────────────────────
+// check — pre-install verification.
+//
+// The three explicit kinds, reading each skill from the CHECKOUT. No
+// install, no $HOME: a content change is provable before it is made live
+// for every session on the machine.
+//
+// smoke — post-install verification.
+//
+// The two implicit kinds, where the agent must find the skill among
+// everything deployed. Requires install to have run.
+// ─────────────────────────────────────────────────────────────────
+
+/// Run one verification stage. `dry_run` constructs and structurally
+/// checks every prompt without calling an agent, which costs nothing.
+/// How a sweep runs, beyond what it selects.
+#[derive(Clone, Copy, Debug)]
+pub struct RunOptions<'a> {
+    pub dry_run: bool,
+    pub stress: Option<Stress<'a>>,
+    /// Runs per test. Above 1, each test also prints a `TALLY` line.
+    pub repeat: usize,
+    /// Add a control run, without the skill, beside each enact test.
+    pub control: bool,
+    /// Skill roots to read beside the checkout's `resources/`, and fixture
+    /// dirs beside `plain/tests/skills/`: another package's own skills.
+    pub skills: &'a [PathBuf],
+    pub fixtures: &'a [PathBuf],
+}
+
+pub fn cmd_verify(
+    target: &impl Deploy,
+    checkout: &Path,
+    selection: &Selection,
+    opts: RunOptions,
+) -> Result<u8> {
+    let RunOptions {
+        dry_run,
+        stress: stressed,
+        repeat,
+        control,
+        skills,
+        fixtures: fixture_dirs,
+    } = opts;
+    let repeat = repeat.max(1);
+    // Under `verify`, a --kind naming only the other stage's kinds leaves
+    // this stage with nothing to do. That is a scoped-away no-op, not a
+    // failure — the other stage runs the tests.
+    if selection.kinds.is_empty() {
+        println!("no {} kinds selected", selection.stage);
+        return Ok(0);
+    }
+
+    let (fixtures, broken) = load_fixtures(checkout, fixture_dirs, selection)?;
+    if fixtures.is_empty() && broken.is_empty() {
+        // A typo in the fixture selector is a bad invocation, exactly
+        // like a bad --agent or --kind value — it must exit 2, not 1.
+        return Err(usage(format!(
+            "no fixtures matched{}",
+            selection
+                .fixture
+                .as_deref()
+                .map(|f| format!(" selector {f:?}"))
+                .unwrap_or_default()
+        )));
+    }
+
+    // Smoke reads the deployed tree, so say so plainly rather than
+    // failing every test with a confusing path error.
+    if selection.stage == Stage::Smoke && !dry_run {
+        require_installed(target, selection)?;
+    }
+
+    let judge = (!dry_run)
+        .then(|| {
+            let available: Vec<Agent> = Agent::ALL
+                .iter()
+                .copied()
+                .filter(|a| agent_available(*a))
+                .collect();
+            judge_agent(std::env::var("VERIFY_JUDGE").ok().as_deref(), &available)
+        })
+        .transpose()?;
+
+    let before = snapshot_checkout(checkout);
+    // Each unparseable fixture is one failure, reported before any test
+    // runs so it is visible at the top rather than buried mid-sweep.
+    let mut failures = broken.len();
+    for why in &broken {
+        report("fixture", &Outcome::Fail(why.clone()));
+    }
+    // The generated kinds are per-skill; several fixtures share a skill.
+    let mut claimed = Vec::new();
+
+    for fixture in &fixtures {
+        // The skill's text, read once per fixture. An explicit prompt
+        // carries it inline, so a check test installs nothing; an implicit
+        // one needs it only to know whether a marker may be asserted.
+        let body = match fs::read_to_string(checkout_skill(checkout, skills, &fixture.skill)) {
+            Ok(body) => body,
+            Err(e) => {
+                report(
+                    "fixture",
+                    &Outcome::Fail(format!("cannot read {}: {e}", fixture.skill)),
+                );
+                failures += 1;
+                continue;
+            }
+        };
+
+        for (kind, agent) in plan_tests(fixture, selection, &mut claimed) {
+            // Decide everything first (pure), then do it (effectful).
+            let plan = match plan_one(fixture, kind, agent, &body, stressed) {
+                Ok(plan) => plan,
+                Err(Skipped(why)) => {
+                    report(&test_name_for(fixture, kind, agent), &Outcome::Skip(why));
+                    continue;
+                }
+            };
+            let plans = std::iter::once(plan.clone())
+                .chain(control.then(|| control_plan(&plan, fixture)).flatten());
+            for plan in plans {
+                let mut passed = 0;
+                for run in 1..=repeat {
+                    let outcome = match dry_run {
+                        true => check_plan(&plan),
+                        false => execute(&plan, judge),
+                    };
+                    let name = match repeat {
+                        1 => plan.name.clone(),
+                        _ => format!("{} [run {run}/{repeat}]", plan.name),
+                    };
+                    report(&name, &outcome);
+                    match outcome {
+                        Outcome::Fail(_) => failures += 1,
+                        Outcome::Pass(_) => passed += 1,
+                        Outcome::Skip(_) => {}
+                    }
+                }
+                if repeat > 1 {
+                    println!("TALLY {}: {passed}/{repeat}", plan.name);
+                }
+            }
+        }
+    }
+
+    // Behavioral tests can escape their scratch dir; catch it here rather
+    // than leaving it to be found in git log later.
+    if let (Some(before), Some(after)) = (before, snapshot_checkout(checkout)) {
+        let leaked = detect_leak(&before, &after);
+        if !leaked.is_empty() {
+            eprintln!(
+                "\x1b[31mLEAK\x1b[0m a test wrote into the checkout (not its scratch workdir):"
+            );
+            for line in &leaked {
+                eprintln!("  {line}");
+            }
+            eprintln!("  also check git log — a leaked close-notes verb can COMMIT these.");
+            failures += 1;
+        }
+    }
+
+    println!();
+    match failures {
+        0 => {
+            println!("all tests passed");
+            Ok(0)
+        }
+        n => {
+            println!("{n} test(s) failed");
+            Ok(1)
+        }
+    }
+}
+
+fn report(name: &str, outcome: &Outcome) {
+    let colour = match outcome {
+        Outcome::Pass(_) => "32",
+        Outcome::Fail(_) => "31",
+        Outcome::Skip(_) => "33",
+    };
+    let line = format!("\x1b[{colour}m{}\x1b[0m {name}", outcome.token());
+    match outcome {
+        Outcome::Fail(_) => eprintln!("{line}"),
+        _ => println!("{line}"),
+    }
+    if !outcome.detail().is_empty() {
+        println!("  {}", outcome.detail());
+    }
+}
+
+/// Read every `.smoke` under `plain/tests/skills/` and each extra dir, in
+/// name order so two runs are diffable.
+fn load_fixtures(
+    checkout: &Path,
+    extra: &[PathBuf],
+    selection: &Selection,
+) -> Result<(Vec<Fixture>, Vec<String>)> {
+    let mut paths = vec![];
+    for dir in std::iter::once(checkout.join("plain/tests/skills")).chain(extra.iter().cloned()) {
+        paths.extend(
+            fs::read_dir(&dir)
+                .with_context(|| format!("reading fixtures from {}", dir.display()))?
+                .filter_map(Result::ok)
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "smoke")),
+        );
+    }
+    paths.sort_by_key(|p| p.file_name().map(|n| n.to_owned()));
+
+    // A malformed fixture fails itself and the run continues, as bash did:
+    // aborting the sweep would let one typo cost forty minutes of paid
+    // agent time and return no results at all.
+    let (parsed, broken): (Vec<_>, Vec<_>) = paths
+        .iter()
+        .filter_map(|p| {
+            let name = p.file_stem()?.to_string_lossy().to_string();
+            selection.covers(&name).then_some((name, p))
+        })
+        .map(|(name, path)| {
+            fs::read_to_string(path)
+                .with_context(|| format!("reading {}", path.display()))
+                .and_then(|body| Fixture::parse(&name, &body))
+        })
+        .partition(Result::is_ok);
+
+    Ok((
+        parsed.into_iter().map(Result::unwrap).collect(),
+        broken
+            .into_iter()
+            .map(|e| format!("{:#}", e.unwrap_err()))
+            .collect(),
+    ))
+}
+
+/// Stop early when the smoke stage's precondition is unmet, naming the
+/// verb that fixes it.
+fn require_installed(target: &impl Deploy, selection: &Selection) -> Result<()> {
+    let missing: Vec<&str> = selection
+        .agents
+        .iter()
+        .filter(|a| !target.is_deployed(**a))
+        .map(|a| a.name())
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "smoke needs the skills deployed, but {} has no skills tree.\n\
+         Run `just install` first, or use `check` for the \
+         pre-install kinds (activation, playback, enact) which need no install.",
+        missing.join(", ")
+    ))
+}
+
+/// Name a test that was skipped before its plan existed.
+fn test_name_for(fixture: &Fixture, kind: TestKind, agent: Agent) -> String {
+    test_name(
+        match kind.announce_only() {
+            true => &fixture.skill,
+            false => &fixture.name,
+        },
+        kind,
+        agent,
+    )
+}
+
+/// Check a plan structurally, without calling an agent. Free.
+fn check_plan(plan: &Plan) -> Outcome {
+    // A control run carries no skill, so it is checked as an implicit
+    // prompt is: it must not leak the skill's name, path or marker.
+    let kind = match plan.control {
+        true => TestKind::Integration,
+        false => plan.kind,
+    };
+    if plan.control {
+        return match check_prompt(kind, &plan.skill, &plan.prompt) {
+            Ok(()) => Outcome::Pass("dry: control carries no skill".into()),
+            Err(e) => Outcome::Fail(format!("dry: {e}")),
+        };
+    }
+    match check_prompt(kind, &plan.skill, &plan.prompt) {
+        Ok(()) => Outcome::Pass(match plan.kind.reach() {
+            Reach::Explicit => "dry: carries the skill".into(),
+            Reach::Implicit => "dry: names no skill".into(),
+        }),
+        Err(e) => Outcome::Fail(format!("dry: {e}")),
+    }
+}
+
+/// Run a plan against its agent and score the result.
+fn execute(plan: &Plan, judge: Option<Agent>) -> Outcome {
+    if !agent_available(plan.agent) {
+        return Outcome::Fail(format!("{} required but not on PATH", plan.agent.name()));
+    }
+    match &plan.assertion {
+        Assertion::Behavioral { setup, assert } => run_behavioral(plan, setup, assert),
+        Assertion::Reply {
+            substr,
+            narrative,
+            seed,
+        } => run_reply(
+            plan,
+            substr.as_deref(),
+            narrative.as_deref(),
+            seed.as_deref(),
+            judge,
+        ),
+    }
+}
+
+/// Drive an agent read-only and score its reply.
+fn run_reply(
+    plan: &Plan,
+    substr: Option<&str>,
+    narrative: Option<&str>,
+    seed: Option<&str>,
+    judge: Option<Agent>,
+) -> Outcome {
+    let (agent, prompt, label) = (plan.agent, plan.prompt.as_str(), plan.name.as_str());
+    // A scratch cwd, so a relative path in the prompt cannot reach the
+    // checkout the runner was started from.
+    let Ok(scratch) = tempfile::TempDir::new() else {
+        return Outcome::Fail("could not create scratch dir".into());
+    };
+    if let Some(seed) = seed {
+        if let Err(e) = shell(seed, scratch.path()) {
+            return Outcome::Fail(format!("setup failed: {e}"));
+        }
+    }
+    let reply = match drive(agent, prompt, Authority::ReadOnly, Some(scratch.path())) {
+        Ok(r) => r,
+        Err(e) => return Outcome::Fail(format!("{} invocation failed: {e}", agent.name())),
+    };
+
+    // Bash printed a 200-char head on both common reply failures; without
+    // it the two most frequent outcomes give the reader nothing to look
+    // at, while the rarer unparseable case gets a whole file.
+    let head: String = reply.chars().take(200).collect();
+    let mut dump = None;
+    let verdict = match (narrative, judge) {
+        (Some(want), Some(judge)) => {
+            let jp = judge_prompt(prompt, &reply, want);
+            match drive(judge, &jp, Authority::ReadOnly, Some(scratch.path())) {
+                Ok(raw) => {
+                    let verdict = read_verdict(&raw);
+                    if verdict == Verdict::Unparseable {
+                        let path = dump_path("verify-judge", label);
+                        let _ = fs::write(&path, &raw);
+                        dump = Some(path);
+                    }
+                    Some(verdict)
+                }
+                Err(e) => return Outcome::Fail(format!("judge invocation failed: {e}")),
+            }
+        }
+        (Some(_), None) => return Outcome::Fail("no judge available".into()),
+        (None, _) => None,
+    };
+    match score_reply(&reply, substr, verdict.as_ref(), dump.as_deref()) {
+        Outcome::Fail(why) => Outcome::Fail(format!("{why}\n  reply head: {head}...")),
+        other => other,
+    }
+}
+
+/// Seed a scratch workdir, run the agent inside it, then run the fixture's
+/// assert shell against the result. Tests execution, not recall.
+///
+/// The assert runs under `set -x` so a failure names the exact check that
+/// broke: asserts are silent `test`/`grep -q` under `set -e`, so without
+/// the trace every behavioral failure read "assert failed" with nothing
+/// after it — undiagnosable without hand-reproducing the fixture.
+fn run_behavioral(plan: &Plan, setup: &str, assert: &str) -> Outcome {
+    let (agent, prompt, label) = (plan.agent, plan.prompt.as_str(), plan.name.as_str());
+    let Ok(work) = tempfile::TempDir::new() else {
+        return Outcome::Fail("could not create scratch workdir".into());
+    };
+    let dir = work.path();
+    if let Err(e) = shell(setup, dir) {
+        return Outcome::Fail(format!("setup failed: {e}"));
+    }
+
+    // The agent's own failure is not fatal: the assert decides, since a
+    // non-zero exit with correct artefacts is still a pass.
+    let reply = drive(agent, prompt, Authority::Workdir, Some(dir)).unwrap_or_default();
+
+    match shell(&format!("set -x\n{assert}"), dir) {
+        Ok(_) => Outcome::Pass("behavioral".into()),
+        Err(trace) => {
+            let culprit = trace
+                .lines()
+                .rfind(|l| l.starts_with('+'))
+                .map(|l| l.trim_start_matches('+').trim())
+                .unwrap_or("<no trace>")
+                .to_string();
+            // The scratch dir is removed on drop, so the tree is the only
+            // record of what the agent actually created — often the
+            // fastest way to see a file landed one directory up.
+            let tree = shell("find . -not -path '*/.git/*' | head -60", dir).unwrap_or_default();
+            let dump = dump_path("verify-behavioral", label);
+            let _ = fs::write(
+                &dump,
+                format!(
+                    "=== assert trace ===\n{trace}\n\
+                     === agent reply ===\n{reply}\n\
+                     === workdir tree ===\n{tree}\n"
+                ),
+            );
+            Outcome::Fail(format!(
+                "failed check: {culprit} (trace + reply → {})",
+                dump.display()
+            ))
+        }
+    }
+}
+
+/// Run a shell fragment in `dir`, returning its combined output on
+/// failure. `set -e` so a fixture's first broken command stops it.
+fn shell(script: &str, dir: &Path) -> std::result::Result<String, String> {
+    let out = std::process::Command::new("bash")
+        .arg("-c")
+        .arg(format!("set -e\n{script}"))
+        .current_dir(dir)
+        .output()
+        .map_err(|e| e.to_string())?;
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    match out.status.success() {
+        true => Ok(combined),
+        false => Err(combined),
+    }
+}
+
+/// Invoke a coding agent and return its REPLY — not the transcript.
+fn drive(
+    agent: Agent,
+    prompt: &str,
+    authority: Authority,
+    workdir: Option<&Path>,
+) -> Result<String> {
+    let last = tempfile::NamedTempFile::new().context("creating reply file")?;
+    let inv = invocation(agent, prompt, authority, workdir, last.path());
+    if let (Agent::Kiro, Authority::ReadOnly, Some(dir)) = (agent, authority, workdir) {
+        let agents = dir.join(".kiro/agents");
+        fs::create_dir_all(&agents).context("creating kiro agent dir")?;
+        fs::write(
+            agents.join(format!("{KIRO_READONLY_NAME}.json")),
+            KIRO_READONLY_AGENT,
+        )
+        .context("writing kiro read-only profile")?;
+    }
+
+    let mut cmd = std::process::Command::new(&inv.program);
+    cmd.args(&inv.args).stdin(std::process::Stdio::null());
+    if let Some(dir) = &inv.cwd {
+        cmd.current_dir(dir);
+    }
+    let out = cmd
+        .output()
+        .with_context(|| format!("running {}", inv.program))?;
+
+    // An agent that writes its final message to a file: read that, and
+    // never the transcript on stdout.
+    let reply = match &inv.reply_file {
+        Some(path) => fs::read_to_string(path).context("reading agent reply file")?,
+        None => format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    };
+
+    // A non-zero exit is the agent failing, not the skill: an expired
+    // token or a rate limit would otherwise be scored as a reply and
+    // reported as "response missing <marker>", sending the reader to
+    // debug content that is fine.
+    if !out.status.success() {
+        return Err(anyhow!(
+            "exited {} — {}",
+            out.status
+                .code()
+                .map_or("by signal".into(), |c| c.to_string()),
+            reply.trim().lines().next_back().unwrap_or("no output")
+        ));
+    }
+    Ok(reply)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn write(p: &Path, s: &str) {
+        if let Some(parent) = p.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(p, s).unwrap();
+    }
+
+    /// A malformed fixture fails itself; the sweep continues. Bash did
+    /// this, and aborting would let one typo cost a whole paid run.
+    #[test]
+    fn a_malformed_fixture_does_not_abort_the_others() {
+        let dir = TempDir::new().unwrap();
+        let skills = dir.path().join("plain/tests/skills");
+        fs::create_dir_all(&skills).unwrap();
+        fs::write(
+            skills.join("good.smoke"),
+            "skill: notes\n--- enact ---\ntask: t\nexpect: n\n",
+        )
+        .unwrap();
+        // No skill: field — unparseable.
+        fs::write(
+            skills.join("bad.smoke"),
+            "--- enact ---\ntask: t\nexpect: n\n",
+        )
+        .unwrap();
+
+        let selection = Selection::resolve(Stage::Check, None, None, None).unwrap();
+        let (parsed, broken) = load_fixtures(dir.path(), &[], &selection).unwrap();
+
+        assert_eq!(parsed.len(), 1, "the good fixture must still load");
+        assert_eq!(parsed[0].name, "good");
+        assert_eq!(broken.len(), 1, "the bad one is reported, not fatal");
+        assert!(broken[0].contains("bad"), "{}", broken[0]);
+    }
+
+    /// The selector still scopes which fixtures are read at all.
+    #[test]
+    fn load_fixtures_honours_the_fixture_selector() {
+        let dir = TempDir::new().unwrap();
+        let skills = dir.path().join("plain/tests/skills");
+        fs::create_dir_all(&skills).unwrap();
+        for name in ["a", "b"] {
+            fs::write(
+                skills.join(format!("{name}.smoke")),
+                "skill: notes\n--- enact ---\ntask: t\nexpect: n\n",
+            )
+            .unwrap();
+        }
+        let selection = Selection::resolve(Stage::Check, Some("a"), None, None).unwrap();
+        let (parsed, broken) = load_fixtures(dir.path(), &[], &selection).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].name, "a");
+        assert!(broken.is_empty());
+    }
+
+    /// A fixture-name typo is a bad invocation exactly like a bad --agent
+    /// or --kind, and must exit 2 — not 1, which is reserved for "the run
+    /// happened and a test failed".
+    #[test]
+    fn an_unmatched_fixture_selector_is_a_usage_error() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("plain/tests/skills")).unwrap();
+        write(
+            &dir.path().join("plain/tests/skills/real.smoke"),
+            "skill: notes\n--- enact ---\ntask: t\nexpect: n\n",
+        );
+        let selection = Selection::resolve(Stage::Check, Some("typo-of-real"), None, None).unwrap();
+        let err = cmd_verify(
+            &crate::place::NoDeploy,
+            dir.path(),
+            &selection,
+            RunOptions {
+                dry_run: true,
+                stress: None,
+                repeat: 1,
+                control: false,
+                skills: &[],
+                fixtures: &[],
+            },
+        )
+        .unwrap_err();
+        assert!(
+            err.downcast_ref::<crate::shared::UsageError>().is_some(),
+            "{err}"
+        );
+        assert!(err.to_string().contains("typo-of-real"));
+    }
+}

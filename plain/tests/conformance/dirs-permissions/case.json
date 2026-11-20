@@ -1,0 +1,27 @@
+{
+  "about": "a skills dir without permission is unreadable; a skill's own dir without permission is missing",
+  "modes": {
+    "home/.codex/skills": "000",
+    "home/.claude/skills/locked": "000"
+  },
+  "expect": {
+    "exit": 1,
+    "entries": [
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "skill",
+        "name": "s",
+        "state": "unreadable"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "skill",
+        "name": "locked",
+        "state": "missing"
+      }
+    ],
+    "refused": []
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "mcpServers": {
+    "set": {
+      "type": "stdio",
+      "command": "/bin/srv",
+      "args": [
+        "--store",
+        "@RUN@/units"
+      ],
+      "env": {
+        "TOKEN": "${SET_TOKEN}"
+      }
+    },
+    "unset": {
+      "type": "stdio",
+      "command": "/bin/srv",
+      "args": [
+        "--store",
+        "@RUN@/units"
+      ],
+      "env": {
+        "TOKEN": "${UNSET_TOKEN}"
+      }
+    },
+    "no-store": {
+      "type": "stdio",
+      "command": "/bin/srv",
+      "args": [
+        "--store",
+        "@RUN@/units/gone"
+      ],
+      "env": {
+        "TOKEN": "${SET_TOKEN}"
+      }
+    },
+    "literal": {
+      "type": "stdio",
+      "command": "/bin/srv",
+      "args": [
+        "--store",
+        "@RUN@/units"
+      ],
+      "env": {
+        "TOKEN": "a literal secret"
+      }
+    }
+  }
+}

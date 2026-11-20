@@ -1,0 +1,16 @@
+{
+  "about": "a listed member that is null lists nothing",
+  "expect": {
+    "exit": 1,
+    "entries": [
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "mcp",
+        "name": "m",
+        "state": "missing"
+      }
+    ],
+    "refused": []
+  }
+}

@@ -34,10 +34,32 @@
         "type": "github"
       }
     },
+    "pensieve": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1792600114,
+        "narHash": "sha256-5fKR6/Gn+P7DN43BBX3yIIJWwU2BxYDrnvVGJS5SIwI=",
+        "owner": "kusimari",
+        "repo": "pensieve",
+        "rev": "4ff98e71e442a8c5cccdb34bbab45a2c89786a04",
+        "type": "github"
+      },
+      "original": {
+        "owner": "kusimari",
+        "repo": "pensieve",
+        "rev": "4ff98e71e442a8c5cccdb34bbab45a2c89786a04",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "flake-utils": "flake-utils",
         "nixpkgs": "nixpkgs",
+        "pensieve": "pensieve",
         "rust-overlay": "rust-overlay"
       }
     },

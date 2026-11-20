@@ -1,0 +1,156 @@
+{
+  "about": "rule 14: a string value matches a string setting, or a string element of a list, code point for code point after JSON escapes; a value that is not a string is not checkable before the file is read; a setting or element that is not a string never matches; a top-level key with dots wins over a nested path, a dotted key below the top level is never one key, and a dotted path splits at every dot",
+  "expect": {
+    "exit": 1,
+    "entries": [
+      {
+        "harness": "claude",
+        "part": "v00",
+        "kind": "setting",
+        "name": "s",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "v01",
+        "kind": "setting",
+        "name": "s",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "v02",
+        "kind": "setting",
+        "name": "s",
+        "state": "not checkable"
+      },
+      {
+        "harness": "claude",
+        "part": "v03",
+        "kind": "setting",
+        "name": "num",
+        "state": "not checkable"
+      },
+      {
+        "harness": "claude",
+        "part": "v04",
+        "kind": "setting",
+        "name": "num",
+        "state": "not checkable"
+      },
+      {
+        "harness": "claude",
+        "part": "v05",
+        "kind": "setting",
+        "name": "num",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "v06",
+        "kind": "setting",
+        "name": "flag",
+        "state": "not checkable"
+      },
+      {
+        "harness": "claude",
+        "part": "v07",
+        "kind": "setting",
+        "name": "flag",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "v08",
+        "kind": "setting",
+        "name": "gone",
+        "state": "not checkable"
+      },
+      {
+        "harness": "claude",
+        "part": "v09",
+        "kind": "setting",
+        "name": "list",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "v10",
+        "kind": "setting",
+        "name": "list",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "v11",
+        "kind": "setting",
+        "name": "list",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "v12",
+        "kind": "setting",
+        "name": "list",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "v13",
+        "kind": "setting",
+        "name": "list",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "v14",
+        "kind": "setting",
+        "name": "esc",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "v15",
+        "kind": "setting",
+        "name": "nfd",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "v16",
+        "kind": "setting",
+        "name": "x.y",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "v17",
+        "kind": "setting",
+        "name": "x.y",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "v18",
+        "kind": "setting",
+        "name": "m.n.o",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "v19",
+        "kind": "setting",
+        "name": "m.n.o",
+        "state": "missing"
+      },
+      {
+        "harness": "claude",
+        "part": "v20",
+        "kind": "setting",
+        "name": "a.b.c",
+        "state": "missing"
+      }
+    ],
+    "refused": []
+  }
+}

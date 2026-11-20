@@ -1,0 +1,1 @@
+{"format": 1, "part": "p", "harnesses": {"claude": [{"kind": "marketplace", "name": "m"}], "codex": [{"kind": "plugin", "name": "p"}, {"kind": "mcp", "name": "m"}]}}

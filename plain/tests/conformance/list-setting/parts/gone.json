@@ -1,0 +1,1 @@
+{"format": 1, "part": "gone", "harnesses": {"claude": [{"kind": "setting", "name": "permissions.additionalDirectories", "value": "/gone/plugins/some-part", "adopted": true}]}}

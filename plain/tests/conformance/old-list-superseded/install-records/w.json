@@ -1,0 +1,12 @@
+{
+  "format": 1,
+  "package": "w",
+  "agents": {
+    "kiro-cli": [
+      {
+        "kind": "skill",
+        "name": "new"
+      }
+    ]
+  }
+}

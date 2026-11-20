@@ -1,0 +1,129 @@
+{
+  "about": "a kiro agent is named by a string name or its file's stem; JSON that is not an object, or an mcpServers of the wrong type, is unreadable; several files of one name: the best state wins",
+  "expect": {
+    "exit": 1,
+    "entries": [
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "agent",
+        "name": "named",
+        "state": "present"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "agent",
+        "name": "stem",
+        "state": "present"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "agent",
+        "name": "numname",
+        "state": "present"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "agent",
+        "name": "array",
+        "state": "unreadable"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "agent",
+        "name": "broken",
+        "state": "unreadable"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "agent",
+        "name": "half",
+        "state": "present"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "agent",
+        "name": "hidden",
+        "state": "present"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "agent",
+        "name": "UPPER",
+        "state": "missing"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "mcp",
+        "name": "m1",
+        "scope": "named",
+        "state": "present"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "mcp",
+        "name": "x",
+        "scope": "wrongmcp",
+        "state": "unreadable"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "mcp",
+        "name": "x",
+        "scope": "nullmcp",
+        "state": "missing"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "mcp",
+        "name": "t1",
+        "scope": "twin",
+        "state": "present"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "mcp",
+        "name": "t2",
+        "scope": "twin",
+        "state": "present"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "mcp",
+        "name": "h",
+        "scope": "half",
+        "state": "present"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "mcp",
+        "name": "z",
+        "scope": "half",
+        "state": "unreadable"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "mcp",
+        "name": "z",
+        "scope": "named",
+        "state": "missing"
+      }
+    ],
+    "refused": []
+  }
+}

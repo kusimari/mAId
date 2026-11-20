@@ -4,16 +4,18 @@
 # the sites on the user's allowlist.
 #
 # The MCP registration (see the browser-mcp-* verbs in
-# resources/Justfile) points the server-launch command at the
+# plain/Justfile) points the server-launch command at the
 # installed copy, so this runs every time the agent's browser server (re)connects.
 # That is what makes an allowlist edit take effect on the next
 # connection without restarting Chrome: this script re-reads the
 # file each run.
 #
-# Runtime: the flake wraps this script as `maid-browser-mcp`, with
-# chrome-devtools-mcp (and its node) on PATH from the nix store. The
-# agents launch it from the mAId profile, so neither node nor this
-# checkout is needed at run time.
+# Runtime: plain's install puts this script in the profile as
+# `bin/maid-browser-mcp`, with chrome-devtools-mcp linked beside it when
+# it was given one (nix pins it), and the script puts its own dir first
+# on PATH so that one runs. Without one, PATH as found is used. The agents
+# launch it from the mAId profile, so this checkout is not needed at run
+# time.
 #
 # Allowlist:
 #   - File of URL patterns, one per line. Blank lines and lines
@@ -27,12 +29,14 @@
 
 set -euo pipefail
 
+PATH="${BASH_SOURCE[0]%/*}:$PATH"
+
 die() { printf 'browser/launch: %s\n' "$*" >&2; exit 1; }
 
 ALLOWLIST="${MAID_BROWSER_ALLOWLIST:-${XDG_CONFIG_HOME:-$HOME/.config}/maid/browser-allowlist}"
 
 [[ -f "$ALLOWLIST" ]] \
-    || die "no allowlist at $ALLOWLIST — add at least one site pattern (deny-by-default); see: just resources::browser-mcp-allow '<pattern>'"
+    || die "no allowlist at $ALLOWLIST — add at least one site pattern (deny-by-default); see: just plain::browser-mcp-allow '<pattern>'"
 
 # One --allowedUrlPattern per line — the pattern text passes through
 # un-interpreted; mAId owns no pattern grammar, so the browser is the

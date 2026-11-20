@@ -1,0 +1,134 @@
+{
+  "about": "absent or null scope is the one place; \"user\" is that place on claude; a kiro MCP scope, \"\" included, names an agent; any other scope is not checkable",
+  "clis": {
+    "claude": {
+      "plugin list --json": {
+        "stdout": "[{\"id\":\"u\",\"scope\":\"user\"},{\"id\":\"p\",\"scope\":\"project\"}]",
+        "stderr": "",
+        "exit": 0
+      }
+    }
+  },
+  "expect": {
+    "exit": 1,
+    "entries": [
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "plugin",
+        "name": "u",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "plugin",
+        "name": "u",
+        "scope": "user",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "plugin",
+        "name": "u",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "plugin",
+        "name": "p",
+        "scope": "project",
+        "state": "not checkable"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "plugin",
+        "name": "u",
+        "scope": "",
+        "state": "not checkable"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "mcp",
+        "name": "m",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "mcp",
+        "name": "m",
+        "scope": "user",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "mcp",
+        "name": "m",
+        "scope": "local",
+        "state": "not checkable"
+      },
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "skill",
+        "name": "s",
+        "scope": "user",
+        "state": "not checkable"
+      },
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "skill",
+        "name": "s",
+        "scope": "x",
+        "state": "not checkable"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "mcp",
+        "name": "g",
+        "state": "present"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "mcp",
+        "name": "a",
+        "scope": "mine",
+        "state": "present"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "mcp",
+        "name": "e",
+        "scope": "",
+        "state": "present"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "mcp",
+        "name": "a",
+        "scope": "nobody",
+        "state": "missing"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "mcp",
+        "name": "g",
+        "scope": "mine",
+        "state": "missing"
+      }
+    ],
+    "refused": []
+  }
+}

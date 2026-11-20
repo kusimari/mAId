@@ -1,0 +1,25 @@
+{
+  "about": "one unreadable entry fails the run",
+  "clis": {
+    "codex": {
+      "mcp list --json": {
+        "stdout": "",
+        "stderr": "broken",
+        "exit": 1
+      }
+    }
+  },
+  "expect": {
+    "exit": 1,
+    "entries": [
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "mcp",
+        "name": "m",
+        "state": "unreadable"
+      }
+    ],
+    "refused": []
+  }
+}

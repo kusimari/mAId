@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "plugins": {
+    "kit@kit": [
+      {
+        "scope": "user",
+        "installPath": "@RUN@/units/kit",
+        "installedAt": "2026-10-31T10:00:00.000Z"
+      }
+    ],
+    "docs@vendor": [
+      {
+        "scope": "user",
+        "installPath": "@RUN@/units/docs",
+        "installedAt": "2026-10-31T10:00:00.000Z"
+      }
+    ],
+    "off@kit": [
+      {
+        "scope": "user",
+        "installPath": "@RUN@/units/off",
+        "installedAt": "2026-10-31T10:00:00.000Z"
+      }
+    ]
+  }
+}

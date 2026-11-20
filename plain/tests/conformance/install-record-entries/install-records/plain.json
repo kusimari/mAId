@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "package": "plain",
+  "agents": {
+    "kiro-cli": [
+      {
+        "kind": "skill",
+        "name": "s",
+        "at": "@RUN@/units/s"
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+[package]
+name = "ghost-in-shell-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Every test that spans files or runs Claude Code or the installed binary.
+# The crate itself is only the helpers those tests share.
+
+[dependencies]
+# The lib stages the ghost's package for the tests that run Claude Code.
+shell-claude = { path = "../shell/claude" }
+anyhow = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[dev-dependencies]
+ghost = { path = "../ghost" }
+infusion = { path = "../infusion" }
+plain = { path = "../../plain" }
+tempfile = "3"
+gray_matter = "0.3"
+serde = { version = "1", features = ["derive"] }

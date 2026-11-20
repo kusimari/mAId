@@ -1,0 +1,30 @@
+{
+  "about": "a config file whose parent is not a dir is unreadable, not absent",
+  "expect": {
+    "exit": 1,
+    "entries": [
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "setting",
+        "name": "k",
+        "state": "unreadable"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "mcp",
+        "name": "m",
+        "state": "unreadable"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "setting",
+        "name": "k",
+        "state": "unreadable"
+      }
+    ],
+    "refused": []
+  }
+}

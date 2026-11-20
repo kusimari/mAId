@@ -1,0 +1,12 @@
+{
+  "about": "a parts dir that cannot be listed aborts the report",
+  "modes": {
+    "parts": "000"
+  },
+  "expect": {
+    "exit": 1,
+    "aborted": true,
+    "refused": [],
+    "entries": []
+  }
+}

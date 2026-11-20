@@ -1,0 +1,12 @@
+{
+  "format": 1,
+  "package": "entry-kind",
+  "agents": {
+    "kiro-cli": [
+      {
+        "kind": 1,
+        "name": "s"
+      }
+    ]
+  }
+}

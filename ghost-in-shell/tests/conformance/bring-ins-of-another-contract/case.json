@@ -1,0 +1,25 @@
+{
+  "about": "a declaration of a contract the ghost does not know, or of none, is unreadable; one it knows is read",
+  "expect": {
+    "exit": 0,
+    "entries": [],
+    "refused": [],
+    "bring_ins": [
+      {
+        "part": "a",
+        "name": "next",
+        "state": "unreadable"
+      },
+      {
+        "part": "a",
+        "name": "none",
+        "state": "unreadable"
+      },
+      {
+        "part": "a",
+        "name": "known",
+        "state": "ready"
+      }
+    ]
+  }
+}

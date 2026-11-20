@@ -1,0 +1,1 @@
+{"format": 1, "part": "value", "harnesses": {"claude": [{"kind": "setting", "name": "k", "value": {"any": 1}, "skipped": "why"}]}}

@@ -1,0 +1,1 @@
+{"format": 1, "part": "p", "harnesses": {"claude": [{"kind": "setting", "name": "s", "value": 5}, {"kind": "setting", "name": "s", "value": "/a"}]}}

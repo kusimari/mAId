@@ -1,0 +1,44 @@
+{
+  "about": "format is the number 1 in any spelling; null is absent; value is not read; a repeated key: the last counts",
+  "expect": {
+    "exit": 0,
+    "entries": [
+      {
+        "harness": "agy",
+        "part": "one-point-zero",
+        "kind": "skill",
+        "name": "a",
+        "state": "skipped"
+      },
+      {
+        "harness": "agy",
+        "part": "exponent",
+        "kind": "skill",
+        "name": "b",
+        "state": "skipped"
+      },
+      {
+        "harness": "agy",
+        "part": "repeated",
+        "kind": "skill",
+        "name": "c",
+        "state": "skipped"
+      },
+      {
+        "harness": "agy",
+        "part": "nulls",
+        "kind": "skill",
+        "name": "n",
+        "state": "present"
+      },
+      {
+        "harness": "claude",
+        "part": "value",
+        "kind": "setting",
+        "name": "k",
+        "state": "skipped"
+      }
+    ],
+    "refused": []
+  }
+}

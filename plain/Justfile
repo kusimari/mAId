@@ -1,0 +1,249 @@
+# Resources verbs operate on $HOME — the claude and codex plugin, and
+# the symlinks kiro and agy read — except `check-skills`, which
+# needs no deployment at all. Recipes invoke from the workspace
+# root (via `[no-cd]`), so `cargo run -p plain` resolves
+# against the workspace, not this directory.
+#
+# What the agents use lives in the mAId profile, not the checkout:
+# `install-profile` builds this checkout's flake into it as a new
+# generation, and every link, plugin marketplace and MCP registration
+# names the profile path (or the marketplace dir beside it). Delete the checkout and they keep working; install from
+# another checkout and its generation takes over.
+
+import 'env.just'
+
+# plain from the checkout this Justfile is in, so a clone's recipes build
+# and install the clone.
+plain := "cargo run --manifest-path " + quote(justfile_directory() / "Cargo.toml") + " -p plain --release --quiet --"
+
+# Everything `just install` does: the profile, each agent, the browser server.
+[no-cd]
+setup agent="":
+    {{ plain }} setup {{ if agent != "" { "--agent " + quote(agent) } else { "" } }}
+
+# Validate the checkout's resources and build them into the mAId profile:
+# a nix generation, or without nix a dir. Nix sees tracked files only, so
+# `git add` a new file first.
+[no-cd]
+install-profile:
+    {{ plain }} profile install
+
+# The plugin install runs again after the switch: codex serves its cached
+# copy of the plugin, and claude's listed version stays stale, until it
+# does. A generation missing what the agents are pointed at (one from
+# before the plugin) is refused, and nothing changes. Needs nix.
+# Switch the profile one generation back and point the agents at it.
+[no-cd]
+rollback-profile:
+    #!/usr/bin/env bash
+    set -u
+    {{ plain }} profile rollback || exit 1
+    # Its exit code is install's: non-zero also when a link was left alone.
+    {{ just_executable() }} -f {{ source_file() }} install-skills; rc=$?
+    {{ just_executable() }} -f {{ source_file() }} status-profile
+    exit $rc
+
+# Remove the mAId profile. Its store paths go at the next nix GC.
+[no-cd]
+uninstall-profile:
+    {{ plain }} profile uninstall
+
+# Smoke reads the profile, so it must be this checkout's build: the
+# store path nix would build now equals the one installed.
+[no-cd]
+_profile-is-current:
+    @want=$(nix eval --raw "{{ justfile_directory() }}#default.outPath") || { echo "cannot evaluate this checkout's flake" >&2; exit 1; }; [ "$want" = "$(readlink -f "$MAID_PROFILE")" ] || { echo "the installed profile is not this checkout's build; run: just install (or use verify-skills-isolated)" >&2; exit 1; }
+
+# Report which generation the profile is on, and its store path.
+[no-cd]
+status-profile:
+    @{{ plain }} profile status
+
+# First arg is the coding-agent selector (claude|kiro|codex|agy; omit for
+# all); remaining flags pass through, e.g.
+#   just plain::install-skills                 (all agents)
+#   just plain::install-skills agy             (agy only)
+#   just plain::install-skills codex           (codex only)
+#   just plain::install-skills codex --force   (codex, repoint)
+#   just plain::install-skills --force         (all agents, repoint)
+# The `=~ '^-'` guard lets a leading flag (no agent given) pass through
+# as a flag rather than being mistaken for an agent name.
+# Install or update the claude/codex plugin; link kiro and agy (run install-profile first).
+[no-cd]
+install-skills agent="" *FLAGS:
+    {{ plain }} install {{ if agent =~ '^-' { agent } else if agent != "" { "--agent " + agent } else { "" } }} {{ FLAGS }}
+
+# Remove the plugin and the skill links (optionally for one agent).
+[no-cd]
+uninstall-skills agent="" *FLAGS:
+    {{ plain }} uninstall {{ if agent =~ '^-' { agent } else if agent != "" { "--agent " + agent } else { "" } }} {{ FLAGS }}
+
+# Report each plugin's version and each skill link (optionally for one agent).
+[no-cd]
+status-skills agent="":
+    {{ plain }} status {{ if agent != "" { "--agent " + agent } else { "" } }}
+
+# Check every part's list against each harness (optionally one); see `just status --whole`.
+[no-cd]
+status-whole agent="":
+    {{ plain }} whole {{ if agent != "" { "--agent " + agent } else { "" } }}
+
+# ── verification ─────────────────────────────────────────────────
+# Two stages, on opposite sides of install. `check` reads each skill from
+# the CHECKOUT: its kinds name the skill's path in the prompt, so nothing
+# needs deploying and a content change is provable before it goes live.
+# `smoke` reads the DEPLOYED tree: its kinds make the agent find the
+# skill unaided, competing against every installed skill for a capped
+# description listing, which only exists once installed.
+#
+# `verify-skills` runs both, so the existing habit still works.
+
+# Verify skills BEFORE install, from the checkout (no deploy needed).
+[confirm("This costs API credits and takes minutes. Continue? (y/N)")]
+[no-cd]
+check-skills agent="" *FLAGS:
+    {{ plain }} check {{ if agent =~ '^-' { agent } else if agent != "" { "--agent " + agent } else { "" } }} {{ FLAGS }}
+
+# Verify skills AFTER install, against the deployed tree.
+[confirm("This costs API credits and takes minutes. Continue? (y/N)")]
+[no-cd]
+smoke-skills agent="" *FLAGS: _profile-is-current
+    {{ plain }} smoke {{ if agent =~ '^-' { agent } else if agent != "" { "--agent " + agent } else { "" } }} {{ FLAGS }}
+
+# One `verify` invocation, not two lines: just runs recipe lines in
+# separate shells and aborts at the first non-zero exit, so a two-line
+# recipe would skip the smoke stage on any check failure — exactly the
+# fail-fast the binary `verify` exists to prevent.
+# Both stages: pre-install checks, then post-install smoke.
+[confirm("This costs API credits and takes minutes. Continue? (y/N)")]
+[no-cd]
+verify-skills agent="": _profile-is-current
+    {{ plain }} verify {{ if agent != "" { "--agent " + agent } else { "" } }}
+
+# e.g. `just plain::verify-skills-one kdevkit-planning`
+# Drive a single fixture through both stages, optionally scoped to one agent.
+[confirm("This costs API credits and takes minutes. Continue? (y/N)")]
+[no-cd]
+verify-skills-one name agent="": _profile-is-current
+    {{ plain }} verify "{{ name }}" {{ if agent != "" { "--agent " + agent } else { "" } }}
+
+# Paid tests from a throwaway clone, so a test that escapes its scratch dir
+# cannot touch this checkout. Links are restored afterwards. e.g.
+#   just plain::verify-skills-isolated verify kyodakit --repeat 3
+#   just plain::verify-skills-isolated check kdevkit-planning --drift
+[confirm("This costs API credits, takes minutes, and repoints your skill links until it finishes. Continue? (y/N)")]
+[no-cd]
+verify-skills-isolated stage *FLAGS:
+    plain/tests/isolated-verify {{ stage }} {{ FLAGS }}
+
+# Run one kind of skill test across every skill. The five kinds are two
+# axes composed — explicit/implicit reach x announce/recite/perform — and
+# the reach axis IS the install boundary, so each kind belongs to one
+# stage. This verb routes to the owning stage:
+#   activation   explicit  check  does the skill load when named?
+#   playback     explicit  check  does it state its rules correctly?
+#   enact        explicit  check  loaded, does it actually do it?
+#   discovery    implicit  smoke  does its own description trigger?
+#   integration  implicit  smoke  end to end — does it fire AND do it?
+# e.g. `just plain::verify-skills-kind integration`
+# Routed by the binary, which owns the kind -> stage mapping and rejects
+# an unknown kind (or one belonging to the other stage) with a message
+# naming why — so this recipe never restates the taxonomy.
+[confirm("This costs API credits and takes minutes. Continue? (y/N)")]
+[no-cd]
+verify-skills-kind kind agent="":
+    #!/usr/bin/env bash
+    set -uo pipefail
+    # Both stages are attempted because the binary owns the kind -> stage
+    # mapping; the stage that does not own this kind reports a no-op and
+    # exits 0. Output is not redirected — report() splits FAIL headers
+    # (stderr) from their detail lines (stdout), so capturing one stream
+    # would print them unpaired.
+    {{ plain }} verify --kind "{{ kind }}" \
+      {{ if agent != "" { "--agent " + agent } else { "" } }}
+
+# Construct every prompt and check it structurally without calling an
+# agent — explicit prompts must carry the skill's text, implicit prompts
+# must leak no skill name, path, or marker. Free.
+[no-cd]
+verify-skills-dry name="":
+    {{ plain }} verify {{ if name != "" { name } else { "" } }} --dry-run
+
+# ── memory ───────────────────────────────────────────────────────
+# Your personal store is a git checkout you own, memories under
+# `<store>/memory/`. Install registers the profile's pensieve on it with
+# claude as `personal-memory` and turns Claude's own automatic memory off;
+# it never creates or writes the store.
+
+# Set mAId's personal memory store (an existing checkout).
+[no-cd]
+set-memory-store path:
+    {{ plain }} memory set-store {{ quote(path) }}
+
+# Report the store, its server on claude, and Claude's own memory.
+[no-cd]
+status-memory:
+    {{ plain }} memory status
+
+# Copy each agent's own memory into a store dir (--to <dir> [--project <path-prefix>]).
+[no-cd]
+harvest-memory *FLAGS:
+    {{ plain }} memory harvest {{ FLAGS }}
+
+# ── browser-control MCP ──────────────────────────────────────────
+# Register Google's chrome-devtools-mcp with the installed agent
+# harnesses, launched via the profile's maid-browser-mcp (plain's
+# installed copy of resources/browser/launch) so the user's
+# allowlist is enforced. The register/report verbs follow the
+# `<action>-browser-mcp` pattern so they read as peers of the
+# `*-skills` verbs (`browser-mcp-allow` keeps its name — it manages
+# the allowlist, not the registration lifecycle). Desktop-only;
+# graceful skip where there is no GUI Chrome or no harness CLI. The
+# allowlist is user-owned data — uninstall never touches it.
+# Needs the profile (install-profile); the registration names the
+# profile path, so later installs need no re-registration.
+#
+# Every verb takes the uniform coding-agent selector as its first
+# argument (claude|kiro|codex; omit for all three). Each registration
+# is global: claude's and codex's user config, kiro's global MCP
+# config, which kiro agents pull in.
+
+# Usage:
+#   just plain::install-browser-mcp             (all three)
+#   just plain::install-browser-mcp codex       (codex only)
+# Register the browser-control MCP server (optionally for one agent).
+[no-cd]
+install-browser-mcp agent="":
+    resources/browser/manage install "$MAID_PROFILE/bin/maid-browser-mcp" "{{ agent }}"
+
+# Remove the browser-control server registration (keeps allowlist).
+[no-cd]
+uninstall-browser-mcp agent="":
+    resources/browser/manage uninstall "$MAID_PROFILE/bin/maid-browser-mcp" "{{ agent }}"
+
+# Report browser-control registration state and allowlist size.
+[no-cd]
+status-browser-mcp agent="":
+    resources/browser/manage status "$MAID_PROFILE/bin/maid-browser-mcp" "{{ agent }}"
+
+# Append a site pattern to the allowlist verbatim (hand-edit fallback).
+[no-cd]
+browser-mcp-allow pattern:
+    resources/browser/manage allow "{{ pattern }}"
+
+# ATTENDED functional test: drive claude/kiro/codex to open real
+# Chrome via the browser MCP against an isolated allowlist, and confirm
+# an off-list site is blocked. Takes control of your browser — run it
+# by hand. Requires install-browser-mcp + Chrome remote debugging.
+# The `verify-browser-mcp` name mirrors `verify-skills`: it's the
+# token/attended verify for the installable. Omit the agent to drive
+# every available one; kiro runs its default agent, or the one named
+# (it must pull in kiro's global MCP config). e.g.
+#   just plain::verify-browser-mcp                 (all available)
+#   just plain::verify-browser-mcp codex
+#   just plain::verify-browser-mcp kiro my-agent
+# ATTENDED: drive real Chrome via the browser MCP; confirm off-list blocked.
+[confirm("This drives your real Chrome through the coding agents. Chrome must be running with remote debugging enabled. Continue? (y/N)")]
+[no-cd]
+verify-browser-mcp agent="" kiro_agent="":
+    plain/tests/browser-functional {{ agent }} {{ if kiro_agent != "" { "--kiro-agent=" + kiro_agent } else { "" } }}

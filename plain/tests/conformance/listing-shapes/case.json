@@ -1,0 +1,51 @@
+{
+  "about": "a listing of the wrong shape, or stdout that starts with a byte-order mark, is unreadable",
+  "clis": {
+    "claude": {
+      "plugin marketplace list --json": {
+        "stdout": "{\"marketplaces\":[{\"name\":\"m\"}]}",
+        "stderr": "",
+        "exit": 0
+      }
+    },
+    "codex": {
+      "plugin list --json": {
+        "stdout": "{\"installed\":{\"p\":{}}}",
+        "stderr": "",
+        "exit": 0
+      },
+      "mcp list --json": {
+        "stdout": "﻿[{\"name\":\"m\"}]",
+        "stderr": "",
+        "exit": 0
+      }
+    }
+  },
+  "expect": {
+    "exit": 1,
+    "entries": [
+      {
+        "harness": "claude",
+        "part": "p",
+        "kind": "marketplace",
+        "name": "m",
+        "state": "unreadable"
+      },
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "plugin",
+        "name": "p",
+        "state": "unreadable"
+      },
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "mcp",
+        "name": "m",
+        "state": "unreadable"
+      }
+    ],
+    "refused": []
+  }
+}

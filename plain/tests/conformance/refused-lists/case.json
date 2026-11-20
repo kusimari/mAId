@@ -1,0 +1,41 @@
+{
+  "about": "each refused list is listed and fails the run; the good list beside them is still checked",
+  "expect": {
+    "exit": 1,
+    "entries": [
+      {
+        "harness": "agy",
+        "part": "good",
+        "kind": "skill",
+        "name": "s",
+        "state": "skipped"
+      }
+    ],
+    "refused": [
+      "Wrong-Case.json",
+      "array.json",
+      "bom.json",
+      "entry-string.json",
+      "format-2.json",
+      "format-string.json",
+      "format-true.json",
+      "harnesses-array.json",
+      "harnesses-null.json",
+      "harnesses-string.json",
+      "kind-null.json",
+      "list-null.json",
+      "list-object.json",
+      "name-number.json",
+      "no-format.json",
+      "no-harnesses.json",
+      "no-kind.json",
+      "no-part.json",
+      "not-json.json",
+      "not-utf8.json",
+      "part-number.json",
+      "scope-number.json",
+      "skipped-true.json",
+      "wrong-part.json"
+    ]
+  }
+}

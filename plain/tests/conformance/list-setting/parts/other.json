@@ -1,0 +1,1 @@
+{"format": 1, "part": "other", "harnesses": {"claude": [{"kind": "setting", "name": "permissions.additionalDirectories", "value": "/other", "adopted": "yes"}]}}

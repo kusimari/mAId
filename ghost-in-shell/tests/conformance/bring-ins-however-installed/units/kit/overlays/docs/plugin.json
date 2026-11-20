@@ -1,0 +1,11 @@
+{
+  "name": "docs",
+  "description": "borrowed",
+  "extensions": {
+    "ghost-in-shell": {
+      "contract": 1,
+      "scope": "turn",
+      "job": "docs"
+    }
+  }
+}

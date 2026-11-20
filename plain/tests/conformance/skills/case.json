@@ -1,0 +1,65 @@
+{
+  "about": "a skill is <name>/SKILL.md as a file, through links; names match dir entries exactly and are never joined into a path",
+  "expect": {
+    "exit": 1,
+    "entries": [
+      {
+        "harness": "agy",
+        "part": "p",
+        "kind": "skill",
+        "name": "here",
+        "state": "present"
+      },
+      {
+        "harness": "agy",
+        "part": "p",
+        "kind": "skill",
+        "name": "linked",
+        "state": "present"
+      },
+      {
+        "harness": "agy",
+        "part": "p",
+        "kind": "skill",
+        "name": "adir",
+        "state": "missing"
+      },
+      {
+        "harness": "agy",
+        "part": "p",
+        "kind": "skill",
+        "name": "a/b",
+        "state": "missing"
+      },
+      {
+        "harness": "agy",
+        "part": "p",
+        "kind": "skill",
+        "name": ".",
+        "state": "missing"
+      },
+      {
+        "harness": "agy",
+        "part": "p",
+        "kind": "skill",
+        "name": "Here",
+        "state": "missing"
+      },
+      {
+        "harness": "agy",
+        "part": "p",
+        "kind": "skill",
+        "name": "empty",
+        "state": "missing"
+      },
+      {
+        "harness": "agy",
+        "part": "p",
+        "kind": "skill",
+        "name": "gone",
+        "state": "missing"
+      }
+    ],
+    "refused": []
+  }
+}

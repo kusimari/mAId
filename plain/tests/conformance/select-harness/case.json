@@ -1,0 +1,19 @@
+{
+  "about": "with one harness selected only its entries are checked, and a refused list still fails",
+  "harness": "kiro-cli",
+  "expect": {
+    "exit": 1,
+    "entries": [
+      {
+        "harness": "kiro-cli",
+        "part": "a",
+        "kind": "skill",
+        "name": "s",
+        "state": "present"
+      }
+    ],
+    "refused": [
+      "bad.json"
+    ]
+  }
+}

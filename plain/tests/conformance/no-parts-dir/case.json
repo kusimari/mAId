@@ -1,0 +1,8 @@
+{
+  "about": "no parts dir is no lists, and passes",
+  "expect": {
+    "exit": 0,
+    "refused": [],
+    "entries": []
+  }
+}

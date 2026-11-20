@@ -1,0 +1,158 @@
+//! infusion — the five entry points, one file each: `genome`,
+//! `expression`, `experience`, `sleep`, `adaptation`. Each answers the
+//! same way for any carrier (a hook, a framework adapter, an MCP tool or
+//! resource, a skill or a CLI), and nothing here knows a shell: a shell
+//! hands in the call and its session sources (`call`). What forms the
+//! ghost is `ghost`. See the initiative spec `harness-core`, "The five
+//! entry points".
+//!
+//!   call         the call every entry point takes, and the items it answers with
+//!   genome       who the session is, at its start
+//!   expression   what this turn needs: fit, recall, the work's record, delivery
+//!   experience   a session packed: said, told, did, touched, friction
+//!   sleep        marks: sessions waiting to be reflected on
+//!   adaptation   findings, guards, the decision batch, routes, the ledger
+//!   files        writing the ghost's own files whole
+
+pub mod adaptation;
+pub mod call;
+pub mod experience;
+pub mod expression;
+pub mod files;
+pub mod genome;
+pub mod sleep;
+
+pub use adaptation::adaptation;
+pub use call::{Call, Carrier, Close, Infusion, Item, Shell, Slice, Where};
+pub use experience::experience;
+pub use expression::expression;
+pub use genome::genome;
+pub use sleep::sleep;
+
+/// What the modules' own tests share.
+#[cfg(test)]
+pub(crate) mod testing {
+    use crate::call::{Call, Carrier, Infusion, Shell, Where};
+    use crate::experience::source::{Located, SessionSource, Sources};
+    use crate::experience::{Bundle, Entry, Who};
+    use anyhow::{bail, Result};
+    use ghost::config::Config;
+    use ghost::environment::Host;
+    use ghost::parts::Part;
+    use ghost::Ghost;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    /// A shell whose ghost is the parts written as JSON in a dir, one
+    /// `<part>.json` each, so a test says the parts outright.
+    pub struct Parts(pub PathBuf);
+
+    impl Shell for Parts {
+        fn ghost(&self, _: Option<&Path>) -> Result<Ghost> {
+            Ok(ghost_of(&self.0))
+        }
+    }
+
+    /// The ghost of the parts written in `dir`.
+    pub fn ghost_of(dir: &Path) -> Ghost {
+        let mut files: Vec<PathBuf> = fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "json"))
+            .collect();
+        files.sort();
+        let parts: Vec<Part> = files
+            .iter()
+            .filter_map(|p| serde_json::from_str(&fs::read_to_string(p).ok()?).ok())
+            .filter_map(|v| Part::from_json(&v).ok())
+            .collect();
+        Ghost::of(&parts)
+    }
+
+    /// A shell with no session source: what a test that reads no session
+    /// hands in. Reading one says so rather than reaching for a file.
+    pub struct NoSources;
+
+    impl Sources for NoSources {
+        fn named(&self, name: Option<&str>) -> Result<Box<dyn SessionSource>> {
+            bail!(
+                "no session source for {} here",
+                name.unwrap_or("this shell")
+            )
+        }
+    }
+
+    /// A session source whose file holds one entry a line: a line starting
+    /// `said ` is something said, any other is the shell's own and packs as
+    /// nothing, as a shell's bookkeeping does.
+    pub struct SaidLines;
+
+    impl Sources for SaidLines {
+        fn named(&self, _: Option<&str>) -> Result<Box<dyn SessionSource>> {
+            Ok(Box::new(SaidLines))
+        }
+    }
+
+    impl SessionSource for SaidLines {
+        fn name(&self) -> &'static str {
+            "said-lines"
+        }
+
+        fn locate(&self, _: Option<&str>, at: &Where) -> Result<Located> {
+            let Some(t) = at.transcript.clone() else {
+                bail!("no file named");
+            };
+            Ok(Located {
+                source: self.name().into(),
+                session: "s".into(),
+                transcript: t,
+                subs: vec![],
+            })
+        }
+
+        fn pack(&self, at: &Located) -> Result<Bundle> {
+            let said = fs::read_to_string(&at.transcript)?
+                .lines()
+                .filter_map(|l| l.strip_prefix("said "))
+                .map(|t| Entry {
+                    at: String::new(),
+                    who: Who::Agent,
+                    kind: None,
+                    text: t.into(),
+                    truncated: false,
+                })
+                .collect();
+            Ok(Bundle {
+                said,
+                ..Bundle::default()
+            })
+        }
+    }
+
+    /// A context whose ghost is the parts in `<dir>/parts`, its state in
+    /// `<dir>/state`, reading no session.
+    pub fn ctx(dir: &Path) -> Infusion {
+        Infusion {
+            config: Config {
+                state: dir.join("state"),
+                candidates: true,
+                old_names: vec![],
+            },
+            host: Host::default(),
+            sources: Box::new(NoSources),
+            shell: Box::new(Parts(dir.join("parts"))),
+        }
+    }
+
+    /// A call for `session` on `carrier`.
+    pub fn call(session: Option<&str>, carrier: Carrier, reset: bool) -> Call {
+        Call {
+            session: session.map(str::to_string),
+            carrier,
+            reset,
+            ..Call::default()
+        }
+    }
+}

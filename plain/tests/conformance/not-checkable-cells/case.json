@@ -1,0 +1,72 @@
+{
+  "about": "every - cell of the table is not checkable",
+  "expect": {
+    "exit": 0,
+    "entries": [
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "agent",
+        "name": "x",
+        "state": "not checkable"
+      },
+      {
+        "harness": "codex",
+        "part": "p",
+        "kind": "setting",
+        "name": "x",
+        "state": "not checkable"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "plugin",
+        "name": "x",
+        "state": "not checkable"
+      },
+      {
+        "harness": "kiro-cli",
+        "part": "p",
+        "kind": "marketplace",
+        "name": "x",
+        "state": "not checkable"
+      },
+      {
+        "harness": "agy",
+        "part": "p",
+        "kind": "mcp",
+        "name": "x",
+        "state": "not checkable"
+      },
+      {
+        "harness": "agy",
+        "part": "p",
+        "kind": "agent",
+        "name": "x",
+        "state": "not checkable"
+      },
+      {
+        "harness": "agy",
+        "part": "p",
+        "kind": "plugin",
+        "name": "x",
+        "state": "not checkable"
+      },
+      {
+        "harness": "agy",
+        "part": "p",
+        "kind": "marketplace",
+        "name": "x",
+        "state": "not checkable"
+      },
+      {
+        "harness": "agy",
+        "part": "p",
+        "kind": "setting",
+        "name": "x",
+        "state": "not checkable"
+      }
+    ],
+    "refused": []
+  }
+}

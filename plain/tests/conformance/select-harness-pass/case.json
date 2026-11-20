@@ -1,0 +1,9 @@
+{
+  "about": "a missing entry on another harness does not fail a selected one",
+  "harness": "agy",
+  "expect": {
+    "exit": 0,
+    "refused": [],
+    "entries": []
+  }
+}

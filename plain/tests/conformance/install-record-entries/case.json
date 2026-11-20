@@ -1,0 +1,17 @@
+{
+  "about": "an install record's entries are checked as a part list's are",
+  "harness": "kiro-cli",
+  "expect": {
+    "exit": 0,
+    "entries": [
+      {
+        "harness": "kiro-cli",
+        "part": "plain",
+        "kind": "skill",
+        "name": "s",
+        "state": "present"
+      }
+    ],
+    "refused": []
+  }
+}
