@@ -329,6 +329,9 @@ expected.
    the same way.
 5. **Travel:** a second scratch environment pulls the store and its genome
    shows the new habit; the first environment's bindings are not there.
+6. **Plain only** (the ringmaster's addition, to ratify): with the ghost
+   switched off, a session gets no hook and no genome, and plain's skills
+   still load.
 
 ### The layers behind it
 
@@ -361,7 +364,8 @@ and plugin surface moved twice during this initiative.
   settled per shell by a test.
 - **One record of the work.** Goal, next step and continuity come from the
   work's own records.
-- **Paid tests:** up to 30 model runs for the initiative.
+- **Paid tests:** up to 32 model runs for the initiative (30, raised to 32
+  on 2026-11-20).
 - **Claude Code first.** The other shells are mapped, not built.
 - **Build base.** `ghost-in-shell` (parts, part lists, whole-status, the
   memory server) is not on `main` yet. It comes in by merging the local
@@ -464,14 +468,18 @@ ghost-in-shell/
     binding.rs             a config key's value, from how the shell registered the unit
     environment.rs         ready, not ready (why), undeclared; memory's store and index
     config.rs              where the ghost's own state lives
+    old_name.rs            the old `my-harness` names, read for one release
+    time.rs                dates
   infusion/                the five entry points; depends on ghost; knows no shell
     call.rs                the one call every carrier makes (where, prompt, close)
     genome.rs              the startup picture
-    expression.rs          the prefix, with expression/: fit, select (recall),
+    expression.rs          the prefix, with expression/: prefix, essentials,
+                           candidate, reinforcement, drift, fit, select (recall),
                            record (the work's own), here (location), delivery
     experience.rs          the packed session, with experience/source.rs: the
                            session-source trait a shell implements
     sleep.rs               marks
+    files.rs               owner-only whole-file writes
     adaptation.rs          guards, batch, decide, with adaptation/: moves,
                            ledger, memory (writes a habit through the server)
   shell/claude/            Claude Code's adapter: builds the `ghost-claude` binary
