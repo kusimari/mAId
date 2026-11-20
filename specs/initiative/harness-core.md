@@ -1089,3 +1089,6 @@ this initiative.
   the habit through the memory tools itself. The mechanism is proven by
   free tests (the habit reaches the prefix only as a candidate). Backlog
   `candidates-paid-control` holds the control that would settle it
+- Ruling (user, 2026-11-20): the paid budget is raised as needed for the
+  final Macro re-run: 32 runs in all (26 spent), so the re-run keeps all
+  five steps with one retry
