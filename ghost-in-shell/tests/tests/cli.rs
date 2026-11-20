@@ -210,3 +210,128 @@ fn the_genome_answers_from_a_working_dir_that_is_gone() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+/// Every path under `dir` with its kind, and each file's bytes or each
+/// link's target.
+fn tree(dir: &Path) -> Vec<(std::path::PathBuf, String)> {
+    let mut out = vec![];
+    let mut todo = vec![dir.to_path_buf()];
+    while let Some(d) = todo.pop() {
+        for e in fs::read_dir(&d).unwrap().flatten() {
+            let p = e.path();
+            let t = e.file_type().unwrap();
+            let what = match () {
+                _ if t.is_symlink() => format!("link {}", fs::read_link(&p).unwrap().display()),
+                _ if t.is_dir() => {
+                    todo.push(p.clone());
+                    "dir".into()
+                }
+                _ => format!("file {:?}", fs::read(&p).unwrap()),
+            };
+            out.push((p, what));
+        }
+    }
+    out.sort();
+    out
+}
+
+/// `ghost-claude install --dry-run` from this checkout, with `h` as HOME,
+/// the env plain's Justfile sets, and no nix or claude on PATH.
+fn dry_run(h: &Path) -> Output {
+    let state = h.join(".local/state");
+    Command::new(ghost_in_shell_tests::core())
+        .args(["install", "--dry-run", "--root"])
+        .arg(ghost_in_shell_tests::repo())
+        .env_clear()
+        .env("HOME", h)
+        .env("MAID_PROFILE", state.join("maid/profile"))
+        .env("INSTALL_RECORDS", state.join("install-records"))
+        .env("GHOST_IN_SHELL_PARTS", state.join("my-harness/parts"))
+        .env("MAID_CONFIG", h.join("config/maid"))
+        .env("MAID_MEMORY_STORE", h.join("config/maid/memory-store"))
+        .output()
+        .unwrap()
+}
+
+/// A HOME as `setup` makes it, with the memory-store file plain reads.
+fn install_home() -> TempDir {
+    let home = setup();
+    let h = home.path();
+    fs::create_dir_all(h.join("config/maid")).unwrap();
+    fs::write(
+        h.join("config/maid/memory-store"),
+        h.join("store").display().to_string(),
+    )
+    .unwrap();
+    home
+}
+
+#[test]
+fn ghost_install_dry_run_says_what_it_would_do_and_writes_nothing() {
+    let home = install_home();
+    let h = home.path();
+    let state = h.join(".local/state");
+    let before = tree(h);
+    let out = dry_run(h);
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{said}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let profile = state.join("maid/ghost/profile");
+    for line in [
+        format!(
+            "(dry-run) profile  {}: a new generation with ghost ",
+            profile.display()
+        ),
+        "(dry-run) plain    mAId's plugin is at no version, this checkout's is ".into(),
+        "would install plain from this checkout for every agent (claude, kiro, codex, agy)".into(),
+        "(dry-run) claude   plugin ghost@ghost-in-shell 1.0.0-".into(),
+        format!(
+            "at {}/share/ghost/marketplace (not installed)",
+            profile.display()
+        ),
+        format!(
+            "(dry-run) record   {}/install-records/ghost.json",
+            state.display()
+        ),
+        "nothing written".into(),
+    ] {
+        assert!(said.contains(&line), "{line:?} in:\n{said}");
+    }
+    let after = tree(h);
+    let changed: Vec<_> = after
+        .iter()
+        .filter(|e| !before.contains(e))
+        .chain(before.iter().filter(|e| !after.contains(e)))
+        .map(|(p, _)| p)
+        .collect();
+    assert!(
+        changed.is_empty(),
+        "the dry run changed {changed:?}:\n{said}"
+    );
+}
+
+#[test]
+fn ghost_install_dry_run_refuses_a_marketplace_of_its_name_someone_else_added() {
+    let home = install_home();
+    let h = home.path();
+    fs::create_dir_all(h.join(".claude/plugins")).unwrap();
+    fs::write(
+        h.join(".claude/plugins/known_marketplaces.json"),
+        json!({"ghost-in-shell": {"source": {"source": "directory", "path": "/home/me/mine"}}})
+            .to_string(),
+    )
+    .unwrap();
+    let out = dry_run(h);
+    assert!(
+        !out.status.success(),
+        "install would refuse, so the dry run does"
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("a marketplace named ghost-in-shell is at /home/me/mine"),
+        "{err}"
+    );
+}

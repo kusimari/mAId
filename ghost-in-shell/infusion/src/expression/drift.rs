@@ -10,8 +10,9 @@ use std::collections::BTreeSet;
 /// The short form is due once the essentials were last placed this many
 /// prompts back.
 pub const TURNS: u32 = 10;
-/// Or this many bytes back: of the session's transcript where the carrier
-/// names one (tool output is what pushes rules out of reach), else of the
+/// Or this many bytes back: of the session's conversation where the
+/// carrier names its file (what was said and done is what pushes rules out
+/// of reach; the shell's own bookkeeping in that file is not), else of the
 /// prompts themselves.
 pub const BYTES: u64 = 200_000;
 /// The state file in the session's delivery record.
@@ -37,7 +38,7 @@ pub struct Drift {
 
 impl Drift {
     /// The state after `self` for the next prompt: one turn on, at `size`
-    /// bytes when the carrier knows the transcript's size, else `prompt`
+    /// bytes when the carrier knows the conversation's size, else `prompt`
     /// bytes further on.
     pub fn next(&self, size: Option<u64>, prompt: u64) -> Drift {
         Drift {
@@ -130,11 +131,11 @@ mod tests {
     }
 
     #[test]
-    fn bytes_come_from_the_transcript_when_known_else_from_the_prompts() {
+    fn bytes_come_from_the_conversation_when_known_else_from_the_prompts() {
         let d = Drift::default().next(None, 40).next(None, 60);
         assert_eq!(d.now, at(2, 100));
         let d = d.next(Some(9_000), 60);
-        assert_eq!(d.now, at(3, 9_000), "the transcript's size, not a sum");
+        assert_eq!(d.now, at(3, 9_000), "the conversation's size, not a sum");
     }
 
     #[test]

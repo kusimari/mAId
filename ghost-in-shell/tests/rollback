@@ -266,6 +266,29 @@ ggen() { readlink "$gprofile" | sed -n 's/.*-\([0-9]*\)-link$/\1/p'; }
 # Plain is live from the clone (D), so the ghost says so and installs plain
 # from this checkout first. agy's skills dir is mAId's again.
 rm -f "$th/.gemini/config/skills"
+# Every path an install can write, with its type, size, mtime and link
+# target: what a dry run must leave as it is. Only the agents' config and
+# mAId's state and config, since an agent launcher from an earlier step may
+# still write elsewhere in HOME, and in codex's own dot-dirs, in the
+# background.
+snapshot() {
+  # An agent's dir that is not there is no error.
+  { find "$th/.claude" "$th/.claude.json" "$th/.codex" "$th/.kiro" "$th/.gemini" "$th/.agents" \
+    "$th/.local" "$work/state" "$work/config" -path "$th/.codex/.*" -prune -o -printf '%p %y %s %T@ %l\n' 2>/dev/null || true; } | sort
+}
+unchanged() { snapshot | diff "$work/before" - >"$work/diff" || { head -20 "$work/diff"; return 1; }; }
+snapshot >"$work/before"
+ghost install --dry-run
+rc=$?
+dry_says() {
+  grep -q "^(dry-run) plain    mAId.s plugin is at $vD, this checkout.s is $vA; would install plain from this checkout for every agent (claude, kiro, codex, agy)" "$work/g" &&
+    grep -q "^(dry-run) profile  $gprofile: a new generation with ghost .* (now none)" "$work/g" &&
+    grep -q "^(dry-run) claude   plugin ghost@ghost-in-shell .* at $gprofile/share/ghost/marketplace (not installed)" "$work/g" &&
+    grep -q "^(dry-run) record   $grecord" "$work/g"
+}
+check "ghost install --dry-run says plain would be installed for every agent, and where the ghost would go" \
+  eval '[ $rc = 0 ] && dry_says'
+check "ghost install --dry-run writes nothing" unchanged
 ghost install
 rc=$?
 check "ghost over plain from another revision says why and installs plain from this checkout" \
@@ -332,6 +355,11 @@ reflection_ships() {
 check "the reflector ships in the ghost's plugin, its skill's binary runs, and claude validates it" reflection_ships
 
 # Again, from the same checkout: plain is reused, nothing of it placed again.
+snapshot >"$work/before"
+ghost install --dry-run
+rc=$?
+check "ghost install --dry-run over the same install says plain is reused and the profile unchanged, and writes nothing" \
+  eval '[ $rc = 0 ] && grep -q "^(dry-run) plain    reused" "$work/g" && grep -q "^(dry-run) profile  .*: unchanged, ghost $(gversion) is live" "$work/g" && unchanged'
 pgen=$(gen)
 cp "$partlist" "$work/plain-record"
 ghost install

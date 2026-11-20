@@ -216,7 +216,12 @@ ghost says "mAId's plugin is disabled; its skills are off" there, in
 which and runs plain's install through `plain` as a library. Then it adds the
 marketplace at the profile and installs or updates the plugin, reads it
 back, and writes its own record (`install-records/ghost.json`, with the
-version of mAId's plugin it was installed with). `just ghost on|off
+version of mAId's plugin it was installed with). `just ghost install
+--dry-run` prints each of those steps and where (the profile and the
+ghost's version, plain reused or installed for every agent, the plugin
+and its marketplace dir, the record) and writes nothing: it reads Claude
+Code's records without running `claude`, and with nix builds this
+checkout's packages for their versions (the nix store only). `just ghost on|off
 [user|project|local]` is `claude plugin enable|disable`; for one launch,
 `claude --settings '{"enabledPlugins":{"ghost@ghost-in-shell":false}}'`.
 `just ghost status` reports the profile, on or off here and at which
@@ -764,8 +769,10 @@ hook to 300, control characters dropped):
   persona and its memory, the record's goal and next, and each fit's name
   with its first two rule lines (a list item or paragraph, unwrapped, 240
   bytes each), at most 1,500 bytes. It goes when the essentials were last
-  placed whole 10 prompts back, or 200 KB back (the transcript's growth
-  where the carrier names one, else the prompts' bytes), and then carries
+  placed whole 10 prompts back, or 200 KB back (the conversation's growth
+  where the carrier names the session's file: what was said, tool calls
+  and their results, as the session source packs them, never the shell's
+  own bookkeeping in that file; else the prompts' bytes), and then carries
   every essential not sent in full this turn; and when a fit returns after
   a turn without it with its rules held, carrying that fit alone. The
   delivery record keeps each session's count, position, last fits and
@@ -1464,7 +1471,9 @@ cargo-built binary, against a stub of the model API on `127.0.0.1` at a port the
 picks, which records every request: the genome placed once at start, a
 fitting prompt's rules and memory candidate, the candidates under their
 framing line once, nothing new on a second prompt, the short form once
-ten prompts on in a long session,
+ten prompts on in a long session, no short form for 240 KB of Claude
+Code's own bookkeeping entries a turn (a Stop hook appends them, as the
+stub gets far fewer) and the short form for 240 KB of the agent's text,
 a sub-agent's slice, the genome again once after `/compact`, the MCP tool
 answering, the plugin loading with `extensions` in its manifest, and a
 session that ends marked for sleep. Free

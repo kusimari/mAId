@@ -10,6 +10,7 @@ use crate::package::{self, MARKETPLACE, MARKETPLACE_DIR, PLUGIN_ID};
 use crate::plugins::{place_steps, Cli};
 use crate::reuse::{self, Reuse};
 use anyhow::{anyhow, bail, Result};
+use ghost::installed::{Installed, Kind};
 use plain::claude_config::ConfigDir;
 use plain::profile::Profile;
 use plain::record::{self, Item, Own, Package, What};
@@ -153,6 +154,28 @@ pub fn this_checkouts_plain(s: &Setup) -> Result<String> {
         .ok_or_else(|| anyhow!("{} names no version", manifest.display()))
 }
 
+/// The version of the ghost's plugin install would put in the profile: with
+/// nix the flake's `ghost` package's, without it this checkout's plugin
+/// staged for the profile's path, in a temp dir.
+pub fn this_checkouts_ghost(s: &Setup) -> Result<String> {
+    let Some(nix) = plain::shared::find_on(s.path.as_deref(), "nix") else {
+        let dir = tempfile::TempDir::new()?;
+        return package::stage(&s.plugin(), &s.exe, &dir.path().join("out"), &s.profile);
+    };
+    let out = std::process::Command::new(nix)
+        .args(["build", "--no-link", "--print-out-paths"])
+        .arg(format!("{}#ghost", s.root.display()))
+        .output()?;
+    if !out.status.success() {
+        bail!(
+            "cannot build this checkout's ghost package: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    let built = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+    package::version_in(&built).ok_or_else(|| anyhow!("no ghost plugin in {}", built.display()))
+}
+
 /// Where plain's install keeps its things must be known before anything is
 /// built, so a run outside `just` fails before the ghost's profile moves.
 fn plain_env() -> Result<()> {
@@ -197,6 +220,73 @@ pub fn install(s: &Setup) -> Result<u8> {
     Ok(rc)
 }
 
+/// `ghost-claude install --dry-run`: what install would do and where, with
+/// nothing written to HOME, the profiles, Claude Code or the records. It
+/// reads Claude Code's records and never runs `claude`, so it refuses what
+/// install refuses as far as those records show. To learn the packages'
+/// versions it builds them as install does: with nix into the nix store,
+/// without it into temp dirs it removes.
+pub fn dry_run(s: &Setup) -> Result<u8> {
+    validate(s)?;
+    plain_env()?;
+    not_foreign(recorded_marketplace(s))?;
+    let nix = plain::shared::find_on(s.path.as_deref(), "nix");
+    if nix.is_none() && std::fs::symlink_metadata(&s.profile).is_ok_and(|m| m.is_symlink()) {
+        bail!(
+            "{} is a nix profile and nix is not on PATH; put nix on PATH, or remove the profile",
+            s.profile.display()
+        );
+    }
+    let say = |what: &str, text: String| println!("(dry-run) {what:<8} {text}");
+    let ghost = this_checkouts_ghost(s)?;
+    let profile = match package::version_in(&s.profile) {
+        Some(v) if v == ghost => format!("unchanged, ghost {v} is live"),
+        Some(v) => format!("a new generation with ghost {ghost} (now {v})"),
+        None => format!("a new generation with ghost {ghost} (now none)"),
+    };
+    say("profile", format!("{}: {profile}", s.profile.display()));
+    let want = this_checkouts_plain(s)?;
+    let plain = match reuse::check(&s.installed(), &want)? {
+        Reuse::Reused(v) => format!("reused: mAId's plugin is this checkout's ({v})"),
+        Reuse::Disabled(v) => format!("{DISABLED}; reused as it is, not re-enabled ({v})"),
+        Reuse::Install(why) => {
+            let every: Vec<&str> = Agent::ALL.iter().map(|a| a.name()).collect();
+            format!(
+                "{why}; would install plain from this checkout for every agent ({}): its profile, each agent where plain's own install puts it, and the browser server",
+                every.join(", ")
+            )
+        }
+    };
+    say("plain", plain);
+    let now = s
+        .installed()
+        .units(None)?
+        .into_iter()
+        .find(|u| u.kind == Kind::Plugin && u.name == PLUGIN_ID)
+        .map_or("not installed".into(), |u| {
+            format!(
+                "now {}",
+                reuse::version_of(&u).unwrap_or("no version".into())
+            )
+        });
+    say(
+        "claude",
+        format!(
+            "plugin {PLUGIN_ID} {ghost} from marketplace {MARKETPLACE} at {} ({now})",
+            s.profile.join(MARKETPLACE_DIR).display()
+        ),
+    );
+    say(
+        "record",
+        s.records
+            .join(format!("{RECORD}.json"))
+            .display()
+            .to_string(),
+    );
+    println!("nothing written");
+    Ok(0)
+}
+
 /// Bring Claude Code to the ghost's plugin in its profile, and read back
 /// that it is listed at the profile's version.
 pub fn place(s: &Setup) -> Result<()> {
@@ -230,13 +320,29 @@ pub fn place(s: &Setup) -> Result<()> {
 
 /// Refuse a marketplace named `ghost-in-shell` that someone else added.
 fn foreign_marketplace(s: &Setup) -> Result<()> {
-    match s.cli().marketplace(MARKETPLACE)? {
+    not_foreign(s.cli().marketplace(MARKETPLACE)?)
+}
+
+fn not_foreign(registered: Option<PathBuf>) -> Result<()> {
+    match registered {
         Some(at) if !is_ghosts(&at) => bail!(
             "a marketplace named {MARKETPLACE} is at {}, which is not a ghost profile's; remove it (claude plugin marketplace remove {MARKETPLACE}) to install the ghost",
             at.display()
         ),
         _ => Ok(()),
     }
+}
+
+/// Where Claude Code's own record of its marketplaces puts the ghost's,
+/// read from the file, for a dry run that must not run `claude`.
+fn recorded_marketplace(s: &Setup) -> Option<PathBuf> {
+    let file = s.claude.dir().join("plugins/known_marketplaces.json");
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()?;
+    let m = &v[MARKETPLACE];
+    m["source"]["path"]
+        .as_str()
+        .or(m["installLocation"].as_str())
+        .map(PathBuf::from)
 }
 
 /// Whether a marketplace dir is a ghost profile's, by its shape, so a

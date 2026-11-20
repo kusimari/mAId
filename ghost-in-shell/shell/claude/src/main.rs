@@ -152,6 +152,9 @@ enum Cmd {
         /// With `--prefix`: the executable to put in it (default this one).
         #[arg(long, requires = "prefix")]
         exe: Option<std::path::PathBuf>,
+        /// Print what the install would do and where, and write nothing.
+        #[arg(long, conflicts_with = "prefix")]
+        dry_run: bool,
     },
     /// Remove the ghost's plugin, profile and record; plain stays.
     Uninstall(Checkout),
@@ -333,6 +336,7 @@ fn install_verb(cmd: &Cmd) -> Result<Option<u8>> {
             checkout,
             prefix: Some(prefix),
             exe,
+            ..
         } => {
             let s = checkout.setup()?;
             // Its own plugin only: nix runs this on the plugin alone.
@@ -342,6 +346,11 @@ fn install_verb(cmd: &Cmd) -> Result<Option<u8>> {
             println!("installed ghost {v} into {}", prefix.display());
             0
         }
+        Cmd::Install {
+            checkout,
+            dry_run: true,
+            ..
+        } => install::dry_run(&checkout.setup()?)?,
         Cmd::Install { checkout, .. } => install::install(&checkout.setup()?)?,
         Cmd::Uninstall(c) => uninstall::uninstall(&c.setup()?)?,
         Cmd::On { scope } | Cmd::Off { scope } => {

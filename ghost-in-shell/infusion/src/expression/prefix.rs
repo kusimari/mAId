@@ -7,6 +7,7 @@
 //! and project.md, "Expression".
 
 use crate::call::{Call, Carrier, Infusion, Item};
+use crate::experience::source::Located;
 use crate::expression::candidate::{self, Candidate, FRAMING};
 use crate::expression::delivery::{self, Record};
 use crate::expression::drift::{self, Drift};
@@ -46,7 +47,7 @@ pub fn place(
     };
     let drift = match session {
         Some(s) => Some(Drift::read(record.state(s, drift::FILE)?.as_deref()).next(
-            transcript_size(call),
+            conversation_size(ctx, call),
             call.prompt.as_deref().map_or(0, |p| p.len() as u64),
         )),
         None => None,
@@ -126,10 +127,19 @@ fn placed_whole(essentials: &Essentials, d: &Drift, sent: &BTreeSet<&str>) -> bo
         || (!full.is_empty() && full.iter().all(|id| sent.contains(id)))
 }
 
-/// How many bytes the session's transcript holds, where the call names it.
-fn transcript_size(call: &Call) -> Option<u64> {
-    let t = call.at.transcript.as_deref()?;
-    std::fs::metadata(t).ok().map(|m| m.len())
+/// How many bytes of conversation the session holds, where the call names
+/// its file and the session source can read it as this session's: the
+/// source decides which of the file's entries are conversation, since a
+/// shell writes its own bookkeeping there too. Sub-agents' files are not
+/// read. `None` otherwise, and drift then counts the prompts' bytes.
+fn conversation_size(ctx: &Infusion, call: &Call) -> Option<u64> {
+    call.at.transcript.as_ref()?;
+    let source = ctx.sources.named(call.at.source.as_deref()).ok()?;
+    let at = Located {
+        subs: vec![],
+        ..source.locate(call.session.as_deref(), &call.at).ok()?
+    };
+    Some(source.pack(&at).ok()?.conversation_bytes())
 }
 
 #[cfg(test)]
@@ -209,19 +219,32 @@ mod tests {
     }
 
     #[test]
-    fn a_transcript_grown_two_hundred_kb_gets_the_short_form() {
+    fn the_conversation_grown_two_hundred_kb_gets_the_short_form() {
         let dir = TempDir::new().unwrap();
         world(dir.path());
-        let c = ctx(dir.path());
+        let c = Infusion {
+            sources: Box::new(crate::testing::SaidLines),
+            ..ctx(dir.path())
+        };
         let t = dir.path().join("t.jsonl");
-        fs::write(&t, "x".repeat(1_000)).unwrap();
+        let said = |n: usize| format!("said {}\n", "x".repeat(n));
+        let mut file = said(1_000);
+        fs::write(&t, &file).unwrap();
         turn(&c, "s", "deploy the release", Some(&t));
-        fs::write(&t, "x".repeat(1_000 + drift::BYTES as usize - 1)).unwrap();
+        file += &format!("{}\n", "b".repeat(240_000));
+        fs::write(&t, &file).unwrap();
         assert!(
             turn(&c, "s", "deploy the release", Some(&t)).is_empty(),
-            "just under"
+            "240 KB the source does not count as conversation: nothing"
         );
-        fs::write(&t, "x".repeat(1_000 + drift::BYTES as usize)).unwrap();
+        file += &said(drift::BYTES as usize - 1);
+        fs::write(&t, &file).unwrap();
+        assert!(
+            turn(&c, "s", "deploy the release", Some(&t)).is_empty(),
+            "a byte under 200 KB of conversation"
+        );
+        file += &said(1);
+        fs::write(&t, &file).unwrap();
         assert_eq!(ids(&turn(&c, "s", "deploy the release", Some(&t))), [SHORT]);
         assert!(turn(&c, "s", "deploy the release", Some(&t)).is_empty());
     }

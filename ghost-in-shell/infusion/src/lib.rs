@@ -32,8 +32,9 @@ pub use sleep::sleep;
 /// What the modules' own tests share.
 #[cfg(test)]
 pub(crate) mod testing {
-    use crate::call::{Call, Carrier, Infusion, Shell};
-    use crate::experience::source::{SessionSource, Sources};
+    use crate::call::{Call, Carrier, Infusion, Shell, Where};
+    use crate::experience::source::{Located, SessionSource, Sources};
+    use crate::experience::{Bundle, Entry, Who};
     use anyhow::{bail, Result};
     use ghost::config::Config;
     use ghost::environment::Host;
@@ -80,6 +81,53 @@ pub(crate) mod testing {
                 "no session source for {} here",
                 name.unwrap_or("this shell")
             )
+        }
+    }
+
+    /// A session source whose file holds one entry a line: a line starting
+    /// `said ` is something said, any other is the shell's own and packs as
+    /// nothing, as a shell's bookkeeping does.
+    pub struct SaidLines;
+
+    impl Sources for SaidLines {
+        fn named(&self, _: Option<&str>) -> Result<Box<dyn SessionSource>> {
+            Ok(Box::new(SaidLines))
+        }
+    }
+
+    impl SessionSource for SaidLines {
+        fn name(&self) -> &'static str {
+            "said-lines"
+        }
+
+        fn locate(&self, _: Option<&str>, at: &Where) -> Result<Located> {
+            let Some(t) = at.transcript.clone() else {
+                bail!("no file named");
+            };
+            Ok(Located {
+                source: self.name().into(),
+                session: "s".into(),
+                transcript: t,
+                subs: vec![],
+            })
+        }
+
+        fn pack(&self, at: &Located) -> Result<Bundle> {
+            let said = fs::read_to_string(&at.transcript)?
+                .lines()
+                .filter_map(|l| l.strip_prefix("said "))
+                .map(|t| Entry {
+                    at: String::new(),
+                    who: Who::Agent,
+                    kind: None,
+                    text: t.into(),
+                    truncated: false,
+                })
+                .collect();
+            Ok(Bundle {
+                said,
+                ..Bundle::default()
+            })
         }
     }
 

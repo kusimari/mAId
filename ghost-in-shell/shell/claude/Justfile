@@ -15,9 +15,10 @@ ghost := "cargo run --manifest-path " + quote(justfile_directory() / "Cargo.toml
 root := quote(justfile_directory())
 
 # Install the ghost: its profile, plain's install if Claude Code lacks this checkout's, its plugin.
+# With --dry-run: what it would do and where, and nothing written.
 [no-cd]
-install:
-    {{ ghost }} install --root {{ root }}
+install *FLAGS:
+    {{ ghost }} install --root {{ root }} {{ FLAGS }}
 
 # Remove the ghost's plugin, profile and record; plain stays.
 [no-cd]

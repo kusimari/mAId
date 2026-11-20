@@ -132,6 +132,28 @@ impl Bundle {
         out
     }
 
+    /// How many bytes of conversation the session holds: what was said,
+    /// each tool call's input and result, and tool text in the person's
+    /// turn. Nothing the agent was told counts (skill bodies, hook context,
+    /// attachments, summaries), though some of it reaches the model too:
+    /// the source packs a shell's own bookkeeping as told or not at all, so
+    /// counting only what was said and done keeps it out without a list of
+    /// its kinds. Sub-sessions have a context of their own. Drift is
+    /// measured on this.
+    pub fn conversation_bytes(&self) -> u64 {
+        let said = self.said.iter().map(|e| e.text.len());
+        let tool = self
+            .told
+            .iter()
+            .filter(|e| e.who == Who::Tool)
+            .map(|e| e.text.len());
+        let did = self
+            .did
+            .iter()
+            .map(|d| d.input.len() + d.result.as_ref().map_or(0, |r| r.text.len()));
+        said.chain(tool).chain(did).map(|n| n as u64).sum()
+    }
+
     /// The copy that is stored and read: every text cut to `CAP`.
     pub fn capped(mut self) -> Bundle {
         for e in self.said.iter_mut().chain(self.told.iter_mut()) {
@@ -311,6 +333,28 @@ mod tests {
         assert!(b.said[0].truncated);
         assert!(!b.said[1].truncated);
         assert!(b.sub_sessions[0].told[0].truncated);
+    }
+
+    #[test]
+    fn the_conversation_is_what_was_said_and_done_not_what_was_told() {
+        let b = Bundle {
+            said: vec![entry(Who::Person, "ab"), entry(Who::Agent, "cde")],
+            told: vec![entry(Who::Told, &"x".repeat(1_000)), entry(Who::Tool, "fg")],
+            did: vec![Did {
+                at: "t:2".into(),
+                tool: "Read".into(),
+                input: "{}".into(),
+                truncated: false,
+                result: Some(entry(Who::Tool, "hij")),
+                failed: false,
+            }],
+            sub_sessions: vec![Bundle {
+                said: vec![entry(Who::Agent, &"y".repeat(1_000))],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(b.conversation_bytes(), 2 + 3 + 2 + 2 + 3);
     }
 
     #[test]

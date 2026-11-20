@@ -184,6 +184,63 @@ fn a_prompt_with_nothing_that_fits_gets_nothing() {
     }
 }
 
+/// About `size` bytes of the entries Claude Code 2.1.329 writes of its own
+/// on every turn: request copies, request shapes, prompt snapshots.
+fn bookkeeping(size: usize) -> String {
+    let pad = "x".repeat(4_000);
+    let kinds = [
+        json!({"type": "api-request-blob", "sessionId": "s1", "hash": "h",
+            "message": {"role": "user", "content": [{"type": "text", "text": pad}]}}),
+        json!({"type": "api-request-shape", "sessionId": "s1", "shape": {"system": [pad]}}),
+        json!({"type": "attachment", "isSidechain": false,
+            "attachment": {"type": "prompt_snapshot", "systemPrompt": [pad]}}),
+        json!({"type": "attachment", "isSidechain": false,
+            "attachment": {"type": "skill_listing", "content": pad}}),
+    ];
+    kinds
+        .iter()
+        .cycle()
+        .map(|l| format!("{l}\n"))
+        .take(size / pad.len() + 1)
+        .collect()
+}
+
+/// One session, the same prompt twice with 240 KB of Claude Code's own
+/// entries between them, as current Claude Code writes in a small turn,
+/// gets nothing new; 240 KB of the agent's text after that gets the short
+/// form.
+#[test]
+fn drift_is_measured_on_the_conversation_not_claude_codes_bookkeeping() {
+    let home = home();
+    let t = home.path().join(".claude/projects/-w/s1.jsonl");
+    fs::create_dir_all(t.parent().unwrap()).unwrap();
+    let prompt = "Fix the bug in count-words.sh. Play it back first.";
+    let user = json!({"type": "user", "message": {"role": "user", "content": prompt}});
+    fs::write(&t, format!("{user}\n")).unwrap();
+    let payload = json!({"session_id": "s1", "transcript_path": t, "cwd": "/w",
+        "hook_event_name": "UserPromptSubmit", "prompt": prompt});
+    let cmd = command("UserPromptSubmit", None);
+    let prompt_once = || context(&run(home.path(), &cmd, &payload), "UserPromptSubmit");
+    let append = |text: String| {
+        let mut f = fs::OpenOptions::new().append(true).open(&t).unwrap();
+        f.write_all(text.as_bytes()).unwrap();
+    };
+    let first = prompt_once().expect("the essentials, the first time");
+    assert!(first.contains("fits this turn: kyodakit"), "{first}");
+
+    append(bookkeeping(240_000));
+    assert_eq!(prompt_once(), None, "nothing changed, nothing drifted");
+
+    let said = json!({"type": "assistant", "message": {"role": "assistant",
+        "content": [{"type": "text", "text": "y".repeat(240_000)}]}});
+    append(format!("{said}\n{user}\n"));
+    let third = prompt_once().expect("the short form, 240 KB of conversation on");
+    assert!(
+        third.contains("still in force, as placed earlier in this session"),
+        "{third}"
+    );
+}
+
 #[test]
 fn a_failing_hook_exits_0_with_nothing_on_stdout() {
     let home = home();

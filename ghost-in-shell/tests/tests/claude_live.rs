@@ -20,9 +20,15 @@ use ghost_in_shell_tests::ClaudeHome;
 
 type Log = Arc<Mutex<Vec<Value>>>;
 
+/// What a turn adds: of the agent's text for BIGREPLY, and of Claude Code's
+/// own bookkeeping where a test adds it, about what current Claude Code
+/// writes of its own in a small turn.
+const BIG: usize = 240_000;
+
 /// The stub model API. Its answers: a sub-agent call for a prompt saying
 /// SPAWN, a call of the expression tool for CALLTOOL, a read of the genome
-/// resource for READRES, a summary for a compaction, else a line of text.
+/// resource for READRES, `BIG` bytes of text for BIGREPLY, a summary for a
+/// compaction, else a line of text.
 fn stub() -> (String, Log) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -113,6 +119,8 @@ fn answer(path: &str, body: &Value) -> (&'static str, Vec<u8>) {
             json!({"type": "tool_use", "id": "toolu_2", "name": "mcp__plugin_ghost_ghost-in-shell__expression",
             "input": {"prompt": "deploy the release"}}),
         ]
+    } else if last.contains("BIGREPLY") {
+        vec![json!({"type": "text", "text": "y".repeat(BIG)})]
     } else {
         vec![json!({"type": "text", "text": "stub reply"})]
     };
@@ -274,6 +282,55 @@ impl World {
         .unwrap();
         ghost_in_shell_tests::staged_ghost(d);
         World { dir }
+    }
+
+    /// After each turn, a Stop hook appends `BIG` bytes of the entries
+    /// Claude Code writes of its own (request copies, request shapes,
+    /// prompt snapshots, skill listings) to the session's transcript, since
+    /// against the stub it writes far less of them.
+    fn with_bookkeeping(self) -> World {
+        let d = self.dir.path();
+        let pad = "x".repeat(4_000);
+        let kinds = [
+            json!({"type": "api-request-blob", "hash": "h",
+                "message": {"role": "user", "content": [{"type": "text", "text": pad}]}}),
+            json!({"type": "api-request-shape", "shape": {"system": [pad], "tools": []}}),
+            json!({"type": "attachment", "isSidechain": false,
+                "attachment": {"type": "prompt_snapshot", "systemPrompt": [pad]}}),
+            json!({"type": "attachment", "isSidechain": false,
+                "attachment": {"type": "skill_listing", "content": pad}}),
+        ];
+        let lines: String = kinds
+            .iter()
+            .cycle()
+            .map(|l| format!("{l}\n"))
+            .take(BIG / pad.len() + 1)
+            .collect();
+        let book = d.join("bookkeeping.jsonl");
+        fs::write(&book, lines).unwrap();
+        let command = format!(
+            r#"p=$(sed -n 's/.*"transcript_path": *"\([^"]*\)".*/\1/p'); cat '{}' >> "$p""#,
+            book.display()
+        );
+        let settings = d.join("home/.claude/settings.json");
+        let mut v: Value = serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+        v["hooks"]["Stop"] = json!([{"hooks": [{"type": "command", "command": command}]}]);
+        fs::write(&settings, v.to_string()).unwrap();
+        self
+    }
+
+    /// The session's transcripts, joined.
+    fn transcripts(&self) -> String {
+        let root = self.dir.path().join("home/.claude/projects");
+        let mut out = String::new();
+        for dir in fs::read_dir(root).unwrap().flatten() {
+            for f in fs::read_dir(dir.path()).unwrap().flatten() {
+                if f.path().extension().is_some_and(|x| x == "jsonl") {
+                    out += &fs::read_to_string(f.path()).unwrap();
+                }
+            }
+        }
+        out
     }
 
     /// One `claude -p` session fed `prompts` as stream-json, against `url`.
@@ -570,6 +627,49 @@ fn a_long_session_gets_the_short_form_once_ten_prompts_on() {
         count(&eleventh, "- deployer:"),
         1,
         "with the fit's name and first rules"
+    );
+}
+
+#[test]
+#[ignore = "needs claude; run with --ignored"]
+fn claude_codes_own_bookkeeping_does_not_drift_and_the_conversation_does() {
+    let (url, log) = stub();
+    let world = World::new().with_bookkeeping();
+    world.paced(
+        &url,
+        &[
+            "deploy the release, turn 1",
+            "deploy the release, turn 2",
+            "BIGREPLY deploy the release, turn 3",
+            "deploy the release, turn 4",
+        ],
+    );
+    let book = world
+        .transcripts()
+        .matches(r#""type":"api-request-blob""#)
+        .count();
+    assert!(
+        book * 4 * 4_000 >= 3 * BIG,
+        "the Stop hook added bookkeeping after each turn ({book} request copies)"
+    );
+    let at = |n: usize| {
+        requests(&log, &format!("turn {n}"))
+            .into_iter()
+            .find(|m| !m.contains(&format!("turn {}", n + 1)))
+            .unwrap_or_else(|| panic!("a request for prompt {n}"))
+    };
+    let second = at(2);
+    assert_eq!(
+        count(&second, SHORT),
+        0,
+        "240 KB of bookkeeping is no drift:\n{second}"
+    );
+    assert_eq!(count(&second, "TAG FIRST, THEN DEPLOY"), 1, "nothing new");
+    let fourth = at(4);
+    assert_eq!(
+        count(&fourth, SHORT),
+        1,
+        "240 KB of the agent's text is: the short form at prompt 4"
     );
 }
 

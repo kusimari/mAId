@@ -302,6 +302,10 @@ impl Packer<'_> {
     }
 
     fn line(&mut self, n: usize, v: &Value) {
+        // Only `user` and `assistant` lines can be said or done, which is
+        // what drift counts: Claude Code's own entries (`api-request-*`,
+        // `attachment`s such as `prompt_snapshot`, ...) pack as told or not
+        // at all, and must stay so.
         match v["type"].as_str() {
             Some("user") => self.user(n, v),
             Some("assistant") => self.assistant(n, v),
@@ -666,6 +670,61 @@ mod tests {
         assert!(c.locate(Some("../x"), &Where::default()).is_err());
         assert!(c.locate(Some("nope"), &Where::default()).is_err());
         assert!(c.locate(None, &at_cwd("/elsewhere")).is_err());
+    }
+
+    /// Lines of Claude Code's own bookkeeping, as 2.1.329 writes them every
+    /// turn, `size` bytes or a little over.
+    fn bookkeeping(size: usize) -> String {
+        let pad = "x".repeat(4_000);
+        let kinds = [
+            serde_json::json!({"type": "api-request-blob", "sessionId": S, "hash": "h",
+                "message": {"role": "user", "content": [{"type": "text", "text": pad}]}}),
+            serde_json::json!({"type": "api-request-shape", "sessionId": S,
+                "shape": {"system": [pad], "tools": []}}),
+            serde_json::json!({"type": "attachment", "isSidechain": false,
+                "attachment": {"type": "prompt_snapshot", "systemPrompt": [pad]}}),
+            serde_json::json!({"type": "attachment", "isSidechain": false,
+                "attachment": {"type": "skill_listing", "content": pad}}),
+        ];
+        let mut out = String::new();
+        for line in kinds.iter().cycle() {
+            if out.len() >= size {
+                break;
+            }
+            out.push_str(&format!("{line}\n"));
+        }
+        out
+    }
+
+    fn conversation(text: &str) -> u64 {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("projects");
+        let t = root.join(format!("-work/{S}.jsonl"));
+        fs::create_dir_all(t.parent().unwrap()).unwrap();
+        fs::write(&t, text).unwrap();
+        let c = Claude { root };
+        let at = c.locate(Some(S), &Where::default()).unwrap();
+        c.pack(&at).unwrap().conversation_bytes()
+    }
+
+    #[test]
+    fn claude_codes_bookkeeping_is_no_conversation_and_what_was_said_and_done_is() {
+        let book = bookkeeping(240_000);
+        assert!(book.len() >= 240_000);
+        assert_eq!(conversation(&book), 0, "bookkeeping counts nothing");
+        let text = "y".repeat(240_000);
+        let said = serde_json::json!({"type": "assistant", "message": {"role": "assistant",
+            "content": [{"type": "text", "text": text}]}});
+        assert_eq!(conversation(&format!("{book}{said}\n")), 240_000);
+        let called = serde_json::json!({"type": "assistant", "message": {"role": "assistant",
+            "content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {}}]}});
+        let result = serde_json::json!({"type": "user", "message": {"role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "t1", "content": text}]}});
+        assert_eq!(
+            conversation(&format!("{called}\n{book}{result}\n")),
+            2 + 240_000,
+            "a tool call's input and its result"
+        );
     }
 
     /// infusion's own tests read the fixture session as a packed bundle,
