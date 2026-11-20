@@ -132,7 +132,7 @@ fn ghost_generation(d: &Path, dir: &Path, tag: &str) {
     plain::stage::copy_tree(&plugin(), &src).unwrap();
     let manifest = src.join(".claude-plugin/plugin.json");
     let mut m: Value = serde_json::from_str(&fs::read_to_string(&manifest).unwrap()).unwrap();
-    m["extensions"]["my-harness"]["job"] = format!("the adapter, generation {tag}").into();
+    m["extensions"]["ghost-in-shell"]["job"] = format!("the adapter, generation {tag}").into();
     fs::write(&manifest, m.to_string()).unwrap();
     shell_claude::package::stage(&src, Path::new(core()), dir, dir).unwrap();
 }
@@ -258,14 +258,18 @@ fn claude_code_runs_plain_alone_then_the_ghost_on_off_and_across_generations() {
         profile: profile.clone(),
         claude: config.clone(),
         records: d.join("records"),
-        state: d.join("ghost-state"),
+        config: ghost::config::Config {
+            state: d.join("ghost-state"),
+            candidates: true,
+            old_names: vec![],
+        },
         exe: PathBuf::from(core()),
         path: Some(path.clone().into()),
     };
     shell_claude::install::place(&s).unwrap();
     let (first, out) = run(&claude, &home, &work, &[]);
     assert!(
-        out.contains(r#"{"name":"plugin:ghost:my-harness","status":"connected""#),
+        out.contains(r#"{"name":"plugin:ghost:ghost-in-shell","status":"connected""#),
         "the ghost's MCP server connects:\n{out}"
     );
     assert_eq!(

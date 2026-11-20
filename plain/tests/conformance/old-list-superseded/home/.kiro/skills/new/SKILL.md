@@ -2,6 +2,6 @@
 name: new
 description: about new
 metadata:
-  my-harness.scope: turn
-  my-harness.job: be new
+  ghost-in-shell.scope: turn
+  ghost-in-shell.job: be new
 ---

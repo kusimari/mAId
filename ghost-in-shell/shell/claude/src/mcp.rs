@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
-pub const GENOME_URI: &str = "my-harness://genome";
+pub const GENOME_URI: &str = "ghost-in-shell://genome";
 /// The protocol versions this server speaks, newest first. It uses only
 /// resources, prompts and tools with text content, which each of them has;
 /// a client asking for another is answered with the newest.
@@ -56,7 +56,7 @@ pub fn answer(ctx: &Infusion, session: &Session, msg: &Value) -> Option<Value> {
                 .filter(|v| VERSIONS.contains(v))
                 .unwrap_or(VERSIONS[0]),
             "capabilities": {"resources": {}, "prompts": {}, "tools": {}},
-            "serverInfo": {"name": "my-harness", "version": env!("CARGO_PKG_VERSION")},
+            "serverInfo": {"name": ghost::NAME, "version": env!("CARGO_PKG_VERSION")},
         })),
         "ping" => Ok(json!({})),
         "resources/list" => Ok(json!({"resources": [{

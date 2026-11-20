@@ -14,7 +14,7 @@ th=$work/home
 mkdir -p "$th/.kiro/settings" "$work/bin" "$work/profile/bin"
 export CARGO_HOME=${CARGO_HOME:-$HOME/.cargo} CARGO_TARGET_DIR=$here/target
 unset XDG_STATE_HOME XDG_CONFIG_HOME MAID_BROWSER_ALLOWLIST
-export MY_HARNESS_PARTS=$th/.local/state/my-harness/parts
+export GHOST_IN_SHELL_PARTS=$th/.local/state/my-harness/parts
 export INSTALL_RECORDS=$th/.local/state/install-records
 # The profile the server's entry names its files in.
 export MAID_PROFILE=$work/profile

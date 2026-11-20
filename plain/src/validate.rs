@@ -370,7 +370,7 @@ mod tests {
         assert!(e.contains("description"));
     }
 
-    /// Plain checks a skill's standard only: a `my-harness` declaration the
+    /// Plain checks a skill's standard only: a `ghost-in-shell` declaration the
     /// ghost would refuse (an unknown contract, a rules pointer to nothing)
     /// is not plain's to judge.
     #[test]
@@ -378,11 +378,11 @@ mod tests {
         let dir = TempDir::new().unwrap();
         write(
             &dir.path().join("skills/foo/SKILL.md"),
-            "---\nname: foo\ndescription: bar\nmetadata:\n  my-harness.contract: \"9\"\n  my-harness.scope: always\n  my-harness.rules: SKILL.md#gone\n---\n",
+            "---\nname: foo\ndescription: bar\nmetadata:\n  ghost-in-shell.contract: \"9\"\n  ghost-in-shell.scope: always\n  ghost-in-shell.rules: SKILL.md#gone\n---\n",
         );
         write(
             &dir.path().join("servers/s/server.json"),
-            r#"{"name":"s","_meta":{"my-harness":{"contract":9}}}"#,
+            r#"{"name":"s","_meta":{"ghost-in-shell":{"contract":9}}}"#,
         );
         assert_eq!(check_content(&[dir.path().to_path_buf()]).unwrap(), 1);
     }

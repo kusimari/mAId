@@ -16,7 +16,7 @@
 //!   status       ghost status: each bring-in as the ghost sees it
 //!   uninstall    remove what its record names, its profile, the adapter's cache
 //!   rollback     its profile one generation back, its plugin updated
-//!   validate     every `my-harness` declaration it will read, before an install
+//!   validate     every `ghost-in-shell` declaration it will read, before an install
 
 pub mod hook;
 pub mod install;

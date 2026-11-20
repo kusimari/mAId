@@ -2,6 +2,6 @@
 name: r
 description: about r
 metadata:
-  my-harness.scope: turn
-  my-harness.job: be r
+  ghost-in-shell.scope: turn
+  ghost-in-shell.job: be r
 ---

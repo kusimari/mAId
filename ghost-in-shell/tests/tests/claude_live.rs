@@ -106,11 +106,11 @@ fn answer(path: &str, body: &Value) -> (&'static str, Vec<u8>) {
     } else if last.contains("READRES") && !last.contains("tool_result") {
         vec![
             json!({"type": "tool_use", "id": "toolu_3", "name": "ReadMcpResourceTool",
-            "input": {"server": "plugin:ghost:my-harness", "uri": "my-harness://genome"}}),
+            "input": {"server": "plugin:ghost:ghost-in-shell", "uri": "ghost-in-shell://genome"}}),
         ]
     } else if last.contains("CALLTOOL") && !last.contains("tool_result") {
         vec![
-            json!({"type": "tool_use", "id": "toolu_2", "name": "mcp__plugin_ghost_my-harness__expression",
+            json!({"type": "tool_use", "id": "toolu_2", "name": "mcp__plugin_ghost_ghost-in-shell__expression",
             "input": {"prompt": "deploy the release"}}),
         ]
     } else {
@@ -215,8 +215,8 @@ impl World {
         // What the ghost finds installed in Claude Code: mAId's part (a
         // skill and its memory) and a second part with its own memory.
         let claude = ClaudeHome::at(&d.join("home"));
-        let deployer = "---\nname: deployer\ndescription: deploy things\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: deploy a release\n  my-harness.signals.jobs: deploy\n  my-harness.rules: SKILL.md#rules\n---\n## Rules\n\nTAG FIRST, THEN DEPLOY\n";
-        let planner = acting.then_some("---\nname: planner\ndescription: plan work\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: plan the work\n  my-harness.signals.locations: work\n---\n");
+        let deployer = "---\nname: deployer\ndescription: deploy things\nmetadata:\n  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: deploy a release\n  ghost-in-shell.signals.jobs: deploy\n  ghost-in-shell.rules: SKILL.md#rules\n---\n## Rules\n\nTAG FIRST, THEN DEPLOY\n";
+        let planner = acting.then_some("---\nname: planner\ndescription: plan work\nmetadata:\n  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: plan the work\n  ghost-in-shell.signals.locations: work\n---\n");
         for (name, repo, persona, skill) in [
             (
                 "maid",
@@ -249,7 +249,7 @@ impl World {
                 .unwrap(),
             )
             .unwrap();
-            server["_meta"]["my-harness"]["persona"] = persona.into();
+            server["_meta"]["ghost-in-shell"]["persona"] = persona.into();
             let memory = format!("{persona}-memory");
             fs::create_dir_all(at.join("servers").join(&memory)).unwrap();
             fs::write(
@@ -299,7 +299,10 @@ impl World {
                 "stream-json",
                 "--verbose",
             ])
-            .args(["--allowedTools", "mcp__plugin_ghost_my-harness__expression"])
+            .args([
+                "--allowedTools",
+                "mcp__plugin_ghost_ghost-in-shell__expression",
+            ])
             .arg("--plugin-dir")
             .arg(d.join("ghost").join(shell_claude::package::PLUGIN_DIR))
             .current_dir(d.join("work"))
@@ -386,7 +389,7 @@ fn a_session_starts_with_the_genome_and_each_turn_gets_only_what_changed() {
         ],
     );
     assert!(
-        out.contains(r#"{"name":"plugin:ghost:my-harness","status":"connected""#),
+        out.contains(r#"{"name":"plugin:ghost:ghost-in-shell","status":"connected""#),
         "the plugin, `extensions` and all, loads and its MCP server connects:\n{out}"
     );
 
@@ -420,7 +423,10 @@ fn a_session_starts_with_the_genome_and_each_turn_gets_only_what_changed() {
         count(second, "Deploy steps - how a release is deployed ("),
         1
     );
-    assert_eq!(count(second, "[my-harness]"), count(first, "[my-harness]"));
+    assert_eq!(
+        count(second, "[ghost-in-shell]"),
+        count(first, "[ghost-in-shell]")
+    );
 
     let sub = requests(&log, "SUBTASK");
     let sub = sub
@@ -453,8 +459,8 @@ fn with_a_persona_acting_a_second_prompt_with_nothing_changed_gets_nothing() {
     );
     let second = main.iter().find(|m| m.contains("once more")).unwrap();
     assert_eq!(
-        count(second, "[my-harness]"),
-        count(first, "[my-harness]"),
+        count(second, "[ghost-in-shell]"),
+        count(first, "[ghost-in-shell]"),
         "a second prompt with nothing changed gets nothing new:\n{second}"
     );
     assert_eq!(
@@ -526,7 +532,10 @@ fn candidates_appear_under_their_line_and_a_second_prompt_gets_none_again() {
     );
     let second = main.iter().find(|m| m.contains("again")).unwrap();
     assert_eq!(count(second, FRAMING), 1, "nothing new:\n{second}");
-    assert_eq!(count(second, "[my-harness]"), count(first, "[my-harness]"));
+    assert_eq!(
+        count(second, "[ghost-in-shell]"),
+        count(first, "[ghost-in-shell]")
+    );
 }
 
 #[test]
@@ -612,7 +621,10 @@ fn a_session_that_ends_is_marked_for_sleep() {
     let (url, _log) = stub();
     let world = World::new();
     world.session(&url, &["deploy the release"]);
-    let sleep = world.dir.path().join("home/.local/state/my-harness/sleep");
+    let sleep = world
+        .dir
+        .path()
+        .join("home/.local/state/ghost-in-shell/sleep");
     let marks: Vec<Value> = fs::read_dir(&sleep)
         .unwrap_or_else(|e| panic!("no marks at {}: {e}", sleep.display()))
         .map(|e| serde_json::from_str(&fs::read_to_string(e.unwrap().path()).unwrap()).unwrap())

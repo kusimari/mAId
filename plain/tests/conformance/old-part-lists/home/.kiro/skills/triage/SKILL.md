@@ -2,6 +2,6 @@
 name: triage
 description: about triage
 metadata:
-  my-harness.scope: turn
-  my-harness.job: be triage
+  ghost-in-shell.scope: turn
+  ghost-in-shell.job: be triage
 ---

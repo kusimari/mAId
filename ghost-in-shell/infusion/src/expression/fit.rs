@@ -264,7 +264,7 @@ mod tests {
     }
 
     fn turn(job: &str, signals: &str) -> String {
-        format!("  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: {job}\n{signals}")
+        format!("  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: {job}\n{signals}")
     }
 
     fn names(fits: &[Fit]) -> Vec<String> {
@@ -284,27 +284,27 @@ mod tests {
             &[
                 (
                     "loc",
-                    &turn("j", "  my-harness.signals.locations: '*-vault'\n"),
+                    &turn("j", "  ghost-in-shell.signals.locations: '*-vault'\n"),
                 ),
                 (
                     "files",
-                    &turn("j", "  my-harness.signals.files: specs/project.md\n"),
+                    &turn("j", "  ghost-in-shell.signals.files: specs/project.md\n"),
                 ),
                 (
                     "jobs",
-                    &turn("j", "  my-harness.signals.jobs: draft an email\n"),
+                    &turn("j", "  ghost-in-shell.signals.jobs: draft an email\n"),
                 ),
                 (
                     "outcomes",
-                    &turn("j", "  my-harness.signals.outcomes: shipped release\n"),
+                    &turn("j", "  ghost-in-shell.signals.outcomes: shipped release\n"),
                 ),
                 (
                     "states",
-                    &turn("j", "  my-harness.signals.states: review\n"),
+                    &turn("j", "  ghost-in-shell.signals.states: review\n"),
                 ),
                 (
                     "named",
-                    &turn("j", "  my-harness.signals.files: '*.xlsx'\n"),
+                    &turn("j", "  ghost-in-shell.signals.files: '*.xlsx'\n"),
                 ),
             ],
         );
@@ -390,7 +390,7 @@ mod tests {
                     turn(
                         "j",
                         &format!(
-                            "  my-harness.signals.jobs: deploy{}\n",
+                            "  ghost-in-shell.signals.jobs: deploy{}\n",
                             if i == 4 { ", release" } else { "" }
                         ),
                     ),
@@ -401,7 +401,7 @@ mod tests {
             .iter()
             .map(|(a, b)| (a.as_str(), b.as_str()))
             .collect();
-        let session = "  my-harness.contract: \"1\"\n  my-harness.scope: session\n  my-harness.job: deploy things\n  my-harness.signals.jobs: deploy\n";
+        let session = "  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.scope: session\n  ghost-in-shell.job: deploy things\n  ghost-in-shell.signals.jobs: deploy\n";
         all.push(("mem", session));
         all.push(("bare", "  other.key: x\n"));
         part(dir.path(), "a", "personal", &all);
@@ -432,7 +432,10 @@ mod tests {
             dir.path(),
             "mine",
             "personal",
-            &[("n", &turn("j", "  my-harness.signals.files: vault.md\n"))],
+            &[(
+                "n",
+                &turn("j", "  ghost-in-shell.signals.files: vault.md\n"),
+            )],
         );
         part(
             dir.path(),
@@ -440,7 +443,7 @@ mod tests {
             "work",
             &[(
                 "w",
-                &turn("j", "  my-harness.signals.files: service.toml\n"),
+                &turn("j", "  ghost-in-shell.signals.files: service.toml\n"),
             )],
         );
         let m = crate::testing::ghost_of(&dir.path().join("parts"));
@@ -464,7 +467,7 @@ mod tests {
             "config": {"store": {"about": "s"}}, "state": {"permanent": "store"}});
         fs::write(
             &server,
-            json!({"name": "m", "_meta": {"my-harness": decl}}).to_string(),
+            json!({"name": "m", "_meta": {"ghost-in-shell": decl}}).to_string(),
         )
         .unwrap();
         part(dir.path(), "mine", "personal", &[]);
@@ -500,7 +503,7 @@ mod tests {
                     "mailer",
                     &turn(
                         "send mail",
-                        "  my-harness.signals.jobs: draft an email
+                        "  ghost-in-shell.signals.jobs: draft an email
 ",
                     ),
                 ),
@@ -509,7 +512,7 @@ mod tests {
                     "deployer",
                     &turn(
                         "ship it",
-                        "  my-harness.signals.jobs: deploy
+                        "  ghost-in-shell.signals.jobs: deploy
 ",
                     ),
                 ),

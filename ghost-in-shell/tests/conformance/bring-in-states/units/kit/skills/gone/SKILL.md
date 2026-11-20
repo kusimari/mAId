@@ -2,7 +2,7 @@
 name: gone
 description: about gone
 metadata:
-  my-harness.contract: "1"
-  my-harness.scope: sometimes
-  my-harness.job: j
+  ghost-in-shell.contract: "1"
+  ghost-in-shell.scope: sometimes
+  ghost-in-shell.job: j
 ---

@@ -50,7 +50,7 @@ impl Env {
             .env("HOME", self.at("home"))
             .env("PATH", self.at("bin"))
             .env("MAID_PROFILE", self.at("profile"))
-            .env("MY_HARNESS_PARTS", self.at("parts"))
+            .env("GHOST_IN_SHELL_PARTS", self.at("parts"))
             .env("INSTALL_RECORDS", self.at("install-records"))
             .env("MAID_MEMORY_STORE", self.at("memory-store"))
             .env_remove("CODEX_HOME")

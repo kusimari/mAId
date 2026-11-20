@@ -23,7 +23,9 @@ export MAID_PROFILE=$work/state/maid/profile GHOST_PROFILE=$work/state/maid/ghos
 export CARGO_HOME=${CARGO_HOME:-$HOME/.cargo} CARGO_TARGET_DIR=$here/target
 # nix keeps its settings and fetch cache under these; the agents do not.
 export XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config} XDG_CACHE_HOME=${XDG_CACHE_HOME:-$HOME/.cache}
-unset CODEX_HOME CLAUDE_CONFIG_DIR XDG_STATE_HOME MY_HARNESS_STATE MY_HARNESS_PARTS INSTALL_RECORDS
+unset CODEX_HOME CLAUDE_CONFIG_DIR XDG_STATE_HOME INSTALL_RECORDS \
+  GHOST_IN_SHELL_STATE GHOST_IN_SHELL_PARTS GHOST_IN_SHELL_CANDIDATES \
+  MY_HARNESS_STATE MY_HARNESS_PARTS MY_HARNESS_CANDIDATES
 # XDG_CONFIG_HOME stays real for nix, so mAId's config dir must not.
 export MAID_CONFIG=$work/config/maid MAID_MEMORY_STORE=$work/config/maid/memory-store
 # A personal store, so install registers and records the memory server.
@@ -276,7 +278,7 @@ ghost_carriers() {
   core=$(readlink -f "$gprofile")/bin/ghost-claude &&
     jq -e --arg core "$core" '[.hooks[][].hooks[].command | split(" ")[0]] | length > 0 and all(. == $core)' \
       "$gplugin/hooks/hooks.json" >/dev/null &&
-    jq -e --arg core "$core" '.mcpServers["my-harness"].command == $core' "$gplugin/.mcp.json" >/dev/null &&
+    jq -e --arg core "$core" '.mcpServers["ghost-in-shell"].command == $core' "$gplugin/.mcp.json" >/dev/null &&
     cmd=$(jq -r '.hooks.SessionStart[] | select(.matcher | split("|") | index("startup")) | .hooks[0].command' \
       "$gplugin/hooks/hooks.json") &&
     echo '{"session_id":"rollback-probe","cwd":"/","source":"startup"}' |
@@ -300,7 +302,7 @@ session_bring_ins() {
 check "the genome lists the declared memory with its store, and the adapter as [personal, own]" session_bring_ins
 by_hand() {
   mkdir -p "$th/.claude/skills/garden"
-  printf -- '---\nname: garden\ndescription: d\nmetadata:\n  my-harness.contract: "1"\n  my-harness.repository: https://example.org/me/garden\n  my-harness.scope: turn\n  my-harness.job: tend the garden\n---\n' \
+  printf -- '---\nname: garden\ndescription: d\nmetadata:\n  ghost-in-shell.contract: "1"\n  ghost-in-shell.repository: https://example.org/me/garden\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: tend the garden\n---\n' \
     >"$th/.claude/skills/garden/SKILL.md"
   env -i HOME="$th" "$gprofile/bin/ghost-claude" genome >"$work/hand" 2>&1
   rm -r "$th/.claude/skills/garden"
@@ -399,7 +401,7 @@ cp "$partlist" "$work/plain-record"
 ghost uninstall
 rc=$?
 check "ghost uninstall removes its plugin, marketplace, record, profile and the adapter's cache" \
-  eval '[ $rc = 0 ] && [ -z "$(glisted)" ] && ! inhome claude plugin marketplace list --json | grep -q ghost-in-shell && [ ! -e "$grecord" ] && [ ! -e "$gprofile" ] && [ ! -e "$th/.local/state/my-harness/shells" ]'
+  eval '[ $rc = 0 ] && [ -z "$(glisted)" ] && ! inhome claude plugin marketplace list --json | grep -q ghost-in-shell && [ ! -e "$grecord" ] && [ ! -e "$gprofile" ] && [ ! -e "$th/.local/state/ghost-in-shell/shells" ]'
 check "ghost uninstall leaves plain whole: its plugin listed and its record byte-identical" \
   eval 'both_at "$vA" && cmp -s "$partlist" "$work/plain-record"'
 
@@ -436,6 +438,14 @@ done <<<"$(tr ':' '\n' <<<"$PATH")"
 nonix_path=$nonix:${nonix_path%:}
 th2=$work/home2
 mkdir -p "$th2"
+# This HOME has the old names, read for one release: the ghost's state dir
+# named my-harness, with a decision waiting, and a skill declared under
+# my-harness.
+old_state=$th2/.local/state/my-harness
+mkdir -p "$old_state/pending" "$th2/.claude/skills/garden"
+echo '{}' >"$old_state/pending/old.json"
+printf -- '---\nname: garden\ndescription: d\nmetadata:\n  my-harness.contract: "1"\n  my-harness.repository: https://example.org/me/garden\n  my-harness.scope: turn\n  my-harness.job: tend the garden\n---\n' \
+  >"$th2/.claude/skills/garden/SKILL.md"
 dirprofile=$work/dirstate/maid/profile
 in2() { HOME=$th2 PATH=$nonix_path MAID_PROFILE=$dirprofile "$@"; }
 in2 just plain::install-profile >"$work/n" 2>&1 && in2 just plain::install-skills claude >>"$work/n" 2>&1
@@ -451,6 +461,22 @@ GHOST_PROFILE=$dirghost in2 just ghost install >"$work/n" 2>&1
 rc=$?
 check "without nix, the ghost installs into a profile dir over plain, reusing it, its hooks naming that dir's binary" \
   eval '[ $rc = 0 ] && grep -q "plain    reused" "$work/n" && [ -d "$dirghost" ] && [ ! -L "$dirghost" ] && [ -x "$dirghost/bin/ghost-claude" ] && jq -e --arg core "$dirghost/bin/ghost-claude" "[.hooks[][].hooks[].command | split(\" \")[0]] | all(. == \$core)" "$dirghost/share/ghost/marketplace/plugins/ghost/hooks/hooks.json" >/dev/null && HOME=$th2 claude plugin list --json | jq -e ".[] | select(.id == \"ghost@ghost-in-shell\")" >/dev/null'
+GHOST_PROFILE=$dirghost in2 just ghost status >"$work/n" 2>&1
+old_names() {
+  local old="garden (garden) declares under my-harness, the old name of ghost-in-shell; read for this release only"
+  local dir="the state is at $old_state, the old name; read where it is for this release only, so move all of it but parts/ to $th2/.local/state/ghost-in-shell once no older ghost is rolled back to"
+  grep -qx "pending  1 decision(s) at $old_state/pending" "$work/n" &&
+    grep -qx "    ready          garden" "$work/n" &&
+    grep -qxF "old name       $old" "$work/n" &&
+    grep -qF "old name       $dir" "$work/n" &&
+    env -i HOME="$th2" MY_HARNESS_CANDIDATES=on "$dirghost/bin/ghost-claude" genome >"$work/old-genome" 2>&1 &&
+    grep -qx '  garden: tend the garden \[garden, own\]' "$work/old-genome" &&
+    grep -qxF "  old name: $old" "$work/old-genome" &&
+    grep -qF "  old name: $dir" "$work/old-genome" &&
+    grep -qx '  old name: MY_HARNESS_CANDIDATES is the old name of GHOST_IN_SHELL_CANDIDATES; read for this release only' "$work/old-genome" &&
+    [ ! -e "$th2/.local/state/ghost-in-shell" ]
+}
+check "the ghost installed over the old names reads them, each with a warning: the state dir where it is, a declaration, a variable" old_names
 GHOST_PROFILE=$dirghost in2 just ghost uninstall >/dev/null 2>&1
 in2 just plain::uninstall-skills >/dev/null 2>&1
 

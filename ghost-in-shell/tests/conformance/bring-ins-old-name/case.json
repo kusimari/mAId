@@ -1,0 +1,29 @@
+{
+  "about": "a declaration under the old name, my-harness, is read for one release and named as old; one under ghost-in-shell is not",
+  "expect": {
+    "exit": 0,
+    "entries": [],
+    "refused": [],
+    "bring_ins": [
+      {
+        "part": "a",
+        "name": "kit",
+        "state": "ready"
+      },
+      {
+        "part": "a",
+        "name": "old",
+        "state": "ready"
+      },
+      {
+        "part": "a",
+        "name": "new",
+        "state": "ready"
+      }
+    ],
+    "old_names": [
+      "kit (a) declares under my-harness, the old name of ghost-in-shell; read for this release only",
+      "old (a) declares under my-harness, the old name of ghost-in-shell; read for this release only"
+    ]
+  }
+}

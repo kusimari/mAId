@@ -4,12 +4,12 @@ description: 'Brief a human before they review a change — "review what was don
 version: 1.3.0
 tags: [review, pr, cr, briefing, reviewer, spec, diff, independent]
 metadata:
-  my-harness.contract: "1"
-  my-harness.scope: turn
-  my-harness.job: brief a human reviewer on a change from its spec and diff
-  my-harness.signals.jobs: brief a review, write a PR body
-  my-harness.signals.states: review
-  my-harness.rules: SKILL.md#non-negotiables--check-every-one-before-you-return
+  ghost-in-shell.contract: "1"
+  ghost-in-shell.scope: turn
+  ghost-in-shell.job: brief a human reviewer on a change from its spec and diff
+  ghost-in-shell.signals.jobs: brief a review, write a PR body
+  ghost-in-shell.signals.states: review
+  ghost-in-shell.rules: SKILL.md#non-negotiables--check-every-one-before-you-return
 ---
 
 # kreviewkit — brief a human before they review

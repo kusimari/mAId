@@ -62,7 +62,7 @@ fn shipped_skills_declare_the_contract() {
             let text: String = std::fs::read_to_string(&file)
                 .unwrap_or_default()
                 .lines()
-                .filter(|l| !l.trim_start().starts_with("my-harness.bind."))
+                .filter(|l| !l.trim_start().starts_with("ghost-in-shell.bind."))
                 .collect::<Vec<_>>()
                 .join("\n");
             for default in [

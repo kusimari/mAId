@@ -21,7 +21,7 @@ fn plugin(home: &Path, name: &str, repo: &str, persona: &str, notes: bool) -> st
         fs::create_dir_all(at.join("skills/notes")).unwrap();
         fs::write(
             at.join("skills/notes/SKILL.md"),
-            "---\nname: notes\ndescription: capture notes\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: capture a note\n---\n",
+            "---\nname: notes\ndescription: capture notes\nmetadata:\n  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: capture a note\n---\n",
         )
         .unwrap();
     }
@@ -32,7 +32,7 @@ fn plugin(home: &Path, name: &str, repo: &str, persona: &str, notes: bool) -> st
     fs::create_dir_all(server.parent().unwrap()).unwrap();
     fs::write(
         &server,
-        json!({"name": format!("{persona}-memory"), "_meta": {"my-harness": decl}}).to_string(),
+        json!({"name": format!("{persona}-memory"), "_meta": {"ghost-in-shell": decl}}).to_string(),
     )
     .unwrap();
     at
@@ -168,7 +168,10 @@ fn a_bad_session_id_fails_and_writes_nothing_outside_the_record() {
         .output()
         .unwrap();
     assert!(!out.status.success());
-    assert!(!home.path().join(".local/state/my-harness/escape").exists());
+    assert!(!home
+        .path()
+        .join(".local/state/ghost-in-shell/escape")
+        .exists());
 }
 
 #[test]

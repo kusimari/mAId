@@ -200,7 +200,7 @@ mod tests {
         let skill = dir.join("SKILL.md");
         fs::write(
             &skill,
-            "---\nname: m\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: session\n  my-harness.job: memory\n  my-harness.config.store: the store\n  my-harness.config.token: \"[secret] [optional] a token\"\n  my-harness.config.colour: \"[optional] a colour\"\n  my-harness.state.local: store\n  my-harness.requires: tool\n---\n",
+            "---\nname: m\ndescription: d\nmetadata:\n  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.scope: session\n  ghost-in-shell.job: memory\n  ghost-in-shell.config.store: the store\n  ghost-in-shell.config.token: \"[secret] [optional] a token\"\n  ghost-in-shell.config.colour: \"[optional] a colour\"\n  ghost-in-shell.state.local: store\n  ghost-in-shell.requires: tool\n---\n",
         )
         .unwrap();
         of(json!({"part": "a", "persona": "p", "bring_ins": [
@@ -266,7 +266,7 @@ mod tests {
         let skill = dir.path().join("SKILL.md");
         fs::write(
             &skill,
-            "---\nname: w\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: write\n  my-harness.config.learned: \"[optional] pending\"\n  my-harness.config.kept: kept\n  my-harness.state.local: learned\n  my-harness.state.permanent: kept\n---\n",
+            "---\nname: w\ndescription: d\nmetadata:\n  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: write\n  ghost-in-shell.config.learned: \"[optional] pending\"\n  ghost-in-shell.config.kept: kept\n  ghost-in-shell.state.local: learned\n  ghost-in-shell.state.permanent: kept\n---\n",
         )
         .unwrap();
         let ghost = of(json!({"part": "a", "bring_ins": [

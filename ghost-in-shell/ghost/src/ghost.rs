@@ -86,6 +86,9 @@ pub struct Ghost {
     /// Each part's plugin that is turned off, said in a line.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub disabled: Vec<String>,
+    /// Each bring-in declared under the old name, said in a line.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub old_names: Vec<String>,
 }
 
 impl Ghost {
@@ -143,12 +146,18 @@ impl Ghost {
             .filter(|(_, parts)| parts.len() > 1)
             .map(|(n, _)| n.to_string())
             .collect();
+        let old_names = bring_ins
+            .iter()
+            .filter(|b| b.declaration().is_some_and(|d| d.under_old_name))
+            .map(|b| crate::old_name::declared(&b.name, &b.part))
+            .collect();
         Ghost {
             personas,
             bring_ins,
             clashes,
             not_understood: vec![],
             disabled: vec![],
+            old_names,
         }
     }
 }
@@ -210,7 +219,7 @@ mod tests {
         let p = dir.join(format!("{name}.md"));
         fs::write(
             &p,
-            format!("---\nname: {name}\ndescription: about {name}\nmetadata:\n  my-harness.contract: \"1\"\n{meta}---\n"),
+            format!("---\nname: {name}\ndescription: about {name}\nmetadata:\n  ghost-in-shell.contract: \"1\"\n{meta}---\n"),
         )
         .unwrap();
         p.display().to_string()
@@ -222,7 +231,7 @@ mod tests {
         let notes = skill(
             dir.path(),
             "notes",
-            "  my-harness.scope: turn\n  my-harness.job: capture notes\n",
+            "  ghost-in-shell.scope: turn\n  ghost-in-shell.job: capture notes\n",
         );
         let g = Ghost::of(&[
             part(json!({"part": "home", "persona": "personal",
@@ -259,7 +268,7 @@ mod tests {
     #[test]
     fn a_secret_held_as_a_value_makes_that_bring_in_unreadable_and_is_never_echoed() {
         let dir = TempDir::new().unwrap();
-        let s = skill(dir.path(), "s", "  my-harness.scope: session\n  my-harness.job: j\n  my-harness.config.token: \"[secret] t\"\n");
+        let s = skill(dir.path(), "s", "  ghost-in-shell.scope: session\n  ghost-in-shell.job: j\n  ghost-in-shell.config.token: \"[secret] t\"\n");
         let g = Ghost::of(&[part(json!({"part": "a", "persona": "p", "bring_ins": [
             {"name": "leaky", "unit": {"standard": "skill", "path": s}, "values": {"token": "hunter2"}},
             {"name": "fine", "unit": {"standard": "skill", "path": s}, "values": {"token": "env:TOKEN"}}]}))]);
@@ -294,7 +303,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let d = dir.path().join("garden");
         fs::create_dir_all(&d).unwrap();
-        fs::write(d.join("SKILL.md"), "---\nname: garden\ndescription: d\nmetadata:\n  my-harness.contract: \"2\"\n  my-harness.scope: turn\n  my-harness.job: j\n---\n").unwrap();
+        fs::write(d.join("SKILL.md"), "---\nname: garden\ndescription: d\nmetadata:\n  ghost-in-shell.contract: \"2\"\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: j\n---\n").unwrap();
         let mut u = Unit::new(Kind::Skill, "garden");
         u.manifest = Some(d.join("SKILL.md"));
         let g = Ghost::from(&vec![u], None).unwrap();

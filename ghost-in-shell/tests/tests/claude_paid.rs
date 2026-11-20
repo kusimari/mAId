@@ -18,7 +18,7 @@
 //! authenticate with the model provider. Claude Code keeps the shell's
 //! HOME and environment, so its model access is the shell's own and no
 //! credential is handed over. Three locations go to
-//! a temp world: `CLAUDE_CONFIG_DIR`, `MY_HARNESS_STATE`
+//! a temp world: `CLAUDE_CONFIG_DIR`, `GHOST_IN_SHELL_STATE`
 //! and `XDG_CACHE_HOME`, where Claude Code keeps its MCP logs whatever its
 //! config dir. A run refuses to start if any of them, or the world, would
 //! land under HOME. On a stub of the model API, nothing else was written
@@ -57,7 +57,7 @@ fn world() -> TempDir {
     )
     .unwrap();
     fs::create_dir_all(kit.join("skills/deployer")).unwrap();
-    fs::write(kit.join("skills/deployer/SKILL.md"), format!("---\nname: deployer\ndescription: deploy things\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: deploy a release\n  my-harness.signals.jobs: deploy\n  my-harness.rules: SKILL.md#rules\n---\n## Rules\n\nThe first line of every reply about a deploy is the literal line {MARKER}.\n")).unwrap();
+    fs::write(kit.join("skills/deployer/SKILL.md"), format!("---\nname: deployer\ndescription: deploy things\nmetadata:\n  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: deploy a release\n  ghost-in-shell.signals.jobs: deploy\n  ghost-in-shell.rules: SKILL.md#rules\n---\n## Rules\n\nThe first line of every reply about a deploy is the literal line {MARKER}.\n")).unwrap();
     fs::create_dir_all(kit.join("servers/personal-memory")).unwrap();
     fs::copy(
         ghost_in_shell_tests::content().join("servers/personal-memory/server.json"),
@@ -125,7 +125,7 @@ fn ask_with(world: &Path, prompt: &str, args: &[&str], env: &[(&str, &str)]) -> 
         .arg(world.join("ghost").join(shell_claude::package::PLUGIN_DIR))
         .current_dir(world.join("work"))
         .env("CLAUDE_CONFIG_DIR", &config)
-        .env("MY_HARNESS_STATE", &state)
+        .env("GHOST_IN_SHELL_STATE", &state)
         .env("XDG_CACHE_HOME", &cache)
         .args(args)
         .envs(env.iter().copied());
@@ -393,7 +393,7 @@ fn habit_prefix(habit: &Habit, on: bool) -> String {
         .env_clear()
         .env("HOME", d)
         .env("CLAUDE_CONFIG_DIR", d.join("claude-config"))
-        .env("MY_HARNESS_STATE", d.join("state"))
+        .env("GHOST_IN_SHELL_STATE", d.join("state"))
         .env(ghost::config::CANDIDATES, switch(on))
         .current_dir(d.join("work"))
         .stdin(std::process::Stdio::piped())

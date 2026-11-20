@@ -200,7 +200,7 @@ after its build succeeds; otherwise a rollback after rollback-then-install would
 them rather than on the install before.
 
 **The ghost's install.** `just ghost install` (`ghost-claude install`)
-validates every `my-harness` declaration in `resources/` and the ghost's
+validates every `ghost-in-shell` declaration in `resources/` and the ghost's
 plugin, builds the ghost's own profile
 (`${XDG_STATE_HOME:-~/.local/state}/maid/ghost/profile`, `GHOST_PROFILE`:
 the flake's `ghost` package, or a dir without nix) holding `bin/ghost-claude`
@@ -516,11 +516,26 @@ remove, and deletes the file when nothing is left. In mAId,
 
 **The old part lists, for one release.** Before install records, each part
 wrote `<part>.json` in `${XDG_STATE_HOME:-$HOME/.local/state}/my-harness/parts`
-(`MY_HARNESS_PARTS`): `part` for `package`, `harnesses` for `agents`, the
+(`MY_HARNESS_PARTS`, overridden by `GHOST_IN_SHELL_PARTS`): `part` for
+`package`, `harnesses` for `agents`, the
 same entries, and from mAId also `persona` and `bring_ins`. Whole-status
 still checks that folder's entries after the install records' (an old
 list whose name an install record has is not read). mAId's own
 `maid-harness.json` is taken as its record and removed on its next install.
+
+**The old name, for one release.** Before ghost-in-shell the concept's
+name was `my-harness`. For one release the ghost still reads a
+declaration under `my-harness` when its slot holds none under
+`ghost-in-shell` (in a skill, when only the old keys name a contract);
+`MY_HARNESS_STATE` and `MY_HARNESS_CANDIDATES` when the new variable is
+unset; and the state dir `my-harness`, where it is, while `ghost-in-shell`
+is not there and it holds more than plain's old `parts/`. The ghost never moves it, so a rollback to an older ghost
+sees the same state. `ghost status` and the genome's environment section
+name each one with what to rename it to, and `ghost-claude validate`
+refuses the old namespace, so nothing ships under it. The MCP server's
+name has no old-name path: a permission written for its old tool names
+(`mcp__plugin_ghost_my-harness__*`) asks again until rewritten. The code is `ghost::old_name`; backlog `drop-my-harness-compat`
+removes it.
 
 **What the ghost reads.** The ghost builds itself from what is installed in
 the shell, however it got there (plain, another installer, by hand), never
@@ -595,22 +610,22 @@ From the enabled units, the ghost finds the parts (`ghost::parts`):
 
 **The bring-in contract.** A bring-in stays a plain unit of its standard
 and declares what the ghost needs in that standard's own extension slot,
-under the namespace `my-harness`; a shell that does not know the slot
+under the namespace `ghost-in-shell`; a shell that does not know the slot
 ignores it:
 
 - an Agent Skill: frontmatter `metadata`, flat string keys:
-  `my-harness.contract` (`"1"`), `my-harness.scope` (`session` or `turn`), `my-harness.job`,
-  `my-harness.signals.<outcomes|jobs|states|locations|files>` (comma
-  lists), `my-harness.rules`, `my-harness.package`,
-  `my-harness.config.<key>` (its description, after optional `[secret]`
-  and `[optional]` markers), `my-harness.state.local`,
-  `my-harness.state.permanent` (each a config key),
-  `my-harness.state.promote` (`auto`, `propose` or `off`),
-  `my-harness.requires` (commands, a comma list), `my-harness.record`
-  (pointers, a comma list), `my-harness.bind.<key>` (where a config key's
-  value comes from), `my-harness.persona` and `my-harness.repository`;
-- a plugin manifest: `extensions["my-harness"]`, and an MCP server's
-  `server.json`: `_meta["my-harness"]`, each the same fields as one JSON
+  `ghost-in-shell.contract` (`"1"`), `ghost-in-shell.scope` (`session` or `turn`), `ghost-in-shell.job`,
+  `ghost-in-shell.signals.<outcomes|jobs|states|locations|files>` (comma
+  lists), `ghost-in-shell.rules`, `ghost-in-shell.package`,
+  `ghost-in-shell.config.<key>` (its description, after optional `[secret]`
+  and `[optional]` markers), `ghost-in-shell.state.local`,
+  `ghost-in-shell.state.permanent` (each a config key),
+  `ghost-in-shell.state.promote` (`auto`, `propose` or `off`),
+  `ghost-in-shell.requires` (commands, a comma list), `ghost-in-shell.record`
+  (pointers, a comma list), `ghost-in-shell.bind.<key>` (where a config key's
+  value comes from), `ghost-in-shell.persona` and `ghost-in-shell.repository`;
+- a plugin manifest: `extensions["ghost-in-shell"]`, and an MCP server's
+  `server.json`: `_meta["ghost-in-shell"]`, each the same fields as one JSON
   object (lists as arrays; `config` as `{ "<key>": { "about", "secret",
   "optional", "bind" } }`; `state` as `{ "local", "permanent", "promote" }`;
   `contract` a number). A plugin's own declaration may give `name`, the
@@ -656,7 +671,7 @@ writes it.
 **Session bring-ins.** mAId's part records two: its memory (Memory,
 below) and the core's adapter on each shell it is built for. On Claude Code
 that is `claude-adapter`, declared in the Claude manifest of the ghost's
-own plugin (`extensions["my-harness"]` in
+own plugin (`extensions["ghost-in-shell"]` in
 `ghost-in-shell/shell/claude/plugin/.claude-plugin/plugin.json`), whose hooks
 are the core's carriers, with `name` `claude-adapter` and mAId's
 `repository`; own, in mAId's part (`[personal, own]`) while
@@ -667,7 +682,7 @@ genome's environment section.
 
 **Borrowed units: an overlay.** A part never changes a unit it borrows,
 so it ships an *overlay*, a manifest in the unit's own standard holding
-only `name`, `description` and the `my-harness` slot, and ships it in its
+only `name`, `description` and the `ghost-in-shell` slot, and ships it in its
 plugin. The lender's files are never read for the declaration. mAId's are
 `resources/overlays/<plugin>/plugin.json` (today
 `document-skills`, whose `requires` is the vendor row's `needs`), in its
@@ -696,8 +711,8 @@ records; transient always sends. An item counts as sent when it is handed
 to the carrier, so a carrier that fails to place it calls again with
 `--reset`, which forgets what the session was sent; a sub-session is its
 own id. The core never keeps or prints a secret bound as a value. It
-reads `CLAUDE_CONFIG_DIR` (else `~/.claude`) and `MY_HARNESS_STATE`
-(default `${XDG_STATE_HOME:-$HOME/.local/state}/my-harness`), so it runs
+reads `CLAUDE_CONFIG_DIR` (else `~/.claude`) and `GHOST_IN_SHELL_STATE`
+(default `${XDG_STATE_HOME:-$HOME/.local/state}/ghost-in-shell`), so it runs
 from a hook with no checkout. With no
 `--session`, the session is the input's `session_id` (with an `agent_id`,
 the sub-session `<session_id>.<agent_id>`); `--claude-event <Event>`
@@ -767,7 +782,7 @@ hook to 300, control characters dropped):
   file the prompt names (`.sh` is shell). A near fit is a bring-in past
   the fit cap, or one with some word of a signal phrase or its job in the
   prompt, whose fit the session does not hold. Each goes once a session.
-  `MY_HARNESS_CANDIDATES=off` leaves memories matched on the prompt's own
+  `GHOST_IN_SHELL_CANDIDATES=off` leaves memories matched on the prompt's own
   words and offers no near fit.
 
 The acting persona is the only one when there is one; otherwise the one
@@ -788,7 +803,7 @@ UserPromptSubmit calls `expression`; SessionEnd calls `sleep`, which marks
 the session and prints nothing (its input's own `reason` is recorded as
 `end`). `ghost-claude mcp --session-env
 CLAUDE_CODE_SESSION_ID` serves the on-demand carrier: resource
-`my-harness://genome`, prompt `genome`, tool `expression` (a folder under
+`ghost-in-shell://genome`, prompt `genome`, tool `expression` (a folder under
 the server's own, else its own). Claude Code places
 a hook's `additionalContext` whole up to 10,000 characters, past that a
 2 KB preview and a file; expression stays under it, and the genome, a few
@@ -1327,6 +1342,7 @@ mAId/
 │   │   ├── src/contract.rs the bring-in contract, read from each standard's slot
 │   │   ├── src/installed.rs  `Installed`: what a shell has, where, enabled, registered
 │   │   ├── src/parts.rs    each repo's persona and bring-ins, found in what is installed
+│   │   ├── src/old_name.rs the old name, `my-harness`, read for one release
 │   │   ├── src/binding.rs  a declared config key's value, from how the shell registered the unit
 │   │   ├── src/ghost.rs    fusion: `Ghost::from(&dyn Installed)`
 │   │   ├── src/environment.rs  each bring-in ready or not here; the PATH rule
@@ -1361,7 +1377,7 @@ mAId/
 │   │   ├── src/installed.rs  what Claude Code has installed, from its own records, cached under the state dir
 │   │   ├── src/transcript.rs   Claude's transcripts, located and packed: its session source
 │   │   ├── src/mcp.rs      the on-demand carrier as an MCP server on stdio
-│   │   ├── src/validate.rs every `my-harness` declaration in resources/ and the plugin
+│   │   ├── src/validate.rs every `ghost-in-shell` declaration in resources/ and the plugin
 │   │   ├── src/package.rs  the ghost's package: its plugin and binary staged into a prefix
 │   │   ├── src/reuse.rs    the reuse check: mAId's plugin in Claude Code, this checkout's or not
 │   │   ├── src/install.rs  the ghost's install: profile, reuse or install plain, plugin, record
@@ -2014,10 +2030,10 @@ still work as plain standard units where the core is absent. Each shape
 named here is defined under Architecture, "My harness".
 
 1. **Declare the contract on every unit it ships,** in that standard's
-   slot under the namespace `my-harness`: a skill's frontmatter `metadata`
-   (flat keys, `my-harness.contract: "1"`, `my-harness.scope`, ...), a
-   plugin manifest's `extensions["my-harness"]`, an MCP server's
-   `server.json` `_meta["my-harness"]`, with the standard's own fields too
+   slot under the namespace `ghost-in-shell`: a skill's frontmatter `metadata`
+   (flat keys, `ghost-in-shell.contract: "1"`, `ghost-in-shell.scope`, ...), a
+   plugin manifest's `extensions["ghost-in-shell"]`, an MCP server's
+   `server.json` `_meta["ghost-in-shell"]`, with the standard's own fields too
    (a `server.json` has `name`, `description` and `version`). Key and value
    shapes per slot: Architecture, "The bring-in contract". `contract`
    (`1`), `scope` (`session` or `turn`) and `job` are required. Name where
@@ -2047,7 +2063,7 @@ named here is defined under Architecture, "My harness".
    while the server is registered (Architecture, "Claude's own automatic
    memory is turned off").
 3. **Declare what it borrows by overlay,** a manifest in the unit's own
-   standard holding only `name`, `description` and the `my-harness` slot,
+   standard holding only `name`, `description` and the `ghost-in-shell` slot,
    shipped in its plugin at `overlays/<name>/`, and never change the unit.
    A unit with no declaration of its own is borrowed: reported only, a
    note for its lender, never written.

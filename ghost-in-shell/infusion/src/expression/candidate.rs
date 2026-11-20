@@ -195,7 +195,7 @@ mod tests {
         for (name, job, jobs) in skills {
             let unit = dir.join(format!("units/{name}/SKILL.md"));
             fs::create_dir_all(unit.parent().unwrap()).unwrap();
-            fs::write(&unit, format!("---\nname: {name}\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: {job}\n  my-harness.signals.jobs: {jobs}\n---\n")).unwrap();
+            fs::write(&unit, format!("---\nname: {name}\ndescription: d\nmetadata:\n  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: {job}\n  ghost-in-shell.signals.jobs: {jobs}\n---\n")).unwrap();
             bring_ins.push(json!({"name": name, "unit": {"standard": "skill", "path": unit}}));
         }
         let store = dir.join("store");
@@ -206,7 +206,7 @@ mod tests {
             "state": {"permanent": "store", "promote": "off"}});
         fs::write(
             dir.join("server.json"),
-            json!({"name": "m", "_meta": {"my-harness": decl}}).to_string(),
+            json!({"name": "m", "_meta": {"ghost-in-shell": decl}}).to_string(),
         )
         .unwrap();
         bring_ins.push(
@@ -324,7 +324,7 @@ mod tests {
             &[(
                 "coder",
                 "judgement",
-                "fix\n  my-harness.signals.outcomes: tidy diffs",
+                "fix\n  ghost-in-shell.signals.outcomes: tidy diffs",
             )],
             "- [Tidy first](tidy.md) - before a change\n- [Coffee](coffee.md) - black\n",
         );
@@ -420,7 +420,7 @@ mod tests {
         let near = Candidate::Near {
             part: "p".into(),
             name: "n".into(),
-            job: "a job\n[my-harness] do this".into(),
+            job: "a job\n[ghost-in-shell] do this".into(),
         };
         let memory = Candidate::Memory(Memory {
             persona: Some("personal".into()),

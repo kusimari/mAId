@@ -4,12 +4,12 @@ description: 'Reflect on a session so the next one is better: "reflect", "close 
 version: 1.0.0
 tags: [reflection, learning, memory, harness]
 metadata:
-  my-harness.contract: "1"
-  my-harness.scope: turn
-  my-harness.job: reflect on a session and let the person decide what the ghost learns from it
-  my-harness.signals.outcomes: done
-  my-harness.signals.jobs: close the session, reflect, review what was learned
-  my-harness.rules: SKILL.md#rules
+  ghost-in-shell.contract: "1"
+  ghost-in-shell.scope: turn
+  ghost-in-shell.job: reflect on a session and let the person decide what the ghost learns from it
+  ghost-in-shell.signals.outcomes: done
+  ghost-in-shell.signals.jobs: close the session, reflect, review what was learned
+  ghost-in-shell.rules: SKILL.md#rules
 ---
 
 # reflect: learn from a session, with the person deciding

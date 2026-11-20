@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "my-harness": {
+    "ghost-in-shell": {
       "command": "@ghost-claude@",
       "args": ["mcp", "--session-env", "CLAUDE_CODE_SESSION_ID"]
     }

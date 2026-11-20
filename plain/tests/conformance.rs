@@ -200,7 +200,7 @@ fn compare(
         .env_clear()
         .env("HOME", home)
         .env("INSTALL_RECORDS", &roots[0])
-        .env("MY_HARNESS_PARTS", &roots[1])
+        .env("GHOST_IN_SHELL_PARTS", &roots[1])
         .env("PATH", &path)
         .env("CARGO_MANIFEST_DIR", env!("CARGO_MANIFEST_DIR"));
     if let Some(a) = agent {

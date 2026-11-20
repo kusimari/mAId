@@ -2,8 +2,8 @@
 name: ready
 description: about ready
 metadata:
-  my-harness.contract: "1"
-  my-harness.scope: turn
-  my-harness.job: be ready
-  my-harness.requires: tool
+  ghost-in-shell.contract: "1"
+  ghost-in-shell.scope: turn
+  ghost-in-shell.job: be ready
+  ghost-in-shell.requires: tool
 ---

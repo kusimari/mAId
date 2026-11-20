@@ -356,7 +356,7 @@ pub fn manifest_dirs() -> Result<crate::record::Lists> {
     };
     Ok(crate::record::Lists {
         records: dir("INSTALL_RECORDS")?,
-        old: dir("MY_HARNESS_PARTS")?,
+        old: dir("GHOST_IN_SHELL_PARTS")?,
     })
 }
 

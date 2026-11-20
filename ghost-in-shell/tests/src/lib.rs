@@ -177,7 +177,7 @@ pub fn adapter_declaration() -> serde_json::Value {
         &std::fs::read_to_string(plugin().join(".claude-plugin/plugin.json")).unwrap(),
     )
     .unwrap();
-    manifest["extensions"]["my-harness"].clone()
+    manifest["extensions"]["ghost-in-shell"].clone()
 }
 
 /// mAId's plugin laid out as plain stages it, at `at`: the Claude manifest

@@ -4,11 +4,11 @@ description: 'Work like the experienced developer beside the user on any coding 
 version: 1.0.0
 tags: [coding, design, judgement, review-feedback, testing, plain-language, independent]
 metadata:
-  my-harness.contract: "1"
-  my-harness.scope: turn
-  my-harness.job: developer judgement on any coding work, in any language
-  my-harness.signals.jobs: design, build, fix, refactor, test, act on review feedback
-  my-harness.rules: SKILL.md#0-stop-where-you-should-stop-or-are-expected-to-stop-ask-well-with-context
+  ghost-in-shell.contract: "1"
+  ghost-in-shell.scope: turn
+  ghost-in-shell.job: developer judgement on any coding work, in any language
+  ghost-in-shell.signals.jobs: design, build, fix, refactor, test, act on review feedback
+  ghost-in-shell.rules: SKILL.md#0-stop-where-you-should-stop-or-are-expected-to-stop-ask-well-with-context
 ---
 
 # kyodakit: work like the experienced developer beside the user

@@ -6,6 +6,7 @@
 //!
 //! Dependencies run down this list:
 //!
+//!   old_name     the concept's old name, `my-harness`, read for one release
 //!   config       where the ghost keeps its own things
 //!   contract     what a bring-in declares, read from its standard's slot
 //!   installed    what the shell has installed: the trait each adapter implements
@@ -21,7 +22,12 @@ pub mod contract;
 pub mod environment;
 pub mod ghost;
 pub mod installed;
+pub mod old_name;
 pub mod parts;
 pub mod time;
 
 pub use ghost::{BringIn, Declared, Ghost, Persona};
+
+/// The concept's name: the bring-in contract's namespace, the ghost's
+/// state dir and its MCP server.
+pub const NAME: &str = "ghost-in-shell";

@@ -1,4 +1,4 @@
-//! Validate: every `my-harness` declaration the ghost will read reads, and
+//! Validate: every `ghost-in-shell` declaration the ghost will read reads, and
 //! its `rules` pointer names a section that is there, so a renamed heading
 //! never ships. It checks the person's resources and the ghost's own
 //! plugin; plain checks only what each standard requires. See the
@@ -52,11 +52,16 @@ fn units(root: &Path) -> Vec<(Standard, PathBuf)> {
         .collect()
 }
 
-/// A unit's declaration, if it has one, reads, and its rules pointer
-/// resolves.
+/// A unit's declaration, if it has one, reads under the current name, and
+/// its rules pointer resolves.
 fn declaration(standard: Standard, path: &Path) -> Result<(), String> {
     let path = std::path::absolute(path).map_err(|e| e.to_string())?;
     match contract::read(standard, &path)? {
+        Slot::Declared(d) if d.under_old_name => Err(format!(
+            "declares under {}, the old name; declare under {}",
+            ghost::old_name::NAME,
+            contract::NAMESPACE
+        )),
         Slot::Declared(d) => match &d.rules {
             Some(pointer) => contract::rules(&path, pointer).map(drop),
             None => Ok(()),
@@ -92,7 +97,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         write(
             &dir.path().join("servers/s/server.json"),
-            r#"{"name":"s","_meta":{"my-harness":{"contract":1,"scope":"turn","job":"j"}}}"#,
+            r#"{"name":"s","_meta":{"ghost-in-shell":{"contract":1,"scope":"turn","job":"j"}}}"#,
         );
         write(
             &dir.path().join("overlays/o/plugin.json"),
@@ -101,7 +106,7 @@ mod tests {
         assert_eq!(check(&dir).unwrap(), 2);
         write(
             &dir.path().join("servers/s/server.json"),
-            r#"{"name":"s","_meta":{"my-harness":{"contract":1,"scope":"turn","job":"j","rules":"README.md#x"}}}"#,
+            r#"{"name":"s","_meta":{"ghost-in-shell":{"contract":1,"scope":"turn","job":"j","rules":"README.md#x"}}}"#,
         );
         let errs = check(&dir).unwrap_err();
         assert!(errs[0].contains("cannot read"), "{errs:?}");
@@ -120,16 +125,30 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let skill = dir.path().join("skills/foo/SKILL.md");
         let decl = |rules: &str| {
-            format!("---\nname: foo\ndescription: bar\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: j\n  my-harness.rules: {rules}\n---\n## Rules\n\nfirst\n")
+            format!("---\nname: foo\ndescription: bar\nmetadata:\n  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: j\n  ghost-in-shell.rules: {rules}\n---\n## Rules\n\nfirst\n")
         };
         write(&skill, &decl("SKILL.md#rules"));
         assert_eq!(check(&dir).unwrap(), 1);
         write(&skill, &decl("SKILL.md#renamed"));
         let e = check(&dir).unwrap_err();
         assert!(e[0].contains("no heading"), "{e:?}");
-        write(&skill, "---\nname: foo\ndescription: bar\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: always\n  my-harness.job: j\n---\n");
+        write(&skill, "---\nname: foo\ndescription: bar\nmetadata:\n  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.scope: always\n  ghost-in-shell.job: j\n---\n");
         let e = check(&dir).unwrap_err();
         assert!(e[0].contains("declaration"), "{e:?}");
+    }
+
+    #[test]
+    fn nothing_ships_under_the_old_name() {
+        let dir = TempDir::new().unwrap();
+        write(
+            &dir.path().join("servers/s/server.json"),
+            r#"{"name":"s","_meta":{"my-harness":{"contract":1,"scope":"turn","job":"j"}}}"#,
+        );
+        let e = check(&dir).unwrap_err();
+        assert!(
+            e[0].contains("declares under my-harness, the old name; declare under ghost-in-shell"),
+            "{e:?}"
+        );
     }
 
     #[test]
@@ -137,7 +156,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         write(
             &dir.path().join(".claude-plugin/plugin.json"),
-            r#"{"name":"p","extensions":{"my-harness":{"contract":2,"scope":"session","job":"j"}}}"#,
+            r#"{"name":"p","extensions":{"ghost-in-shell":{"contract":2,"scope":"session","job":"j"}}}"#,
         );
         let e = check(&dir).unwrap_err();
         assert!(e[0].contains(".claude-plugin/plugin.json"), "{e:?}");

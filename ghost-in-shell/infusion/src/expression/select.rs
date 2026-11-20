@@ -133,7 +133,7 @@ mod tests {
                 "state": {"permanent": "store", "promote": "off"}});
             fs::write(
                 dir.path().join("server.json"),
-                json!({"name": "m", "_meta": {"my-harness": decl}}).to_string(),
+                json!({"name": "m", "_meta": {"ghost-in-shell": decl}}).to_string(),
             )
             .unwrap();
             fs::create_dir_all(dir.path().join("parts")).unwrap();

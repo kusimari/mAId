@@ -195,7 +195,7 @@ fn a_failing_hook_exits_0_with_nothing_on_stdout() {
     );
     assert!(out.status.success());
     assert!(out.stdout.is_empty());
-    let state = home.path().join(".local/state/my-harness");
+    let state = home.path().join(".local/state/ghost-in-shell");
     let _ = fs::remove_dir_all(&state);
     fs::create_dir_all(state.parent().unwrap()).unwrap();
     fs::write(&state, "not a dir").unwrap();
@@ -232,7 +232,7 @@ fn a_failing_hook_exits_0_with_nothing_on_stdout() {
 fn the_shipped_mcp_config_starts_the_core_as_a_server_with_the_session() {
     let path = ghost_in_shell_tests::plugin().join(".mcp.json");
     let v: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
-    let server = &v["mcpServers"]["my-harness"];
+    let server = &v["mcpServers"]["ghost-in-shell"];
     assert_eq!(server["command"], "@ghost-claude@");
     let args: Vec<&str> = server["args"]
         .as_array()
@@ -251,7 +251,7 @@ fn the_shipped_mcp_config_starts_the_core_as_a_server_with_the_session() {
         .spawn()
         .unwrap();
     let call = json!({"jsonrpc": "2.0", "id": 1, "method": "resources/read",
-        "params": {"uri": "my-harness://genome"}});
+        "params": {"uri": "ghost-in-shell://genome"}});
     writeln!(child.stdin.take().unwrap(), "{call}").unwrap();
     let out = child.wait_with_output().unwrap();
     let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -261,7 +261,7 @@ fn the_shipped_mcp_config_starts_the_core_as_a_server_with_the_session() {
         .starts_with("personas: personal"));
     assert!(
         home.path()
-            .join(".local/state/my-harness/delivery/s1")
+            .join(".local/state/ghost-in-shell/delivery/s1")
             .is_dir(),
         "the session comes from the variable Claude Code sets"
     );
@@ -279,7 +279,7 @@ fn session_end_marks_the_session_for_sleep_and_says_nothing() {
     let out = run(h, &command("SessionEnd", None), &end);
     assert_eq!(context(&out, "SessionEnd"), None);
     let mark: Value = serde_json::from_str(
-        &fs::read_to_string(h.join(".local/state/my-harness/sleep/s1.json")).unwrap(),
+        &fs::read_to_string(h.join(".local/state/ghost-in-shell/sleep/s1.json")).unwrap(),
     )
     .unwrap();
     assert_eq!(mark["reasons"], json!(["end"]));

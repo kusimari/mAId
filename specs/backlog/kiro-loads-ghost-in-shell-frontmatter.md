@@ -1,9 +1,9 @@
-# Backlog: kiro-loads-my-harness-frontmatter
+# Backlog: kiro-loads-ghost-in-shell-frontmatter
 
 ## What
 
 Verify that kiro-cli still loads, lists and activates a skill whose
-frontmatter carries `metadata` with `my-harness.*` keys (all six of
+frontmatter carries `metadata` with `ghost-in-shell.*` keys (all six of
 mAId's skills do since `turn-bring-ins`). Use a free or isolated-HOME
 check when one is possible: a kiro command that renders its skill list
 without a model call, or a smoke-stage run that never repoints the real

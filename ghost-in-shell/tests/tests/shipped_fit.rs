@@ -44,6 +44,7 @@ fn setup() -> (TempDir, Infusion) {
         config: Config {
             state: dir.path().join("state"),
             candidates: true,
+            old_names: vec![],
         },
         host: Host::default(),
         sources: Box::new(Transcripts { projects: None }),
@@ -172,7 +173,7 @@ fn the_genome_of_this_repos_install_with_a_second_part_stays_small() {
         &fs::read_to_string(content().join("servers/personal-memory/server.json")).unwrap(),
     )
     .unwrap();
-    server["_meta"]["my-harness"]["persona"] = "work".into();
+    server["_meta"]["ghost-in-shell"]["persona"] = "work".into();
     fs::create_dir_all(work.join("servers/work-memory")).unwrap();
     fs::write(
         work.join("servers/work-memory/server.json"),

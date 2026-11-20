@@ -90,6 +90,7 @@ pub(crate) mod testing {
             config: Config {
                 state: dir.join("state"),
                 candidates: true,
+                old_names: vec![],
             },
             host: Host::default(),
             sources: Box::new(NoSources),

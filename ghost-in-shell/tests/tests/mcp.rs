@@ -13,7 +13,7 @@ use ghost_in_shell_tests::{core, ClaudeHome};
 /// A HOME whose Claude Code has a skill put in by hand that declares itself.
 fn home() -> TempDir {
     let home = TempDir::new().unwrap();
-    ClaudeHome::at(home.path()).skill("deployer", "---\nname: deployer\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.repository: https://example.org/me/kit\n  my-harness.scope: turn\n  my-harness.job: deploys\n  my-harness.signals.jobs: deploy\n  my-harness.rules: SKILL.md#rules\n---\n## Rules\n\nTAG FIRST\n");
+    ClaudeHome::at(home.path()).skill("deployer", "---\nname: deployer\ndescription: d\nmetadata:\n  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.repository: https://example.org/me/kit\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: deploys\n  ghost-in-shell.signals.jobs: deploy\n  ghost-in-shell.rules: SKILL.md#rules\n---\n## Rules\n\nTAG FIRST\n");
     home
 }
 
@@ -61,7 +61,11 @@ fn the_server_answers_the_genome_and_expression_on_demand() {
             ),
             json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
             req(2, "resources/list", json!({})),
-            req(3, "resources/read", json!({"uri": "my-harness://genome"})),
+            req(
+                3,
+                "resources/read",
+                json!({"uri": "ghost-in-shell://genome"}),
+            ),
             req(4, "prompts/get", json!({"name": "genome"})),
             req(5, "tools/list", json!({})),
             req(
@@ -82,11 +86,11 @@ fn the_server_answers_the_genome_and_expression_on_demand() {
         9,
         "one per request, none for the notification: {replies:?}"
     );
-    assert_eq!(replies[0]["result"]["serverInfo"]["name"], "my-harness");
+    assert_eq!(replies[0]["result"]["serverInfo"]["name"], "ghost-in-shell");
     assert_eq!(replies[0]["result"]["protocolVersion"], "2025-06-18");
     assert_eq!(
         replies[1]["result"]["resources"][0]["uri"],
-        "my-harness://genome"
+        "ghost-in-shell://genome"
     );
     let resource = replies[2]["result"]["contents"][0]["text"]
         .as_str()
@@ -118,7 +122,7 @@ fn the_server_answers_the_genome_and_expression_on_demand() {
     assert_eq!(replies[8]["error"]["code"], -32700);
     assert!(
         home.path()
-            .join(".local/state/my-harness/delivery/s1")
+            .join(".local/state/ghost-in-shell/delivery/s1")
             .is_dir(),
         "on demand records under the session it was told of"
     );
@@ -133,7 +137,7 @@ fn the_tool_answers_only_for_folders_under_its_own() {
         "# Elsewhere\n\n## Handoff\n\n- **Stage:** SECRET\n",
     )
     .unwrap();
-    ClaudeHome::at(home.path()).skill("kit", "---\nname: kit\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.repository: https://example.org/me/kit\n  my-harness.scope: turn\n  my-harness.job: k\n  my-harness.record: notes.md#handoff\n---\n");
+    ClaudeHome::at(home.path()).skill("kit", "---\nname: kit\ndescription: d\nmetadata:\n  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.repository: https://example.org/me/kit\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: k\n  ghost-in-shell.record: notes.md#handoff\n---\n");
     std::os::unix::fs::symlink(outside.path(), home.path().join("link")).unwrap();
     let up = format!(
         "{}/../{}",

@@ -137,7 +137,7 @@ enum Cmd {
         #[arg(long, value_name = "NAME")]
         session_env: Option<String>,
     },
-    /// Check every `my-harness` declaration in the checkout's resources
+    /// Check every `ghost-in-shell` declaration in the checkout's resources
     /// and the ghost's plugin.
     Validate(Checkout),
     /// Install the ghost: its profile, plain's install when Claude Code

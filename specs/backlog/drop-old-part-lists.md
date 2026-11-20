@@ -2,7 +2,8 @@
 
 ## What
 
-Remove the old parts folder (`my-harness/parts`, `MY_HARNESS_PARTS`) from
+Remove the old parts folder (`my-harness/parts`, `MY_HARNESS_PARTS`,
+overridden by `GHOST_IN_SHELL_PARTS`) from
 plain one release after live-shell: mAId's migration of
 `maid-harness.json`, whole-status reading old lists, and the conformance
 cases for both old shapes.

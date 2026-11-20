@@ -180,7 +180,7 @@ impl Home {
         put(
             ghost.join(".claude-plugin/plugin.json"),
             json!({"name": "ghost", "version": "def456", "repository": "https://example.org/me/maid",
-                "extensions": {"my-harness": decl}})
+                "extensions": {"ghost-in-shell": decl}})
             .to_string(),
         );
         put(
@@ -227,7 +227,7 @@ impl Home {
         );
         put(
             work.join("servers/work-memory/server.json"),
-            json!({"name": "work-memory", "_meta": {"my-harness": {"contract": 1, "scope": "session", "job": "work memory",
+            json!({"name": "work-memory", "_meta": {"ghost-in-shell": {"contract": 1, "scope": "session", "job": "work memory",
                 "persona": "work",
                 "config": {"store": {"about": "s", "bind": "arg:--store"}, "index": {"about": "i", "bind": "value:memory/MEMORY.md"},
                     "serve": {"about": "c", "bind": "command"}},
@@ -282,7 +282,7 @@ impl Home {
 
     /// Every file under HOME but the core's own state, with its bytes.
     fn snapshot(&self) -> Vec<(PathBuf, Vec<u8>)> {
-        let state = self.path().join(".local/state/my-harness");
+        let state = self.path().join(".local/state/ghost-in-shell");
         let mut out = vec![];
         walk(self.path(), &mut out);
         out.retain(|(p, _)| !p.starts_with(&state));
@@ -319,7 +319,7 @@ fn reflection() -> String {
 }
 
 fn pending(home: &Home) -> usize {
-    fs::read_dir(home.path().join(".local/state/my-harness/pending"))
+    fs::read_dir(home.path().join(".local/state/ghost-in-shell/pending"))
         .map(|rd| rd.count())
         .unwrap_or(0)
 }
@@ -429,7 +429,7 @@ fn close_proposes_one_batch_and_ok_writes_the_habit_and_files_the_move_and_nothi
     );
     let proposals = home
         .path()
-        .join(".local/state/my-harness/proposals/maid-writing-style");
+        .join(".local/state/ghost-in-shell/proposals/maid-writing-style");
     let files: Vec<_> = fs::read_dir(proposals).unwrap().flatten().collect();
     assert_eq!(files.len(), 1);
     let proposal = fs::read_to_string(files[0].path()).unwrap();
@@ -445,7 +445,7 @@ fn close_proposes_one_batch_and_ok_writes_the_habit_and_files_the_move_and_nothi
         "{proposal}"
     );
 
-    let state = home.path().join(".local/state/my-harness");
+    let state = home.path().join(".local/state/ghost-in-shell");
     assert!(
         !state.join(format!("briefed/{SESSION}.json")).exists(),
         "the full copy goes once the batch is decided"
@@ -492,7 +492,7 @@ fn a_correction_saved_in_the_session_is_listed_and_ok_files_only_the_move() {
     );
     let proposals = home
         .path()
-        .join(".local/state/my-harness/proposals/maid-writing-style");
+        .join(".local/state/ghost-in-shell/proposals/maid-writing-style");
     let files: Vec<_> = fs::read_dir(proposals).unwrap().flatten().collect();
     assert_eq!(files.len(), 1);
     let proposal = fs::read_to_string(files[0].path()).unwrap();
@@ -526,7 +526,7 @@ fn a_declined_move_is_not_offered_again_until_a_new_rule_is_saved() {
         third.contains("backlog item, maid/writing-style (on https://example.org/me/maid): move 1 taught rule into writing-style's text"),
         "a new rule brings the move back, with only what is new:\n{third}"
     );
-    let proposals = home.path().join(".local/state/my-harness/proposals");
+    let proposals = home.path().join(".local/state/ghost-in-shell/proposals");
     assert!(!proposals.exists(), "a decline files nothing");
 }
 
@@ -687,9 +687,9 @@ fn skip_leaves_the_session_out_and_dismiss_clears_the_waiting_ones() {
     assert!(!home.store().join("memory/use-tr-not-sed.md").exists());
     assert!(!home
         .path()
-        .join(".local/state/my-harness/proposals")
+        .join(".local/state/ghost-in-shell/proposals")
         .exists());
-    let state = home.path().join(".local/state/my-harness");
+    let state = home.path().join(".local/state/ghost-in-shell");
     assert!(!state.join(format!("briefed/{SESSION}.json")).exists());
     assert!(home
         .text(&["ledger"], None)

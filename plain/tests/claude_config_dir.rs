@@ -116,7 +116,7 @@ impl Env {
                 format!("{}:/usr/bin:/bin", self.at("bin").display()),
             )
             .env("MAID_PROFILE", self.at("profile"))
-            .env("MY_HARNESS_PARTS", self.at("parts"))
+            .env("GHOST_IN_SHELL_PARTS", self.at("parts"))
             .env("INSTALL_RECORDS", self.at("install-records"))
             .env("MAID_CONFIG", self.at("config"))
             .env("MAID_MEMORY_STORE", self.at("memory-store"))

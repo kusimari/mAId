@@ -2,8 +2,8 @@
 name: odd
 description: about odd
 metadata:
-  my-harness.contract: "1"
-  my-harness.scope: turn
-  my-harness.job: j
-  my-harness.state.local: nowhere
+  ghost-in-shell.contract: "1"
+  ghost-in-shell.scope: turn
+  ghost-in-shell.job: j
+  ghost-in-shell.state.local: nowhere
 ---

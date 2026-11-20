@@ -4,14 +4,14 @@ description: 'Spec-driven dev on a repo with specs/: plan or start a feature, ru
 version: 4.8.0
 tags: [spec, feature, requirements, design, kdevkit, workflow, planning, backlog, initiative, public-repo]
 metadata:
-  my-harness.contract: "1"
-  my-harness.scope: turn
-  my-harness.job: spec-driven feature work on a repo with a spec tree, from plan through gates to close
-  my-harness.signals.jobs: plan a feature, run an initiative, act on review comments, close a feature, add to backlog
-  my-harness.signals.states: planning, dev, review, closure
-  my-harness.signals.files: specs/project.md, specs/feature/*.md, docs/specs/project.md, .kdevkit/project.md
-  my-harness.rules: SKILL.md#phase-gating-cues
-  my-harness.record: specs/feature/*.md#handoff, docs/specs/feature/*.md#handoff, .kdevkit/feature/*.md#handoff
+  ghost-in-shell.contract: "1"
+  ghost-in-shell.scope: turn
+  ghost-in-shell.job: spec-driven feature work on a repo with a spec tree, from plan through gates to close
+  ghost-in-shell.signals.jobs: plan a feature, run an initiative, act on review comments, close a feature, add to backlog
+  ghost-in-shell.signals.states: planning, dev, review, closure
+  ghost-in-shell.signals.files: specs/project.md, specs/feature/*.md, docs/specs/project.md, .kdevkit/project.md
+  ghost-in-shell.rules: SKILL.md#phase-gating-cues
+  ghost-in-shell.record: specs/feature/*.md#handoff, docs/specs/feature/*.md#handoff, .kdevkit/feature/*.md#handoff
 ---
 
 # kdevkit — spec-driven development workflow

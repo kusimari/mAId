@@ -94,7 +94,7 @@ lint:
 check:
     cargo check --workspace
 
-# Every my-harness declaration the ghost will read.
+# Every ghost-in-shell declaration the ghost will read.
 validate:
     just ghost::validate
 

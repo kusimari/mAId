@@ -2,5 +2,5 @@
 name: alone
 description: d
 metadata:
-  my-harness.scope: turn
+  ghost-in-shell.scope: turn
 ---

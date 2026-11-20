@@ -141,7 +141,7 @@ mod tests {
         assert_eq!(manifest["name"], "ghost");
         assert_eq!(manifest["version"], v);
         assert_eq!(
-            manifest["extensions"]["my-harness"]["name"],
+            manifest["extensions"]["ghost-in-shell"]["name"],
             "claude-adapter"
         );
         assert_eq!(fs::read_to_string(out.join(EXE)).unwrap(), "binary");

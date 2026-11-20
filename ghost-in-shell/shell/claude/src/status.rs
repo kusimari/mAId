@@ -21,11 +21,13 @@ pub struct BringInLine {
     pub readiness: Readiness,
 }
 
-/// The ghost's bring-ins on Claude Code, and the records not understood.
+/// The ghost's bring-ins on Claude Code, the records not understood, and
+/// the bring-ins declared under the old name.
 #[derive(Debug, Default)]
 pub struct BringIns {
     pub lines: Vec<BringInLine>,
     pub not_understood: Vec<String>,
+    pub old_names: Vec<String>,
 }
 
 /// The bring-ins of each part that declares itself, as the ghost finds
@@ -58,6 +60,7 @@ pub fn bring_ins(claude: &ConfigDir, host: &Host) -> Result<BringIns> {
     Ok(BringIns {
         lines,
         not_understood: ghost.not_understood.clone(),
+        old_names: ghost.old_names.clone(),
     })
 }
 
@@ -83,6 +86,9 @@ impl fmt::Display for BringIns {
         }
         for n in &self.not_understood {
             writeln!(f, "not understood  {n}")?;
+        }
+        for n in &self.old_names {
+            writeln!(f, "old name       {n}")?;
         }
         Ok(())
     }
@@ -119,12 +125,11 @@ pub fn status(s: &crate::install::Setup, here: &std::path::Path) -> Result<u8> {
         println!("{w}");
     }
     print!("{}", bring_ins(&s.claude, &Host::from_env())?);
-    let config = ghost::config::Config {
-        state: s.state.clone(),
-        candidates: true,
-    };
-    let pending = infusion::genome::pending_in(&config)?;
-    let waiting = infusion::sleep::waiting(&config)?.len();
+    for n in &s.config.old_names {
+        println!("old name       {n}");
+    }
+    let pending = infusion::genome::pending_in(&s.config)?;
+    let waiting = infusion::sleep::waiting(&s.config)?.len();
     println!("pending  {} decision(s) at {}", pending.count, pending.at);
     println!("sleeping {waiting} session(s) waiting to be reflected on");
     Ok(0)

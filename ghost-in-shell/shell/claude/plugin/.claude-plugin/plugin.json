@@ -7,7 +7,7 @@
   },
   "repository": "https://github.com/kusimari/mAId",
   "extensions": {
-    "my-harness": {
+    "ghost-in-shell": {
       "contract": 1,
       "name": "claude-adapter",
       "scope": "session",

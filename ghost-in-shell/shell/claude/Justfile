@@ -44,7 +44,7 @@ status:
 rollback:
     {{ ghost }} rollback --root {{ root }}
 
-# Check every my-harness declaration in resources/ and the ghost's plugin.
+# Check every ghost-in-shell declaration in resources/ and the ghost's plugin.
 [no-cd]
 validate:
     {{ ghost }} validate --root {{ root }}

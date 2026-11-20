@@ -37,6 +37,10 @@ pub struct Picture {
     /// Each part's plugin that is turned off.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub disabled: Vec<String>,
+    /// Each old name in use (a bring-in's namespace, a variable, the state
+    /// dir), one line each.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub old_names: Vec<String>,
     pub pending: Pending,
     /// Sessions marked for sleep and not yet reflected on.
     pub waiting: usize,
@@ -103,6 +107,11 @@ pub fn picture_at(ctx: &Infusion, here: &Here) -> Result<Picture> {
         clashes: ghost.clashes.clone(),
         not_understood: ghost.not_understood.clone(),
         disabled: ghost.disabled.clone(),
+        old_names: [&ghost.old_names, &ctx.config.old_names]
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect(),
         pending: pending(ctx)?,
         waiting: sleep::waiting(&ctx.config)?.len(),
     })
@@ -272,6 +281,9 @@ pub fn render_slice(p: &Picture, slice: Slice) -> String {
     for d in &p.disabled {
         let _ = writeln!(s, "  {d}");
     }
+    for n in &p.old_names {
+        let _ = writeln!(s, "  old name: {n}");
+    }
     if !p.clashes.is_empty() {
         let _ = writeln!(
             s,
@@ -316,7 +328,7 @@ mod tests {
             "config": {"store": {"about": "the store"}}, "state": {"local": "store"}});
         fs::write(
             &p,
-            json!({"name": "mem", "_meta": {"my-harness": decl}}).to_string(),
+            json!({"name": "mem", "_meta": {"ghost-in-shell": decl}}).to_string(),
         )
         .unwrap();
         p.display().to_string()
@@ -390,7 +402,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let skill = dir.path().join("style/SKILL.md");
         fs::create_dir_all(skill.parent().unwrap()).unwrap();
-        fs::write(&skill, "---\nname: style\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: write\n  my-harness.config.learned: \"[optional] older\"\n  my-harness.config.promoted: \"[optional] older\"\n  my-harness.config.token: \"[secret] a token\"\n  my-harness.config.serve: a command\n  my-harness.config.index: relative\n---\n").unwrap();
+        fs::write(&skill, "---\nname: style\ndescription: d\nmetadata:\n  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: write\n  ghost-in-shell.config.learned: \"[optional] older\"\n  ghost-in-shell.config.promoted: \"[optional] older\"\n  ghost-in-shell.config.token: \"[secret] a token\"\n  ghost-in-shell.config.serve: a command\n  ghost-in-shell.config.index: relative\n---\n").unwrap();
         part(
             dir.path(),
             "home",
@@ -511,7 +523,7 @@ mod tests {
             fs::create_dir_all(&d).unwrap();
             let meta = match contract {
                 "" => String::new(),
-                c => format!("metadata:\n  my-harness.contract: \"{c}\"\n  my-harness.scope: turn\n  my-harness.job: j\n  my-harness.repository: https://example.org/me/next\n"),
+                c => format!("metadata:\n  ghost-in-shell.contract: \"{c}\"\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: j\n  ghost-in-shell.repository: https://example.org/me/next\n"),
             };
             fs::write(
                 d.join("SKILL.md"),
@@ -527,7 +539,7 @@ mod tests {
         let text = render(&picture(&c).unwrap());
         assert!(text.starts_with("personas: no persona (local)\n"), "{text}");
         assert!(
-            text.contains("  unreadable next-skill (local): the my-harness declaration follows contract 2, which this ghost does not know\n"),
+            text.contains("  unreadable next-skill (local): the ghost-in-shell declaration follows contract 2, which this ghost does not know\n"),
             "{text}"
         );
         assert!(
@@ -535,6 +547,40 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("  undeclared: plain-skill\n"), "{text}");
+    }
+
+    #[test]
+    fn each_old_name_read_is_named_in_the_environment() {
+        use ghost::installed::{Kind, Unit};
+        let dir = TempDir::new().unwrap();
+        let d = dir.path().join("garden");
+        fs::create_dir_all(&d).unwrap();
+        fs::write(
+            d.join("SKILL.md"),
+            "---\nname: garden\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: tend the garden\n---\n",
+        )
+        .unwrap();
+        let mut u = Unit::new(Kind::Skill, "garden");
+        u.manifest = Some(d.join("SKILL.md"));
+        let mut c = ctx(dir.path());
+        c.shell = Box::new(vec![u]);
+        c.config.old_names = vec!["MY_HARNESS_STATE is the old name".into()];
+        let p = picture(&c).unwrap();
+        let text = render(&p);
+        assert!(
+            text.contains("  garden: tend the garden [local, own]\n"),
+            "{text}"
+        );
+        for want in [
+            "  old name: garden (local) declares under my-harness, the old name of ghost-in-shell; read for this release only\n",
+            "  old name: MY_HARNESS_STATE is the old name\n",
+        ] {
+            assert!(text.contains(want), "{want:?} in:\n{text}");
+        }
+        assert!(!render_slice(&p, Slice::SubSession).contains("old name"));
+        c.shell = Box::new(Vec::<Unit>::new());
+        c.config.old_names = vec![];
+        assert!(!render(&picture(&c).unwrap()).contains("old name"));
     }
 
     #[test]

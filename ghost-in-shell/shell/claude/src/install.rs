@@ -39,8 +39,8 @@ pub struct Setup {
     pub claude: ConfigDir,
     /// The install-records folder.
     pub records: PathBuf,
-    /// The ghost's own state.
-    pub state: PathBuf,
+    /// Where the ghost keeps its own things.
+    pub config: ghost::config::Config,
     /// This executable, staged into a profile without nix.
     pub exe: PathBuf,
     pub path: Option<OsString>,
@@ -62,7 +62,7 @@ impl Setup {
             profile: path_or("GHOST_PROFILE", format!("{state_home}/maid/ghost/profile"))?,
             claude: ConfigDir::from_env()?.ok_or_else(|| anyhow!("HOME is not set"))?,
             records: path_or("INSTALL_RECORDS", format!("{state_home}/install-records"))?,
-            state: ghost::config::Config::from_env()?.state,
+            config: ghost::config::Config::from_env()?,
             exe: std::env::current_exe()?,
             path: std::env::var_os("PATH"),
         })
@@ -307,7 +307,11 @@ mod tests {
             profile: dir.join("ghost/profile"),
             claude: ConfigDir::new(&dir.join("home"), None),
             records: dir.join("records"),
-            state: dir.join("state"),
+            config: ghost::config::Config {
+                state: dir.join("state"),
+                candidates: true,
+                old_names: vec![],
+            },
             exe: dir.join("exe"),
             path: None,
         }

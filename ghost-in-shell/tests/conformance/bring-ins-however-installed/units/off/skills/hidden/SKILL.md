@@ -2,7 +2,7 @@
 name: hidden
 description: about hidden
 metadata:
-  my-harness.contract: "1"
-  my-harness.scope: turn
-  my-harness.job: j
+  ghost-in-shell.contract: "1"
+  ghost-in-shell.scope: turn
+  ghost-in-shell.job: j
 ---

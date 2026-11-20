@@ -37,7 +37,7 @@ use anyhow::Result;
 /// What each item of the prefix begins with, so a reader (and the model)
 /// can tell the ghost's text from the person's. The lines under an item
 /// (a record's state, a candidate, a short-form entry) are its own.
-pub const TAG: &str = "[my-harness]";
+pub const TAG: &str = "[ghost-in-shell]";
 /// A record line or a memory's title and hook is cut to this.
 pub const FIELD_BYTES: usize = 300;
 
@@ -129,7 +129,7 @@ pub(crate) mod tests {
         for (name, job, rule) in skills {
             let unit = dir.join(format!("units/{part_name}/{name}/SKILL.md"));
             fs::create_dir_all(unit.parent().unwrap()).unwrap();
-            fs::write(&unit, format!("---\nname: {name}\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: {name} work\n  my-harness.signals.jobs: {job}\n  my-harness.rules: SKILL.md#rules\n---\n## Rules\n\n{rule}\n\n## Other\n\nnot sent\n")).unwrap();
+            fs::write(&unit, format!("---\nname: {name}\ndescription: d\nmetadata:\n  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: {name} work\n  ghost-in-shell.signals.jobs: {job}\n  ghost-in-shell.rules: SKILL.md#rules\n---\n## Rules\n\n{rule}\n\n## Other\n\nnot sent\n")).unwrap();
             bring_ins.push(json!({"name": name, "unit": {"standard": "skill", "path": unit}}));
         }
         let store = dir.join(format!("{part_name}-store"));
@@ -141,7 +141,7 @@ pub(crate) mod tests {
             "state": {"permanent": "store", "promote": "off"}});
         fs::write(
             &server,
-            json!({"name": "m", "_meta": {"my-harness": decl}}).to_string(),
+            json!({"name": "m", "_meta": {"ghost-in-shell": decl}}).to_string(),
         )
         .unwrap();
         bring_ins.push(json!({"name": format!("{part_name}-memory"), "unit": {"standard": "mcp", "path": server},
@@ -261,7 +261,7 @@ pub(crate) mod tests {
         .unwrap();
         let unit = dir.path().join("units/kit/SKILL.md");
         fs::create_dir_all(unit.parent().unwrap()).unwrap();
-        fs::write(&unit, "---\nname: kit\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: specs\n  my-harness.signals.files: specs/feature/*.md\n  my-harness.record: specs/feature/*.md#handoff\n---\n").unwrap();
+        fs::write(&unit, "---\nname: kit\ndescription: d\nmetadata:\n  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: specs\n  ghost-in-shell.signals.files: specs/feature/*.md\n  ghost-in-shell.record: specs/feature/*.md#handoff\n---\n").unwrap();
         let parts = dir.path().join("parts/home.json");
         let mut v: Value = serde_json::from_str(&fs::read_to_string(&parts).unwrap()).unwrap();
         v["bring_ins"]
@@ -319,8 +319,8 @@ pub(crate) mod tests {
         assert_eq!(
             left,
             [
-                "[my-harness] persona: none known here\n",
-                "[my-harness] record: none here\n"
+                "[ghost-in-shell] persona: none known here\n",
+                "[ghost-in-shell] record: none here\n"
             ],
             "leaving the location is said once"
         );
@@ -345,7 +345,7 @@ pub(crate) mod tests {
         part(dir.path(), "job", "work", json!([]));
         let unit = dir.path().join("units/garden/SKILL.md");
         fs::create_dir_all(unit.parent().unwrap()).unwrap();
-        fs::write(&unit, "---\nname: garden\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: plan the beds\n  my-harness.signals.locations: garden-*\n---\n").unwrap();
+        fs::write(&unit, "---\nname: garden\ndescription: d\nmetadata:\n  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: plan the beds\n  ghost-in-shell.signals.locations: garden-*\n---\n").unwrap();
         let parts = dir.path().join("parts/home.json");
         let mut v: Value = serde_json::from_str(&fs::read_to_string(&parts).unwrap()).unwrap();
         v["bring_ins"]
@@ -380,7 +380,7 @@ pub(crate) mod tests {
         );
         let left = at(dir.path(), "and elsewhere");
         let texts: Vec<&str> = left.iter().map(|i| i.text.as_str()).collect();
-        assert_eq!(texts, ["[my-harness] persona: none known here\n"]);
+        assert_eq!(texts, ["[ghost-in-shell] persona: none known here\n"]);
     }
     #[test]
     fn the_turn_budget_counts_only_what_is_sent_and_no_one_item_takes_it() {

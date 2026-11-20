@@ -31,6 +31,7 @@ impl World {
         let config = Config {
             state: root.join("state"),
             candidates: true,
+            old_names: vec![],
         };
         let parts = root.join("parts");
         let (stub, log) = memory::tests::stub(&root);
@@ -44,7 +45,7 @@ impl World {
                 "state": {"permanent": "store", "promote": "off"}});
             fs::write(
                 &p,
-                json!({"name": name, "_meta": {"my-harness": decl}}).to_string(),
+                json!({"name": name, "_meta": {"ghost-in-shell": decl}}).to_string(),
             )
             .unwrap();
             p
@@ -52,14 +53,14 @@ impl World {
         let style = units.join("writing-style.md");
         fs::write(
             &style,
-            "---\nname: writing-style\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: write in my voice\n  my-harness.config.learned: \"[optional] pending\"\n  my-harness.config.promoted: \"[optional] promoted\"\n  my-harness.state.local: learned\n  my-harness.state.permanent: promoted\n  my-harness.state.promote: propose\n---\n",
+            "---\nname: writing-style\ndescription: d\nmetadata:\n  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: write in my voice\n  ghost-in-shell.config.learned: \"[optional] pending\"\n  ghost-in-shell.config.promoted: \"[optional] promoted\"\n  ghost-in-shell.state.local: learned\n  ghost-in-shell.state.permanent: promoted\n  ghost-in-shell.state.promote: propose\n---\n",
         )
         .unwrap();
         let plugin = |name: &str| {
             let p = units.join(format!("{name}.plugin.json"));
             fs::write(
                 &p,
-                json!({"name": name, "extensions": {"my-harness": {"contract": 1, "scope": "turn", "job": format!("{name} job")}}})
+                json!({"name": name, "extensions": {"ghost-in-shell": {"contract": 1, "scope": "turn", "job": format!("{name} job")}}})
                     .to_string(),
             )
             .unwrap();
@@ -879,7 +880,7 @@ impl World {
     fn style_in_memory(&mut self) {
         fs::write(
             self.root.join("units/writing-style.md"),
-            "---\nname: writing-style\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: write in my voice, rules in my persona's memory\n  my-harness.config.learned: \"[optional] older\"\n  my-harness.config.promoted: \"[optional] older\"\n---\n",
+            "---\nname: writing-style\ndescription: d\nmetadata:\n  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: write in my voice, rules in my persona's memory\n  ghost-in-shell.config.learned: \"[optional] older\"\n  ghost-in-shell.config.promoted: \"[optional] older\"\n---\n",
         )
         .unwrap();
         self.ghost = crate::testing::ghost_of(&self.root.join("parts"));

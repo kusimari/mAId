@@ -27,7 +27,7 @@ impl Env {
             .env("HOME", self.at("home"))
             .env("MAID_MEMORY_STORE", self.at("config/memory-store"))
             .env("MAID_PROFILE", self.at("profile"))
-            .env("MY_HARNESS_PARTS", self.at("state"))
+            .env("GHOST_IN_SHELL_PARTS", self.at("state"))
             .env("INSTALL_RECORDS", self.at("install-records"))
             .env_remove("CODEX_HOME")
             .env_remove("CLAUDE_CONFIG_DIR")

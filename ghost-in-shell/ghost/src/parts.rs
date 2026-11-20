@@ -401,12 +401,14 @@ fn one(
     }
 }
 
-/// Whether a manifest mentions the contract's namespace at all.
+/// Whether a manifest mentions the contract's namespace, or its old one,
+/// at all.
 fn names_the_contract(m: Option<&Manifest>) -> bool {
     m.and_then(|m| contract::read_small(&m.path).ok())
         .is_some_and(|t| {
-            t.contains(&format!("{}.", contract::NAMESPACE))
-                || t.contains(&format!("\"{}\"", contract::NAMESPACE))
+            [contract::NAMESPACE, crate::old_name::NAME]
+                .iter()
+                .any(|n| t.contains(&format!("{n}.")) || t.contains(&format!("\"{n}\"")))
         })
 }
 
@@ -421,9 +423,11 @@ pub fn disabled(installed: &dyn Installed, here: Option<&Path>) -> anyhow::Resul
         .filter_map(|u| {
             let text = contract::read_small(u.manifest.as_ref()?).ok()?;
             let v: Value = serde_json::from_str(&text).ok()?;
+            let declared = |n: &str| v["extensions"][n]["repository"].as_str();
             let repo = v["repository"]
                 .as_str()
-                .or_else(|| v["extensions"][contract::NAMESPACE]["repository"].as_str())?;
+                .or_else(|| declared(contract::NAMESPACE))
+                .or_else(|| declared(crate::old_name::NAME))?;
             Some(format!(
                 "{}'s plugin is disabled; its skills are off",
                 part_name(repo)
@@ -560,7 +564,7 @@ mod tests {
     }
 
     const TURN: &str =
-        "  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: j\n";
+        "  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: j\n";
 
     fn json_file(p: &Path, v: Value) {
         fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -579,14 +583,14 @@ mod tests {
         skill(&at.join("skills"), "plain", "");
         json_file(
             &at.join("servers/mem/server.json"),
-            json!({"name": "mem", "_meta": {"my-harness": {"contract": 1, "scope": "session",
+            json!({"name": "mem", "_meta": {"ghost-in-shell": {"contract": 1, "scope": "session",
                 "job": "memory", "persona": "personal",
                 "config": {"store": {"about": "s", "bind": "arg:--store"}, "serve": {"about": "c", "bind": "command"}},
                 "state": {"permanent": "store", "promote": "off"}}}}),
         );
         json_file(
             &at.join("overlays/docs/plugin.json"),
-            json!({"name": "docs", "extensions": {"my-harness": {"contract": 1, "scope": "turn", "job": "docs"}}}),
+            json!({"name": "docs", "extensions": {"ghost-in-shell": {"contract": 1, "scope": "turn", "job": "docs"}}}),
         );
         let mut p = Unit::new(Kind::Plugin, "kit@home");
         p.dir = Some(at.clone());
@@ -694,7 +698,7 @@ mod tests {
         hand.manifest = Some(skill(
             dir.path(),
             "garden",
-            &format!("{TURN}  my-harness.repository: https://example.org/me/garden\n"),
+            &format!("{TURN}  ghost-in-shell.repository: https://example.org/me/garden\n"),
         ));
         let mut loose = Unit::new(Kind::Skill, "loose");
         loose.manifest = Some(skill(dir.path(), "loose", ""));
@@ -724,7 +728,7 @@ mod tests {
         early.manifest = Some(skill(
             dir.path(),
             "aaa",
-            &format!("{TURN}  my-harness.persona: someone\n  my-harness.repository: https://example.org/me/kit\n"),
+            &format!("{TURN}  ghost-in-shell.persona: someone\n  ghost-in-shell.repository: https://example.org/me/kit\n"),
         ));
         let units = vec![
             early,
@@ -737,13 +741,26 @@ mod tests {
         next.manifest = Some(skill(
             dir.path(),
             "next",
-            "  my-harness.contract: \"2\"\n  my-harness.scope: turn\n  my-harness.job: j\n",
+            "  ghost-in-shell.contract: \"2\"\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: j\n",
         ));
         let parts = of(&vec![next], None).unwrap();
         assert!(
             parts[0].declared,
             "a part whose only declaration is unreadable is still reported"
         );
+    }
+
+    #[test]
+    fn an_unreadable_declaration_under_the_old_name_still_shows() {
+        let dir = TempDir::new().unwrap();
+        let mut next = Unit::new(Kind::Skill, "next");
+        next.manifest = Some(skill(
+            dir.path(),
+            "next",
+            "  my-harness.contract: \"2\"\n  my-harness.scope: turn\n  my-harness.job: j\n",
+        ));
+        let parts = of(&vec![next], None).unwrap();
+        assert!(parts[0].declared, "it tried to declare, so it is reported");
     }
 
     #[test]
@@ -764,7 +781,7 @@ mod tests {
         json_file(
             &at.join(".claude-plugin/plugin.json"),
             json!({"name": "maid", "repository": "https://example.org/me/maid",
-                "extensions": {"my-harness": {"contract": 1, "name": "claude-adapter", "scope": "session", "job": "adapter"}}}),
+                "extensions": {"ghost-in-shell": {"contract": 1, "name": "claude-adapter", "scope": "session", "job": "adapter"}}}),
         );
         let mut u = Unit::new(Kind::Plugin, "maid@maid");
         u.dir = Some(at.clone());
@@ -860,5 +877,22 @@ mod tests {
         assert!(of(&units, None).unwrap().is_empty());
         p.enabled = true;
         assert!(disabled(&vec![p], None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_plugin_turned_off_is_named_by_the_repository_its_old_declaration_gives() {
+        let dir = TempDir::new().unwrap();
+        let at = dir.path().join("p");
+        json_file(
+            &at.join(".claude-plugin/plugin.json"),
+            json!({"name": "kit", "extensions": {"my-harness": {"repository": "https://example.org/me/kit"}}}),
+        );
+        let mut u = Unit::new(Kind::Plugin, "kit@home");
+        u.manifest = Some(at.join(".claude-plugin/plugin.json"));
+        u.enabled = false;
+        assert_eq!(
+            disabled(&vec![u], None).unwrap(),
+            ["kit's plugin is disabled; its skills are off"]
+        );
     }
 }

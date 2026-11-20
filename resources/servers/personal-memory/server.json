@@ -7,7 +7,7 @@
     "source": "github"
   },
   "_meta": {
-    "my-harness": {
+    "ghost-in-shell": {
       "contract": 1,
       "scope": "session",
       "job": "the personal persona's memory: what agents keep across sessions",

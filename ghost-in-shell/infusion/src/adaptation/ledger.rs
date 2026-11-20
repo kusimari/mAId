@@ -298,6 +298,7 @@ mod tests {
         Config {
             state: dir.join("state"),
             candidates: true,
+            old_names: vec![],
         }
     }
 

@@ -37,7 +37,7 @@ pub fn uninstall(s: &Setup) -> Result<u8> {
     }
     s.profile().uninstall()?;
     println!("removed  {}", s.profile.display());
-    let shells = s.state.join("shells");
+    let shells = s.config.shells();
     if shells.exists() {
         fs::remove_dir_all(&shells)?;
         println!("removed  {}", shells.display());

@@ -1,19 +1,23 @@
 //! The bring-in contract: what a bring-in declares about itself, carried in
-//! its standard's own extension slot under the `my-harness` namespace, so
+//! its standard's own extension slot under the `ghost-in-shell` namespace, so
 //! the unit stays a plain unit of its standard. See project.md "My harness".
 //!
 //! - an Agent Skill: frontmatter `metadata`, a flat string map, so each
-//!   field is its own `my-harness.<field>` key;
-//! - a plugin manifest: `extensions["my-harness"]`, a JSON object;
-//! - an MCP server manifest (`server.json`): `_meta["my-harness"]`, the same.
+//!   field is its own `ghost-in-shell.<field>` key;
+//! - a plugin manifest: `extensions["ghost-in-shell"]`, a JSON object;
+//! - an MCP server manifest (`server.json`): `_meta["ghost-in-shell"]`, the same.
+//!
+//! A slot under the old namespace (`old_name::NAME`) is read when the new
+//! one holds nothing, and marked so.
 
+use crate::old_name;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-pub const NAMESPACE: &str = "my-harness";
+pub const NAMESPACE: &str = crate::NAME;
 
 /// The contract version this ghost reads. A declaration of any other, or
 /// of none, is refused.
@@ -127,6 +131,9 @@ pub struct Declaration {
     /// `repository` field when the slot names none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository: Option<String>,
+    /// Read under the old namespace.
+    #[serde(skip)]
+    pub under_old_name: bool,
 }
 
 /// What a unit's slot holds.
@@ -271,9 +278,10 @@ pub fn read_small(path: &Path) -> std::io::Result<String> {
 fn from_manifest(text: &str, slot_name: &str) -> Result<Slot, String> {
     let v: Value = serde_json::from_str(text).map_err(|e| format!("not JSON: {e}"))?;
     let description = v["description"].as_str().map(str::to_string);
-    let slot = match &v[slot_name][NAMESPACE] {
-        Value::Null => return Ok(Slot::Undeclared { description }),
-        decl => parse(decl.clone())?,
+    let slot = match (&v[slot_name][NAMESPACE], &v[slot_name][old_name::NAME]) {
+        (Value::Null, Value::Null) => return Ok(Slot::Undeclared { description }),
+        (Value::Null, old) => parse(old.clone(), old_name::NAME)?,
+        (decl, _) => parse(decl.clone(), NAMESPACE)?,
     };
     if slot_name != "extensions" {
         return Ok(slot);
@@ -291,6 +299,10 @@ fn from_manifest(text: &str, slot_name: &str) -> Result<Slot, String> {
     })
 }
 
+/// A skill's keys under one namespace: the namespace, its key prefix, and
+/// each field with its value.
+type Under = (&'static str, String, Vec<(String, Value)>);
+
 fn from_skill(text: &str) -> Result<Slot, String> {
     #[derive(Deserialize)]
     struct Front {
@@ -303,18 +315,34 @@ fn from_skill(text: &str) -> Result<Slot, String> {
         .map_err(|e| format!("frontmatter: {e}"))?
         .data
         .ok_or("no frontmatter")?;
-    let prefix = format!("{NAMESPACE}.");
-    let ours: Vec<(String, Value)> = front
-        .metadata
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|(k, v)| k.strip_prefix(&prefix).map(|f| (f.to_string(), v)))
-        .collect();
-    if ours.is_empty() {
+    let metadata = front.metadata.unwrap_or_default();
+    let under = |namespace: &'static str| {
+        let prefix = format!("{namespace}.");
+        let ours: Vec<(String, Value)> = metadata
+            .iter()
+            .filter_map(|(k, v)| k.strip_prefix(&prefix).map(|f| (f.to_string(), v.clone())))
+            .collect();
+        (!ours.is_empty()).then_some((namespace, prefix, ours))
+    };
+    let names_contract = |found: &Option<Under>| {
+        found
+            .as_ref()
+            .is_some_and(|(_, _, ours)| ours.iter().any(|(k, _)| k == "contract"))
+    };
+    // The new namespace, unless only the old one names a contract: an old
+    // declaration with one new key added still reads, and its new keys are
+    // dropped. A manifest's slot is one object, so there the new one wins
+    // whole.
+    let (new, old) = (under(NAMESPACE), under(old_name::NAME));
+    let chosen = match !names_contract(&new) && names_contract(&old) {
+        true => old,
+        false => new.or(old),
+    };
+    let Some((namespace, prefix, ours)) = chosen else {
         return Ok(Slot::Undeclared {
             description: front.description,
         });
-    }
+    };
     let mut flat = BTreeMap::new();
     for (field, v) in ours {
         let Value::String(s) = v else {
@@ -322,7 +350,7 @@ fn from_skill(text: &str) -> Result<Slot, String> {
         };
         flat.insert(field, s);
     }
-    parse(unflatten(&flat))
+    parse(unflatten(&flat), namespace)
 }
 
 /// The flat skill keys as the object a plugin or server manifest carries.
@@ -392,20 +420,22 @@ fn key_of(value: &str) -> Value {
     json!({ "about": rest.trim_end(), "secret": secret, "optional": optional })
 }
 
-fn parse(decl: Value) -> Result<Slot, String> {
+/// The declaration found under `namespace`.
+fn parse(decl: Value, namespace: &str) -> Result<Slot, String> {
     if !decl.is_object() {
-        return Err(format!("the {NAMESPACE} declaration is not an object"));
+        return Err(format!("the {namespace} declaration is not an object"));
     }
     match &decl["contract"] {
-        Value::Null => return Err(format!("the {NAMESPACE} declaration names no contract")),
+        Value::Null => return Err(format!("the {namespace} declaration names no contract")),
         Value::Number(n) if n.as_u64() == Some(CONTRACT) => {}
         other => {
             let why = format!("follows contract {other}, which this ghost does not know");
-            return Err(format!("the {NAMESPACE} declaration {why}"));
+            return Err(format!("the {namespace} declaration {why}"));
         }
     }
-    let d: Declaration =
-        serde_json::from_value(decl).map_err(|e| format!("the {NAMESPACE} declaration: {e}"))?;
+    let mut d: Declaration =
+        serde_json::from_value(decl).map_err(|e| format!("the {namespace} declaration: {e}"))?;
+    d.under_old_name = namespace == old_name::NAME;
     if let Some(state) = &d.state {
         if let Some(k) = state.keys().find(|k| !d.config.contains_key(*k)) {
             return Err(format!("state names {k:?}, which is not a config key"));
@@ -473,6 +503,7 @@ mod tests {
             record: vec!["specs/*.md#handoff".into(), "docs/*.md#handoff".into()],
             persona: Some("personal".into()),
             repository: Some("https://example.org/me/kit".into()),
+            under_old_name: false,
         }
     }
 
@@ -482,7 +513,7 @@ mod tests {
         let p = write(
             &dir,
             "SKILL.md",
-            "---\nname: s\ndescription: d\nmetadata:\n  other.key: kept out\n  my-harness.contract: \"1\"\n  my-harness.persona: personal\n  my-harness.repository: https://example.org/me/kit\n  my-harness.bind.store: arg:--store\n  my-harness.scope: session\n  my-harness.job: memory for the personal persona\n  my-harness.signals.jobs: recall, save\n  my-harness.rules: SKILL.md#rules\n  my-harness.package: pensieve\n  my-harness.config.store: the persona's store\n  my-harness.config.token: \"[secret] [optional] a sync token\"\n  my-harness.state.local: store\n  my-harness.state.promote: auto\n  my-harness.requires: git, python\n  my-harness.record: specs/*.md#handoff, docs/*.md#handoff\n  my-harness.future: ignored\n---\nbody\n",
+            "---\nname: s\ndescription: d\nmetadata:\n  other.key: kept out\n  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.persona: personal\n  ghost-in-shell.repository: https://example.org/me/kit\n  ghost-in-shell.bind.store: arg:--store\n  ghost-in-shell.scope: session\n  ghost-in-shell.job: memory for the personal persona\n  ghost-in-shell.signals.jobs: recall, save\n  ghost-in-shell.rules: SKILL.md#rules\n  ghost-in-shell.package: pensieve\n  ghost-in-shell.config.store: the persona's store\n  ghost-in-shell.config.token: \"[secret] [optional] a sync token\"\n  ghost-in-shell.state.local: store\n  ghost-in-shell.state.promote: auto\n  ghost-in-shell.requires: git, python\n  ghost-in-shell.record: specs/*.md#handoff, docs/*.md#handoff\n  ghost-in-shell.future: ignored\n---\nbody\n",
         );
         assert_eq!(declared(read(Standard::Skill, &p)), full());
     }
@@ -494,15 +525,88 @@ mod tests {
         let plugin = write(
             &dir,
             "plugin.json",
+            &json!({"name": "p", "extensions": {"ghost-in-shell": decl}}).to_string(),
+        );
+        let server = write(
+            &dir,
+            "server.json",
+            &json!({"name": "s", "_meta": {"ghost-in-shell": decl, "other": 1}}).to_string(),
+        );
+        assert_eq!(declared(read(Standard::Plugin, &plugin)), full());
+        assert_eq!(declared(read(Standard::Mcp, &server)), full());
+    }
+
+    #[test]
+    fn each_slot_under_the_old_name_is_read_and_marked() {
+        let dir = TempDir::new().unwrap();
+        let old = Declaration {
+            under_old_name: true,
+            ..full()
+        };
+        let decl = serde_json::to_value(full()).unwrap();
+        let skill = write(
+            &dir,
+            "SKILL.md",
+            "---\nname: s\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: j\n---\n",
+        );
+        let plugin = write(
+            &dir,
+            "plugin.json",
             &json!({"name": "p", "extensions": {"my-harness": decl}}).to_string(),
         );
         let server = write(
             &dir,
             "server.json",
-            &json!({"name": "s", "_meta": {"my-harness": decl, "other": 1}}).to_string(),
+            &json!({"name": "s", "_meta": {"my-harness": decl}}).to_string(),
         );
-        assert_eq!(declared(read(Standard::Plugin, &plugin)), full());
-        assert_eq!(declared(read(Standard::Mcp, &server)), full());
+        let d = declared(read(Standard::Skill, &skill));
+        assert!(
+            d.under_old_name && d.scope == Scope::Turn && d.job == "j",
+            "{d:?}"
+        );
+        assert_eq!(declared(read(Standard::Plugin, &plugin)), old);
+        assert_eq!(declared(read(Standard::Mcp, &server)), old);
+        let err = read(
+            Standard::Skill,
+            &write(&dir, "two.md", "---\nname: s\nmetadata:\n  my-harness.contract: \"2\"\n  my-harness.scope: turn\n  my-harness.job: j\n---\n"),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("the my-harness declaration"), "{err}");
+    }
+
+    #[test]
+    fn an_old_skill_declaration_with_a_new_key_added_reads_under_the_old_name() {
+        let dir = TempDir::new().unwrap();
+        let skill = write(
+            &dir,
+            "SKILL.md",
+            "---\nname: s\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: old\n  ghost-in-shell.bind.x: value:y\n---\n",
+        );
+        let d = declared(read(Standard::Skill, &skill));
+        assert!(d.under_old_name && d.job == "old", "{d:?}");
+    }
+
+    #[test]
+    fn the_new_name_wins_over_the_old_one() {
+        let dir = TempDir::new().unwrap();
+        let skill = write(
+            &dir,
+            "SKILL.md",
+            "---\nname: s\ndescription: d\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: session\n  my-harness.job: old\n  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: new\n---\n",
+        );
+        let old = json!({"contract": 1, "scope": "session", "job": "old"});
+        let new = json!({"contract": 1, "scope": "turn", "job": "new"});
+        let server = write(
+            &dir,
+            "server.json",
+            &json!({"name": "s", "_meta": {"my-harness": old, "ghost-in-shell": new}}).to_string(),
+        );
+        for d in [
+            declared(read(Standard::Skill, &skill)),
+            declared(read(Standard::Mcp, &server)),
+        ] {
+            assert!(!d.under_old_name && d.job == "new", "{d:?}");
+        }
     }
 
     #[test]
@@ -513,7 +617,7 @@ mod tests {
         let plugin = write(
             &dir,
             "plugin.json",
-            &json!({"name": "p", "repository": "https://example.org/p", "extensions": {"my-harness": decl}}).to_string(),
+            &json!({"name": "p", "repository": "https://example.org/p", "extensions": {"ghost-in-shell": decl}}).to_string(),
         );
         assert_eq!(
             declared(read(Standard::Plugin, &plugin))
@@ -526,7 +630,7 @@ mod tests {
         let server = write(
             &dir,
             "server.json",
-            &json!({"name": "s", "repository": {"url": "https://example.org/code"}, "_meta": {"my-harness": decl}}).to_string(),
+            &json!({"name": "s", "repository": {"url": "https://example.org/code"}, "_meta": {"ghost-in-shell": decl}}).to_string(),
         );
         assert_eq!(declared(read(Standard::Mcp, &server)).repository, None);
     }
@@ -536,10 +640,14 @@ mod tests {
         let dir = TempDir::new().unwrap();
         for (file, contract, why) in [
             ("a.md", "", "names no contract"),
-            ("b.md", "  my-harness.contract: \"2\"\n", "contract 2"),
-            ("c.md", "  my-harness.contract: one\n", "contract \"one\""),
+            ("b.md", "  ghost-in-shell.contract: \"2\"\n", "contract 2"),
+            (
+                "c.md",
+                "  ghost-in-shell.contract: one\n",
+                "contract \"one\"",
+            ),
         ] {
-            let text = format!("---\nname: s\nmetadata:\n{contract}  my-harness.scope: turn\n  my-harness.job: j\n---\n");
+            let text = format!("---\nname: s\nmetadata:\n{contract}  ghost-in-shell.scope: turn\n  ghost-in-shell.job: j\n---\n");
             let err = read(Standard::Skill, &write(&dir, file, &text)).unwrap_err();
             assert!(err.contains(why), "{file}: {err}");
         }
@@ -563,16 +671,20 @@ mod tests {
     fn a_malformed_declaration_says_why() {
         let dir = TempDir::new().unwrap();
         let cases = [
-            ("a.md", "---\nname: s\nmetadata:\n  my-harness.scope: 3\n---\n", "not a string"),
-            ("b.md", "---\nname: s\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: always\n  my-harness.job: j\n---\n", "declaration"),
-            ("c.md", "---\nname: s\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.job: j\n---\n", "scope"),
-            ("d.md", "---\nname: s\nmetadata:\n  my-harness.contract: \"1\"\n  my-harness.scope: turn\n  my-harness.job: j\n  my-harness.state.local: nowhere\n---\n", "not a config key"),
+            ("a.md", "---\nname: s\nmetadata:\n  ghost-in-shell.scope: 3\n---\n", "not a string"),
+            ("b.md", "---\nname: s\nmetadata:\n  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.scope: always\n  ghost-in-shell.job: j\n---\n", "declaration"),
+            ("c.md", "---\nname: s\nmetadata:\n  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.job: j\n---\n", "scope"),
+            ("d.md", "---\nname: s\nmetadata:\n  ghost-in-shell.contract: \"1\"\n  ghost-in-shell.scope: turn\n  ghost-in-shell.job: j\n  ghost-in-shell.state.local: nowhere\n---\n", "not a config key"),
         ];
         for (file, text, why) in cases {
             let err = read(Standard::Skill, &write(&dir, file, text)).unwrap_err();
             assert!(err.contains(why), "{file}: {err}");
         }
-        let p = write(&dir, "p.json", r#"{"extensions":{"my-harness":"turn"}}"#);
+        let p = write(
+            &dir,
+            "p.json",
+            r#"{"extensions":{"ghost-in-shell":"turn"}}"#,
+        );
         assert!(read(Standard::Plugin, &p)
             .unwrap_err()
             .contains("not an object"));

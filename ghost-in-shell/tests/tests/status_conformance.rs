@@ -1,6 +1,7 @@
 //! The ghost status conformance set (`ghost-in-shell/tests/conformance/
 //! <case>/`): each case's Claude Code home and units, and the bring-ins
-//! `ghost status` reports for them, each ready, not ready or unreadable.
+//! `ghost status` reports for them, each ready, not ready or unreadable,
+//! and the bring-ins it names as declared under the old name.
 //! A case's `clis` are stubs on PATH, its `env` the variables set. Paths a
 //! case's records name are written `@RUN@`, for the run dir.
 
@@ -64,6 +65,7 @@ fn run(case: &Path) -> Result<(), String> {
             .collect(),
     };
     let got = bring_ins(&ConfigDir::new(&home, None), &host).map_err(|e| format!("{e:#}"))?;
+    let old_names = got.old_names.clone();
     let mut got: Vec<(String, String, String)> = got
         .lines
         .iter()
@@ -86,9 +88,18 @@ fn run(case: &Path) -> Result<(), String> {
         .collect();
     got.sort();
     want.sort();
-    match got == want {
+    if got != want {
+        return Err(format!("bring-ins {got:?}, want {want:?}"));
+    }
+    let want_old: Vec<String> = spec["expect"]["old_names"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    match old_names == want_old {
         true => Ok(()),
-        false => Err(format!("bring-ins {got:?}, want {want:?}")),
+        false => Err(format!("old names {old_names:?}, want {want_old:?}")),
     }
 }
 
