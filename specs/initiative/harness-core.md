@@ -4,6 +4,18 @@
 - Status: streams 1-16 merged; every Macro step passes on the real model
   (the final run, after D-1). PR #60 waits on the user to ratify the
   briefing's calls, then lands as a squash.
+
+## Goal
+
+Any base harness I launch plain acts like me, and gets better from use.
+Installing bring-ins only makes them available; this initiative adds the
+core that infuses them into every session and lets each session improve
+the next, on any base harness, without wrapping it.
+
+## Framing
+
+### A ghost in the shell
+
 - **Shell:** any base harness (Claude Code, kiro-cli, codex, a LangGraph
   app, any agent loop). It can do the work and knows nothing about the
   person using it.
