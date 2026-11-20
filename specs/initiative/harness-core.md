@@ -624,7 +624,9 @@ may bear on the work, whatever the agent loaded earlier.
   words and the named files' languages; turn bring-ins that nearly fit)
   under a line saying they are candidates, not instructions. The
   essentials go once, then on change, and again in a short form once
-  drifted (10 prompts or 200 KB of transcript) or when a fit returns.
+  drifted (10 prompts or 200 KB of conversation: what was said, tool
+  calls and their results, never Claude Code's own entries) or when a fit
+  returns.
   `GHOST_IN_SHELL_CANDIDATES=off` narrows the net to the prompt's words.
 - *Limits:* at most 3 turn bring-ins, and 5 candidates per turn (3
   memories, 2 near fits); the short form at most 1,500 bytes; the genome
@@ -707,7 +709,7 @@ may bear on the work, whatever the agent loaded earlier.
 | 10 | saved-in-session | from Macro test run 4: the genome names where a bring-in's bound files are, so a skill never falls back to a default path (R4-1); a persona memory saved during the session is shown in the close batch as saved in memory (R4-2) | 9 | merged |
 | 11 | prompt-prefix | Concept D1 and D2: Rust gathers and the agent judges (candidates in the prefix); the essentials go again on change and once drifted; paid runs compare with and without candidates | 12 | merged |
 | 15 | ghost-in-shell-name | the name `my-harness` becomes `ghost-in-shell` everywhere: the declaration namespace in every slot, the prefix lines, the MCP server and its resource, the env vars, the ghost's state dir (the old ones read for one release) | 11 | merged |
-| 16 | drift-measure | from the final Macro run: drift is measured on the conversation, not Claude Code's own bookkeeping entries, so the short form does not go again on nearly every prompt; `ghost install --dry-run` | 15 | running |
+| 16 | drift-measure | from the final Macro run: drift is measured on the conversation, not Claude Code's own bookkeeping entries, so the short form does not go again on nearly every prompt; `ghost install --dry-run` | 15 | merged |
 | 12 | ghost-package | the plain install and the ghost install split: the ghost as its own Claude plugin and install, on/off, `ghost status`; with D3: a Rust staging step builds each package, install is a PREFIX copy, the flake only runs build and install | 14 | merged |
 | 13 | ghost-in-shell-layout | the crates `ghost`, `infusion`, `shell/claude` and `tests` under `ghost-in-shell/`, laid out as the concept; no behaviour change | 10 | merged |
 | 14 | live-shell | the ghost builds itself from the environment: `ghost` defines `Installed`, `shell/claude` implements it from Claude Code's own records (plugins, enabled, MCP registrations), cached; declarations gain `persona` (on memory), `repository`, `contract`; own or borrowed by declaration; the ghost stops reading part lists | 13 | merged |
@@ -1103,3 +1105,9 @@ this initiative.
   240 KB a turn, so the 200 KB drift limit sent the short form again on a
   prompt where nothing changed (D-1). The real HOME unchanged · fix stream
   16; steps 2 to 6 run again after it
+- Ruling (ringmaster, stream 16 closure, to ratify): nothing the agent
+  was told (skill bodies, hook context) counts toward drift, only what was
+  said and done; B stays 200 KB of conversation; `ghost install --dry-run`
+  forecasts from Claude Code's records, never runs `claude`; backlog
+  ghost-install-scope: the ghost's plain install should cover Claude Code
+  only
