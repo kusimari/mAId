@@ -1,22 +1,9 @@
 # Initiative: harness-core
 
 - Branch: `initiative/harness-core` (cut from `main` at 0881e13)
-- Status: streams 1-10 merged; every Macro step passes on the real model
-  (run 7), and steps 1, 2, 3 and 5 in the user's manual run. Streams 11
-  and 12 are planned. PR #60 waits on the user to ratify the briefing's
-  calls, then lands as a squash.
-
-## Goal
-
-Any base harness I launch plain acts like me, and gets better from use.
-Installing bring-ins only makes them available; this initiative adds the
-core that infuses them into every session and lets each session improve
-the next, on any base harness, without wrapping it.
-
-## Framing
-
-### A ghost in the shell
-
+- Status: streams 1-16 merged; every Macro step passes on the real model
+  (the final run, after D-1). PR #60 waits on the user to ratify the
+  briefing's calls, then lands as a squash.
 - **Shell:** any base harness (Claude Code, kiro-cli, codex, a LangGraph
   app, any agent loop). It can do the work and knows nothing about the
   person using it.
@@ -1111,3 +1098,15 @@ this initiative.
   forecasts from Claude Code's records, never runs `claude`; backlog
   ghost-install-scope: the ghost's plain install should cover Claude Code
   only
+- Final Macro run, after D-1 (real model, at a7acf46, 4 sessions; 32 of
+  32 spent): steps 1 to 6 PASS (1 and 6 free): start; turn (the second
+  prompt carried no new line, drift counts conversation only); close (the
+  habit and the rule saved in memory, the move proposal, only memory and
+  the proposal changed); reflect mid-session; travel (side B applied the
+  habits, nothing of side A); ghost off (no hook, no genome, plain's
+  skills loaded). No mAId or Claude config path in the real HOME changed;
+  the launcher's own credential cache refreshed, as the shell's own model
+  access does. Noted, not failures: the model names the memory store but
+  not its path; `ghost status` panics on a closed pipe; installing the
+  ghost before plain installs plain for every agent (backlog
+  ghost-install-scope)
