@@ -717,6 +717,7 @@ may bear on the work, whatever the agent loaded earlier.
 | 11 | prompt-prefix | Concept D1 and D2: Rust gathers and the agent judges (candidates in the prefix); the essentials go again on change and once drifted; paid runs compare with and without candidates | 12 | merged |
 | 15 | ghost-in-shell-name | the name `my-harness` becomes `ghost-in-shell` everywhere: the declaration namespace in every slot, the prefix lines, the MCP server and its resource, the env vars, the ghost's state dir (the old ones read for one release) | 11 | merged |
 | 16 | drift-measure | from the final Macro run: drift is measured on the conversation, not Claude Code's own bookkeeping entries, so the short form does not go again on nearly every prompt; `ghost install --dry-run` | 15 | merged |
+| 17 | held-saves | a memory the agent would save mid-session is held until the person's yes, asked at any time; a setting lets saves land implicitly later | 16 | running |
 | 12 | ghost-package | the plain install and the ghost install split: the ghost as its own Claude plugin and install, on/off, `ghost status`; with D3: a Rust staging step builds each package, install is a PREFIX copy, the flake only runs build and install | 14 | merged |
 | 13 | ghost-in-shell-layout | the crates `ghost`, `infusion`, `shell/claude` and `tests` under `ghost-in-shell/`, laid out as the concept; no behaviour change | 10 | merged |
 | 14 | live-shell | the ghost builds itself from the environment: `ghost` defines `Installed`, `shell/claude` implements it from Claude Code's own records (plugins, enabled, MCP registrations), cached; declarations gain `persona` (on memory), `repository`, `contract`; own or borrowed by declaration; the ghost stops reading part lists | 13 | merged |
@@ -1130,3 +1131,9 @@ this initiative.
   not its path; `ghost status` panics on a closed pipe; installing the
   ghost before plain installs plain for every agent (backlog
   ghost-install-scope)
+- Ruling (user, 2026-11-25): a memory the agent would save during a
+  session is held until the person answers; the ask to save can happen at
+  any time in the session, not only at close. Keep it loose: a setting
+  lets the person later have saves land without an explicit yes. This
+  replaces the ringmaster's ruling that in-session saves count · stream 17,
+  reviewed as its own PR
